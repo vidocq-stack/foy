@@ -1,0 +1,632 @@
+package io.vidocq.foy.internal.container;
+
+import io.vidocq.foy.internal.dispatcher.DispatchResolver;
+import io.vidocq.foy.internal.dispatcher.RequestDispatcherImpl;
+import io.vidocq.foy.internal.listener.ListenerRegistry;
+import jakarta.servlet.Filter;
+import jakarta.servlet.FilterRegistration;
+import jakarta.servlet.RequestDispatcher;
+import jakarta.servlet.Servlet;
+import jakarta.servlet.ServletContext;
+import jakarta.servlet.ServletRegistration;
+import jakarta.servlet.SessionCookieConfig;
+import jakarta.servlet.SessionTrackingMode;
+import jakarta.servlet.descriptor.JspConfigDescriptor;
+
+import java.util.Collections;
+import java.util.EnumSet;
+import java.util.Enumeration;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.Set;
+
+/**
+ * {@link ServletContext} minimal pour le jalon M2a.
+ * <p>
+ * Les opérations de configuration dynamique (addServlet/addFilter/...) ne sont pas
+ * supportées dans ce jalon — on s'appuie uniquement sur la découverte CDI des
+ * beans annotés {@code @WebServlet}.
+ * </p>
+ */
+public final class VidocqServletContext implements ServletContext {
+
+    private final String contextPath;
+    private final String serverInfo;
+    private final Map<String, Object> attributes = new HashMap<>();
+    private final Map<String, String> initParameters = new HashMap<>();
+    private String requestCharacterEncoding = "UTF-8";
+    private String responseCharacterEncoding = "UTF-8";
+    private int sessionTimeout = 30;
+    private ListenerRegistry listenerRegistry = new ListenerRegistry();
+    private DispatchResolver dispatchResolver;
+    private RequestDispatcherImpl.Invoker dispatchInvoker;
+    private io.vidocq.foy.internal.error.ErrorPageRegistry errorPages =
+            new io.vidocq.foy.internal.error.ErrorPageRegistry();
+    private io.vidocq.foy.spi.security.SecurityProvider securityProvider =
+            new io.vidocq.foy.internal.security.AnonymousSecurityProvider();
+    private boolean initialized;
+    private boolean programmaticListenerActive;
+    private Map<String, String> localeEncodingMappings = Map.of();
+    private final java.util.LinkedHashMap<String, DynamicServletRegistration> dynamicServlets = new java.util.LinkedHashMap<>();
+    private final java.util.LinkedHashMap<String, DynamicFilterRegistration> dynamicFilters = new java.util.LinkedHashMap<>();
+    /** Registrations "statiques" (web.xml / @WebServlet) — exposées par
+     *  {@link #getServletRegistrations()} mais jamais matérialisées à nouveau
+     *  par le harness (elles sont déjà dans la liste des servlets actifs). */
+    private final java.util.LinkedHashMap<String, DynamicServletRegistration> staticServlets = new java.util.LinkedHashMap<>();
+    private final java.util.LinkedHashMap<String, DynamicFilterRegistration> staticFilters = new java.util.LinkedHashMap<>();
+
+    /** Enregistre une ServletRegistration "statique" (issue du web.xml/@WebServlet).
+     *  Le nom est aussi marqué réservé pour bloquer un éventuel addServlet dynamique. */
+    public DynamicServletRegistration registerStaticServlet(String name, Class<? extends Servlet> klass,
+                                                            java.util.List<String> patterns,
+                                                            java.util.Map<String, String> initParams,
+                                                            boolean asyncSupported) {
+        DynamicServletRegistration r = new DynamicServletRegistration(name, klass);
+        r.attach(this);
+        if (initParams != null) r.setInitParameters(new java.util.LinkedHashMap<>(initParams));
+        if (patterns != null) for (String p : patterns) r.addMappingDirect(p);
+        r.setAsyncSupported(asyncSupported);
+        staticServlets.put(name, r);
+        reservedServletNames.add(name);
+        if (patterns != null) for (String p : patterns) reserveUrlPattern(p);
+        return r;
+    }
+
+    public DynamicFilterRegistration registerStaticFilter(String name, Class<? extends Filter> klass,
+                                                          java.util.Map<String, String> initParams) {
+        DynamicFilterRegistration r = new DynamicFilterRegistration(name, klass);
+        if (initParams != null) r.setInitParameters(new java.util.LinkedHashMap<>(initParams));
+        staticFilters.put(name, r);
+        reservedFilterNames.add(name);
+        return r;
+    }
+    /** Noms réservés par le web.xml — un addServlet/addFilter avec ce nom doit retourner null. */
+    private final java.util.Set<String> reservedServletNames = new java.util.HashSet<>();
+    private final java.util.Set<String> reservedFilterNames = new java.util.HashSet<>();
+    /** URL patterns déjà mappés par le web.xml à un servlet statique. */
+    private final java.util.Set<String> reservedUrlPatterns = new java.util.HashSet<>();
+    public void reserveServletName(String name) { reservedServletNames.add(name); }
+    public void reserveFilterName(String name) { reservedFilterNames.add(name); }
+    public void reserveUrlPattern(String pattern) {
+        if (pattern != null && !pattern.isEmpty()) reservedUrlPatterns.add(pattern);
+    }
+
+    /** Indique si {@code pattern} est déjà mappé à un servlet *autre* que
+     *  {@code selfName} — que ce soit par le web.xml ou par une autre
+     *  {@link DynamicServletRegistration}. Utilisé par addMapping (§4.4)
+     *  pour appliquer la sémantique "all or nothing" sur les conflits. */
+    public boolean isUrlPatternMappedElsewhere(String selfName, String pattern) {
+        if (pattern == null) return false;
+        if (reservedUrlPatterns.contains(pattern)) return true;
+        for (var entry : dynamicServlets.entrySet()) {
+            if (entry.getKey().equals(selfName)) continue;
+            if (entry.getValue().getMappings().contains(pattern)) return true;
+        }
+        return false;
+    }
+
+    public Map<String, DynamicServletRegistration> dynamicServletRegistrations() {
+        return java.util.Collections.unmodifiableMap(dynamicServlets);
+    }
+    public Map<String, DynamicFilterRegistration> dynamicFilterRegistrations() {
+        return java.util.Collections.unmodifiableMap(dynamicFilters);
+    }
+
+    /** Active/désactive la phase "programmatic listener init" — pendant celle-ci,
+     *  les méthodes de configuration dynamique doivent throw UOE (§4.4.3). */
+    public void setProgrammaticListenerActive(boolean active) { this.programmaticListenerActive = active; }
+
+    /** Mapping &lt;locale&gt; → &lt;encoding&gt; issu du {@code web.xml} (Servlet 6.1 §14.4). */
+    public void setLocaleEncodingMappings(Map<String, String> mappings) {
+        this.localeEncodingMappings = mappings == null ? Map.of() : Map.copyOf(mappings);
+    }
+    public String encodingForLocale(java.util.Locale locale) {
+        if (locale == null) return null;
+        String lang = locale.getLanguage();
+        String country = locale.getCountry();
+        // 1) Mappings explicites du web.xml (§14.4) — prioritaires.
+        if (!localeEncodingMappings.isEmpty()) {
+            if (country != null && !country.isEmpty()) {
+                String full = lang + "-" + country.toLowerCase(java.util.Locale.ROOT);
+                String v = localeEncodingMappings.get(full);
+                if (v != null) return v;
+            }
+            String v = localeEncodingMappings.get(lang);
+            if (v != null) return v;
+        }
+        // 2) Défauts du conteneur (table alignée avec Tomcat / Servlet 6.1).
+        return DEFAULT_LOCALE_ENCODINGS.get(lang);
+    }
+
+    private static final Map<String, String> DEFAULT_LOCALE_ENCODINGS = Map.ofEntries(
+            Map.entry("ar", "ISO-8859-6"),
+            Map.entry("be", "ISO-8859-5"),
+            Map.entry("bg", "ISO-8859-5"),
+            Map.entry("ca", "ISO-8859-1"),
+            Map.entry("cs", "ISO-8859-2"),
+            Map.entry("da", "ISO-8859-1"),
+            Map.entry("de", "ISO-8859-1"),
+            Map.entry("el", "ISO-8859-7"),
+            Map.entry("en", "ISO-8859-1"),
+            Map.entry("es", "ISO-8859-1"),
+            Map.entry("et", "ISO-8859-1"),
+            Map.entry("fi", "ISO-8859-1"),
+            Map.entry("fr", "ISO-8859-1"),
+            Map.entry("hr", "ISO-8859-2"),
+            Map.entry("hu", "ISO-8859-2"),
+            Map.entry("is", "ISO-8859-1"),
+            Map.entry("it", "ISO-8859-1"),
+            Map.entry("iw", "ISO-8859-8"),
+            Map.entry("ja", "Shift_JIS"),
+            Map.entry("ko", "EUC-KR"),
+            Map.entry("lt", "ISO-8859-2"),
+            Map.entry("lv", "ISO-8859-2"),
+            Map.entry("mk", "ISO-8859-5"),
+            Map.entry("nl", "ISO-8859-1"),
+            Map.entry("no", "ISO-8859-1"),
+            Map.entry("pl", "ISO-8859-2"),
+            Map.entry("pt", "ISO-8859-1"),
+            Map.entry("ro", "ISO-8859-2"),
+            Map.entry("ru", "ISO-8859-5"),
+            Map.entry("sh", "ISO-8859-5"),
+            Map.entry("sk", "ISO-8859-2"),
+            Map.entry("sl", "ISO-8859-2"),
+            Map.entry("sq", "ISO-8859-2"),
+            Map.entry("sr", "ISO-8859-5"),
+            Map.entry("sv", "ISO-8859-1"),
+            Map.entry("tr", "ISO-8859-9"),
+            Map.entry("uk", "ISO-8859-5"),
+            Map.entry("zh", "GB2312"),
+            Map.entry("zh_TW", "Big5"));
+
+    public VidocqServletContext(String contextPath) {
+        this.contextPath = contextPath;
+        this.serverInfo = "Vidocq Servlet/Chappe";
+    }
+
+    /** Marqueur de fin d'initialisation (Servlet 6.1 §4.4) — après cet appel,
+     *  les méthodes de configuration dynamique doivent throw {@link IllegalStateException}. */
+    public void markInitialized() { this.initialized = true; }
+
+    public void setListenerRegistry(ListenerRegistry registry) {
+        this.listenerRegistry = registry;
+    }
+
+    public ListenerRegistry listenerRegistry() { return listenerRegistry; }
+
+    public void setDispatchInfrastructure(DispatchResolver resolver, RequestDispatcherImpl.Invoker invoker) {
+        this.dispatchResolver = resolver;
+        this.dispatchInvoker = invoker;
+    }
+
+    public DispatchResolver dispatchResolver() { return dispatchResolver; }
+    public RequestDispatcherImpl.Invoker dispatchInvoker() { return dispatchInvoker; }
+
+    public io.vidocq.foy.internal.error.ErrorPageRegistry errorPages() {
+        return errorPages;
+    }
+
+    public void setErrorPages(io.vidocq.foy.internal.error.ErrorPageRegistry errorPages) {
+        this.errorPages = errorPages;
+    }
+
+    public io.vidocq.foy.spi.security.SecurityProvider securityProvider() {
+        return securityProvider;
+    }
+
+    public void setSecurityProvider(io.vidocq.foy.spi.security.SecurityProvider provider) {
+        this.securityProvider = java.util.Objects.requireNonNull(provider);
+    }
+
+    @Override public String getContextPath() { return contextPath; }
+    @Override public ServletContext getContext(String uripath) {
+        // Servlet 6.1 §4.8 : le conteneur peut retourner null si cross-context non supporté.
+        // Ici, on résout via le registre des contextes déployés dans le même JVM.
+        if (uripath == null || uripath.isEmpty() || !uripath.startsWith("/")) return null;
+        return CrossContextRegistry.lookup(uripath);
+    }
+    @Override public int getMajorVersion() { return 6; }
+    @Override public int getMinorVersion() { return 1; }
+
+    private int effectiveMajor = 6;
+    private int effectiveMinor = 1;
+    public void setEffectiveVersion(int major, int minor) {
+        this.effectiveMajor = major; this.effectiveMinor = minor;
+    }
+    @Override public int getEffectiveMajorVersion() { return effectiveMajor; }
+    @Override public int getEffectiveMinorVersion() { return effectiveMinor; }
+    @Override public String getMimeType(String file) {
+        if (file == null) return null;
+        int dot = file.lastIndexOf('.');
+        if (dot < 0) return null;
+        String ext = file.substring(dot + 1).toLowerCase(java.util.Locale.ROOT);
+        return switch (ext) {
+            case "class" -> "application/x-java-class";
+            case "html", "htm" -> "text/html";
+            case "txt" -> "text/plain";
+            case "xml" -> "text/xml";
+            case "json" -> "application/json";
+            case "css" -> "text/css";
+            case "js"  -> "application/javascript";
+            case "jpg", "jpeg" -> "image/jpeg";
+            case "png" -> "image/png";
+            case "gif" -> "image/gif";
+            case "svg" -> "image/svg+xml";
+            case "pdf" -> "application/pdf";
+            case "zip" -> "application/zip";
+            default -> java.net.URLConnection.guessContentTypeFromName(file);
+        };
+    }
+    /**
+     * Source de ressources du WAR — fournie par le DeployableContainer au démarrage
+     * du harness. Le provider expose les chemins connus et ouvre les flux.
+     */
+    public interface ResourceProvider {
+        /** Liste les chemins immédiats sous {@code path} (type {@code /WEB-INF/}). */
+        Set<String> listPaths(String path);
+        java.io.InputStream openStream(String path);
+        /** Retourne une URL (par exemple {@code file:}) qui expose {@code path}
+         *  dans une forme respectant la casse et la structure du path, ou null. */
+        default java.net.URL toUrl(String path) { return null; }
+    }
+
+    private ResourceProvider resourceProvider;
+    public void setResourceProvider(ResourceProvider provider) { this.resourceProvider = provider; }
+
+    @Override public Set<String> getResourcePaths(String path) {
+        if (path == null || !path.startsWith("/")) return null;
+        if (resourceProvider == null) return null;
+        Set<String> out = resourceProvider.listPaths(path);
+        return (out == null || out.isEmpty()) ? null : out;
+    }
+    @Override public java.net.URL getResource(String path) throws java.net.MalformedURLException {
+        if (path == null) return null;
+        if (!path.startsWith("/")) {
+            throw new java.net.MalformedURLException("path must start with '/': " + path);
+        }
+        if (resourceProvider == null) return null;
+        return resourceProvider.toUrl(path);
+    }
+    @Override public java.io.InputStream getResourceAsStream(String path) {
+        if (path == null || !path.startsWith("/")) return null;
+        if (resourceProvider == null) return null;
+        return resourceProvider.openStream(path);
+    }
+    @Override public RequestDispatcher getRequestDispatcher(String path) {
+        // Servlet 6.1 §9.1 : retourne un dispatcher non-null pour tout chemin relatif au
+        // contexte, même si aucun servlet n'est mappé (un forward/include sur ce path
+        // renverra 404 si aucune ressource correspond).
+        if (path == null) return null;
+        if (!path.startsWith("/")) return null; // doit être absolu dans le contexte
+        if (dispatchResolver == null || dispatchInvoker == null) return null;
+        String tmp = path;
+        if (!contextPath.equals("/") && path.startsWith(contextPath)) {
+            tmp = path.substring(contextPath.length());
+            if (tmp.isEmpty()) tmp = "/";
+        }
+        final String resolvePath = tmp;
+        return dispatchResolver.resolve(resolvePath)
+                .<RequestDispatcher>map(t -> new RequestDispatcherImpl(t, dispatchInvoker))
+                .orElseGet(() -> RequestDispatcherImpl.notFound(resolvePath));
+    }
+    @Override public RequestDispatcher getNamedDispatcher(String name) {
+        if (dispatchResolver == null || dispatchInvoker == null || name == null) return null;
+        return dispatchResolver.resolveByName(name)
+                .<RequestDispatcher>map(t -> new RequestDispatcherImpl(t, dispatchInvoker))
+                .orElse(null);
+    }
+    @Override public void log(String msg) { System.getLogger("servlet.log").log(System.Logger.Level.INFO, msg); }
+    @Override public void log(String message, Throwable throwable) {
+        System.getLogger("servlet.log").log(System.Logger.Level.ERROR, message, throwable);
+    }
+    @Override public String getRealPath(String path) { return null; }
+    @Override public String getServerInfo() { return serverInfo; }
+    @Override public String getInitParameter(String name) {
+        if (name == null) throw new NullPointerException("name is null");
+        return initParameters.get(name);
+    }
+    @Override public Enumeration<String> getInitParameterNames() {
+        return Collections.enumeration(initParameters.keySet());
+    }
+    @Override public boolean setInitParameter(String name, String value) {
+        if (name == null) throw new NullPointerException("name is null");
+        if (programmaticListenerActive) throw programmaticForbidden();
+        if (initialized) throw alreadyInitialized();
+        return initParameters.putIfAbsent(name, value) == null;
+    }
+
+    @Override public Object getAttribute(String name) {
+        // Servlet 6.1 §4.0 : NullPointerException sur name null.
+        if (name == null) throw new NullPointerException("name is null");
+        return attributes.get(name);
+    }
+    @Override public Enumeration<String> getAttributeNames() {
+        return Collections.enumeration(attributes.keySet());
+    }
+    @Override public void setAttribute(String name, Object object) {
+        if (name == null) throw new NullPointerException("name is null");
+        if (object == null) { removeAttribute(name); return; }
+        Object previous = attributes.put(name, object);
+        if (previous == null) listenerRegistry.fireContextAttributeAdded(this, name, object);
+        else listenerRegistry.fireContextAttributeReplaced(this, name, previous);
+    }
+    @Override public void removeAttribute(String name) {
+        if (name == null) throw new NullPointerException("name is null");
+        Object previous = attributes.remove(name);
+        if (previous != null) listenerRegistry.fireContextAttributeRemoved(this, name, previous);
+    }
+
+    private String servletContextName = "vidocq";
+    public void setServletContextName(String name) {
+        if (name != null && !name.isEmpty()) this.servletContextName = name;
+    }
+    @Override public String getServletContextName() { return servletContextName; }
+
+    // ---- Dynamic registration — not supported in M2a ----
+    // Servlet 6.1 §4.4 : après initialisation du contexte, ces méthodes doivent throw
+    // IllegalStateException. Avant initialisation, elles throw UnsupportedOperationException
+    // tant que la feature n'est pas implémentée.
+
+    @Override public ServletRegistration.Dynamic addServlet(String name, String className) {
+        if (programmaticListenerActive) throw programmaticForbidden();
+        if (initialized) throw alreadyInitialized();
+        requireNonEmptyName(name, "servletName");
+        if (dynamicServlets.containsKey(name) || reservedServletNames.contains(name)) return null;
+        var r = new DynamicServletRegistration(name, className);
+        r.attach(this);
+        dynamicServlets.put(name, r);
+        return r;
+    }
+    @Override public ServletRegistration.Dynamic addServlet(String name, Servlet servlet) {
+        if (programmaticListenerActive) throw programmaticForbidden();
+        if (initialized) throw alreadyInitialized();
+        requireNonEmptyName(name, "servletName");
+        if (dynamicServlets.containsKey(name) || reservedServletNames.contains(name)) return null;
+        var r = new DynamicServletRegistration(name, servlet);
+        r.attach(this);
+        dynamicServlets.put(name, r);
+        return r;
+    }
+    @Override public ServletRegistration.Dynamic addServlet(String name, Class<? extends Servlet> c) {
+        if (programmaticListenerActive) throw programmaticForbidden();
+        if (initialized) throw alreadyInitialized();
+        requireNonEmptyName(name, "servletName");
+        if (dynamicServlets.containsKey(name) || reservedServletNames.contains(name)) return null;
+        var r = new DynamicServletRegistration(name, c);
+        r.attach(this);
+        dynamicServlets.put(name, r);
+        return r;
+    }
+    @Override public ServletRegistration.Dynamic addJspFile(String name, String jspFile) {
+        if (programmaticListenerActive) throw programmaticForbidden();
+        if (initialized) throw alreadyInitialized();
+        // §4.4 addJspFile : IllegalArgumentException si servletName null ou vide.
+        requireNonEmptyName(name, "servletName");
+        // JSP non supporté — on enregistre quand même la registration pour les tests qui
+        // vérifient le flux de configuration (la request vers cette URL renverra 404).
+        if (dynamicServlets.containsKey(name) || reservedServletNames.contains(name)) return null;
+        var r = new DynamicServletRegistration(name, (String) null);
+        r.attach(this);
+        dynamicServlets.put(name, r);
+        return r;
+    }
+
+    private static void requireNonEmptyName(String name, String arg) {
+        if (name == null || name.isEmpty()) {
+            throw new IllegalArgumentException(arg + " is null or empty");
+        }
+    }
+    @Override public <T extends Servlet> T createServlet(Class<T> c) throws jakarta.servlet.ServletException {
+        if (programmaticListenerActive) throw programmaticForbidden();
+        try { return c.getDeclaredConstructor().newInstance(); }
+        catch (ReflectiveOperationException e) {
+            throw new jakarta.servlet.ServletException("cannot instantiate servlet " + c.getName(), e);
+        }
+    }
+    @Override public ServletRegistration getServletRegistration(String name) {
+        if (programmaticListenerActive) throw programmaticForbidden();
+        var d = dynamicServlets.get(name);
+        return d != null ? d : staticServlets.get(name);
+    }
+    @Override public Map<String, ? extends ServletRegistration> getServletRegistrations() {
+        if (programmaticListenerActive) throw programmaticForbidden();
+        // §4.4 : retourne *toutes* les ServletRegistration — web.xml + dynamiques.
+        var merged = new java.util.LinkedHashMap<String, ServletRegistration>();
+        merged.putAll(staticServlets);
+        merged.putAll(dynamicServlets);
+        return java.util.Collections.unmodifiableMap(merged);
+    }
+    @Override public FilterRegistration.Dynamic addFilter(String name, String className) {
+        if (programmaticListenerActive) throw programmaticForbidden();
+        if (initialized) throw alreadyInitialized();
+        requireNonEmptyName(name, "filterName");
+        if (dynamicFilters.containsKey(name) || reservedFilterNames.contains(name)) return null;
+        var r = new DynamicFilterRegistration(name, className);
+        dynamicFilters.put(name, r);
+        return r;
+    }
+    @Override public FilterRegistration.Dynamic addFilter(String name, Filter f) {
+        if (programmaticListenerActive) throw programmaticForbidden();
+        if (initialized) throw alreadyInitialized();
+        requireNonEmptyName(name, "filterName");
+        if (dynamicFilters.containsKey(name) || reservedFilterNames.contains(name)) return null;
+        var r = new DynamicFilterRegistration(name, f);
+        dynamicFilters.put(name, r);
+        return r;
+    }
+    @Override public FilterRegistration.Dynamic addFilter(String name, Class<? extends Filter> c) {
+        if (programmaticListenerActive) throw programmaticForbidden();
+        if (initialized) throw alreadyInitialized();
+        requireNonEmptyName(name, "filterName");
+        if (dynamicFilters.containsKey(name) || reservedFilterNames.contains(name)) return null;
+        var r = new DynamicFilterRegistration(name, c);
+        dynamicFilters.put(name, r);
+        return r;
+    }
+    @Override public <T extends Filter> T createFilter(Class<T> c) throws jakarta.servlet.ServletException {
+        if (programmaticListenerActive) throw programmaticForbidden();
+        try { return c.getDeclaredConstructor().newInstance(); }
+        catch (ReflectiveOperationException e) {
+            throw new jakarta.servlet.ServletException("cannot instantiate filter " + c.getName(), e);
+        }
+    }
+    @Override public FilterRegistration getFilterRegistration(String name) {
+        if (programmaticListenerActive) throw programmaticForbidden();
+        var d = dynamicFilters.get(name);
+        return d != null ? d : staticFilters.get(name);
+    }
+    @Override public Map<String, ? extends FilterRegistration> getFilterRegistrations() {
+        if (programmaticListenerActive) throw programmaticForbidden();
+        var merged = new java.util.LinkedHashMap<String, FilterRegistration>();
+        merged.putAll(staticFilters);
+        merged.putAll(dynamicFilters);
+        return java.util.Collections.unmodifiableMap(merged);
+    }
+
+    // ---- Listeners ----
+    // Servlet 6.1 §4.4 : addListener n'est autorisé que pendant l'initialisation
+    // (SCI.onStartup ou contextInitialized d'un listener non-programmatique).
+
+    @Override public void addListener(String className) {
+        if (programmaticListenerActive) throw programmaticForbidden();
+        if (initialized) throw alreadyInitialized();
+        try {
+            Class<?> c = Class.forName(className, true, getClassLoader());
+            addProgrammaticListener((java.util.EventListener) c.getDeclaredConstructor().newInstance());
+        } catch (ReflectiveOperationException e) {
+            throw new IllegalArgumentException("cannot load listener " + className, e);
+        }
+    }
+    @Override public <T extends java.util.EventListener> void addListener(T t) {
+        if (programmaticListenerActive) throw programmaticForbidden();
+        if (initialized) throw alreadyInitialized();
+        addProgrammaticListener(t);
+    }
+    @Override public void addListener(Class<? extends java.util.EventListener> listenerClass) {
+        if (programmaticListenerActive) throw programmaticForbidden();
+        if (initialized) throw alreadyInitialized();
+        try {
+            addProgrammaticListener(listenerClass.getDeclaredConstructor().newInstance());
+        } catch (ReflectiveOperationException e) {
+            throw new IllegalArgumentException("cannot instantiate " + listenerClass, e);
+        }
+    }
+    @Override public <T extends java.util.EventListener> T createListener(Class<T> c) throws jakarta.servlet.ServletException {
+        if (programmaticListenerActive) throw programmaticForbidden();
+        if (initialized) throw alreadyInitialized();
+        // Servlet 6.1 §4.4 : seule une classe implémentant une interface reconnue
+        // peut être instanciée par createListener.
+        if (!jakarta.servlet.ServletContextListener.class.isAssignableFrom(c)
+                && !jakarta.servlet.ServletContextAttributeListener.class.isAssignableFrom(c)
+                && !jakarta.servlet.ServletRequestListener.class.isAssignableFrom(c)
+                && !jakarta.servlet.ServletRequestAttributeListener.class.isAssignableFrom(c)
+                && !jakarta.servlet.http.HttpSessionListener.class.isAssignableFrom(c)
+                && !jakarta.servlet.http.HttpSessionAttributeListener.class.isAssignableFrom(c)
+                && !jakarta.servlet.http.HttpSessionIdListener.class.isAssignableFrom(c)) {
+            throw new IllegalArgumentException(
+                    "class " + c.getName() + " does not implement any supported listener interface");
+        }
+        try { return c.getDeclaredConstructor().newInstance(); }
+        catch (ReflectiveOperationException e) {
+            throw new jakarta.servlet.ServletException("cannot instantiate listener " + c.getName(), e);
+        }
+    }
+
+    private boolean contextInitializedPhase;
+    /** Active/désactive la phase d'appel des {@code contextInitialized} des listeners
+     *  déclarés (web.xml/@WebListener) — pendant cette phase, addListener
+     *  d'un ServletContextListener doit throw IllegalArgumentException (§4.4). */
+    public void setContextInitializedPhase(boolean active) { this.contextInitializedPhase = active; }
+
+    private void addProgrammaticListener(java.util.EventListener l) {
+        // Servlet 6.1 §4.4 : rejette un EventListener qui n'implémente aucune des
+        // interfaces écoute reconnues.
+        if (!(l instanceof jakarta.servlet.ServletContextListener
+                || l instanceof jakarta.servlet.ServletContextAttributeListener
+                || l instanceof jakarta.servlet.ServletRequestListener
+                || l instanceof jakarta.servlet.ServletRequestAttributeListener
+                || l instanceof jakarta.servlet.http.HttpSessionListener
+                || l instanceof jakarta.servlet.http.HttpSessionAttributeListener
+                || l instanceof jakarta.servlet.http.HttpSessionIdListener)) {
+            throw new IllegalArgumentException(
+                    "listener " + l.getClass().getName() + " does not implement any supported listener interface");
+        }
+        // §4.4 : addListener d'un ServletContextListener n'est autorisé que depuis
+        // un SCI.onStartup — jamais depuis un contextInitialized d'un autre SCL.
+        if (contextInitializedPhase && l instanceof jakarta.servlet.ServletContextListener) {
+            throw new IllegalArgumentException(
+                    "ServletContextListener " + l.getClass().getName()
+                            + " can only be added from a ServletContainerInitializer");
+        }
+        if (listenerRegistry == null) listenerRegistry = new ListenerRegistry();
+        listenerRegistry.register(l, true);
+    }
+
+    private static UnsupportedOperationException programmaticForbidden() {
+        return new UnsupportedOperationException(
+                "dynamic configuration not allowed from a programmatic listener");
+    }
+
+    // ---- Sessions ----
+
+    private Set<SessionTrackingMode> effectiveSessionTrackingModes; // null = défaut COOKIE
+    private final io.vidocq.foy.internal.session.VidocqSessionCookieConfig sessionCookieConfig
+            = new io.vidocq.foy.internal.session.VidocqSessionCookieConfig(this);
+    @Override public SessionCookieConfig getSessionCookieConfig() {
+        if (programmaticListenerActive) throw programmaticForbidden();
+        return sessionCookieConfig;
+    }
+    @Override public void setSessionTrackingModes(Set<SessionTrackingMode> modes) {
+        if (programmaticListenerActive) throw programmaticForbidden();
+        if (initialized) throw alreadyInitialized();
+        if (modes != null && modes.contains(SessionTrackingMode.SSL) && modes.size() > 1) {
+            throw new IllegalArgumentException("SSL tracking mode is mutually exclusive");
+        }
+        this.effectiveSessionTrackingModes = modes == null ? null : EnumSet.copyOf(modes);
+    }
+    @Override public Set<SessionTrackingMode> getDefaultSessionTrackingModes() {
+        return EnumSet.of(SessionTrackingMode.COOKIE);
+    }
+    @Override public Set<SessionTrackingMode> getEffectiveSessionTrackingModes() {
+        return effectiveSessionTrackingModes == null
+                ? EnumSet.of(SessionTrackingMode.COOKIE)
+                : EnumSet.copyOf(effectiveSessionTrackingModes);
+    }
+    /** Flag "initialized" n'empêche plus la lecture des tracking modes depuis un contextInitialized. */
+    public boolean isInitializedInternal() { return initialized; }
+    @Override public int getSessionTimeout() { return sessionTimeout; }
+    @Override public void setSessionTimeout(int sessionTimeout) {
+        if (programmaticListenerActive) throw programmaticForbidden();
+        if (initialized) throw alreadyInitialized();
+        this.sessionTimeout = sessionTimeout;
+    }
+    /** Setter interne (contourne les checks) — utilisé par le harness pour
+     *  propager la valeur de {@code <session-timeout>} du web.xml. */
+    public void setSessionTimeoutInternal(int minutes) { this.sessionTimeout = minutes; }
+
+    @Override public JspConfigDescriptor getJspConfigDescriptor() { return null; }
+    @Override public ClassLoader getClassLoader() { return Thread.currentThread().getContextClassLoader(); }
+    @Override public void declareRoles(String... roleNames) {}
+    @Override public String getVirtualServerName() { return "vidocq"; }
+
+    @Override public String getRequestCharacterEncoding() { return requestCharacterEncoding; }
+    @Override public void setRequestCharacterEncoding(String encoding) { this.requestCharacterEncoding = encoding; }
+    @Override public void setRequestCharacterEncoding(java.nio.charset.Charset encoding) {
+        this.requestCharacterEncoding = encoding == null ? null : encoding.name();
+    }
+    @Override public String getResponseCharacterEncoding() { return responseCharacterEncoding; }
+    @Override public void setResponseCharacterEncoding(String encoding) { this.responseCharacterEncoding = encoding; }
+    @Override public void setResponseCharacterEncoding(java.nio.charset.Charset encoding) {
+        this.responseCharacterEncoding = encoding == null ? null : encoding.name();
+    }
+
+    private RuntimeException dynamicUnavailable() {
+        // Servlet 6.1 §4.4 : après initialisation, IllegalStateException est requis.
+        if (initialized) return alreadyInitialized();
+        return new UnsupportedOperationException("dynamic registration not implemented in M2a");
+    }
+
+    private static IllegalStateException alreadyInitialized() {
+        return new IllegalStateException("ServletContext already initialized");
+    }
+}

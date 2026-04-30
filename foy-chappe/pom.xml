@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.1.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.1.0 http://maven.apache.org/xsd/maven-4.1.0.xsd">
+    <modelVersion>4.1.0</modelVersion>
+
+    <parent>
+        <groupId>io.vidocq.foy</groupId>
+        <artifactId>foy-parent</artifactId>
+    </parent>
+
+    <artifactId>foy-chappe</artifactId>
+    <name>Foy :: Chappe Adapter</name>
+    <description>Adapter HTTP Chappe → Foy : pont Request/Response Chappe vers FoyHttpExchange et délégation au moteur Servlet via la SPI foy-api.</description>
+
+    <dependencies>
+        <dependency>
+            <groupId>io.vidocq.foy</groupId>
+            <artifactId>foy-api</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.vidocq.foy</groupId>
+            <artifactId>foy-core</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.vidocq.chappe</groupId>
+            <artifactId>chappe-api</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>jakarta.servlet</groupId>
+            <artifactId>jakarta.servlet-api</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>jakarta.enterprise</groupId>
+            <artifactId>jakarta.enterprise.cdi-api</artifactId>
+            <scope>provided</scope>
+        </dependency>
+
+        <dependency>
+            <groupId>io.vidocq.chappe</groupId>
+            <artifactId>chappe-core</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+</project>

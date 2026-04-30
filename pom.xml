@@ -1,0 +1,225 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.1.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.1.0 http://maven.apache.org/xsd/maven-4.1.0.xsd"
+         root="true">
+    <modelVersion>4.1.0</modelVersion>
+
+    <groupId>io.vidocq.foy</groupId>
+    <artifactId>foy-parent</artifactId>
+    <version>0.1.0-SNAPSHOT</version>
+    <packaging>pom</packaging>
+
+    <name>Foy</name>
+    <description>Implémentation Jakarta Servlet 6.1 standalone — moteur Servlet pur, transport HTTP via SPI, CDI optionnel</description>
+    <url>https://forge.vidocq.dev/vidocq/foy</url>
+
+    <developers>
+        <developer>
+            <name>Yann Blazart</name>
+            <email>yann.blazart@gmail.com</email>
+        </developer>
+    </developers>
+
+    <licenses>
+        <license>
+            <name>Apache License, Version 2.0</name>
+            <url>https://www.apache.org/licenses/LICENSE-2.0</url>
+        </license>
+    </licenses>
+
+    <scm>
+        <connection>scm:git:https://forge.vidocq.dev/vidocq/foy.git</connection>
+        <developerConnection>scm:git:ssh://git@forge.vidocq.dev:vidocq/foy.git</developerConnection>
+        <url>https://forge.vidocq.dev/vidocq/foy</url>
+    </scm>
+
+    <distributionManagement>
+        <snapshotRepository>
+            <id>vidocq-snapshots</id>
+            <url>https://repo.vidocq.dev/snapshots</url>
+        </snapshotRepository>
+        <repository>
+            <id>vidocq-releases</id>
+            <url>https://repo.vidocq.dev/releases</url>
+        </repository>
+    </distributionManagement>
+
+    <repositories>
+        <repository>
+            <id>vidocq-snapshots</id>
+            <url>https://repo.vidocq.dev/snapshots</url>
+            <releases><enabled>false</enabled></releases>
+            <snapshots><enabled>true</enabled></snapshots>
+        </repository>
+        <repository>
+            <id>vidocq-releases</id>
+            <url>https://repo.vidocq.dev/releases</url>
+            <releases><enabled>true</enabled></releases>
+            <snapshots><enabled>false</enabled></snapshots>
+        </repository>
+    </repositories>
+
+    <pluginRepositories>
+        <pluginRepository>
+            <id>vidocq-snapshots</id>
+            <url>https://repo.vidocq.dev/snapshots</url>
+            <releases><enabled>false</enabled></releases>
+            <snapshots><enabled>true</enabled></snapshots>
+        </pluginRepository>
+        <pluginRepository>
+            <id>vidocq-releases</id>
+            <url>https://repo.vidocq.dev/releases</url>
+            <releases><enabled>true</enabled></releases>
+            <snapshots><enabled>false</enabled></snapshots>
+        </pluginRepository>
+    </pluginRepositories>
+
+    <properties>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <maven.compiler.release>25</maven.compiler.release>
+
+        <jakarta.servlet.version>6.1.0</jakarta.servlet.version>
+        <jakarta.cdi.version>4.1.0</jakarta.cdi.version>
+        <jakarta.annotation.version>3.0.0</jakarta.annotation.version>
+
+        <chappe.version>0.1.0-SNAPSHOT</chappe.version>
+        <vauban.version>0.1.0-SNAPSHOT</vauban.version>
+
+        <junit.version>6.0.3</junit.version>
+    </properties>
+
+    <!--
+        foy-tck est volontairement HORS reactor (POM Model 4.0.0 standalone)
+        pour contourner ShrinkWrap Maven Resolver 3.3 qui ne sait pas parser
+        les POMs Model 4.1.0. Il est invoqué par run-official-tck-servlet6.1.sh
+        après installation locale du reactor.
+    -->
+    <subprojects>
+        <subproject>foy-api</subproject>
+        <subproject>foy-core</subproject>
+        <subproject>foy-cdi-vauban</subproject>
+        <subproject>foy-chappe</subproject>
+    </subprojects>
+
+    <dependencyManagement>
+        <dependencies>
+            <!-- JUnit 6 BOM -->
+            <dependency>
+                <groupId>org.junit</groupId>
+                <artifactId>junit-bom</artifactId>
+                <version>${junit.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+
+            <!-- Jakarta APIs -->
+            <dependency>
+                <groupId>jakarta.servlet</groupId>
+                <artifactId>jakarta.servlet-api</artifactId>
+                <version>${jakarta.servlet.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>jakarta.enterprise</groupId>
+                <artifactId>jakarta.enterprise.cdi-api</artifactId>
+                <version>${jakarta.cdi.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>jakarta.annotation</groupId>
+                <artifactId>jakarta.annotation-api</artifactId>
+                <version>${jakarta.annotation.version}</version>
+            </dependency>
+
+            <!-- Chappe (transport HTTP par défaut, optionnel) -->
+            <dependency>
+                <groupId>io.vidocq.chappe</groupId>
+                <artifactId>chappe-api</artifactId>
+                <version>${chappe.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.vidocq.chappe</groupId>
+                <artifactId>chappe-core</artifactId>
+                <version>${chappe.version}</version>
+            </dependency>
+
+            <!-- Vauban (compile scope pour foy-cdi-vauban) -->
+            <dependency>
+                <groupId>io.vidocq.vauban</groupId>
+                <artifactId>vauban-api</artifactId>
+                <version>${vauban.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.vidocq.vauban</groupId>
+                <artifactId>vauban-core</artifactId>
+                <version>${vauban.version}</version>
+            </dependency>
+
+            <!-- Foy modules internes -->
+            <dependency>
+                <groupId>io.vidocq.foy</groupId>
+                <artifactId>foy-api</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.vidocq.foy</groupId>
+                <artifactId>foy-core</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.vidocq.foy</groupId>
+                <artifactId>foy-cdi-vauban</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.vidocq.foy</groupId>
+                <artifactId>foy-chappe</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
+
+    <build>
+        <pluginManagement>
+            <plugins>
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-compiler-plugin</artifactId>
+                    <version>4.0.0-beta-4</version>
+                    <configuration>
+                        <release>25</release>
+                    </configuration>
+                </plugin>
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-surefire-plugin</artifactId>
+                    <version>3.5.5</version>
+                </plugin>
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-jar-plugin</artifactId>
+                    <version>3.4.2</version>
+                </plugin>
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-clean-plugin</artifactId>
+                    <version>3.4.0</version>
+                </plugin>
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-resources-plugin</artifactId>
+                    <version>3.3.1</version>
+                </plugin>
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-install-plugin</artifactId>
+                    <version>3.1.3</version>
+                </plugin>
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-deploy-plugin</artifactId>
+                    <version>3.1.3</version>
+                </plugin>
+            </plugins>
+        </pluginManagement>
+    </build>
+</project>

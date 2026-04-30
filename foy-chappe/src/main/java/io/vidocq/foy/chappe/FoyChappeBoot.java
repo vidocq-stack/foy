@@ -1,0 +1,124 @@
+package io.vidocq.foy.chappe;
+
+import io.vidocq.chappe.api.Handler;
+import io.vidocq.foy.internal.boot.WebAppDiscovery;
+import io.vidocq.foy.internal.bridge.ChappeServletBridge;
+import io.vidocq.foy.internal.container.VidocqServletContext;
+import io.vidocq.foy.internal.dispatcher.FilterMapping;
+import io.vidocq.foy.internal.dispatcher.FilterRegistry;
+import io.vidocq.foy.internal.dispatcher.ServletDispatcher;
+import io.vidocq.foy.internal.listener.ListenerRegistry;
+import io.vidocq.foy.internal.session.InMemorySessionStore;
+import io.vidocq.foy.internal.session.SessionManager;
+import jakarta.enterprise.inject.spi.BeanManager;
+
+import java.util.EventListener;
+import java.util.List;
+import java.util.Optional;
+
+/**
+ * Bootstrap Foy sur le transport HTTP Chappe.
+ *
+ * <p>Découvre les beans {@code @WebServlet}, {@code @WebFilter} et
+ * {@code @WebListener} via le {@link BeanManager} fourni, monte la stack
+ * Servlet 6.1 et expose un {@link Handler} Chappe prêt à être enregistré sur
+ * un {@code ChappeMountPoint}.</p>
+ *
+ * <h3>Exemple d'usage</h3>
+ * <pre>{@code
+ * Optional<FoyChappeBoot.Mounted> opt = FoyChappeBoot.builder()
+ *         .beanManager(CDI.current().getBeanManager())
+ *         .contextPath("/app")
+ *         .sessionTimeoutSeconds(1800)
+ *         .build();
+ * opt.ifPresent(mounted -> chappeMountPoint.mount(listener, mounted.mountPrefix(), mounted.handler()));
+ * }</pre>
+ *
+ * <p>Le {@link Optional} est vide si aucun bean Servlet/Filter/Listener n'a
+ * été découvert (l'application n'a rien à servir).</p>
+ */
+public final class FoyChappeBoot {
+
+    private static final System.Logger LOG = System.getLogger(FoyChappeBoot.class.getName());
+
+    private FoyChappeBoot() {}
+
+    public static Builder builder() {
+        return new Builder();
+    }
+
+    /**
+     * Résultat d'un bootstrap réussi : un handler prêt à monter et le
+     * préfixe de mount à utiliser ({@code ""} si le contextPath est {@code "/"}).
+     */
+    public record Mounted(Handler handler, String mountPrefix, VidocqServletContext servletContext,
+                          ListenerRegistry listenerRegistry) {
+
+        /** Hook lifecycle à appeler après mount Chappe pour notifier les listeners. */
+        public void fireContextInitialized() {
+            listenerRegistry.fireContextInitialized(servletContext);
+        }
+
+        /** Hook lifecycle à appeler avant l'arrêt pour notifier les listeners. */
+        public void fireContextDestroyed() {
+            listenerRegistry.fireContextDestroyed(servletContext);
+        }
+    }
+
+    public static final class Builder {
+        private BeanManager beanManager;
+        private String contextPath = "/";
+        private int sessionTimeoutSeconds = 30 * 60;
+
+        public Builder beanManager(BeanManager bm) { this.beanManager = bm; return this; }
+        public Builder contextPath(String path) { this.contextPath = path == null ? "/" : path; return this; }
+        public Builder sessionTimeoutSeconds(int seconds) { this.sessionTimeoutSeconds = seconds; return this; }
+
+        public Optional<Mounted> build() {
+            if (beanManager == null) {
+                throw new IllegalStateException("beanManager is required");
+            }
+
+            List<ServletDispatcher.Mapping> servletMappings = WebAppDiscovery.discoverServlets(beanManager);
+            List<FilterMapping> filterMappings = WebAppDiscovery.discoverFilters(beanManager);
+            List<EventListener> eventListeners = WebAppDiscovery.discoverListeners(beanManager);
+
+            if (servletMappings.isEmpty() && filterMappings.isEmpty() && eventListeners.isEmpty()) {
+                LOG.log(System.Logger.Level.INFO,
+                        "No @WebServlet / @WebFilter / @WebListener beans discovered — Foy inactive");
+                return Optional.empty();
+            }
+
+            ServletDispatcher dispatcher = new ServletDispatcher(servletMappings);
+            FilterRegistry filterRegistry = new FilterRegistry(filterMappings);
+            ListenerRegistry listeners = new ListenerRegistry();
+            listeners.registerAll(eventListeners);
+
+            VidocqServletContext servletContext = new VidocqServletContext(contextPath);
+            servletContext.setListenerRegistry(listeners);
+            SessionManager sessionManager = new SessionManager(
+                    new InMemorySessionStore(), servletContext, sessionTimeoutSeconds);
+            sessionManager.setListenerRegistry(listeners);
+
+            ChappeServletBridge bridge = new ChappeServletBridge(
+                    dispatcher, filterRegistry, servletContext, sessionManager, contextPath);
+
+            String mountPrefix = "/".equals(contextPath) ? "" : contextPath;
+
+            for (ServletDispatcher.Mapping m : servletMappings) {
+                LOG.log(System.Logger.Level.INFO,
+                        "Mapped servlet {0} -> {1}", m.servletName(), m.matcher().pattern());
+            }
+            for (FilterMapping m : filterMappings) {
+                LOG.log(System.Logger.Level.INFO,
+                        "Mapped filter {0} -> {1} [{2}]",
+                        m.filterName(), m.matcher().pattern(), m.dispatcherTypes());
+            }
+            for (EventListener l : eventListeners) {
+                LOG.log(System.Logger.Level.INFO, "Registered listener: {0}", l.getClass().getName());
+            }
+
+            return Optional.of(new Mounted(bridge, mountPrefix, servletContext, listeners));
+        }
+    }
+}
