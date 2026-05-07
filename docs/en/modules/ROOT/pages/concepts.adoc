@@ -1,0 +1,60 @@
+= Concepts
+:description: ChappeServletBridge, web.xml, listeners, security.
+
+== Chappe ↔ Servlet bridge
+
+`foy-chappe` hosts `ChappeServletBridge`: a Chappe `Handler` that:
+
+. exposes the Chappe `Request` as `HttpServletRequestImpl`;
+. exposes the Chappe `Response` as `HttpServletResponseImpl`;
+. invokes the `Filter` → `Servlet` chain;
+. returns the Chappe `Body` built around `ServletOutputStreamImpl`.
+
+No body copy. The Servlet `OutputStream` is wired directly onto Chappe's streaming.
+
+== Application discovery
+
+`foy-core` orchestrates:
+
+. reading of **annotations** (`@WebServlet`, `@WebFilter`, `@WebListener`) — resolved at compile time by an APT;
+. reading of **descriptors** (`WEB-INF/web.xml`, `META-INF/web-fragment.xml`) via `WebXmlParser` → `WebAppDescriptor`;
+. merge of both according to `metadata-complete` (Servlet 6.1 standard).
+
+`WebAppDiscovery` performs this aggregation at startup.
+
+== Security
+
+* `BasicAuthenticator` — standard Basic Auth.
+* `SecurityConstraintEnforcer` — applies `<security-constraint>` from `web.xml`.
+* `AnonymousSecurityProvider` — open fallback (development only).
+
+[TODO]
+====
+Document Form Auth and Digest Auth once stable. Document Jakarta Authentication / Authorization integration when wired.
+====
+
+== Listeners
+
+`ListenerRegistry` enrolls `ServletContextListener`, `HttpSessionListener`, `ServletRequestListener` discovered at compile time. Events fire in the standard Servlet order.
+
+== Forwards and includes
+
+`ForwardedRequest` and `IncludedRequest` implement standard `RequestDispatcher#forward` and `#include`, reusing the Chappe routing.
+
+== CDI integration
+
+`foy-cdi-vauban`:
+
+* the `ServletContext` is exposed as `@ApplicationScoped` bean;
+* `HttpServletRequest` is exposed as `@RequestScoped` bean;
+* `Servlet`/`Filter` can be `@Inject`-annotated;
+* all resolved at compile time by Vauban.
+
+== Jakarta Servlet 6.1 TCK
+
+[source,bash]
+----
+./run-official-tck-servlet6.1.sh --all
+----
+
+`foy-tck` is out-of-reactor (standalone `modelVersion 4.0.0` POM). See xref:reference.adoc[Reference].

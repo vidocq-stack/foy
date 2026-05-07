@@ -1,0 +1,63 @@
+= Migration
+:description: Depuis Tomcat, Jetty (Servlet) ou Undertow.
+
+[CAUTION]
+Foy est en **0.1.0-SNAPSHOT**. La migration n'est pas recommandée pour des charges de production tant que `foy-tck` n'est pas entièrement passant.
+
+== Depuis Tomcat
+
+[cols="1,1,2"]
+|===
+| Tomcat | Foy | Note
+
+| `server.xml` (`<Connector>`, `<Engine>`, `<Host>`)
+| `FoyChappeBoot.builder()`
+| Configuration programmatique
+
+| `WEB-INF/web.xml`
+| Identique
+| Lu par `WebXmlParser` au démarrage
+
+| `@WebServlet`, `@WebFilter`, `@WebListener`
+| Identiques
+| Détectés à la compilation par APT
+
+| `META-INF/web-fragment.xml`
+| Identique
+| Pas de scan classpath runtime
+
+| Coyote (HTTP)
+| Chappe
+| HTTP/2 + virtual threads
+|===
+
+[TODO]
+====
+Patterns à documenter :
+
+* JNDI lookups → `@Inject` via `foy-cdi-vauban`.
+* `Realm`/`AuthMethod` → équivalents Foy *(en cours)*.
+* `Context.xml` resources → `[TODO]` à clarifier.
+====
+
+== Depuis Jetty (Servlet)
+
+[TODO]
+====
+* `WebAppContext` → `FoyChappeBoot.builder().webapp(Path.of("..."))` *(en cours)*.
+* `JettyWebSocketServletContainerInitializer` → `[TODO]`.
+====
+
+== Depuis Undertow
+
+[TODO] : à documenter dès qu'un cas réel se présente.
+
+== Manques connus
+
+* WebSocket Servlet 6.1 / Jakarta WebSocket 2.2 — `[TODO]` planifié.
+* JSP — non supporté, pas planifié. Pages dynamiques via xref:cassini::index.adoc[Cassini] (REST) ou Servlet pur.
+
+== Pièges
+
+* L'autoload de `META-INF/services` runtime n'est pas utilisé par Foy. Si une lib Servlet en dépend, ouvrir une issue.
+* `metadata-complete=true` est respecté ; en `false` les annotations APT-détectées priment.

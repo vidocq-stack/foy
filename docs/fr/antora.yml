@@ -1,0 +1,8 @@
+name: foy-fr
+title: Foy
+version: ~
+nav:
+  - modules/ROOT/nav.adoc
+asciidoc:
+  attributes:
+    lang: fr

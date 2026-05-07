@@ -1,0 +1,60 @@
+= Concepts
+:description: ChappeServletBridge, web.xml, listeners, sécurité.
+
+== Pont Chappe ↔ Servlet
+
+`foy-chappe` héberge `ChappeServletBridge` : un `Handler` Chappe qui :
+
+. expose `Request` Chappe comme `HttpServletRequestImpl` ;
+. expose `Response` Chappe comme `HttpServletResponseImpl` ;
+. invoque la chaîne `Filter` → `Servlet` ;
+. retourne le `Body` Chappe construit autour de `ServletOutputStreamImpl`.
+
+Pas de copie de body. L'`OutputStream` Servlet est branché directement sur le streaming Chappe.
+
+== Découverte d'application
+
+`foy-core` orchestre :
+
+. lecture des **annotations** (`@WebServlet`, `@WebFilter`, `@WebListener`) — résolues à la compilation par un APT ;
+. lecture des **descripteurs** (`WEB-INF/web.xml`, `META-INF/web-fragment.xml`) via `WebXmlParser` → `WebAppDescriptor` ;
+. fusion des deux selon `metadata-complete` (standard Servlet 6.1).
+
+`WebAppDiscovery` réalise cette agrégation au démarrage.
+
+== Sécurité
+
+* `BasicAuthenticator` — Basic Auth standard.
+* `SecurityConstraintEnforcer` — applique les contraintes `<security-constraint>` du `web.xml`.
+* `AnonymousSecurityProvider` — fallback ouvert (à utiliser uniquement en dev).
+
+[TODO]
+====
+Documenter Form Auth et Digest Auth quand stabilisés. Documenter l'intégration Jakarta Authentication / Authorization quand intégrée.
+====
+
+== Listeners
+
+`ListenerRegistry` enrôle les `ServletContextListener`, `HttpSessionListener`, `ServletRequestListener` détectés à la compilation. Les events sont déclenchés dans l'ordre standard Servlet.
+
+== Forwards et includes
+
+`ForwardedRequest` et `IncludedRequest` réalisent le `RequestDispatcher#forward` et `#include` standards, en réutilisant le routing Chappe.
+
+== Intégration CDI
+
+`foy-cdi-vauban` :
+
+* le `ServletContext` est exposé comme bean `@ApplicationScoped` ;
+* `HttpServletRequest` est exposé comme bean `@RequestScoped` ;
+* les `Servlet`/`Filter` peuvent être annotés `@Inject` ;
+* tout résolu à la compilation par Vauban.
+
+== TCK Jakarta Servlet 6.1
+
+[source,bash]
+----
+./run-official-tck-servlet6.1.sh --all
+----
+
+`foy-tck` est hors-reactor (POM `modelVersion 4.0.0` standalone). Voir xref:reference.adoc[Référence].

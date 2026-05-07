@@ -1,0 +1,88 @@
+= Démarrage rapide
+:description: Premier `HttpServlet` servi par Foy sur Chappe.
+
+== Pré-requis
+
+* **Java 25**, **Maven 4.0.0-rc-5** — `.sdkmanrc` à la racine du repo.
+* Connaître l'API Jakarta Servlet 6.1.
+
+== Coordonnées Maven
+
+[source,xml]
+----
+<dependencies>
+    <dependency>
+        <groupId>jakarta.servlet</groupId>
+        <artifactId>jakarta.servlet-api</artifactId>
+    </dependency>
+    <dependency>
+        <groupId>io.vidocq.foy</groupId>
+        <artifactId>foy-core</artifactId>
+        <version>0.1.0-SNAPSHOT</version>
+    </dependency>
+    <dependency>
+        <groupId>io.vidocq.foy</groupId>
+        <artifactId>foy-chappe</artifactId>
+        <version>0.1.0-SNAPSHOT</version>
+        <scope>runtime</scope>
+    </dependency>
+</dependencies>
+----
+
+== Hello world
+
+[source,java]
+----
+package io.example;
+
+import jakarta.servlet.annotation.WebServlet;
+import jakarta.servlet.http.HttpServlet;
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
+import java.io.IOException;
+
+@WebServlet("/hello/*")
+public class HelloServlet extends HttpServlet {
+    @Override
+    protected void doGet(HttpServletRequest req, HttpServletResponse resp) throws IOException {
+        var name = req.getPathInfo() == null ? "world" : req.getPathInfo().substring(1);
+        resp.setContentType("text/plain;charset=UTF-8");
+        resp.getWriter().write("Hello, " + name + "!");
+    }
+}
+----
+
+Démarrage :
+
+[source,java]
+----
+import io.vidocq.foy.chappe.FoyChappeBoot;
+
+void main() throws Exception {
+    try (var server = FoyChappeBoot.builder()
+            .port(8080)
+            .servlet(new HelloServlet(), "/hello/*")
+            .build()) {
+        server.start();
+        Thread.currentThread().join();
+    }
+}
+----
+
+== `web.xml` ou annotations ?
+
+Foy supporte les deux. Les `@WebServlet`, `@WebFilter`, `@WebListener` sont découverts à la compilation par un APT (pas de scan classpath au démarrage). Un `WEB-INF/web.xml` peut compléter ou surcharger via `metadata-complete` standard.
+
+== Build et lancement
+
+[source,bash]
+----
+sdk env
+./mvnw -ntp install -DskipTests
+java -jar target/myapp.jar
+----
+
+[TIP]
+====
+TCK Jakarta Servlet 6.1 officiel : `./run-official-tck-servlet6.1.sh --all` à la racine du repo `foy`. Module `foy-tck` hors-reactor.
+====

@@ -1,0 +1,22 @@
+= Foy
+:description: Implémentation Jakarta Servlet 6.1 sur Chappe, intégration CDI optionnelle via Vauban.
+
+[.lead]
+Foy est une implémentation Jakarta Servlet 6.1 — transport via xref:chappe::index.adoc[Chappe], intégration CDI optionnelle via xref:vauban::index.adoc[Vauban]. Honorer le contrat Servlet sans en payer le poids historique.
+
+== Pourquoi ?
+
+Maximilien Sébastien Foy (1775-1825), général d'Empire, blessé quinze fois, puis député libéral sous la Restauration. Il défendait à la tribune des Chambres un compromis difficile : honorer la mémoire de l'armée impériale tout en travaillant avec les institutions du nouveau régime. Quand il meurt en 1825, son enterrement public à Paris rassemble 100 000 personnes ; la souscription pour ses enfants est l'un des plus grands gestes politiques de la décennie.
+
+Foy, l'implémentation, joue ce rôle de pont. Servlet 6.1 reste la spec d'intégration de référence du monde Jakarta — beaucoup de bibliothèques (sécurité, observabilité, frameworks legacy) en dépendent. Foy honore ce contrat à la lettre, mais le greffe sur le moteur Chappe (HTTP/2, virtual threads) plutôt que sur Tomcat ou Jetty.
+
+== En bref
+
+* **Jakarta Servlet 6.1** — `HttpServletRequest`, `HttpServletResponse`, `Filter`, `Listener`, `ServletContext`, async, web fragments.
+* **Pont Chappe** — `foy-chappe` traduit `Request`/`Response` Chappe en API Servlet, sans copie inutile, en réutilisant les `OutputStream` natifs.
+* **CDI optionnel** — `foy-cdi-vauban` permet `@Inject` dans les `Servlet` et `Filter` via Vauban build-time.
+* **Découverte web fragments** — lecture des `META-INF/web-fragment.xml` à la compilation, pas de scan ServiceLoader runtime.
+* **TCK Jakarta Servlet 6.1** — module `foy-tck` hors-reactor (contrainte ShrinkWrap, voir xref:reference.adoc[Référence]).
+* **Java 25, JPMS** — `module-info.java` partout.
+
+xref:getting-started.adoc[Démarrer →]
