@@ -1,60 +1,117 @@
 = Concepts
-:description: ChappeServletBridge, web.xml, listeners, sécurité.
+:description: Vocabulaire Servlet, modèle conceptuel, ce qui change avec Servlet 6.1.
 
-== Pont Chappe ↔ Servlet
+[.lead]
+Avant de plonger dans les internals, fixer le vocabulaire. Les termes ci-dessous sont ceux de la spec {spec-servlet-6-1}[Jakarta Servlet 6.1] tels qu'implémentés par Foy.
 
-`foy-chappe` héberge `ChappeServletBridge` : un `Handler` Chappe qui :
+== Vocabulaire de base
 
-. expose `Request` Chappe comme `HttpServletRequestImpl` ;
-. expose `Response` Chappe comme `HttpServletResponseImpl` ;
-. invoque la chaîne `Filter` → `Servlet` ;
-. retourne le `Body` Chappe construit autour de `ServletOutputStreamImpl`.
+[cols="1,3"]
+|===
+| Terme | Définition côté Foy
 
-Pas de copie de body. L'`OutputStream` Servlet est branché directement sur le streaming Chappe.
+| **Request** / **Response**
+| `HttpServletRequest` / `HttpServletResponse`. Implémentés par `HttpServletRequestImpl` / `HttpServletResponseImpl` qui adaptent les `Request` / `Response` de xref:chappe::index.adoc[Chappe] sans copie de body.
+
+| **Servlet**
+| Un `jakarta.servlet.Servlet` (typiquement un `HttpServlet`) qui répond à un mapping d'URL. Découvert par `@WebServlet` ou par `<servlet>` dans `web.xml`.
+
+| **Filter chain**
+| Pipeline de `jakarta.servlet.Filter` traversé avant la `Servlet` cible. Construit par `FilterRegistry` à partir des `<filter-mapping>` et `@WebFilter`. Ordre déterministe (voir xref:reference.adoc[Référence]).
+
+| **Listener**
+| Un bean qui réagit au cycle de vie du container (`ServletContextListener`), des sessions (`HttpSessionListener`), ou des requêtes (`ServletRequestListener`). Enrôlé par `ListenerRegistry` à partir de `@WebListener`.
+
+| **`ServletContext`**
+| Implémenté par `VidocqServletContext`. Un par contextPath. Porte les attributs partagés, les beans CDI exposés, les `RequestDispatcher`.
+
+| **`RequestDispatcher`**
+| Mécanisme `forward` / `include`. Implémenté par `RequestDispatcherImpl` qui réutilise le routage Chappe.
+
+| **Async**
+| `request.startAsync()` retourne un `AsyncContext`. Aucun pool plateforme à protéger : chaque requête tourne sur un *virtual thread*, l'async sert juste à découpler la réponse de la requête côté programme.
+
+| **Multipart**
+| `@MultipartConfig` + `request.getParts()`. Parsing en streaming sur le body Chappe.
+|===
+
+== Métaphore : la couche au-dessus du transport
+
+xref:chappe::index.adoc[Chappe] **bouge des octets** : il sait répondre à HTTP/1.1 ou HTTP/2 sur TLS, gérer une connexion, lire un body. Il ne sait pas ce qu'est une « Servlet » ou un « filtre ».
+
+Foy **interprète ces octets** : il transforme une connexion HTTP en `HttpServletRequest`, retrouve la Servlet associée à l'URL, déroule la chaîne de filtres, écrit la réponse. C'est exactement la division que faisait l'administration télégraphique du XIXᵉ siècle entre les *stationnaires* (qui relayaient le code Chappe sans le comprendre) et les *directeurs de bureau* (qui interprétaient le message).
 
 == Découverte d'application
 
-`foy-core` orchestre :
+`foy-core` orchestre la fusion entre annotations et descripteurs :
 
-. lecture des **annotations** (`@WebServlet`, `@WebFilter`, `@WebListener`) — résolues à la compilation par un APT ;
-. lecture des **descripteurs** (`WEB-INF/web.xml`, `META-INF/web-fragment.xml`) via `WebXmlParser` → `WebAppDescriptor` ;
-. fusion des deux selon `metadata-complete` (standard Servlet 6.1).
+. lecture des **annotations** (`@WebServlet`, `@WebFilter`, `@WebListener`, `@MultipartConfig`) — résolues à la compilation par un APT, exposées via le `BeanManager` Vauban ;
+. lecture des **descripteurs** (`WEB-INF/web.xml`, `META-INF/web-fragment.xml`) via `WebXmlParser` qui produit un `WebAppDescriptor` ;
+. fusion selon `metadata-complete` (standard Servlet 6.1) ;
+. `WebAppDiscovery` réalise cette agrégation au démarrage de `FoyChappeBoot`.
 
-`WebAppDiscovery` réalise cette agrégation au démarrage.
+Aucun scan classpath runtime. Tous les beans Servlet sont déjà connus de Vauban à la compilation.
 
-== Sécurité
+== Pont Chappe ↔ Servlet
 
-* `BasicAuthenticator` — Basic Auth standard.
-* `SecurityConstraintEnforcer` — applique les contraintes `<security-constraint>` du `web.xml`.
-* `AnonymousSecurityProvider` — fallback ouvert (à utiliser uniquement en dev).
+`foy-chappe` héberge `ChappeServletBridge`, un `Handler` Chappe qui :
 
-[TODO]
-====
-Documenter Form Auth et Digest Auth quand stabilisés. Documenter l'intégration Jakarta Authentication / Authorization quand intégrée.
-====
+. expose `Request` Chappe comme `HttpServletRequestImpl` ;
+. expose `Response` Chappe comme `HttpServletResponseImpl` ;
+. invoque la chaîne `Filter` -> `Servlet` ;
+. retourne le `Body` Chappe construit autour de `ServletOutputStreamImpl`.
 
-== Listeners
+L'`OutputStream` Servlet est branché directement sur le streaming Chappe — pas de copie de body, pas de buffer intermédiaire.
 
-`ListenerRegistry` enrôle les `ServletContextListener`, `HttpSessionListener`, `ServletRequestListener` détectés à la compilation. Les events sont déclenchés dans l'ordre standard Servlet.
+== Sécurité applicative
 
-== Forwards et includes
+* `BasicAuthenticator` — Basic Auth standard (RFC 7617).
+* `SecurityConstraintEnforcer` — applique les `<security-constraint>` du `web.xml`.
+* `AnonymousSecurityProvider` — fallback ouvert pour le développement.
+* SPI publique : `io.vidocq.foy.spi.security.SecurityProvider` permet de greffer un provider custom (LDAP, JWT, OIDC).
 
-`ForwardedRequest` et `IncludedRequest` réalisent le `RequestDispatcher#forward` et `#include` standards, en réutilisant le routing Chappe.
+Form-based et Digest : `// TODO@user: documenter une fois stables`. Jakarta Authentication / Authorization : `// TODO@user: planifié, jalon ultérieur`.
 
-== Intégration CDI
+== CDI : un BeanManager unique
 
-`foy-cdi-vauban` :
+`foy-cdi-vauban` greffe la `Servlet API` sur xref:vauban::index.adoc[Vauban] :
 
-* le `ServletContext` est exposé comme bean `@ApplicationScoped` ;
-* `HttpServletRequest` est exposé comme bean `@RequestScoped` ;
-* les `Servlet`/`Filter` peuvent être annotés `@Inject` ;
-* tout résolu à la compilation par Vauban.
+* le `ServletContext` est exposé en `@ApplicationScoped` ;
+* `HttpServletRequest` en `@RequestScoped` ;
+* `HttpSession` en `@SessionScoped` *(`// TODO@user: confirmer disponibilité M2`)* ;
+* les `Servlet`/`Filter` peuvent porter `@Inject`.
 
-== TCK Jakarta Servlet 6.1
+Toute la résolution se fait à la compilation par Vauban — aucun proxy dynamique, aucune réflexion à chaud, compatible AOT (GraalVM, Leyden CDS).
 
-[source,bash]
-----
-./run-official-tck-servlet6.1.sh --all
-----
+== Différences Servlet 6.1 vs 5.0
 
-`foy-tck` est hors-reactor (POM `modelVersion 4.0.0` standalone). Voir xref:reference.adoc[Référence].
+[cols="1,2,2"]
+|===
+| Aspect | Servlet 5.0 (Jakarta EE 9.1) | Servlet 6.1 (Jakarta EE 11)
+
+| Package
+| `jakarta.servlet.*` (rebrand)
+| `jakarta.servlet.*` (stable)
+
+| Modules JPMS
+| Optionnel
+| Recommandé — Foy l'impose
+
+| Threading I/O
+| Pool plateforme + NIO `Selector`
+| Virtual threads (Foy : un VT par requête)
+
+| API legacy
+| `SingleThreadModel`, `<run-as>` partiel
+| Supprimés / clarifiés
+
+| WebSocket
+| Spec séparée 2.1
+| Spec séparée 2.2 — `// TODO@user: à implémenter`
+
+| HTTP/3
+| Hors scope
+| Hors scope (côté transport — voir xref:chappe::index.adoc[Chappe])
+|===
+
+Foy se concentre sur le sous-ensemble pertinent en 2026 : pas de JSP, pas de SCI runtime via `META-INF/services`, pas de réflexion. Les libs qui en dépendaient sont à porter via une SPI explicite ou un APT.

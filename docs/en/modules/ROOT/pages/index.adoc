@@ -1,22 +1,63 @@
 = Foy
-:description: Jakarta Servlet 6.1 implementation on Chappe, optional CDI through Vauban.
+:description: Jakarta Servlet 6.1 implementation inheriting the Chappe transport, optional CDI through Vauban.
 
 [.lead]
-Foy is a Jakarta Servlet 6.1 implementation — transport via xref:chappe::index.adoc[Chappe], optional CDI through xref:vauban::index.adoc[Vauban]. Honour the Servlet contract without paying its historical weight.
+Foy is the **Jakarta Servlet 6.1** implementation of the Vidocq ecosystem. It grafts onto the xref:chappe::index.adoc[Chappe] HTTP transport and pulls its optional CDI from xref:vauban::index.adoc[Vauban]. Honour the Servlet contract without paying its historical weight: no classpath, no runtime scan, no hot-path reflection.
 
-== Why?
+== Origin of the name
 
-Maximilien Sébastien Foy (1775-1825), Empire general, wounded fifteen times, then liberal MP under the Restoration. From the parliamentary tribune he defended a difficult compromise: honour the memory of the imperial army while working with the institutions of the new regime. When he died in 1825 his public funeral in Paris drew 100,000 people; the subscription for his children was one of the largest political gestures of the decade.
+**Vincent-Louis-Alphonse Foy** (1796-1888), French senior civil servant, **director of the French telegraph service from 1833 to 1853**. Successor (through Pierre-François Marchal) of the Chappe brothers at the head of the Administration centrale de la télégraphie established by royal ordinance on 24 August 1833. Co-inventor of the Foy-Breguet telegraph (1840s), which reused the Chappe code over electric lines. See https://fr.wikipedia.org/wiki/Alphonse_Foy[French Wikipedia].
 
-The Foy implementation plays the same bridge role. Servlet 6.1 remains the reference integration spec of the Jakarta world — many libraries (security, observability, legacy frameworks) depend on it. Foy honours that contract to the letter, but grafts it onto the Chappe engine (HTTP/2, virtual threads) rather than Tomcat or Jetty.
+The metaphor is direct: **Foy inherits the Chappe transport**. Just as Alphonse Foy in 1833 took over the Chappe brothers' infrastructure to evolve it without throwing away its codes, the Foy module takes over the xref:chappe::index.adoc[Chappe] HTTP engine to graft the Servlet 6.1 layer on top — same protocol on the surface, redesigned engineering underneath.
 
 == At a glance
 
-* **Jakarta Servlet 6.1** — `HttpServletRequest`, `HttpServletResponse`, `Filter`, `Listener`, `ServletContext`, async, web fragments.
-* **Chappe bridge** — `foy-chappe` translates Chappe `Request`/`Response` to the Servlet API without unnecessary copy, reusing native `OutputStream`s.
-* **Optional CDI** — `foy-cdi-vauban` enables `@Inject` in `Servlet` and `Filter` via Vauban build-time.
-* **Web fragment discovery** — reads `META-INF/web-fragment.xml` at compile time, no runtime ServiceLoader scan.
-* **Jakarta Servlet 6.1 TCK** — `foy-tck` module is out-of-reactor (ShrinkWrap constraint, see xref:reference.adoc[Reference]).
-* **Java 25, JPMS** — `module-info.java` everywhere.
+[cols="1,3"]
+|===
+| Implemented spec | {spec-servlet-6-1}[Jakarta Servlet 6.1]
+| Repo | {repo-foy}
+| Java | 25 (LTS), virtual threads
+| JPMS modules | `io.vidocq.foy.api`, `io.vidocq.foy.core`, `io.vidocq.foy.chappe`, `io.vidocq.foy.cdi.vauban`
+| Runtime dependencies | `jakarta.servlet-api`, `jakarta.cdi-api` (static), {repo-chappe} (transport), {repo-vauban} (CDI)
+| TCK | ⚠️ partial — about 90 % of the official Jakarta Servlet 6.1 TCK on `api.*` packages. Details xref:tck.adoc[here].
+|===
 
-xref:getting-started.adoc[Get started →]
+== Position in the ecosystem
+
+Foy is the servlet layer: it turns a Chappe HTTP connection into `Servlet`/`Filter`/`Listener` execution and exposes the Vauban `BeanManager` to application beans.
+
+[mermaid]
+....
+flowchart TB
+    app["Servlet application<br/>@WebServlet · @WebFilter · @WebListener<br/>web.xml · web-fragment.xml"]
+    subgraph foy["Foy — Jakarta Servlet 6.1"]
+        foycore["foy-core<br/>dispatcher · filter chain · sessions<br/>error pages · multipart · security"]
+        foychappe["foy-chappe<br/>FoyChappeBoot · ChappeServletBridge"]
+        foycdi["foy-cdi-vauban<br/>FoyVaubanBootstrap"]
+    end
+    chappe["Chappe<br/>HTTP/1.1 · HTTP/2 · TLS 1.3<br/>virtual threads"]
+    vauban["Vauban<br/>CDI 4.1 Lite build-time"]
+
+    app --> foycore
+    foycore --> foychappe
+    foychappe --> chappe
+    foycdi --> vauban
+    foycore -.-> foycdi
+....
+
+Foy **shares the Chappe runtime** with xref:cassini::index.adoc[Cassini] (REST 4.0). The same JVM can serve legacy Servlets (Foy) and JAX-RS resources (Cassini) on the same Chappe connector.
+
+== Quick links
+
+* xref:getting-started.adoc[Getting started]
+* xref:usage.adoc[Usage recipes]
+* xref:concepts.adoc[Concepts]
+* xref:internals.adoc[Internals]
+* xref:tck.adoc[Jakarta Servlet 6.1 TCK status]
+* xref:reference.adoc[Reference]
+* xref:migration.adoc[Migration from Tomcat / Jetty / Undertow]
+
+== Bugs and benchmarks
+
+* link:{repo-foy}/src/branch/main/BUG.md[BUG.md] — reproducible bugs, hypotheses, status.
+* link:{repo-foy}/src/branch/main/BENCH.md[BENCH.md] — JMH/wrk numbers, deltas vs previous run. No performance numbers inline in this doc.

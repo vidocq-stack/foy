@@ -1,0 +1,161 @@
+= Internals
+:description: Request sequence, threading model, container lifecycle, Vauban integration.
+
+[.lead]
+This page documents the implementation: what happens between the moment an HTTP connection lands on Chappe and the moment a Servlet writes its response. It complements xref:concepts.adoc[Concepts] (vocabulary) and xref:reference.adoc[Reference] (API).
+
+== Big picture: three layers, two JPMS modules
+
+[plantuml]
+....
+@startuml
+!theme plain
+skinparam componentStyle rectangle
+
+package "Application" {
+  [Servlet / Filter / Listener] as APP
+}
+
+package "Foy" {
+  package "io.vidocq.foy.core" {
+    [WebAppDiscovery]
+    [WebAppDescriptor]
+    [ServletDispatcher]
+    [FilterRegistry]
+    [SessionManager]
+    [VidocqServletContext]
+    [SecurityConstraintEnforcer]
+  }
+  package "io.vidocq.foy.chappe" {
+    [FoyChappeBoot]
+    [ChappeServletBridge]
+  }
+  package "io.vidocq.foy.cdi.vauban" {
+    [FoyVaubanBootstrap]
+  }
+}
+
+package "Chappe" {
+  [Connection / Handler]
+}
+
+package "Vauban" {
+  [BeanManager]
+}
+
+APP --> [VidocqServletContext]
+[FoyChappeBoot] --> [WebAppDiscovery]
+[WebAppDiscovery] --> [BeanManager]
+[ChappeServletBridge] --> [ServletDispatcher]
+[ServletDispatcher] --> [FilterRegistry]
+[ServletDispatcher] --> [SecurityConstraintEnforcer]
+[ChappeServletBridge] --> [Connection / Handler]
+[FoyVaubanBootstrap] --> [BeanManager]
+@enduml
+....
+
+== Request sequence
+
+[mermaid]
+....
+sequenceDiagram
+    participant Client
+    participant Chappe as Chappe (transport)
+    participant Bridge as ChappeServletBridge
+    participant Disp as ServletDispatcher
+    participant Sec as SecurityConstraintEnforcer
+    participant Filters as FilterRegistry
+    participant Servlet
+    participant Session as SessionManager
+
+    Client->>Chappe: HTTP/2 frames (HEADERS + DATA)
+    Chappe->>Chappe: parse HTTP, virtual thread
+    Chappe->>Bridge: handle(Request, Response)
+    Bridge->>Bridge: HttpServletRequestImpl / HttpServletResponseImpl
+    Bridge->>Disp: dispatch(req, resp)
+    Disp->>Sec: enforce(security-constraint)
+    alt unauthorised
+        Sec-->>Client: 401/403 (BasicAuthenticator)
+    else authorised
+        Disp->>Session: ensureSession(req, resp)
+        Disp->>Filters: build chain(URI, dispatcherType)
+        Filters->>Servlet: doGet/doPost/...
+        Servlet-->>Filters: write OutputStream
+        Filters-->>Disp: chain ends
+        Disp-->>Bridge: response complete
+    end
+    Bridge-->>Chappe: Body (streaming)
+    Chappe-->>Client: HTTP/2 frames (HEADERS + DATA)
+....
+
+No body copy: `ServletOutputStreamImpl` writes straight into the Chappe `Body`. The `ServletInputStream` reads straight from the Chappe frame parser.
+
+== Threading model
+
+* **One *virtual thread* per request.** Chappe's `accept()` already produces one VT per connection. Foy stays on that thread until `service()` returns.
+* **No platform pool.** No `ExecutorService` to size.
+* **Async: no extra cost.** `request.startAsync()` captures the current VT; the program may detach the response, but the container reserves no platform thread.
+* **`ThreadLocal`** is used sparingly through `ScopedValue` (JEP 506) on the Chappe side. Foy inherits that context without pinning.
+
+[NOTE]
+====
+The bridge never `pin`s a VT on a Java monitor — every critical section uses `ReentrantLock` or lock-free structures. See link:{repo-foy}/src/branch/main/BENCH.md[BENCH.md] for the numbers.
+====
+
+== Container lifecycle
+
+[mermaid]
+....
+stateDiagram-v2
+    [*] --> Discovery
+    Discovery: WebAppDiscovery scans the Vauban BeanManager\nWebXmlParser reads web.xml + web-fragment.xml
+    Discovery --> Built: FoyChappeBoot.builder().build() returns Mounted
+    Built --> Mounted: ChappeMountPoint.mount(handler)
+    Mounted --> Started: fireContextInitialized() — @WebListener
+    Started --> Serving: requests handled
+    Serving --> Stopping: shutdown signal
+    Stopping --> Destroyed: fireContextDestroyed() — listeners
+    Destroyed --> [*]
+....
+
+`fireContextInitialized()` and `fireContextDestroyed()` are exposed by `FoyChappeBoot.Mounted` — the caller picks the exact moment (typically right after `mount` / right before `unmount`).
+
+== CDI integration through Vauban
+
+`foy-cdi-vauban` works in two phases:
+
+. **build-time (Vauban)** — Vauban's annotation processor generates *bean producers* for `ServletContext`, `HttpServletRequest` and `HttpSession`. No reflection, all `Class-File API` (JEP 484).
+. **runtime (Foy)** — `FoyVaubanBootstrap.beanManager()` returns the `BeanManager` injected into `FoyChappeBoot`. On every request, `ServletDispatcher` pushes the current `HttpServletRequest` instance into the `RequestScoped` context.
+
+Benefit: `@Inject HttpServletRequest req` works in any Servlet or Filter, with no runtime dynamic proxy.
+
+== Implementation choices
+
+[cols="1,3"]
+|===
+| Choice | Justification
+
+| No runtime classpath scan
+| All `@WebServlet` / `@WebFilter` / `@WebListener` are known at compile time through Vauban. Startup is O(1) in the number of beans, not O(N) in the classpath.
+
+| No runtime reflection
+| Aligns with the Vidocq ecosystem's principles. AOT-friendly (GraalVM, Leyden CDS).
+
+| No body copy
+| `ServletOutputStreamImpl` and `ServletInputStreamImpl` wire directly onto the Chappe `Body`.
+
+| `requires io.vidocq.chappe.api` in `foy-core`
+| Temporary M1 coupling — to be replaced in M2 by a `FoyHttpExchange` SPI inside `foy-api`, opening the door to other transports.
+
+| No runtime `META-INF/services`
+| Servlet SPIs (e.g. `ServletContainerInitializer`) are not loaded by scan; they go through the Vauban `BeanManager`.
+|===
+
+== Known limits
+
+* Cross-context dispatch (`ServletContext.getContext`): not implemented — see xref:tck.adoc[].
+* WebSocket Servlet 6.1: `// TODO@user: planned, no date`.
+* JSP: not supported, not planned.
+* Form-based authentication: `// TODO@user: in progress`.
+
+For comparative numbers (Tomcat, Jetty), see link:{repo-foy}/src/branch/main/BENCH.md[BENCH.md].

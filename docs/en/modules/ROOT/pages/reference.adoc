@@ -1,63 +1,219 @@
 = Reference
-:description: Maven artefacts, public packages, Jakarta Servlet 6.1 TCK.
+:description: Maven artefacts, JPMS modules, public API, configuration, Servlet 6.1 comparison.
+
+[.lead]
+Consolidated technical reference. Use this page as an anchor for external links (issues, RFCs, other Antora sites).
 
 == Maven artefacts
 
-[cols="1,3"]
+[cols="1,3",options="header"]
 |===
 | Artefact | Role
 
 | `io.vidocq.foy:foy-api:0.1.0-SNAPSHOT`
-| Public API
+| Public SPI: `SessionStore`, `SecurityProvider`, `AuthenticatedUser`. No dependency outside `jakarta.servlet-api`.
 
 | `io.vidocq.foy:foy-core:0.1.0-SNAPSHOT`
-| Servlet engine (web.xml parser, listeners, security, request/response bridges)
+| Servlet 6.1 engine — dispatcher, filter chain, sessions, error pages, listeners, security, `web.xml` parser, multipart.
 
 | `io.vidocq.foy:foy-chappe:0.1.0-SNAPSHOT`
-| Bridge to Chappe (`FoyChappeBoot`, `ChappeServletBridge`)
+| HTTP bridge to xref:chappe::index.adoc[Chappe] (`FoyChappeBoot`, `ChappeServletBridge`).
 
 | `io.vidocq.foy:foy-cdi-vauban:0.1.0-SNAPSHOT`
-| Build-time CDI integration with Vauban (`FoyVaubanBootstrap`)
+| CDI bridge to xref:vauban::index.adoc[Vauban] (`FoyVaubanBootstrap`).
+
+| `io.vidocq.foy:foy-tck`
+| Arquillian harness for the official TCK — **standalone `modelVersion 4.0.0` POM, out of reactor** (see xref:tck.adoc[TCK status]).
 |===
 
-`foy-tck` is **out-of-reactor** (standalone `modelVersion 4.0.0` POM).
+== JPMS modules and exports
 
-== Jakarta Servlet 6.1 coverage
-
-[TODO]
-====
-Track spec coverage:
-
-* Servlets, Filters, Listeners
-* `@WebServlet`, `@WebFilter`, `@WebListener`, `@MultipartConfig`
-* `web.xml`, `web-fragment.xml`
-* `metadata-complete`
-* sessions, cookies
-* `RequestDispatcher` (forward, include)
-* async (`AsyncContext`)
-* security (Basic, Form, URL constraints)
-* file upload (`Part`)
-* WebSocket upgrade
-
-and TCK status (suite passed / remaining).
-====
-
-== TCK
-
-[source,bash]
+[source,java]
 ----
-cd foy
-./run-official-tck-servlet6.1.sh --all
-./run-official-tck-servlet6.1.sh -Dtest=...
+module io.vidocq.foy.api {
+    requires transitive jakarta.servlet;
+    requires static jakarta.annotation;
+
+    exports io.vidocq.foy.spi.session;    // SessionStore
+    exports io.vidocq.foy.spi.security;   // SecurityProvider, AuthenticatedUser
+}
 ----
 
-== Bugs and benchmarks
+[source,java]
+----
+module io.vidocq.foy.core {
+    requires transitive io.vidocq.foy.api;
+    requires transitive jakarta.servlet;
+    requires static jakarta.cdi;
+    requires static jakarta.annotation;
+    requires java.xml;
+    requires static java.net.http;
+    requires io.vidocq.chappe.api;        // M1 coupling — will become an SPI in M2
 
-* `foy/BUG.md`
-* `foy/BENCH.md`
+    exports io.vidocq.foy.internal.async;
+    exports io.vidocq.foy.internal.boot;
+    exports io.vidocq.foy.internal.bridge;
+    exports io.vidocq.foy.internal.container;
+    exports io.vidocq.foy.internal.dispatcher;
+    exports io.vidocq.foy.internal.error;
+    exports io.vidocq.foy.internal.http;
+    exports io.vidocq.foy.internal.listener;
+    exports io.vidocq.foy.internal.security;
+    exports io.vidocq.foy.internal.session;
+    exports io.vidocq.foy.internal.webxml;
+}
+----
+
+[source,java]
+----
+module io.vidocq.foy.chappe {
+    requires transitive io.vidocq.foy.api;
+    requires io.vidocq.foy.core;
+    requires io.vidocq.chappe.api;
+    requires jakarta.servlet;
+    requires jakarta.cdi;
+
+    exports io.vidocq.foy.chappe;         // FoyChappeBoot
+}
+----
+
+[source,java]
+----
+module io.vidocq.foy.cdi.vauban {
+    requires transitive io.vidocq.foy.api;
+    requires jakarta.cdi;
+    requires io.vidocq.vauban.core;
+
+    exports io.vidocq.foy.cdi.vauban;     // FoyVaubanBootstrap
+}
+----
+
+[NOTE]
+====
+The `io.vidocq.foy.internal.*` packages are exported to allow advanced integrations (custom dispatcher, observability). They are **not** semver-stable — see xref:migration.adoc[Migration] for variations between milestones.
+====
+
+== Public API: `FoyChappeBoot`
+
+[cols="1,3",options="header"]
+|===
+| Method | Description
+
+| `FoyChappeBoot.builder()`
+| Returns a fresh `Builder`.
+
+| `Builder.beanManager(BeanManager bm)`
+| **Required.** Vauban `BeanManager` from which `@WebServlet` / `@WebFilter` / `@WebListener` beans will be resolved.
+
+| `Builder.contextPath(String path)`
+| URL prefix served by this container. Default: `"/"`.
+
+| `Builder.sessionTimeoutSeconds(int seconds)`
+| Session timeout in seconds. Default: `1800` (30 min).
+
+| `Builder.build()`
+| Returns `Optional<Mounted>`. Empty if no Servlet/Filter/Listener bean was discovered.
+
+| `Mounted.handler()`
+| The `io.vidocq.chappe.api.Handler` to mount on a `ChappeMountPoint`.
+
+| `Mounted.mountPrefix()`
+| Mount prefix to use (`""` if `contextPath == "/"`).
+
+| `Mounted.servletContext()`
+| The container's `VidocqServletContext` — useful for observability.
+
+| `Mounted.fireContextInitialized()`
+| Fire `ServletContextListener.contextInitialized` (call after `mount`).
+
+| `Mounted.fireContextDestroyed()`
+| Fire `ServletContextListener.contextDestroyed` (call before `unmount`).
+|===
+
+== Public SPI (`foy-api`)
+
+[cols="1,3",options="header"]
+|===
+| Type | Role
+
+| `io.vidocq.foy.spi.session.SessionStore`
+| Session storage backend. Default: `InMemorySessionStore`. Implement to back Redis, Hazelcast, JDBC, etc.
+
+| `io.vidocq.foy.spi.security.SecurityProvider`
+| Application authentication. Default: `AnonymousSecurityProvider` (dev) or `BasicAuthenticator`. Implement for OIDC, LDAP, JWT.
+
+| `io.vidocq.foy.spi.security.AuthenticatedUser`
+| Immutable authenticated-user representation (login, roles, attributes).
+|===
+
+== `web.xml` configuration
+
+Foy reads the standard Servlet 6.1 `WEB-INF/web.xml`:
+
+* `<servlet>` / `<servlet-mapping>`
+* `<filter>` / `<filter-mapping>`
+* `<listener>`
+* `<session-config>` (timeout, cookie config)
+* `<security-constraint>`, `<login-config>`, `<security-role>`
+* `<error-page>`
+* `<welcome-file-list>`
+* `<context-param>` exposed via `ServletContext.getInitParameter`
+* `<multipart-config>` at `<servlet>` level
+
+`META-INF/web-fragment.xml` fragments are merged under standard `metadata-complete`.
+
+== Servlet 6.1 API comparison
+
+[cols="1,1,3",options="header"]
+|===
+| Area | Foy status | Notes
+
+| Core (`Servlet`, `HttpServlet`, `Filter`)
+| ✅
+| Near-complete coverage in the official TCK.
+
+| `RequestDispatcher` (forward / include)
+| ✅
+| Cross-context (`getContext`) **not implemented** — see xref:tck.adoc[TCK].
+
+| Async (`AsyncContext`)
+| ⚠️
+| Standard cases OK; `setTimeout` + late dispatch: a few TCK errors.
+
+| Multipart (`@MultipartConfig`)
+| ✅
+| Streaming over the Chappe body.
+
+| Sessions
+| ✅
+| `InMemorySessionStore`; SPI `SessionStore` for distribution.
+
+| Security (Basic)
+| ✅
+| `BasicAuthenticator` + `<security-constraint>`.
+
+| Security (Form, Digest, Jakarta Auth)
+| ❌
+| `// TODO@user: planned`.
+
+| WebSocket (Servlet 6.1 upgrade)
+| ❌
+| `// TODO@user: planned`.
+
+| JSP
+| ❌
+| Not supported, not planned.
+|===
 
 == Compatibility
 
-* Java 25, Maven 4.0.0-rc-5
+* Java 25 (LTS)
+* Maven 4.0.0-rc-5
 * Jakarta Servlet 6.1
-* Strict JPMS, virtual threads
+* Strict JPMS, virtual threads (one VT per request)
+* AOT-friendly (no reflection, no dynamic proxy)
+
+== Bugs and benchmarks
+
+* link:{repo-foy}/src/branch/main/BUG.md[BUG.md] — reproducible bugs, hypotheses, status.
+* link:{repo-foy}/src/branch/main/BENCH.md[BENCH.md] — JMH/wrk numbers, deltas vs previous run.

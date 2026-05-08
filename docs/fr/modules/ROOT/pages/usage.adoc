@@ -1,0 +1,187 @@
+= Cas d'usage
+:description: Filtres, listeners, async, multipart, sessions, dispatchers, virtual hosts, intégration CDI Vauban.
+
+[.lead]
+Cette page rassemble les recettes pour exploiter Foy au-delà du « hello world ». Elle suit les chapitres canoniques de la spec Jakarta Servlet 6.1.
+
+== Filtres
+
+[source,java]
+----
+import jakarta.servlet.*;
+import jakarta.servlet.annotation.WebFilter;
+import java.io.IOException;
+
+@WebFilter(urlPatterns = "/*")
+public class RequestIdFilter implements Filter {
+    @Override
+    public void doFilter(ServletRequest req, ServletResponse resp, FilterChain chain)
+            throws IOException, ServletException {
+        var id = java.util.UUID.randomUUID().toString();
+        req.setAttribute("requestId", id);
+        ((jakarta.servlet.http.HttpServletResponse) resp).addHeader("X-Request-Id", id);
+        chain.doFilter(req, resp);
+    }
+}
+----
+
+L'ordre des filtres suit l'ordre déclaré dans `web.xml` (`<filter-mapping>`) ou, à défaut, l'ordre alphabétique des classes — voir xref:reference.adoc[Référence] pour le détail.
+
+== Listeners
+
+`@WebListener` couvre `ServletContextListener`, `HttpSessionListener`, `ServletRequestListener` et leurs variantes `*AttributeListener`. Tous sont enrôlés par `ListenerRegistry` à partir des beans découverts par Vauban.
+
+[source,java]
+----
+import jakarta.servlet.ServletContextEvent;
+import jakarta.servlet.ServletContextListener;
+import jakarta.servlet.annotation.WebListener;
+
+@WebListener
+public class StartupHook implements ServletContextListener {
+    @Override
+    public void contextInitialized(ServletContextEvent sce) {
+        sce.getServletContext().setAttribute("started-at", java.time.Instant.now());
+    }
+}
+----
+
+Les évènements `contextInitialized` / `contextDestroyed` se déclenchent via `FoyChappeBoot.Mounted.fireContextInitialized()` / `fireContextDestroyed()`.
+
+== Async (`AsyncContext`)
+
+Foy implémente `request.startAsync()`, `AsyncContext.dispatch(...)`, `complete()`, et `setTimeout`. Chaque requête est portée par un *virtual thread* — le passage en async ne change pas le coût (pas de pool plateforme à protéger).
+
+[source,java]
+----
+@WebServlet(value = "/long", asyncSupported = true)
+public class LongServlet extends HttpServlet {
+    @Override
+    protected void doGet(HttpServletRequest req, HttpServletResponse resp) {
+        var ctx = req.startAsync();
+        ctx.setTimeout(5_000);
+        Thread.startVirtualThread(() -> {
+            try {
+                Thread.sleep(2_000);
+                resp.getWriter().write("done");
+                ctx.complete();
+            } catch (Exception e) {
+                ctx.complete();
+            }
+        });
+    }
+}
+----
+
+[NOTE]
+====
+Quelques cas pointus du TCK 6.1 sur `startAsync` après dispatch sont encore en erreur — voir xref:tck.adoc[État TCK].
+====
+
+== Upload de fichiers (`@MultipartConfig`)
+
+[source,java]
+----
+import jakarta.servlet.annotation.MultipartConfig;
+import jakarta.servlet.annotation.WebServlet;
+import jakarta.servlet.http.*;
+
+@WebServlet("/upload")
+@MultipartConfig(maxFileSize = 10 * 1024 * 1024)
+public class UploadServlet extends HttpServlet {
+    @Override
+    protected void doPost(HttpServletRequest req, HttpServletResponse resp) throws Exception {
+        Part part = req.getPart("file");
+        try (var in = part.getInputStream()) {
+            in.transferTo(java.nio.file.Files.newOutputStream(
+                    java.nio.file.Path.of("/tmp", part.getSubmittedFileName())));
+        }
+        resp.setStatus(204);
+    }
+}
+----
+
+Le parsing multipart se fait en streaming sur le `ServletInputStream` adossé au body Chappe — pas de copie intermédiaire en mémoire pour les gros uploads.
+
+== Sessions
+
+Le `SessionManager` interne s'appuie par défaut sur `InMemorySessionStore`. Le timeout est piloté par `FoyChappeBoot.builder().sessionTimeoutSeconds(...)` ou par `<session-config>` dans `web.xml`.
+
+Pour une session distribuée ou persistée, implémenter `io.vidocq.foy.spi.session.SessionStore` (voir xref:reference.adoc[Référence]).
+
+== `RequestDispatcher` : forward et include
+
+[source,java]
+----
+@WebServlet("/router")
+public class Router extends HttpServlet {
+    @Override
+    protected void doGet(HttpServletRequest req, HttpServletResponse resp) throws Exception {
+        var rd = req.getRequestDispatcher("/target?key=42");
+        rd.forward(req, resp); // ou rd.include(req, resp);
+    }
+}
+----
+
+`ForwardedRequest` et `IncludedRequest` injectent les attributs standard (`jakarta.servlet.forward.*`, `jakarta.servlet.include.*`) et réutilisent le routage Chappe.
+
+== Virtual hosts et déploiement WAR
+
+Foy peut être démarré :
+
+* programmatiquement via `FoyChappeBoot.builder()` — un container par contextPath ;
+* en empilant plusieurs `Mounted` sur le même `ChappeMountPoint` pour servir plusieurs applications sur le même connecteur ;
+* à terme via packaging WAR — `// TODO@user: documenter la commande de déploiement WAR quand stable`.
+
+== Intégration CDI via Vauban
+
+Quand `foy-cdi-vauban` est sur le classpath, Foy expose les beans suivants :
+
+[cols="1,3"]
+|===
+| Bean | Scope
+
+| `ServletContext`
+| `@ApplicationScoped`
+
+| `HttpServletRequest`
+| `@RequestScoped`
+
+| `HttpSession`
+| `@SessionScoped` *(via Vauban — `// TODO@user: vérifier la disponibilité M2)`*
+|===
+
+Toute Servlet ou Filter peut donc utiliser `@Inject` :
+
+[source,java]
+----
+import jakarta.inject.Inject;
+import jakarta.servlet.annotation.WebServlet;
+import jakarta.servlet.http.*;
+
+@WebServlet("/me")
+public class MeServlet extends HttpServlet {
+    @Inject HttpServletRequest request;
+    @Inject MyBusinessService service;
+
+    @Override
+    protected void doGet(HttpServletRequest req, HttpServletResponse resp) throws Exception {
+        resp.getWriter().write(service.greet(request.getRemoteUser()));
+    }
+}
+----
+
+Toute la résolution est faite à la compilation par xref:vauban::index.adoc[Vauban] — pas de proxy dynamique runtime, pas de réflexion à chaud.
+
+== Sécurité applicative
+
+* `<security-constraint>` du `web.xml` est appliqué par `SecurityConstraintEnforcer`.
+* `BasicAuthenticator` couvre l'authentification HTTP Basic.
+* `AnonymousSecurityProvider` est le fallback ouvert (développement uniquement).
+* Form-based et Digest : `// TODO@user: documenter une fois stables`.
+
+Pour un provider custom, implémenter `io.vidocq.foy.spi.security.SecurityProvider` et l'enregistrer comme bean CDI.
+
+== Cohabitation avec Cassini
+
+Foy et xref:cassini::index.adoc[Cassini] partagent le même runtime Chappe. Sur le même `ChappeMountPoint`, on peut monter `/app` (Foy) et `/api` (Cassini) — chacun reste maître de son contextPath, les deux containers n'interagissent pas.

@@ -1,63 +1,113 @@
 = Migration
-:description: From Tomcat, Jetty (Servlet) or Undertow.
+:description: From Tomcat, Jetty, Undertow or Helidon Servlet to Foy.
+
+[.lead]
+Foy honours the Jakarta Servlet 6.1 spec to the letter — your `web.xml`, your `@WebServlet`, your filters and listeners are ported as-is. This page lists the points where the environment differs.
 
 [CAUTION]
-Foy is at **0.1.0-SNAPSHOT**. Migration is not recommended for production workloads until `foy-tck` is fully green.
+====
+Foy is at **0.1.0-SNAPSHOT** and the official TCK passes around 90 % (see xref:tck.adoc[TCK status]). Migration is not recommended in production until the listed gaps are closed.
+====
 
 == From Tomcat
 
-[cols="1,1,2"]
+[cols="1,1,2",options="header"]
 |===
 | Tomcat | Foy | Note
 
 | `server.xml` (`<Connector>`, `<Engine>`, `<Host>`)
-| `FoyChappeBoot.builder()`
-| Programmatic configuration
+| `FoyChappeBoot.builder()` + xref:chappe::index.adoc[Chappe]
+| Programmatic configuration. The connector is Chappe, mounted through `ChappeMountPoint`.
 
 | `WEB-INF/web.xml`
 | Identical
-| Read by `WebXmlParser` at startup
+| Read by `WebXmlParser` at startup.
 
 | `@WebServlet`, `@WebFilter`, `@WebListener`
 | Identical
-| Detected at compile time by APT
+| Detected at compile time by APT — no runtime scan.
 
 | `META-INF/web-fragment.xml`
 | Identical
-| No runtime classpath scan
+| Likewise, merged with `web.xml` under `metadata-complete`.
 
-| Coyote (HTTP)
-| Chappe
-| HTTP/2 + virtual threads
+| Coyote (HTTP/1.1, HTTP/2)
+| xref:chappe::index.adoc[Chappe]
+| HTTP/1.1 + HTTP/2 + virtual threads.
+
+| `Realm` / `AuthMethod`
+| `SecurityProvider` (`foy-api`)
+| Implement `io.vidocq.foy.spi.security.SecurityProvider`. Basic Auth via `BasicAuthenticator`.
+
+| JNDI lookups (`@Resource`)
+| `@Inject` via `foy-cdi-vauban`
+| Datasources / pools are CDI Vauban beans.
+
+| `Context.xml` resources
+| CDI Vauban beans
+| `// TODO@user: clarify mapping for application JNDI resources.`
 |===
-
-[TODO]
-====
-Patterns to document:
-
-* JNDI lookups → `@Inject` via `foy-cdi-vauban`.
-* `Realm`/`AuthMethod` → Foy equivalents *(in progress)*.
-* `Context.xml` resources → `[TODO]` to clarify.
-====
 
 == From Jetty (Servlet)
 
-[TODO]
-====
-* `WebAppContext` → `FoyChappeBoot.builder().webapp(Path.of("..."))` *(in progress)*.
-* `JettyWebSocketServletContainerInitializer` → `[TODO]`.
-====
+[cols="1,1,2",options="header"]
+|===
+| Jetty | Foy | Note
+
+| `Server` + `ServerConnector`
+| xref:chappe::index.adoc[Chappe] `ChappeBoot`
+| The connector is Chappe.
+
+| `WebAppContext`
+| `FoyChappeBoot.builder().contextPath(...)`
+| `// TODO@user: direct WAR deploy once stabilised.`
+
+| `ServletContextHandler`
+| `VidocqServletContext` (internal)
+| Likewise.
+
+| `JettyWebSocketServletContainerInitializer`
+| `// TODO@user`
+| WebSocket Servlet 6.1 planned, no date.
+
+| Custom Jetty `Handler`
+| Chappe `Handler`
+| The `io.vidocq.chappe.api.Handler` API is the equivalent — see xref:chappe::reference.adoc[Chappe Reference].
+|===
 
 == From Undertow
 
-[TODO]: to document once a real-world case shows up.
+[cols="1,1,2",options="header"]
+|===
+| Undertow | Foy | Note
+
+| `Undertow.builder()`
+| `FoyChappeBoot.builder()` + Chappe
+| Two-step programmatic config: Chappe for transport, Foy for Servlet.
+
+| `DeploymentInfo`
+| Automatic `WebAppDiscovery` through `BeanManager`
+| No explicit Servlet/Filter config — annotations + `web.xml`.
+
+| Undertow `HttpHandler`
+| Chappe `Handler`
+| See xref:chappe::reference.adoc[Chappe Reference].
+|===
+
+== From Helidon Servlet
+
+`// TODO@user: to document once a real-world migration case shows up.`
 
 == Known gaps
 
-* WebSocket Servlet 6.1 / Jakarta WebSocket 2.2 — `[TODO]` planned.
-* JSP — not supported, not planned. Use dynamic pages via xref:cassini::index.adoc[Cassini] (REST) or pure Servlets.
+* **WebSocket Servlet 6.1 / Jakarta WebSocket 2.2** — `// TODO@user: planned, no date`.
+* **Cross-context dispatch** (`ServletContext.getContext`) — not implemented, see xref:tck.adoc[TCK].
+* **JSP** — not supported, not planned. For dynamic pages use xref:cassini::index.adoc[Cassini] (REST) or HTML-emitting Servlets.
+* **Form-based / Digest authentication** — `// TODO@user: in progress`.
 
-== Pitfalls
+== Common pitfalls
 
-* Runtime `META-INF/services` autoload is not used by Foy. If a Servlet library depends on it, open an issue.
-* `metadata-complete=true` is honoured; with `false` the APT-detected annotations take precedence.
+* **No runtime `META-INF/services` autoload.** Foy does not use `ServiceLoader` at startup. If a Servlet library relies on a `ServletContainerInitializer` loaded by scan, declare it as a CDI bean in Vauban.
+* **`metadata-complete=true` honoured to the letter.** With `false`, APT-detected annotations take precedence — standard Servlet 6.1 behaviour.
+* **No runtime dynamic proxy.** Frameworks that rely on it (Spring AOP, some profiling libs) won't work as-is. Prefer APT alternatives (Vauban, Class-File API).
+* **Strict JPMS modules.** If a legacy uses reflective `setAccessible(true)`, it needs an explicit `--add-opens` — better to port the legacy to `@Inject`.

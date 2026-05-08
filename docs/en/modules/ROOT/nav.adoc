@@ -1,5 +1,8 @@
 * xref:index.adoc[Foy]
 ** xref:getting-started.adoc[Getting started]
+** xref:usage.adoc[Usage]
 ** xref:concepts.adoc[Concepts]
+** xref:internals.adoc[Internals]
+** xref:tck.adoc[TCK]
 ** xref:reference.adoc[Reference]
 ** xref:migration.adoc[Migration]

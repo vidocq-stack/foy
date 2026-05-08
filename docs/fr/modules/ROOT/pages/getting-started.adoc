@@ -1,10 +1,14 @@
 = Démarrage rapide
-:description: Premier `HttpServlet` servi par Foy sur Chappe.
+:description: Première Servlet @WebServlet servie par Foy sur le transport Chappe.
+
+[.lead]
+Premier servlet, container Foy, transport Chappe : moins de cinquante lignes de Java, pas de `web.xml` obligatoire, pas de scan classpath runtime.
 
 == Pré-requis
 
-* **Java 25**, **Maven 4.0.0-rc-5** — `.sdkmanrc` à la racine du repo.
-* Connaître l'API Jakarta Servlet 6.1.
+* **Java 25** (Temurin) et **Maven 4.0.0-rc-5** — `.sdkmanrc` est versionné à la racine du repo, lancer `sdk env` avant tout.
+* Familiarité avec l'API Jakarta Servlet 6.1.
+* Pour la version CDI : un `BeanManager` Vauban (voir xref:vauban::getting-started.adoc[Vauban — démarrage rapide]).
 
 == Coordonnées Maven
 
@@ -14,6 +18,7 @@
     <dependency>
         <groupId>jakarta.servlet</groupId>
         <artifactId>jakarta.servlet-api</artifactId>
+        <version>6.1.0</version>
     </dependency>
     <dependency>
         <groupId>io.vidocq.foy</groupId>
@@ -26,10 +31,17 @@
         <version>0.1.0-SNAPSHOT</version>
         <scope>runtime</scope>
     </dependency>
+    <!-- CDI optionnel via Vauban -->
+    <dependency>
+        <groupId>io.vidocq.foy</groupId>
+        <artifactId>foy-cdi-vauban</artifactId>
+        <version>0.1.0-SNAPSHOT</version>
+        <scope>runtime</scope>
+    </dependency>
 </dependencies>
 ----
 
-== Hello world
+== Hello world : une Servlet annotée
 
 [source,java]
 ----
@@ -52,37 +64,63 @@ public class HelloServlet extends HttpServlet {
 }
 ----
 
-Démarrage :
+L'annotation `@WebServlet` est résolue à la compilation par un APT. Aucun scan classpath au démarrage.
+
+== Démarrer le container
+
+L'API publique côté Chappe est `FoyChappeBoot`. Elle prend un `BeanManager` (CDI) et expose un `Handler` Chappe à monter sur un `ChappeMountPoint`.
 
 [source,java]
 ----
 import io.vidocq.foy.chappe.FoyChappeBoot;
+import jakarta.enterprise.inject.spi.CDI;
 
 void main() throws Exception {
-    try (var server = FoyChappeBoot.builder()
-            .port(8080)
-            .servlet(new HelloServlet(), "/hello/*")
-            .build()) {
-        server.start();
-        Thread.currentThread().join();
-    }
+    var mounted = FoyChappeBoot.builder()
+            .beanManager(CDI.current().getBeanManager())
+            .contextPath("/app")
+            .sessionTimeoutSeconds(1800)
+            .build()
+            .orElseThrow(() -> new IllegalStateException("Aucun @WebServlet découvert"));
+
+    chappeMountPoint.mount(listener, mounted.mountPrefix(), mounted.handler());
+    mounted.fireContextInitialized();
 }
 ----
 
-== `web.xml` ou annotations ?
+`build()` retourne un `Optional<Mounted>` vide quand l'application ne déclare aucun bean Servlet/Filter/Listener — l'appelant choisit s'il s'agit d'une erreur ou d'un cas dégradé acceptable.
 
-Foy supporte les deux. Les `@WebServlet`, `@WebFilter`, `@WebListener` sont découverts à la compilation par un APT (pas de scan classpath au démarrage). Un `WEB-INF/web.xml` peut compléter ou surcharger via `metadata-complete` standard.
+== Annotations ou `web.xml` ?
 
-== Build et lancement
+Foy supporte les deux et applique la sémantique `metadata-complete` standard.
+
+* `@WebServlet`, `@WebFilter`, `@WebListener`, `@MultipartConfig` : découverts à la compilation par APT.
+* `WEB-INF/web.xml` et `META-INF/web-fragment.xml` : lus au démarrage par `WebXmlParser` et fusionnés via `WebAppDiscovery`.
+* Si `metadata-complete=true`, les annotations sont ignorées (comportement Servlet 6.1 standard).
+
+== Intégration avec Chappe
+
+Le pont est `ChappeServletBridge`, un `Handler` Chappe qui :
+
+. expose la `Request` Chappe en tant que `HttpServletRequestImpl` ;
+. expose la `Response` Chappe en tant que `HttpServletResponseImpl` ;
+. invoque la chaîne `Filter` -> `Servlet` ;
+. retourne la réponse via `ServletOutputStreamImpl` adossé au streaming Chappe — pas de copie intermédiaire.
 
 [source,bash]
 ----
 sdk env
 ./mvnw -ntp install -DskipTests
-java -jar target/myapp.jar
+./mvnw test
 ----
 
 [TIP]
 ====
-TCK Jakarta Servlet 6.1 officiel : `./run-official-tck-servlet6.1.sh --all` à la racine du repo `foy`. Module `foy-tck` hors-reactor.
+TCK Jakarta Servlet 6.1 officiel : `./run-official-tck-servlet6.1.sh --all` à la racine du repo `foy`. Le module `foy-tck` est volontairement hors-reactor — voir xref:tck.adoc[la page TCK].
 ====
+
+== Et après ?
+
+* xref:usage.adoc[Cas d'usage] — filtres, listeners, async, multipart, sessions, dispatchers, virtual hosts, intégration CDI.
+* xref:concepts.adoc[Concepts] — le vocabulaire Servlet, ce qui change avec la 6.1.
+* xref:internals.adoc[Fonctionnement interne] — séquence d'une requête, modèle de threads, lifecycle container.

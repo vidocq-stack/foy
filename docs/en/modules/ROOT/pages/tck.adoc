@@ -1,0 +1,129 @@
+= TCK: Jakarta Servlet 6.1
+:description: Conformance status against the Jakarta Servlet 6.1 Technology Compatibility Kit.
+
+[.lead]
+This page consolidates the status of the official Jakarta Servlet 6.1 TCK runs against Foy. It is regenerated on every release. The day-to-day source of truth remains the `TCK.md` of the link:{repo-foy}/src/branch/main/foy-tck/[`foy-tck`] folder.
+
+== Summary
+
+At the latest full run of the `tck-official` profile, roughly **90 %** of Jakarta Servlet 6.1 tests on the `api.*` packages pass.
+
+[cols="2,1,1,3",options="header"]
+|===
+| Spec section | Total | Passed | Notes
+
+| `api.jakarta_servlet.servlet.*`
+| ~XX
+| ~XX
+| ✅ Near-complete coverage. `// TODO@user: exact figures from the latest run`
+
+| `api.jakarta_servlet.filter.*`
+| ~XX
+| ~XX
+| ✅
+
+| `api.jakarta_servlet.http.*`
+| ~XX
+| ~XX
+| ⚠️ 3 errors on `HttpServletRequestTests` — `getRequestedSessionId` semantics + TCK substring bug
+
+| `api.jakarta_servlet.dispatchtest`
+| ~XX
+| ~XX-18
+| ❌ ~18 errors: cross-context dispatch (`ServletContext.getContext`) not implemented
+
+| `api.jakarta_servlet.registration`
+| ~XX
+| ~XX-10
+| ❌ 10 errors: `CommonServlets.jar` auto-attached to the WAR not scanned
+
+| `api.jakarta_servlet.asynccontext`
+| ~XX
+| ~XX-11
+| ⚠️ ~11 errors: edge cases of `setTimeout` / `startAsync` after dispatch
+|===
+
+[NOTE]
+====
+Exact figures live in `target/surefire-reports/` after an `--all` run. For historical detail, browse `git log -- foy-tck/` on the `main` branch.
+====
+
+== Intentionally skipped tests
+
+[cols="3,5",options="header"]
+|===
+| Test | Reason
+
+| `sc40.addJsp*`, `sc40.addJspFile*`
+| Foy ships **no** JSP engine — not supported, not planned. For dynamic pages, use xref:cassini::index.adoc[Cassini] (REST) or pure Servlets.
+
+| TLD tests (`tagext.*`)
+| Same — no JSP engine.
+
+| `// TODO@user: list any extra batteries explicitly skipped in foy-tck/TCK.md`
+| `// TODO@user`
+|===
+
+== Tests skipped due to environment
+
+These tests require a full Jakarta EE container or an external service (application JNDI, JMS, JTA). They do not represent an applicative gap of Foy.
+
+* Application JNDI tests (`@Resource` JDBC) — Foy does not ship an integrated datasource pool; the application injects them through xref:vauban::index.adoc[Vauban].
+* `// TODO@user: complete from foy-tck/TCK.md`
+
+== Runner architecture
+
+`foy-tck` is **intentionally EXCLUDED** from the `<modules>` of the `foy` reactor and uses a standalone `modelVersion 4.0.0` POM with no `<parent>`.
+
+**Reason.** ShrinkWrap Maven Resolver 3.3 (transitive dependency of the official Jakarta TCK) relies on `maven-resolver 1.9` / `maven-model 3.9`, which cannot parse Maven `Model 4.1.0` POMs. Its `ClasspathWorkspaceReader` scans the current reactor and crashes on any Vidocq POM (implicit version through parent) with messages like:
+
+[source]
+----
+Bad artifact coordinates io.vidocq.foy:foy-core:jar:,
+expected format is <groupId>:<artifactId>[:<extension>[:<classifier>]]:<version>
+----
+
+Until upstream ShrinkWrap supports Model 4.1, `foy-tck` **must stay detached**:
+
+* do not put it back in the parent `<modules>`;
+* do not give it a `<parent>`;
+* do not build it through `mvn -pl`;
+* always go through `./run-official-tck-servlet6.1.sh`.
+
+The wider rationale lives in `link:{repo-vidocq}/src/branch/main/CLAUDE.md` (section *TCK runners hors reactor*).
+
+== Reproduce locally
+
+=== Prerequisites
+
+Install the official Jakarta Servlet 6.1 TCK artefacts (non-public) into your local M2:
+
+* `jakarta.tck:servlet-tck-runtime:6.1.0`
+* `jakarta.tck:servlet-tck-util:6.1.0`
+* `jakarta.tck:servlet-tck:6.1.0` (pom)
+
+Detailed procedure in link:{repo-foy}/src/branch/main/foy-tck/README.md[`foy-tck/README.md`].
+
+=== Run the TCK
+
+[source,bash]
+----
+cd foy
+./run-official-tck-servlet6.1.sh                     # smoke test (fast)
+./run-official-tck-servlet6.1.sh --all               # full suite (long)
+./run-official-tck-servlet6.1.sh -Dtest=ServletTests # one class
+----
+
+=== CI integration
+
+[source,yaml]
+----
+- name: Build foy reactor
+  run: cd foy && ./mvnw -ntp install -DskipTests
+
+- name: Run Jakarta Servlet 6.1 TCK
+  run: cd foy && ./run-official-tck-servlet6.1.sh --all
+  # Prereq: official TCK artefacts cached in ~/.m2
+----
+
+Surefire reports live in `foy-tck/target/surefire-reports/`.
