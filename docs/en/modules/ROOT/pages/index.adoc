@@ -1,6 +1,10 @@
 = Foy
 :description: Jakarta Servlet 6.1 implementation inheriting the Chappe transport, optional CDI through Vauban.
 
+[.text-center]
+image::foy-logo.png[Foy,300,role=module-logo]
+
+
 [.lead]
 Foy is the **Jakarta Servlet 6.1** implementation of the Vidocq ecosystem. It grafts onto the xref:chappe::index.adoc[Chappe] HTTP transport and pulls its optional CDI from xref:vauban::index.adoc[Vauban]. Honour the Servlet contract without paying its historical weight: no classpath, no runtime scan, no hot-path reflection.
 

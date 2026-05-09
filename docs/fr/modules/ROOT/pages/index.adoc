@@ -1,6 +1,10 @@
 = Foy
 :description: Implémentation Jakarta Servlet 6.1 héritée du transport Chappe, CDI optionnel via Vauban.
 
+[.text-center]
+image::foy-logo.png[Foy,300,role=module-logo]
+
+
 [.lead]
 Foy est l'implémentation **Jakarta Servlet 6.1** de l'écosystème Vidocq. Elle se greffe sur le transport HTTP xref:chappe::index.adoc[Chappe] et tire son CDI optionnel de xref:vauban::index.adoc[Vauban]. Honorer le contrat Servlet sans en porter le poids historique : pas de classpath, pas de scan runtime, pas de réflexion à chaud.
 
