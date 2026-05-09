@@ -1,4 +1,22 @@
-# Foy
+<p align="center">
+  <img src="foy-logo.png" alt="Foy" width="300">
+</p>
+
+<h1 align="center">Foy</h1>
+
+<p align="center">
+  <strong>Implémentation Jakarta Servlet 6.1 — moteur pur, transport HTTP via SPI, CDI optionnel</strong><br>
+  <a href="https://jakarta.ee/specifications/servlet/6.1/">Jakarta Servlet 6.1</a> | JPMS natif | Virtual Threads | JDK 25
+</p>
+
+<p align="center">
+  <img src="https://img.shields.io/badge/JDK-25-orange" alt="JDK">
+  <img src="https://img.shields.io/badge/Maven-4.0--rc--5-purple" alt="Maven">
+  <img src="https://img.shields.io/badge/Jakarta_Servlet-6.1-blue" alt="Jakarta Servlet">
+  <img src="https://img.shields.io/badge/license-Apache_2.0-green" alt="License">
+</p>
+
+---
 
 Implémentation **Jakarta Servlet 6.1** standalone — moteur Servlet pur, transport
 HTTP via SPI, CDI optionnel.
