@@ -17,9 +17,28 @@
 # Si ton repo upstream n'a PAS le même nom court que sa property, ajuste le
 # bloc « Compute Maven property » ci-dessous.
 name: upstream-pr
+# Forgejo Actions ne supporte pas `repository_dispatch` (endpoint GitHub-only).
+# On utilise `workflow_dispatch` avec inputs typés. Le producteur appelle
+# POST /api/v1/repos/<this>/actions/workflows/upstream-pr.yml/dispatches
 on:
-  repository_dispatch:
-    types: [upstream-pr]
+  workflow_dispatch:
+    inputs:
+      upstream_repo:
+        description: "Slug du repo producteur (ex: vidocq/vauban)"
+        required: true
+        type: string
+      upstream_version:
+        description: "Version PR de l'artefact upstream à overrider"
+        required: true
+        type: string
+      pr_number:
+        description: "Numéro de la PR upstream"
+        required: true
+        type: string
+      pr_sha:
+        description: "SHA HEAD de la PR upstream (pour poster le statut)"
+        required: true
+        type: string
 
 jobs:
   verify:
@@ -27,10 +46,10 @@ jobs:
     steps:
       - name: Affiche le payload reçu
         run: |
-          echo "upstream_repo    : ${{ github.event.client_payload.upstream_repo }}"
-          echo "upstream_version : ${{ github.event.client_payload.upstream_version }}"
-          echo "pr_number        : ${{ github.event.client_payload.pr_number }}"
-          echo "pr_sha           : ${{ github.event.client_payload.pr_sha }}"
+          echo "upstream_repo    : ${{ inputs.upstream_repo }}"
+          echo "upstream_version : ${{ inputs.upstream_version }}"
+          echo "pr_number        : ${{ inputs.pr_number }}"
+          echo "pr_sha           : ${{ inputs.pr_sha }}"
 
       - uses: actions/checkout@v4
 
@@ -74,16 +93,16 @@ jobs:
         id: prop
         run: |
           # vidocq/vauban -> vauban.version
-          UPSTREAM="${{ github.event.client_payload.upstream_repo }}"
+          UPSTREAM="${{ inputs.upstream_repo }}"
           SHORT="${UPSTREAM##*/}"           # vauban
           echo "name=${SHORT}.version" >> "$GITHUB_OUTPUT"
-          echo "Property override : ${SHORT}.version=${{ github.event.client_payload.upstream_version }}"
+          echo "Property override : ${SHORT}.version=${{ inputs.upstream_version }}"
 
       - name: Build complet du reactor avec version upstream override
         id: build
         run: |
           mvn -B -ntp verify \
-            -D${{ steps.prop.outputs.name }}=${{ github.event.client_payload.upstream_version }}
+            -D${{ steps.prop.outputs.name }}=${{ inputs.upstream_version }}
 
       - name: Poste status sur la PR upstream (succès)
         if: success()
@@ -91,12 +110,12 @@ jobs:
           curl -fsSL -X POST \
             -H "Authorization: token ${{ secrets.VIDOCQ_BOT_TOKEN }}" \
             -H "Content-Type: application/json" \
-            "https://forge.vidocq.dev/api/v1/repos/${{ github.event.client_payload.upstream_repo }}/statuses/${{ github.event.client_payload.pr_sha }}" \
+            "https://forge.vidocq.dev/api/v1/repos/${{ inputs.upstream_repo }}/statuses/${{ inputs.pr_sha }}" \
             -d "$(cat <<JSON
           {
             "state": "success",
             "context": "downstream/${{ github.repository }}",
-            "description": "Build OK contre ${{ github.event.client_payload.upstream_version }}",
+            "description": "Build OK contre ${{ inputs.upstream_version }}",
             "target_url": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
           }
           JSON
@@ -108,12 +127,12 @@ jobs:
           curl -fsSL -X POST \
             -H "Authorization: token ${{ secrets.VIDOCQ_BOT_TOKEN }}" \
             -H "Content-Type: application/json" \
-            "https://forge.vidocq.dev/api/v1/repos/${{ github.event.client_payload.upstream_repo }}/statuses/${{ github.event.client_payload.pr_sha }}" \
+            "https://forge.vidocq.dev/api/v1/repos/${{ inputs.upstream_repo }}/statuses/${{ inputs.pr_sha }}" \
             -d "$(cat <<JSON
           {
             "state": "failure",
             "context": "downstream/${{ github.repository }}",
-            "description": "Build KO contre ${{ github.event.client_payload.upstream_version }}",
+            "description": "Build KO contre ${{ inputs.upstream_version }}",
             "target_url": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
           }
           JSON
