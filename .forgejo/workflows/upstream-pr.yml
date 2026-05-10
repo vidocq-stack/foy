@@ -110,6 +110,18 @@ jobs:
                     <snapshots><enabled>true</enabled><updatePolicy>always</updatePolicy></snapshots>
                   </repository>
                 </repositories>
+                <pluginRepositories>
+                  <!-- Maven cherche les <plugin> dans <pluginRepository>, pas dans
+                       <repository>. Sans cette section, vauban-maven-plugin (et
+                       autres Maven plugins Vidocq) en version PR ne seront pas
+                       trouvés et Maven retombera sur vidocq-snapshots. -->
+                  <pluginRepository>
+                    <id>vidocq-pr-staging</id>
+                    <url>https://repo.vidocq.dev/pr-staging</url>
+                    <releases><enabled>false</enabled></releases>
+                    <snapshots><enabled>true</enabled><updatePolicy>always</updatePolicy></snapshots>
+                  </pluginRepository>
+                </pluginRepositories>
               </profile>
             </profiles>
           </settings>
