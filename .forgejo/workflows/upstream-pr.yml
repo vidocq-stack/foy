@@ -1,0 +1,120 @@
+# Template à copier tel quel dans `.forgejo/workflows/upstream-pr.yml` de chaque
+# repo *consommateur* (cassini, foy, mansart, vidocq-mps, ravel, ...).
+#
+# But : quand un producteur upstream (vauban, chappe, etc.) ouvre une PR, ce
+# workflow se déclenche, build le consommateur entier contre la version PR
+# upstream (publiée dans pr-staging), et poste un statut sur le SHA de la PR
+# upstream.
+#
+# Hypothèse : chaque pom.xml consommateur référence sa dép upstream via une
+# property dédiée dont le nom est dérivé du repo, ex :
+#   <vauban.version>      pour le repo vidocq/vauban
+#   <chappe.version>      pour le repo vidocq/chappe
+#   <champollion.version> pour le repo vidocq/champollion
+#   <ravel.version>       pour le repo vidocq/ravel
+#   <vidocq-mps.version>  pour le repo vidocq/vidocq-mps
+#
+# Si ton repo upstream n'a PAS le même nom court que sa property, ajuste le
+# bloc « Compute Maven property » ci-dessous.
+name: upstream-pr
+on:
+  repository_dispatch:
+    types: [upstream-pr]
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Affiche le payload reçu
+        run: |
+          echo "upstream_repo    : ${{ github.event.client_payload.upstream_repo }}"
+          echo "upstream_version : ${{ github.event.client_payload.upstream_version }}"
+          echo "pr_number        : ${{ github.event.client_payload.pr_number }}"
+          echo "pr_sha           : ${{ github.event.client_payload.pr_sha }}"
+
+      - uses: actions/checkout@v4
+
+      - name: Set up Java 25
+        uses: actions/setup-java@v4
+        with:
+          java-version: '25'
+          distribution: temurin
+          cache: maven
+
+      - name: Install Maven 4
+        run: |
+          wget -q https://dlcdn.apache.org/maven/maven-4/4.0.0-rc-5/binaries/apache-maven-4.0.0-rc-5-bin.tar.gz
+          tar -xzf apache-maven-4.0.0-rc-5-bin.tar.gz -C /opt
+          echo "/opt/apache-maven-4.0.0-rc-5/bin" >> "$GITHUB_PATH"
+
+      - name: Configure Maven settings (lecture pr-staging)
+        run: |
+          mkdir -p ~/.m2
+          cat > ~/.m2/settings.xml <<EOF
+          <?xml version="1.0" encoding="UTF-8"?>
+          <settings>
+            <profiles>
+              <profile>
+                <id>vidocq-pr-staging</id>
+                <activation><activeByDefault>true</activeByDefault></activation>
+                <repositories>
+                  <repository>
+                    <id>vidocq-pr-staging</id>
+                    <url>https://repo.vidocq.dev/pr-staging</url>
+                    <releases><enabled>false</enabled></releases>
+                    <snapshots><enabled>true</enabled><updatePolicy>always</updatePolicy></snapshots>
+                  </repository>
+                </repositories>
+              </profile>
+            </profiles>
+          </settings>
+          EOF
+
+      - name: Compute Maven property name
+        id: prop
+        run: |
+          # vidocq/vauban -> vauban.version
+          UPSTREAM="${{ github.event.client_payload.upstream_repo }}"
+          SHORT="${UPSTREAM##*/}"           # vauban
+          echo "name=${SHORT}.version" >> "$GITHUB_OUTPUT"
+          echo "Property override : ${SHORT}.version=${{ github.event.client_payload.upstream_version }}"
+
+      - name: Build complet du reactor avec version upstream override
+        id: build
+        run: |
+          mvn -B -ntp verify \
+            -D${{ steps.prop.outputs.name }}=${{ github.event.client_payload.upstream_version }}
+
+      - name: Poste status sur la PR upstream (succès)
+        if: success()
+        run: |
+          curl -fsSL -X POST \
+            -H "Authorization: token ${{ secrets.VIDOCQ_BOT_TOKEN }}" \
+            -H "Content-Type: application/json" \
+            "https://forge.vidocq.dev/api/v1/repos/${{ github.event.client_payload.upstream_repo }}/statuses/${{ github.event.client_payload.pr_sha }}" \
+            -d "$(cat <<JSON
+          {
+            "state": "success",
+            "context": "downstream/${{ github.repository }}",
+            "description": "Build OK contre ${{ github.event.client_payload.upstream_version }}",
+            "target_url": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          }
+          JSON
+          )"
+
+      - name: Poste status sur la PR upstream (échec)
+        if: failure()
+        run: |
+          curl -fsSL -X POST \
+            -H "Authorization: token ${{ secrets.VIDOCQ_BOT_TOKEN }}" \
+            -H "Content-Type: application/json" \
+            "https://forge.vidocq.dev/api/v1/repos/${{ github.event.client_payload.upstream_repo }}/statuses/${{ github.event.client_payload.pr_sha }}" \
+            -d "$(cat <<JSON
+          {
+            "state": "failure",
+            "context": "downstream/${{ github.repository }}",
+            "description": "Build KO contre ${{ github.event.client_payload.upstream_version }}",
+            "target_url": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          }
+          JSON
+          )"
