@@ -334,3 +334,33 @@ jobs:
           done
           echo "Timeout : certains downstreams n'ont pas reporté à temps." >&2
           exit 1
+  notify-success:
+    # Notification Slack unique quand toute la chaîne PR est validée
+    # (build + downstream verify OK). Dépend de verify-downstream qui agrège
+    # déjà tout — pas de message par sous-build.
+    needs: [verify-downstream]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Notify Slack on PR success
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          REPO: ${{ github.repository }}
+          PR_NUM: ${{ github.event.number }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+        run: |
+          set -euo pipefail
+          if [ -z "${SLACK_WEBHOOK_URL:-}" ]; then
+            echo "❌ Secret Forgejo manquant : SLACK_WEBHOOK_URL" >&2
+            exit 1
+          fi
+          payload=$(node <<'JS'
+          process.stdout.write(JSON.stringify({
+            text: `[ViBot]: ✅ *PR validée* — \`${process.env.REPO}\`#${process.env.PR_NUM} par *${process.env.PR_AUTHOR}*\n> ${process.env.PR_TITLE}\n<${process.env.PR_URL}|Voir la PR>`
+          }))
+          JS
+          )
+          curl -fsS -X POST "$SLACK_WEBHOOK_URL" \
+            -H 'Content-Type: application/json' \
+            -d "$payload"
