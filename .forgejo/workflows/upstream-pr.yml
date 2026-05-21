@@ -166,7 +166,7 @@ jobs:
             "state": "success",
             "context": "downstream/${{ github.repository }}",
             "description": "Build OK contre ${{ inputs.upstream_version }}",
-            "target_url": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+            "target_url": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_number }}"
           }
           JSON
           )"
@@ -183,7 +183,7 @@ jobs:
             "state": "failure",
             "context": "downstream/${{ github.repository }}",
             "description": "Build KO contre ${{ inputs.upstream_version }}",
-            "target_url": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+            "target_url": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_number }}"
           }
           JSON
           )"
