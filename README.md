@@ -22,8 +22,8 @@ Implémentation **Jakarta Servlet 6.1** standalone — moteur Servlet pur, trans
 HTTP via SPI, CDI optionnel.
 
 Extrait en avril 2026 du module
-[`vidocq-mps-servlet-chappe-extension`](https://forge.vidocq.dev/vidocq/vidocq)
-pour devenir un projet indépendant utilisable hors écosystème Vidocq-MPS.
+[`vidocq-runtime-servlet-chappe-extension`](https://forge.vidocq.dev/vidocq/vidocq)
+pour devenir un projet indépendant utilisable hors écosystème Vidocq Runtime.
 
 ## Modules
 

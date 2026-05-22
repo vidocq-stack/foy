@@ -1,5 +1,5 @@
 # Template à copier tel quel dans `.forgejo/workflows/upstream-pr.yml` de chaque
-# repo *consommateur* (cassini, foy, mansart, vidocq-mps, ravel, ...).
+# repo *consommateur* (cassini, foy, mansart, vidocq, ravel, ...).
 #
 # But : quand un producteur upstream (vauban, chappe, etc.) ouvre une PR, ce
 # workflow se déclenche, build le consommateur entier contre la version PR
@@ -12,7 +12,7 @@
 #   <chappe.version>      pour le repo vidocq/chappe
 #   <champollion.version> pour le repo vidocq/champollion
 #   <ravel.version>       pour le repo vidocq/ravel
-#   <vidocq-mps.version>  pour le repo vidocq/vidocq-mps
+#   <vidocq.version>  pour le repo vidocq/vidocq
 #
 # Si ton repo upstream n'a PAS le même nom court que sa property, ajuste le
 # bloc « Compute Maven property » ci-dessous.
