@@ -5,6 +5,13 @@
          root="true">
     <modelVersion>4.1.0</modelVersion>
 
+    <parent>
+        <groupId>io.vidocq</groupId>
+        <artifactId>vidocq-parent</artifactId>
+        <version>1.0.0-SNAPSHOT</version>
+        <relativePath/>
+    </parent>
+
     <groupId>io.vidocq.foy</groupId>
     <artifactId>foy-parent</artifactId>
     <version>0.1.0-SNAPSHOT</version>
@@ -12,7 +19,7 @@
 
     <name>Foy</name>
     <description>Implémentation Jakarta Servlet 6.1 standalone — moteur Servlet pur, transport HTTP via SPI, CDI optionnel</description>
-    <url>https://forge.vidocq.dev/vidocq/foy</url>
+    <url>https://codeberg.org/Vidocq/foy</url>
 
     <developers>
         <developer>
@@ -29,64 +36,18 @@
     </licenses>
 
     <scm>
-        <connection>scm:git:https://forge.vidocq.dev/vidocq/foy.git</connection>
+        <connection>scm:git:https://codeberg.org/Vidocq/foy.git</connection>
         <developerConnection>scm:git:ssh://git@forge.vidocq.dev:vidocq/foy.git</developerConnection>
-        <url>https://forge.vidocq.dev/vidocq/foy</url>
+        <url>https://codeberg.org/Vidocq/foy</url>
     </scm>
 
-    <distributionManagement>
-        <snapshotRepository>
-            <id>vidocq-snapshots</id>
-            <url>https://repo.vidocq.dev/snapshots</url>
-        </snapshotRepository>
-        <repository>
-            <id>vidocq-releases</id>
-            <url>https://repo.vidocq.dev/releases</url>
-        </repository>
-    </distributionManagement>
-
-    <repositories>
-        <repository>
-            <id>vidocq-snapshots</id>
-            <url>https://repo.vidocq.dev/snapshots</url>
-            <releases><enabled>false</enabled></releases>
-            <snapshots><enabled>true</enabled></snapshots>
-        </repository>
-        <repository>
-            <id>vidocq-releases</id>
-            <url>https://repo.vidocq.dev/releases</url>
-            <releases><enabled>true</enabled></releases>
-            <snapshots><enabled>false</enabled></snapshots>
-        </repository>
-    </repositories>
-
-    <pluginRepositories>
-        <pluginRepository>
-            <id>vidocq-snapshots</id>
-            <url>https://repo.vidocq.dev/snapshots</url>
-            <releases><enabled>false</enabled></releases>
-            <snapshots><enabled>true</enabled></snapshots>
-        </pluginRepository>
-        <pluginRepository>
-            <id>vidocq-releases</id>
-            <url>https://repo.vidocq.dev/releases</url>
-            <releases><enabled>true</enabled></releases>
-            <snapshots><enabled>false</enabled></snapshots>
-        </pluginRepository>
-    </pluginRepositories>
-
     <properties>
-        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-        <maven.compiler.release>25</maven.compiler.release>
-
         <jakarta.servlet.version>6.1.0</jakarta.servlet.version>
         <jakarta.cdi.version>4.1.0</jakarta.cdi.version>
         <jakarta.annotation.version>3.0.0</jakarta.annotation.version>
 
         <chappe.version>0.1.0-SNAPSHOT</chappe.version>
         <vauban.version>0.1.0-SNAPSHOT</vauban.version>
-
-        <junit.version>6.0.3</junit.version>
     </properties>
 
     <!--
@@ -104,15 +65,6 @@
 
     <dependencyManagement>
         <dependencies>
-            <!-- JUnit 6 BOM -->
-            <dependency>
-                <groupId>org.junit</groupId>
-                <artifactId>junit-bom</artifactId>
-                <version>${junit.version}</version>
-                <type>pom</type>
-                <scope>import</scope>
-            </dependency>
-
             <!-- Jakarta APIs -->
             <dependency>
                 <groupId>jakarta.servlet</groupId>
@@ -177,54 +129,4 @@
             </dependency>
         </dependencies>
     </dependencyManagement>
-
-    <build>
-        <pluginManagement>
-            <plugins>
-                <plugin>
-                    <groupId>org.apache.maven.plugins</groupId>
-                    <artifactId>maven-compiler-plugin</artifactId>
-                    <version>4.0.0-beta-4</version>
-                    <configuration>
-                        <release>25</release>
-                    </configuration>
-                </plugin>
-                <plugin>
-                    <groupId>org.apache.maven.plugins</groupId>
-                    <artifactId>maven-surefire-plugin</artifactId>
-                    <version>3.5.5</version>
-                </plugin>
-                <plugin>
-                    <groupId>org.apache.maven.plugins</groupId>
-                    <artifactId>maven-jar-plugin</artifactId>
-                    <version>3.4.2</version>
-                </plugin>
-                <plugin>
-                    <groupId>org.apache.maven.plugins</groupId>
-                    <artifactId>maven-clean-plugin</artifactId>
-                    <version>3.4.0</version>
-                </plugin>
-                <plugin>
-                    <groupId>org.apache.maven.plugins</groupId>
-                    <artifactId>maven-resources-plugin</artifactId>
-                    <version>3.3.1</version>
-                </plugin>
-                <plugin>
-                    <groupId>org.apache.maven.plugins</groupId>
-                    <artifactId>maven-install-plugin</artifactId>
-                    <version>3.1.3</version>
-                </plugin>
-                <plugin>
-                    <groupId>org.apache.maven.plugins</groupId>
-                    <artifactId>maven-deploy-plugin</artifactId>
-                    <!-- 3.1.4 : fixe les bugs `deployAtEnd` sur Maven 4 ; 3.1.3
-                         BUILD SUCCESS sans rien pousser sur la registry. -->
-                    <version>3.1.4</version>
-                    <configuration>
-                        <deployAtEnd>false</deployAtEnd>
-                    </configuration>
-                </plugin>
-            </plugins>
-        </pluginManagement>
-    </build>
 </project>
