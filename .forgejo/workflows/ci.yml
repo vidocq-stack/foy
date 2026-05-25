@@ -1,0 +1,47 @@
+name: CI
+
+# Post-merge flow (push on main). Common steps come from the Vidocq/ci composite actions.
+on:
+  push:
+    branches: [main]
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: https://codeberg.org/Vidocq/ci/setup-maven@v1
+
+      - name: Build & test
+        run: mvn -B -ntp -U verify
+
+      - name: Deploy to Maven Central
+        uses: https://codeberg.org/Vidocq/ci/deploy-maven@v1
+        with:
+          central-username: ${{ secrets.CENTRAL_USERNAME }}
+          central-password: ${{ secrets.CENTRAL_PASSWORD }}
+          gpg-private-key: ${{ secrets.GPG_PRIVATE_KEY }}
+          gpg-passphrase: ${{ secrets.GPG_PASSPHRASE }}
+
+      - name: Notify Slack on failure
+        if: failure()
+        uses: https://codeberg.org/Vidocq/ci/notify-slack@v1
+        with:
+          webhook-url: ${{ secrets.SLACK_WEBHOOK_URL }}
+          status: failure
+          repo: ${{ github.repository }}
+          ref: ${{ github.ref_name }}
+          run-url: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_number }}
+
+      - name: Notify Slack on success
+        if: success()
+        uses: https://codeberg.org/Vidocq/ci/notify-slack@v1
+        with:
+          webhook-url: ${{ secrets.SLACK_WEBHOOK_URL }}
+          status: success
+          repo: ${{ github.repository }}
+          ref: ${{ github.ref_name }}
+          run-url: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_number }}
+          sha: ${{ github.sha }}
+          commit-message: ${{ github.event.head_commit.message }}
+          commit-author: ${{ github.event.head_commit.author.name }}
