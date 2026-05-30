@@ -6,7 +6,7 @@ First servlet, Foy container, Chappe transport: under fifty lines of Java, no ma
 
 == Prerequisites
 
-* **Java 25** (Temurin) and **Maven 4.0.0-rc-5** — `.sdkmanrc` is checked in at the repo root, run `sdk env` first.
+* **Java 25** (Temurin) and **Maven 3.9.16** — `.sdkmanrc` is checked in at the repo root, run `sdk env` first.
 * Familiarity with the Jakarta Servlet 6.1 API.
 * For the CDI flavour: a Vauban `BeanManager` (see xref:vauban::getting-started.adoc[Vauban — getting started]).
 

@@ -6,7 +6,7 @@ Premier servlet, container Foy, transport Chappe : moins de cinquante lignes de 
 
 == Pré-requis
 
-* **Java 25** (Temurin) et **Maven 4.0.0-rc-5** — `.sdkmanrc` est versionné à la racine du repo, lancer `sdk env` avant tout.
+* **Java 25** (Temurin) et **Maven 3.9.16** — `.sdkmanrc` est versionné à la racine du repo, lancer `sdk env` avant tout.
 * Familiarité avec l'API Jakarta Servlet 6.1.
 * Pour la version CDI : un `BeanManager` Vauban (voir xref:vauban::getting-started.adoc[Vauban — démarrage rapide]).
 

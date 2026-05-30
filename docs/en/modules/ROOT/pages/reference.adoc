@@ -208,7 +208,7 @@ Foy reads the standard Servlet 6.1 `WEB-INF/web.xml`:
 == Compatibility
 
 * Java 25 (LTS)
-* Maven 4.0.0-rc-5
+* Maven 3.9.16
 * Jakarta Servlet 6.1
 * Strict JPMS, virtual threads (one VT per request)
 * AOT-friendly (no reflection, no dynamic proxy)

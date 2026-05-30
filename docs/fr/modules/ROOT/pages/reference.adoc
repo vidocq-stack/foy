@@ -208,7 +208,7 @@ Les fragments `META-INF/web-fragment.xml` sont mergés selon `metadata-complete`
 == Compatibilité
 
 * Java 25 (LTS)
-* Maven 4.0.0-rc-5
+* Maven 3.9.16
 * Jakarta Servlet 6.1
 * JPMS strict, virtual threads (un VT par requête)
 * AOT-friendly (pas de réflexion, pas de proxy dynamique)
