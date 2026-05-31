@@ -6,9 +6,9 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletRequestWrapper;
 
 /**
- * Wrapper pour un include : les méthodes URI reflètent la ressource originale
- * (spec Servlet 6.1 §9.3) tandis que les informations du include sont exposées
- * via les attributs {@code jakarta.servlet.include.*}.
+ * Wrapper for an include: URI reflect methods the original resource
+ * (Servlet spec 6.1 §9.3) while the include information is exposed
+ * via the {@code jakarta.servlet.include.*} attributes.
  */
 public final class IncludedRequest extends HttpServletRequestWrapper {
 

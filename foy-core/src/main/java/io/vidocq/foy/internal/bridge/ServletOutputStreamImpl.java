@@ -7,10 +7,10 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 
 /**
- * {@link ServletOutputStream} qui accumule dans un {@link ByteArrayOutputStream} interne.
- * Le contenu est transféré à la {@link io.vidocq.chappe.api.Response} en fin de dispatch.
+ * {@link ServletOutputStream} which accumulates in an internal {@link ByteArrayOutputStream}.
+ * The content is transferred to {@link io.vidocq.chappe.api.Response} at the end of dispatch.
  *
- * <p><em>Non-blocking I/O n'est pas implémenté dans ce jalon.</em></p>
+ * <p><em>Non-blocking I/O is not implemented in this milestone.</em></p>
  */
 public final class ServletOutputStreamImpl extends ServletOutputStream {
 
@@ -18,7 +18,7 @@ public final class ServletOutputStreamImpl extends ServletOutputStream {
     private boolean closed;
     private Runnable onFlush = () -> {};
 
-    /** Hook exécuté à chaque flush() — typiquement marque la réponse committed. */
+    /** Hook executed every flush() — typically marks the committed response. */
     public void setFlushListener(Runnable onFlush) {
         this.onFlush = onFlush == null ? () -> {} : onFlush;
     }

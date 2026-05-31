@@ -14,7 +14,7 @@ import java.util.Map;
 import java.util.Set;
 
 /**
- * Registration dynamique d'un filter créée via {@link jakarta.servlet.ServletContext#addFilter}.
+ * Dynamic registration of a filter created via {@link jakarta.servlet.ServletContext#addFilter}.
  */
 public final class DynamicFilterRegistration implements FilterRegistration.Dynamic {
 

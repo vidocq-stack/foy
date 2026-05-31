@@ -7,10 +7,10 @@ import java.io.IOException;
 import java.io.InputStream;
 
 /**
- * {@link ServletInputStream} adaptant un {@link InputStream} Chappe.
+ * {@link ServletInputStream} adapting a {@link InputStream} Chappe.
  *
- * <p><em>Non-blocking I/O n'est pas implémenté dans ce jalon</em> — {@link #isReady()}
- * retourne toujours {@code true} et {@link #setReadListener(ReadListener)} n'est pas supporté.</p>
+ * <p><em>Non-blocking I/O is not implemented in this milestone</em> — {@link #isReady()}
+ * always returns {@code true} and {@link #setReadListener(ReadListener)} is not supported.</p>
  */
 public final class ServletInputStreamImpl extends ServletInputStream {
 

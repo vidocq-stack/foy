@@ -35,11 +35,11 @@ import java.util.Locale;
 import java.util.Map;
 
 /**
- * Adapte un {@link Request} Chappe en {@link HttpServletRequest} Servlet 6.1.
+ * Adapts a {@link Request} Chappe into {@link HttpServletRequest} Servlet 6.1.
  *
- * <p>Implémentation minimale pour le jalon M2a — beaucoup de méthodes renvoient
- * {@link UnsupportedOperationException}. Elles seront étoffées au fil des jalons
- * suivants (session, async, multipart, security, upgrade, etc.).</p>
+ * <p>Minimal implementation for the M2a milestone — many methods return
+ * {@link UnsupportedOperationException}. They will be expanded upon as milestones progress.
+ * (session, async, multipart, security, upgrade, etc.).</p>
  */
 public final class HttpServletRequestImpl implements HttpServletRequest {
 
@@ -341,7 +341,7 @@ public final class HttpServletRequestImpl implements HttpServletRequest {
         return Collections.enumeration(list.isEmpty() ? List.of(Locale.getDefault()) : list);
     }
 
-    /** Parse l'en-tête {@code Accept-Language} (RFC 7231 §5.3.5) en liste triée par qualité. */
+    /** Parses the {@code Accept-Language} header (RFC 7231 §5.3.5) into a list sorted by quality. */
     private List<Locale> acceptedLocales() {
         String h = getHeader("Accept-Language");
         if (h == null || h.isBlank()) return List.of();
@@ -542,12 +542,12 @@ public final class HttpServletRequestImpl implements HttpServletRequest {
         if (res instanceof HttpServletResponseImpl impl) impl.bindRequest(this);
     }
     public io.vidocq.foy.internal.async.AsyncContextImpl asyncContextInternal() { return asyncContext; }
-    /** Reset l'état async — utilisé par le bridge entre deux dispatches async
-     *  pour qu'un startAsync dans le servlet redispatched crée un nouveau contexte. */
+    /** Resets async state, used by the bridge between two async dispatches so
+     *  startAsync in a redispatched servlet creates a new context. */
     public void clearAsyncContext() { this.asyncContext = null; }
 
     private boolean asyncSupported = true;
-    /** Fixe si la chaîne (servlet + filters) supporte async — propagé par le bridge. */
+    /** Fixed if the chain (servlet + filters) supports async — propagated by the bridge. */
     public void setAsyncSupported(boolean v) { this.asyncSupported = v; }
 
     @Override public AsyncContext startAsync() {

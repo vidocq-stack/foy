@@ -4,8 +4,8 @@ import org.jboss.arquillian.container.spi.client.container.DeployableContainer;
 import org.jboss.arquillian.core.spi.LoadableExtension;
 
 /**
- * Enregistre {@link VidocqDeployableContainer} comme {@link DeployableContainer}
- * découvrable par Arquillian via son SPI {@link LoadableExtension}.
+ * Save {@link VidocqDeployableContainer} as {@link DeployableContainer}
+ * discoverable by Arquillian via its SPI {@link LoadableExtension}.
  */
 public class VidocqContainerExtension implements LoadableExtension {
     @Override

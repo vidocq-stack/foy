@@ -4,8 +4,8 @@ import java.util.Objects;
 import java.util.Optional;
 
 /**
- * Résout un path relatif (sans contextPath) en un {@link DispatchTarget} à partir
- * du {@link ServletDispatcher}.
+ * Resolves a relative path (without contextPath) to a {@link DispatchTarget} from
+ * of {@link ServletDispatcher}.
  */
 public final class DispatchResolver {
 
@@ -15,7 +15,7 @@ public final class DispatchResolver {
         this.dispatcher = Objects.requireNonNull(dispatcher);
     }
 
-    /** {@code path} : chemin relatif au contextPath, peut contenir une query. */
+    /** {@code path}: path relative to the contextPath, can contain a query. */
     public Optional<DispatchTarget> resolve(String path) {
         String justPath = path;
         String queryString = null;
@@ -45,7 +45,7 @@ public final class DispatchResolver {
         };
     }
 
-    /** Résolution par nom de servlet (Servlet 6.1 §9.1 getNamedDispatcher). */
+    /** Resolution by servlet name (Servlet 6.1 §9.1 getNamedDispatcher). */
     public Optional<DispatchTarget> resolveByName(String servletName) {
         if (servletName == null) return Optional.empty();
         for (ServletDispatcher.Mapping m : dispatcher.mappings()) {

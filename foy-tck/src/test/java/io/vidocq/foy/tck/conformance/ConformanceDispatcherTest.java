@@ -13,7 +13,7 @@ import java.net.http.HttpResponse;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * Couverture conformance Servlet 6.1 §9 (RequestDispatcher) et §12 (url-pattern).
+ * Servlet 6.1 conformance coverage §9 (RequestDispatcher) and §12 (url-pattern).
  */
 class ConformanceDispatcherTest {
 

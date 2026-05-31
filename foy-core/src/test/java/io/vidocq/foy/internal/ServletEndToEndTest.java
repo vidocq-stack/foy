@@ -22,8 +22,8 @@ import java.util.List;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * Démarre un Server Chappe réel qui dispatche vers un HttpServlet via le bridge.
- * Bypass de WebAppDiscovery (pas de CDI dans ce test) — on construit le dispatcher
+ * Starts a real Chappe Server which dispatches to an HttpServlet via the bridge.
+ * Bypass WebAppDiscovery (no CDI in this test) — we build the dispatcher
  * manuellement.
  */
 class ServletEndToEndTest {

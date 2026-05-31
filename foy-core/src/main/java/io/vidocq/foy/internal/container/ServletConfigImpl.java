@@ -10,9 +10,9 @@ import java.util.Map;
 import java.util.Objects;
 
 /**
- * {@link ServletConfig} minimal passé à {@link jakarta.servlet.Servlet#init} lors
- * du démarrage. Expose le nom logique du servlet, son {@link ServletContext} et
- * ses init-params.
+ * {@link ServletConfig} minimum changed to {@link jakarta.servlet.Servlet#init} when
+ * of startups. Exposes the logical name of the servlet, its {@link ServletContext} and
+ * its init-params.
  */
 public final class ServletConfigImpl implements ServletConfig {
 

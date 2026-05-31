@@ -11,10 +11,10 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 
 /**
- * Implémentation in-memory thread-safe de {@link HttpSession}.
+ * Thread-safe in-memory implementation of {@link HttpSession}.
  *
- * <p>Délègue la gestion d'expiration au {@link SessionManager} qui consulte
- * {@link #getLastAccessedTime()} et {@link #getMaxInactiveInterval()}.</p>
+ * <p>Delegates expiration management to {@link SessionManager} who consults
+ * {@link #getLastAccessedTime()} and {@link #getMaxInactiveInterval()}.</p>
  */
 public final class HttpSessionImpl implements HttpSession {
 

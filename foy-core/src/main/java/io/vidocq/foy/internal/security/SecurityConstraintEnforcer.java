@@ -16,17 +16,17 @@ import java.util.Arrays;
 import java.util.Set;
 
 /**
- * Applique les contraintes {@code @ServletSecurity} avant l'invocation du servlet.
+ * Applies {@code @ServletSecurity} constraints before invoking the servlet.
  *
- * <p>Support MVP :</p>
+ * <p>MVP support:</p>
  * <ul>
- *   <li>{@link HttpConstraint}#rolesAllowed : si non vide, exige que l'utilisateur
- *       soit authentifié ET possède au moins un rôle listé.</li>
- *   <li>{@link ServletSecurity.EmptyRoleSemantic}#DENY sur rolesAllowed vide : refuse toujours.</li>
- *   <li>{@link HttpMethodConstraint} : override par méthode HTTP si présent.</li>
+ *   <li>{@link HttpConstraint}#rolesAllowed: if not empty, requires the user to
+ *       is authenticated AND has at least one listed role.</li>
+ *   <li>{@link ServletSecurity.EmptyRoleSemantic}#DENY on empty rolesAllowed: always refuses.</li>
+ *   <li>{@link HttpMethodConstraint}: override by HTTP method if present.</li>
  * </ul>
  *
- * <p>Retourne {@code false} si la requête a été rejetée (401/403) — le caller n'invoque pas le servlet.</p>
+ * <p>Returns {@code false} if the request was rejected (401/403) — the caller does not invoke the servlet.</p>
  */
 public final class SecurityConstraintEnforcer {
 
@@ -98,7 +98,7 @@ public final class SecurityConstraintEnforcer {
         return new ServletSecurityElement(annotation);
     }
 
-    /** Adapter minimal : {@link HttpMethodConstraint} vers {@link HttpConstraint}. */
+    /** Minimum adapt: ​​{@link HttpMethodConstraint} to {@link HttpConstraint}. */
     private record MethodConstraintAsHttpConstraint(HttpMethodConstraint methodConstraint)
             implements HttpConstraint {
         @Override public Class<? extends java.lang.annotation.Annotation> annotationType() { return HttpConstraint.class; }

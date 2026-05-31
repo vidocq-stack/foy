@@ -10,7 +10,7 @@ import java.util.Map;
 import java.util.Set;
 
 /**
- * Descripteur d'une application web parsé depuis {@code WEB-INF/web.xml}.
+ * Descriptor of a web application parsed from {@code WEB-INF/web.xml}.
  */
 public final class WebAppDescriptor {
 
@@ -39,7 +39,7 @@ public final class WebAppDescriptor {
     private final List<ErrorPageDef> errorPages;
     private final int sessionTimeoutMinutes;
     private final Map<String, String> localeEncodingMappings;
-    /** Version déclarée dans l'attribut {@code web-app/version} (par défaut "6.0"). */
+    /** Version declared in the {@code web-app/version} attribute (default "6.0"). */
     private String version = "6.0";
     public String version() { return version; }
     public WebAppDescriptor withVersion(String v) {
@@ -109,7 +109,7 @@ public final class WebAppDescriptor {
                 && listenerClasses.isEmpty() && errorPages.isEmpty() && sessionTimeoutMinutes == -1;
     }
 
-    /** Patterns associés à un servlet donné. */
+    /** Patterns associated with a given servlet. */
     public List<String> patternsFor(String servletName) {
         return servletMappings.stream()
                 .filter(m -> m.servletName().equals(servletName))

@@ -5,7 +5,7 @@ import io.vidocq.foy.spi.security.SecurityProvider;
 
 import java.util.Optional;
 
-/** {@link SecurityProvider} par défaut : refuse toute authentification. */
+/** {@link SecurityProvider} by default: refuses all authentication. */
 public final class AnonymousSecurityProvider implements SecurityProvider {
 
     @Override

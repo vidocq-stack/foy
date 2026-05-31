@@ -30,15 +30,15 @@ import java.util.Map;
 import java.util.Optional;
 
 /**
- * {@link Handler} Chappe qui convertit une requête Chappe en cycle servlet :
+ * {@link Handler} Chappe which converts a Chappe request into a servlet cycle:
  * <ol>
- *   <li>Résout le servlet via {@link ServletDispatcher}</li>
- *   <li>Construit la chaîne de filtres applicables via {@link FilterRegistry}</li>
- *   <li>Construit {@link HttpServletRequestImpl} + {@link HttpServletResponseImpl}</li>
- *   <li>Délègue au {@link #invoke(DispatchTarget, HttpServletRequest, HttpServletResponse, DispatcherType) dispatch interne}
- *       réutilisé par {@link RequestDispatcherImpl} pour forward/include</li>
- *   <li>Émet {@code Set-Cookie JSESSIONID} si une session a été créée</li>
- *   <li>Matérialise la réponse Chappe immuable</li>
+ *   <li>Resolves servlet via {@link ServletDispatcher}</li>
+ *   <li>Constructs the applicable filter chain via {@link FilterRegistry}</li>
+ *   <li>Constructed {@link HttpServletRequestImpl} + {@link HttpServletResponseImpl}</li>
+ *   <li>Delegate to {@link #invoke(DispatchTarget, HttpServletRequest, HttpServletResponse, DispatcherType) dispatch interne}
+ *       reused by {@link RequestDispatcherImpl} for forward/include</li>
+ *   <li>Emits {@code Set-Cookie JSESSIONID} if a session has been created</li>
+ *   <li>Materializes the response Immutable Chappe</li>
  * </ol>
  */
 public final class ChappeServletBridge implements Handler, RequestDispatcherImpl.Invoker {
@@ -62,7 +62,7 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
         servletContext.setDispatchInfrastructure(new DispatchResolver(dispatcher), this);
     }
 
-    /** Construction sans sessions. */
+    /** Construction without sessions. */
     public ChappeServletBridge(ServletDispatcher dispatcher,
                                FilterRegistry filterRegistry,
                                io.vidocq.foy.internal.container.VidocqServletContext servletContext,
@@ -70,7 +70,7 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
         this(dispatcher, filterRegistry, servletContext, null, contextPath);
     }
 
-    /** Construction minimale (compat tests). */
+    /** Minimal construction (compat tests). */
     public ChappeServletBridge(ServletDispatcher dispatcher,
                                io.vidocq.foy.internal.container.VidocqServletContext servletContext,
                                String contextPath) {
@@ -184,9 +184,9 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
     }
 
     /**
-     * Si le servlet a démarré un async, bloque jusqu'à complete/dispatch/timeout. En cas de
-     * dispatch, re-résout et ré-exécute la chaîne sous {@link DispatcherType#ASYNC}.
-     * Renvoie une {@link Throwable} si un timeout s'est produit et n'a pas été géré par listener.
+     * If the servlet started async, blocks until complete/dispatch/timeout. In case of
+     * dispatch, re-resolve and re-execute the chain under {@link DispatcherType#ASYNC}.
+     * Returns a {@link Throwable} if a timeout occurred and was not handled by listener.
      */
     private Throwable awaitAsyncIfStarted(HttpServletRequestImpl req, HttpServletResponseImpl res) {
         AsyncContextImpl ac = req.asyncContextInternal();
@@ -316,9 +316,9 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
     }
 
     /**
-     * Dispatch interne — calcule la filter chain pour le {@link DispatcherType} donné
-     * puis invoque le servlet cible. Réutilisé par {@link RequestDispatcherImpl} pour
-     * forward/include et par {@link #handle(Request)} pour REQUEST.
+     * Internal dispatch — calculates the filter chain for the given {@link DispatcherType}
+     * then invokes the target servlet. Reused by {@link RequestDispatcherImpl} for
+     * forward/include and by {@link #handle(Request)} for REQUEST.
      */
     @Override
     public void invoke(DispatchTarget target, HttpServletRequest req, HttpServletResponse res,

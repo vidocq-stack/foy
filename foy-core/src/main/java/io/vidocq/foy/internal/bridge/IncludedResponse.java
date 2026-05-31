@@ -7,11 +7,11 @@ import jakarta.servlet.http.HttpServletResponseWrapper;
 import java.util.Locale;
 
 /**
- * {@link HttpServletResponseWrapper} utilisé pendant un include (spec Servlet 6.1 §9.3).
+ * {@link HttpServletResponseWrapper} used during an include (Servlet spec 6.1 §9.3).
  * <p>
- * Les setters d'état (status, headers, cookies, content-type, buffer, redirect/error) sont
- * no-op : seule la réponse primaire contrôle l'en-tête HTTP. Seuls {@code getWriter}/
- * {@code getOutputStream} restent connectés pour que le contenu inclus s'agrège au body.
+ * The status setters (status, headers, cookies, content-type, buffer, redirect/error) are
+ * no-op: only the primary response controls the HTTP header. Only {@code getWriter}/
+ * {@code getOutputStream} remain connected so included content is appended to the body.
  * </p>
  */
 public final class IncludedResponse extends HttpServletResponseWrapper {

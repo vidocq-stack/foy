@@ -9,9 +9,9 @@ import java.util.Objects;
 import java.util.Optional;
 
 /**
- * Authentification HTTP Basic (RFC 7617).
- * <p>Parse le header {@code Authorization: Basic base64(user:pass)} et délègue
- * l'authentification au {@link SecurityProvider}.</p>
+ * HTTP Basic Authentication (RFC 7617).
+ * <p>Parse the {@code Authorization: Basic base64(user:pass)} header and delegate
+ * authentication at {@link SecurityProvider}.</p>
  */
 public final class BasicAuthenticator {
 
@@ -29,7 +29,7 @@ public final class BasicAuthenticator {
 
     public String realm() { return realm; }
 
-    /** Tente une authentification à partir d'un header {@code Authorization}. */
+    /** Attempts authentication from a {@code Authorization} header. */
     public Optional<AuthenticatedUser> tryAuthenticate(String authorizationHeader) {
         if (authorizationHeader == null) return Optional.empty();
         String prefix = "Basic ";

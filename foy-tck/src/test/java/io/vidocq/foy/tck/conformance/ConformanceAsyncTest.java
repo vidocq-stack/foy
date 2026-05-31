@@ -9,7 +9,7 @@ import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-/** Couverture conformance Servlet 6.1 §2.3.3.3 (async processing). */
+/** Servlet 6.1 conformance coverage §2.3.3.3 (async processing). */
 class ConformanceAsyncTest {
 
     @Test

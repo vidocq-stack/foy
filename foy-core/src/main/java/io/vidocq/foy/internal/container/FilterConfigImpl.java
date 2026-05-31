@@ -10,7 +10,7 @@ import java.util.Map;
 import java.util.Objects;
 
 /**
- * {@link FilterConfig} minimal passé à {@link jakarta.servlet.Filter#init} au démarrage.
+ * {@link FilterConfig} minimum changed to {@link jakarta.servlet.Filter#init} at startup.
  */
 public final class FilterConfigImpl implements FilterConfig {
 

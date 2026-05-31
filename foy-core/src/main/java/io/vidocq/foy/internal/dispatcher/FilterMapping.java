@@ -8,8 +8,8 @@ import java.util.Objects;
 import java.util.Set;
 
 /**
- * Association d'un {@link Filter} à un url-pattern et un sous-ensemble
- * de {@link DispatcherType} (spec Servlet 6.1 section 6.2).
+ * Association of a {@link Filter} with a url-pattern and a subset
+ * of {@link DispatcherType} (Servlet 6.1 spec section 6.2).
  */
 public record FilterMapping(UrlPatternMatcher matcher,
                             Filter filter,
@@ -28,7 +28,7 @@ public record FilterMapping(UrlPatternMatcher matcher,
         }
     }
 
-    /** Convenience : filter mappé sur REQUEST uniquement. */
+    /** Convenience: filter mapped to REQUEST only. */
     public static FilterMapping onRequest(UrlPatternMatcher matcher, Filter filter, String name) {
         return new FilterMapping(matcher, filter, name, EnumSet.of(DispatcherType.REQUEST));
     }

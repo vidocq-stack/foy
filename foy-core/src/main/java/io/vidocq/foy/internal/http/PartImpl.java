@@ -14,10 +14,10 @@ import java.util.Map;
 import java.util.TreeMap;
 
 /**
- * {@link Part} in-memory : chaque partie conserve son contenu en {@code byte[]}.
+ * {@link Part} in-memory: each part keeps its content in {@code byte[]}.
  *
- * <p>Ce jalon ne spill pas sur disque — le seuil {@code fileSizeThreshold} de
- * {@link jakarta.servlet.annotation.MultipartConfig @MultipartConfig} est ignoré pour l'instant.</p>
+ * <p>This milestone does not spill to disk — the threshold {@code fileSizeThreshold} of
+ * {@link jakarta.servlet.annotation.MultipartConfig @MultipartConfig} is ignored for now.</p>
  */
 public final class PartImpl implements Part {
 
@@ -62,7 +62,7 @@ public final class PartImpl implements Part {
         return new java.util.LinkedHashSet<>(headers.keySet());
     }
 
-    /** Contenu brut (exposé pour que {@code HttpServletRequestImpl} puisse aussi l'utiliser comme paramètre). */
+    /** Raw content (exposed so that {@code HttpServletRequestImpl} can also use it as a parameter). */
     public byte[] bytes() { return content; }
 
     public static Map<String, java.util.List<String>> headersOf(LinkedHashMap<String, String> singles) {

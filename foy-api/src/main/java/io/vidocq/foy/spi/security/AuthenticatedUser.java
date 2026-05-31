@@ -5,7 +5,7 @@ import java.util.Objects;
 import java.util.Set;
 
 /**
- * Utilisateur authentifié résolu par un {@link SecurityProvider}.
+ * Authenticated user resolved to a {@link SecurityProvider}.
  */
 public record AuthenticatedUser(String name, Set<String> roles) implements Principal {
 

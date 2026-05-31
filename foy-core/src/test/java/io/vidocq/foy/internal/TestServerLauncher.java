@@ -6,9 +6,9 @@ import io.vidocq.chappe.api.Server;
 import java.net.ServerSocket;
 
 /**
- * Helper test-only qui démarre un {@link Server} Chappe sur un port libre,
- * avec retry pour absorber les courses port-allocation typiques des tests
- * (un port obtenu via {@link ServerSocket} peut être pris avant le bind).
+ * Test-only helper which starts a {@link Server} Chappe on a free port,
+ * with retry to absorb port-allocation races typical of tests
+ * (a port obtained via {@link ServerSocket} can be taken before the bind).
  */
 final class TestServerLauncher {
 

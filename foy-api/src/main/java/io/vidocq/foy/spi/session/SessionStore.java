@@ -5,23 +5,24 @@ import jakarta.servlet.http.HttpSession;
 import java.util.Optional;
 
 /**
- * SPI de stockage des {@link HttpSession}.
+ * {@link HttpSession} storage SPI.
  * <p>
- * Une implémentation tierce (Redis, JDBC, cluster) peut remplacer le store
- * en mémoire par défaut en fournissant ce service via {@code ServiceLoader}.
+ * A third-party implementation (Redis, JDBC, clustered storage, etc.) can
+ * replace the default in-memory store by exposing this service via
+ * {@code ServiceLoader}.
  * </p>
  */
 public interface SessionStore {
 
-    /** Récupère une session par son ID, si elle existe. */
+    /** Retrieves a session by its ID, if it exists. */
     Optional<HttpSession> get(String id);
 
-    /** Enregistre une nouvelle session. */
+    /** Saves a new session. */
     void put(HttpSession session);
 
-    /** Supprime une session (typiquement sur invalidate ou expiration). */
+    /** Deletes a session (typically on invalidate or expiration). */
     void remove(String id);
 
-    /** Nombre de sessions actuellement stockées (diagnostic). */
+    /** Number of sessions currently stored (diagnostic). */
     int size();
 }

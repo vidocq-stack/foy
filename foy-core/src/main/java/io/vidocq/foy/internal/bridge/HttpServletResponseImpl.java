@@ -19,8 +19,8 @@ import java.util.Set;
 import java.util.TreeMap;
 
 /**
- * {@link HttpServletResponse} qui accumule l'état (status, headers, body) et se matérialise
- * en {@link io.vidocq.chappe.api.Response Response} Chappe immuable à la fin du dispatch.
+ * {@link HttpServletResponse} which accumulates the state (status, headers, body) and materializes
+ * in {@link io.vidocq.chappe.api.Response Response} Immutable trap at the end of dispatch.
  */
 public final class HttpServletResponseImpl implements HttpServletResponse {
 
@@ -85,7 +85,7 @@ public final class HttpServletResponseImpl implements HttpServletResponse {
         committed = true;
     }
 
-    /** Servlet 6.1 §5.8.2 — sendRedirect doit produire une URL absolue. */
+    /** Servlet 6.1 §5.8.2 — sendRedirect must produce an absolute URL. */
     private String toAbsoluteRedirectUrl(String location) {
         if (location == null) return null;
         // Déjà absolu.
@@ -134,7 +134,7 @@ public final class HttpServletResponseImpl implements HttpServletResponse {
         addHeader(name, formatHttpDate(date));
     }
 
-    /** RFC 7231 §7.1.1.1 — IMF-fixdate : "Sun, 06 Nov 1994 08:49:37 GMT". */
+    /** RFC 7231 §7.1.1.1 — IMF-fixdate: "Sun, 06 Nov 1994 08:49:37 GMT". */
     private static String formatHttpDate(long dateMillis) {
         return java.time.format.DateTimeFormatter.RFC_1123_DATE_TIME
                 .withZone(java.time.ZoneOffset.UTC)
@@ -168,10 +168,10 @@ public final class HttpServletResponseImpl implements HttpServletResponse {
 
     // ---- Content-Type / charset ----
 
-    /** Type MIME "brut" (sans le charset) dérivé de setContentType. */
+    /** "Raw" MIME type (without the charset) derived from setContentType. */
     private String mediaType;
     private boolean charsetExplicit;
-    /** Le charset est verrouillé après getWriter() (Servlet 6.1 §5.4). */
+    /** The charset is locked after getWriter() (Servlet 6.1 §5.4). */
     private boolean charsetLocked;
 
     @Override public String getContentType() {
@@ -216,7 +216,7 @@ public final class HttpServletResponseImpl implements HttpServletResponse {
         refreshContentTypeHeader();
     }
 
-    /** Recalcule l'en-tête {@code Content-Type} en combinant mediaType + charset. */
+    /** Recalculates the {@code Content-Type} header by combining mediaType + charset. */
     private void refreshContentTypeHeader() {
         if (mediaType == null) return;
         // Pour les types text/*, on inclut toujours le charset (explicite ou défaut

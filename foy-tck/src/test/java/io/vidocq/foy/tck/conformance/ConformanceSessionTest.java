@@ -12,7 +12,7 @@ import java.net.http.HttpResponse;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-/** Couverture conformance Servlet 6.1 §7 (HttpSession). */
+/** Servlet 6.1 §7 conformance coverage (HttpSession). */
 class ConformanceSessionTest {
 
     @Test

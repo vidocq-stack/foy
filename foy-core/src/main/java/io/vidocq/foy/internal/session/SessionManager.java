@@ -10,12 +10,12 @@ import java.security.SecureRandom;
 import java.util.HexFormat;
 
 /**
- * Coordonne la création, la résolution et l'expiration des {@link HttpSession}.
+ * Coordinates the creation, resolution and expiration of {@link HttpSession}.
  *
- * <p>Génération d'ID : 128 bits de {@link SecureRandom}, encodés en hex (32 chars).</p>
- * <p>Expiration : vérification paresseuse à chaque accès — si
+ * <p>ID generation: 128 bits of {@link SecureRandom}, encoded in hex (32 chars).</p>
+ * <p>Expiration: lazy check on each access — if
  * {@code now - lastAccessedTime > maxInactiveInterval * 1000}, la session est
- * retirée du store et considérée inexistante.</p>
+ * removed from the store and considered non-existent.</p>
  */
 public final class SessionManager {
 
@@ -40,7 +40,7 @@ public final class SessionManager {
 
     public ListenerRegistry listenerRegistry() { return listenerRegistry; }
 
-    /** Résolution d'une session existante par son ID, en vérifiant l'expiration. */
+    /** Resolving an existing session by its ID, checking for expiration. */
     public HttpSessionImpl find(String id) {
         if (id == null) return null;
         HttpSession s = store.get(id).orElse(null);
@@ -55,7 +55,7 @@ public final class SessionManager {
         return impl;
     }
 
-    /** Crée une nouvelle session et la stocke. */
+    /** Creates a new session and stores it. */
     public HttpSessionImpl createNew() {
         String id = generateId();
         HttpSessionImpl s = new HttpSessionImpl(id, servletContext, this, defaultMaxInactiveSeconds);
@@ -64,7 +64,7 @@ public final class SessionManager {
         return s;
     }
 
-    /** Hook de callback depuis {@link HttpSessionImpl#invalidate}. */
+    /** Callback hook from {@link HttpSessionImpl#invalidate}. */
     void onInvalidate(HttpSessionImpl session) {
         listenerRegistry.fireSessionDestroyed(session);
         store.remove(session.getId());

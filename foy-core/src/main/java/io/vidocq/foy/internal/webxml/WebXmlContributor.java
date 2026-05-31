@@ -17,11 +17,11 @@ import java.util.Optional;
 import java.util.Set;
 
 /**
- * Charge {@code WEB-INF/web.xml} du classpath (s'il existe), instancie les
- * servlets/filters/listeners par reflection et contribue au dispatcher + registry.
+ * Loads {@code WEB-INF/web.xml} from the classpath (if it exists), instantiates the
+ * servlets/filters/listeners by reflection and contributes to the dispatcher + registry.
  *
- * <p>L'appel est effectué après la découverte CDI : une définition web.xml s'ajoute
- * sans écraser un nom déjà découvert par annotation.</p>
+ * <p>The call is made after CDI discovery: a web.xml definition is added
+ * without overwriting a name already discovered by annotation.</p>
  */
 public final class WebXmlContributor {
 

@@ -4,13 +4,13 @@ import io.vidocq.vauban.core.container.VaubanContainer;
 import jakarta.enterprise.inject.spi.BeanManager;
 
 /**
- * Pont utilitaire entre Vauban CDI et Foy.
+ * Utility bridge between Vauban CDI and Foy.
  *
- * <p>Récupère le {@link BeanManager} du {@link VaubanContainer} courant pour
- * le passer à {@code FoyChappeBoot} (ou tout autre transport HTTP basé sur
+ * <p>Gets the {@link BeanManager} of the current {@link VaubanContainer} for
+ * pass it to {@code FoyChappeBoot} (or any other HTTP transport based on
  * foy-core).</p>
  *
- * <h3>Exemple d'usage</h3>
+ * <h3>Example of usage</h3>
  * <pre>{@code
  * try (var container = VaubanContainer.builder().scanLocal().build()) {
  *     BeanManager bm = FoyVaubanBootstrap.beanManager();
@@ -19,8 +19,8 @@ import jakarta.enterprise.inject.spi.BeanManager;
  * }
  * }</pre>
  *
- * <p>Une intégration plus profonde (via la SPI {@code BeanProvider} de
- * foy-api) sera introduite en M2 pour permettre la découverte par
+ * <p>Deeper integration (via SPI {@code BeanProvider} of
+ * foy-api) will be introduced in M2 to allow discovery by
  * {@code ServiceLoader} et l'auto-configuration.</p>
  */
 public final class FoyVaubanBootstrap {
@@ -28,15 +28,15 @@ public final class FoyVaubanBootstrap {
     private FoyVaubanBootstrap() {}
 
     /**
-     * Retourne le {@link BeanManager} du {@link VaubanContainer} courant.
+     * Returns the {@link BeanManager} of the current {@link VaubanContainer}.
      *
-     * @throws IllegalStateException si aucun container Vauban n'est démarré
+     * @throws IllegalStateException if no Vauban container is started
      */
     public static BeanManager beanManager() {
         return beanManager(VaubanContainer.current());
     }
 
-    /** Retourne le {@link BeanManager} du container Vauban donné. */
+    /** Returns the {@link BeanManager} of the given Vauban container. */
     public static BeanManager beanManager(VaubanContainer container) {
         if (container == null) {
             throw new IllegalStateException(

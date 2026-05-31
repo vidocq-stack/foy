@@ -9,14 +9,14 @@ import java.util.Objects;
 import java.util.Optional;
 
 /**
- * Associe des {@link UrlPatternMatcher} à des {@link Servlet} et résout le servlet
- * le plus spécifique pour un path donné.
+ * Associates {@link UrlPatternMatcher} with {@link Servlet} and resolves the servlet
+ * the most specific for a given path.
  */
 public final class ServletDispatcher {
 
-    /** Association pattern ↔ servlet. {@code asyncSupported} reflète
-     *  {@code <async-supported>} du web.xml (ou {@code @WebServlet(asyncSupported=...)}) ;
-     *  défaut : {@code true} pour les constructeurs sans cet argument. */
+    /** Pattern-to-servlet association. {@code asyncSupported} reflects
+     *  {@code <async-supported>} from web.xml (or {@code @WebServlet(asyncSupported=...)});
+     *  default is {@code true} for constructors without this argument. */
     public record Mapping(UrlPatternMatcher matcher, Servlet servlet, String servletName,
                           boolean asyncSupported) {
         public Mapping {
@@ -37,7 +37,7 @@ public final class ServletDispatcher {
         this.mappings = List.copyOf(sorted);
     }
 
-    /** Trouve le servlet qui doit répondre pour le path donné. */
+    /** Finds the servlet that should respond for the given path. */
     public Optional<Mapping> find(String path) {
         for (Mapping m : mappings) {
             if (m.matcher().matches(path)) {

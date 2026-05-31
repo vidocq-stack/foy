@@ -24,20 +24,20 @@ import java.util.EventListener;
 import java.util.List;
 
 /**
- * {@link DeployableContainer} Arquillian qui déploie un {@link WebArchive} sur le
- * {@link ServletTestHarness} interne.
+ * {@link DeployableContainer} Arquillian who deploys a {@link WebArchive} on the
+ * {@link ServletTestHarness} internal.
  *
- * <p>Stratégie MVP : extraire les classes du {@code WEB-INF/classes/} de l'archive,
- * les instancier par reflection (le classloader courant les connaît puisque le jar TCK
- * est sur le classpath de test), les classer par annotation {@code @WebServlet/@WebFilter/@WebListener}
- * et les enregistrer dans le harness. Retourne un {@link ProtocolMetaData} {@code Servlet 3.0}
- * avec l'URL du harness pour qu'Arquillian injecte {@code @ArquillianResource URL url}.</p>
+ * <p>MVP strategy: extract the classes of {@code WEB-INF/classes/} from the archive,
+ * instantiate them by reflection (the current classloader knows them since the TCK jar
+ * is on the test classpath), sort them by annotation {@code @WebServlet/@WebFilter/@WebListener}
+ * and save them in the harness. Returns to {@link ProtocolMetaData} {@code Servlet 3.0}
+ * with the harness URL for Arquillian to inject {@code @ArquillianResource URL url}.</p>
  */
 public class VidocqDeployableContainer implements DeployableContainer<VidocqContainerConfiguration> {
 
     private VidocqContainerConfiguration config;
     private ServletTestHarness harness;
-    /** Support multi-deployment (Arquillian peut déployer plusieurs WAR pour un test). */
+    /** Multi-deployment support (Arquillian can deploy several WARs for a test). */
     private final java.util.LinkedHashMap<String, ServletTestHarness> harnessesByArchive = new java.util.LinkedHashMap<>();
 
     @Override
@@ -252,9 +252,8 @@ public class VidocqDeployableContainer implements DeployableContainer<VidocqCont
         }
     }
 
-    /** Parcourt le WAR à la recherche de fichiers {@code META-INF/services/
-     *  jakarta.servlet.ServletContainerInitializer} et enregistre les SCI
-     *  référencés auprès du builder. */
+    /** Scans the WAR for {@code META-INF/services/jakarta.servlet.ServletContainerInitializer}
+     *  files and registers referenced SCIs on the builder. */
     private static void discoverAndRegisterSCIs(WebArchive war, ClassLoader cl,
                                                 ServletTestHarness.Builder builder) {
         for (Node node : flatten(war).values()) {
@@ -328,11 +327,12 @@ public class VidocqDeployableContainer implements DeployableContainer<VidocqCont
     @Override public void deploy(Descriptor descriptor) {}
     @Override public void undeploy(Descriptor descriptor) {}
 
-    /** Expose les fichiers d'un {@link WebArchive} via l'API
+    /** Exposes files from a {@link WebArchive} through
      *  {@link io.vidocq.foy.internal.container.VidocqServletContext.ResourceProvider}.
-     *  Matérialise les assets dans un tempdir miroir afin que {@code getResource()} puisse
-     *  retourner une {@code file:} URL contenant le path d'origine (requis par TCK
-     *  ServletContextTests.getResource qui vérifie que l'URL contient {@code /WEB-INF/web.xml}). */
+     *  Materializes assets in a mirrored temporary directory so {@code getResource()} can
+     *  return a {@code file:} URL containing the original path (required by TCK
+     *  ServletContextTests.getResource, which checks that the URL contains
+     *  {@code /WEB-INF/web.xml}). */
     private static final class WarResourceProvider
             implements io.vidocq.foy.internal.container.VidocqServletContext.ResourceProvider {
         private final WebArchive war;

@@ -7,12 +7,12 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Conserve l'ensemble des {@link FilterMapping} et calcule la chaîne de filtres
- * applicable à un path donné.
+ * Keeps all {@link FilterMapping} and calculates the filter chain
+ * applicable to a given path.
  *
- * <p>L'ordre de découverte est préservé, ce qui correspond à l'ordre d'exécution
- * des filtres (spec Servlet 6.1 §6.2.4 — pour annotations, l'ordre n'est pas
- * spécifié ; on prend l'ordre de découverte CDI, stable).</p>
+ * <p>The order of discovery is preserved, which corresponds to the order of execution
+ * filters (Servlet 6.1 spec §6.2.4 — for annotations, the order is not
+ * specified; we take the discovery order CDI, stable).</p>
  */
 public final class FilterRegistry {
 
@@ -26,7 +26,7 @@ public final class FilterRegistry {
         return mappings;
     }
 
-    /** Filtres applicables pour une requête (path + dispatcherType). */
+    /** Filters applicable for a request (path + dispatcherType). */
     public List<Filter> chainFor(String path, DispatcherType type) {
         List<Filter> out = new ArrayList<>();
         for (FilterMapping m : mappings) {

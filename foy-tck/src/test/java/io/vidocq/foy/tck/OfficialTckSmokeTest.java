@@ -3,11 +3,11 @@ package io.vidocq.foy.tck;
 import org.junit.jupiter.api.Disabled;
 
 /**
- * Point d'accrochage unique pour valider que l'adapter Arquillian boote correctement
- * sur un test TCK officiel. Désactivé par défaut car dépend du profil {@code tck-official}.
+ * Unique hooking point to validate that the Arquillian adapter boots correctly
+ * on an official TCK test. Disabled by default because it depends on the {@code tck-official} profile.
  *
- * <p>Activer via : {@code mvn -Ptck-official -Dtest.official.tck=true -Dtest=OfficialTckSmokeTest verify}.
- * Sans le profil, les classes TCK ne sont pas sur le classpath et la compilation saute.</p>
+ * <p>Activate via: {@code mvn -Ptck-official -Dtest.official.tck=true -Dtest=OfficialTckSmokeTest verify}.
+ * Without the profile, the TCK classes are not on the classpath and compilation skips.</p>
  */
 @Disabled("Activation manuelle — voir README M3 TCK officiel")
 public class OfficialTckSmokeTest {

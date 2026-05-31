@@ -24,7 +24,7 @@ import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-/** E2E dispatcher : forward, include, error pages via Chappe réel. */
+/** E2E dispatcher: forward, include, error pages via real Chappe. */
 class ServletDispatcherEndToEndTest {
 
     private Server server;

@@ -4,8 +4,8 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * Registre statique des {@link VidocqServletContext} déployés — support de
- * {@link jakarta.servlet.ServletContext#getContext(String)} (§4.8) et des
+ * Static registry of deployed {@link VidocqServletContext} — support for
+ * {@link jakarta.servlet.ServletContext#getContext(String)} (§4.8) and
  * cross-context dispatches via {@link jakarta.servlet.AsyncContext#dispatch(
  * jakarta.servlet.ServletContext, String)}.
  */
@@ -24,9 +24,9 @@ public final class CrossContextRegistry {
     }
 
     /**
-     * Résout un {@code uripath} (commençant par {@code /}) en ServletContext.
-     * Correspondance stricte sur le contextPath (pas de préfixe) — le TCK Servlet
-     * 6.1 passe toujours le contextPath exact.
+     * Resolves a {@code uripath} (starting with {@code /}) to a ServletContext.
+     * Strict match on contextPath (no prefix) — the TCK Servlet
+     * 6.1 always passes the exact contextPath.
      */
     public static VidocqServletContext lookup(String uripath) {
         if (uripath == null) return null;

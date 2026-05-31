@@ -6,18 +6,18 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Encodage/décodage des cookies HTTP (RFC 6265).
+ * Encoding/decoding of HTTP cookies (RFC 6265).
  * <p>
- * Décodage : parse un header {@code Cookie} entrant en liste de {@link Cookie}.
- * Encodage : sérialise un {@link Cookie} en ligne {@code Set-Cookie} complète
- * avec ses attributs (Path, Domain, Max-Age, Secure, HttpOnly, SameSite).
+ * Decoding: parses a {@code Cookie} header entering a list of {@link Cookie}.
+ * Encoding: serializes a {@link Cookie} into a full {@code Set-Cookie} line
+ * with its attributes (Path, Domain, Max-Age, Secure, HttpOnly, SameSite).
  * </p>
  */
 public final class CookieCodec {
 
     private CookieCodec() {}
 
-    /** Parse le header {@code Cookie} : {@code name1=v1; name2=v2}. */
+    /** Parse the header {@code Cookie}: {@code name1=v1; name2=v2}. */
     public static List<Cookie> parseCookieHeader(String value) {
         List<Cookie> out = new ArrayList<>();
         if (value == null || value.isEmpty()) return out;
@@ -54,7 +54,7 @@ public final class CookieCodec {
                 || n.startsWith("$");
     }
 
-    /** Sérialise un {@link Cookie} complet en ligne {@code Set-Cookie}. */
+    /** Serializes a complete {@link Cookie} into line {@code Set-Cookie}. */
     public static String serializeSetCookie(Cookie c) {
         StringBuilder sb = new StringBuilder();
         sb.append(c.getName()).append('=').append(c.getValue() == null ? "" : c.getValue());

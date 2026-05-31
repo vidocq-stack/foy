@@ -13,11 +13,11 @@ import java.util.Map;
 import java.util.Set;
 
 /**
- * Registration dynamique d'un servlet créée via {@link jakarta.servlet.ServletContext#addServlet}.
+ * Dynamic registration of a servlet created via {@link jakarta.servlet.ServletContext#addServlet}.
  *
- * <p>Stocke le name, la classe/instance/className, les url-pattern mappings,
- * les init-params et options (load-on-startup, async-supported, run-as, etc.).
- * Sera matérialisée dans le dispatcher par le harness à la fin de la phase d'initialisation.</p>
+ * <p>Stores the name, class/instance/className, url-pattern mappings,
+ * init-params and options (load-on-startup, async-supported, run-as, etc.).
+ * Will be materialized in the dispatcher by the harness at the end of the initialization phase.</p>
  */
 public final class DynamicServletRegistration implements ServletRegistration.Dynamic {
 
@@ -44,8 +44,8 @@ public final class DynamicServletRegistration implements ServletRegistration.Dyn
         this.name = name; this.className = className;
     }
 
-    /** Relie cette registration à son context — permet addMapping d'interroger
-     *  les autres registrations / reserved url-patterns pour détecter les conflits. */
+    /** Links this registration to its context so addMapping can inspect
+     *  other registrations / reserved url-patterns to detect conflicts. */
     void attach(VidocqServletContext ctx) { this.owner = ctx; }
 
     @Override public String getName() { return name; }
@@ -88,8 +88,8 @@ public final class DynamicServletRegistration implements ServletRegistration.Dyn
         return conflicts;
     }
     @Override public Collection<String> getMappings() { return Collections.unmodifiableSet(mappings); }
-    /** Ajoute un url-pattern sans passer par le check de conflits — réservé au harness
-     *  pour peupler les ServletRegistration issues du web.xml / @WebServlet. */
+    /** Adds a url-pattern without conflict checks, reserved for the harness
+     *  to populate ServletRegistration entries from web.xml / @WebServlet. */
     void addMappingDirect(String pattern) { if (pattern != null) mappings.add(pattern); }
     @Override public String getRunAsRole() { return runAsRole; }
     @Override public void setRunAsRole(String roleName) { this.runAsRole = roleName; }

@@ -22,14 +22,14 @@ import java.util.List;
 import java.util.Set;
 
 /**
- * Scanne le {@link BeanManager} Vauban pour découvrir :
+ * Scan the {@link BeanManager} Vauban to discover:
  * <ul>
- *   <li>les beans CDI annotés {@code @WebServlet} → {@link ServletDispatcher.Mapping}</li>
- *   <li>les beans CDI annotés {@code @WebFilter} → {@link FilterMapping}</li>
+ *   <li>CDI beans annotated {@code @WebServlet} → {@link ServletDispatcher.Mapping}</li>
+ *   <li>CDI beans annotated {@code @WebFilter} → {@link FilterMapping}</li>
  * </ul>
  *
- * <p>Chaque url-pattern produit un mapping. Les servlets et filtres sont
- * traités en singleton au sens Servlet 6.1 §2.2.</p>
+ * <p>Each url-pattern produces a mapping. Servlets and filters are
+ * treated as a singleton in the sense of Servlet 6.1 §2.2.</p>
  */
 public final class WebAppDiscovery {
 
@@ -83,7 +83,7 @@ public final class WebAppDiscovery {
         return mappings;
     }
 
-    /** Retourne {@code @WebServlet.urlPatterns} si non vide, sinon {@code .value}. */
+    /** Returns {@code @WebServlet.urlPatterns} if not empty, otherwise {@code .value}. */
     private static String[] effectivePatterns(String[] urlPatterns, String[] value) {
         return urlPatterns.length > 0 ? urlPatterns : value;
     }

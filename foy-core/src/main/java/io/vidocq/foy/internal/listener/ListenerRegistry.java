@@ -22,10 +22,10 @@ import java.util.EventListener;
 import java.util.List;
 
 /**
- * Registre typé des listeners Servlet découverts au démarrage.
+ * Typed register of Servlet listeners discovered at startup.
  * <p>
- * Un listener peut implémenter plusieurs interfaces ; il est enregistré dans
- * chaque liste correspondante.
+ * A listener can implement multiple interfaces; it is recorded in
+ * each corresponding list.
  * </p>
  */
 public final class ListenerRegistry {
@@ -37,8 +37,8 @@ public final class ListenerRegistry {
     private final List<HttpSessionListener> sessionListeners = new ArrayList<>();
     private final List<HttpSessionAttributeListener> sessionAttrListeners = new ArrayList<>();
 
-    /** Identifie les listeners ajoutés programmatiquement (ctx.addListener...) —
-     *  Servlet 6.1 §4.4.3 : ils n'ont pas accès aux API de configuration dynamique. */
+    /** Tracks listeners added programmatically (ctx.addListener...) —
+     *  Servlet 6.1 §4.4.3: they do not have access to dynamic configuration APIs. */
     private final java.util.IdentityHashMap<EventListener, Boolean> programmatic =
             new java.util.IdentityHashMap<>();
 

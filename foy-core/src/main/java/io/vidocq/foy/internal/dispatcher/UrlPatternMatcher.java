@@ -3,17 +3,17 @@ package io.vidocq.foy.internal.dispatcher;
 import java.util.Objects;
 
 /**
- * Matching url-pattern selon Servlet 6.1 section 12.2.
+ * Matching url-pattern according to Servlet 6.1 section 12.2.
  * <ol>
- *   <li>Exact : {@code /path}</li>
- *   <li>Préfixe (le plus long gagne) : {@code /path/*}</li>
- *   <li>Extension : {@code *.ext}</li>
- *   <li>Défaut : {@code /}</li>
- *   <li>Empty string ({@code ""}) — correspond à la racine du contexte</li>
+ *   <li>Correct: {@code /path}</li>
+ *   <li>Prefix (longest wins): {@code /path/*}</li>
+ *   <li>Extension: {@code *.ext}</li>
+ *   <li>Default: {@code /}</li>
+ *   <li>Empty string ({@code ""}) — corresponds to the root of the context</li>
  * </ol>
  *
- * <p>L'ordre de précédence est strict : exact > préfixe (longueur décroissante)
- * > extension > défaut.</p>
+ * <p>The order of precedence is strict: exact > prefix (descending length)
+ * > extension > default.</p>
  */
 public final class UrlPatternMatcher {
 
@@ -56,7 +56,7 @@ public final class UrlPatternMatcher {
     }
 
     /**
-     * Retourne {@code true} si ce pattern matche le path donné (doit commencer par {@code /}).
+     * Returns {@code true} if this pattern matches the given path (must start with {@code /}).
      */
     public boolean matches(String path) {
         Objects.requireNonNull(path, "path");
@@ -78,8 +78,8 @@ public final class UrlPatternMatcher {
     }
 
     /**
-     * Précédence pour choisir un match parmi plusieurs. Plus petit = meilleur.
-     * Exact = 0, prefix long = 1 (+ longueur négative), extension = 2, default = 3, empty = 4.
+     * Precedence to choose one match from several. Smaller = better.
+     * Exact = 0, prefix long = 1 (+ negative length), extension = 2, default = 3, empty = 4.
      */
     public int precedence() {
         return switch (kind) {

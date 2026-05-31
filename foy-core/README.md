@@ -1,23 +1,23 @@
 # vidocq-servlet-chappe-extension
 
-Implémentation Jakarta Servlet 6.1 sur le moteur HTTP Chappe, intégrée à Vauban CDI.
+Jakarta Servlet 6.1 implementation on the Chappe HTTP engine, integrated with Vauban CDI.
 
-## Statut actuel (jalon M2a)
+## Current status (Milestone M2a)
 
-MVP fonctionnel end-to-end :
+Functional end-to-end MVP:
 
-- `HttpServlet#doGet`/`doPost` → réponse HTTP réelle via Chappe.
-- `HttpServletRequest` : `getMethod`, `getRequestURI`, `getHeader(s)`, `getParameter(s)`, `getInputStream`, `getReader`, `getContextPath`, `getServletPath`, `getPathInfo`, `getServerName/Port`, `getRemoteAddr`, `getScheme`, `isSecure`, attributes.
-- `HttpServletResponse` : status, headers, cookies (serialize Set-Cookie), `setContentType`, `getWriter`, `getOutputStream`, `sendRedirect`, `sendError`, body buffering.
-- `ServletContext` (minimal, non-dynamique).
-- Url-pattern matching selon Servlet 6.1 §12.2 (exact / prefix / extension / default / empty) avec précédence.
-- Découverte CDI des beans `@WebServlet` via `BeanManager` Vauban.
-- Montage sur `ChappeMountPoint` (par défaut listener `default`, context-path `/`).
+- `HttpServlet#doGet`/`doPost` → real HTTP response via Chappe.
+- `HttpServletRequest`: `getMethod`, `getRequestURI`, `getHeader(s)`, `getParameter(s)`, `getInputStream`, `getReader`, `getContextPath`, `getServletPath`, `getPathInfo`, `getServerName/Port`, `getRemoteAddr`, `getScheme`, `isSecure`, attributes.
+- `HttpServletResponse`: status, headers, cookies (serialize Set-Cookie), `setContentType`, `getWriter`, `getOutputStream`, `sendRedirect`, `sendError`, body buffering.
+- `ServletContext` (minimal, non-dynamic).
+- URL-pattern matching per Servlet 6.1 §12.2 (exact / prefix / extension / default / empty) with precedence.
+- CDI discovery of `@WebServlet` beans via the Vauban `BeanManager`.
+- Mounted on `ChappeMountPoint` (default listener `default`, context-path `/`).
 
-## Non implémenté (jalons suivants)
+## Not yet implemented (Upcoming milestones)
 
-- Filtres (`@WebFilter`, `FilterChain`).
-- Sessions (`HttpSession`, cookie JSESSIONID).
+- Filters (`@WebFilter`, `FilterChain`).
+- Sessions (`HttpSession`, JSESSIONID cookie).
 - Listeners (`ServletContextListener`, `HttpSessionListener`, ...).
 - Async (`startAsync`, `AsyncContext`).
 - Multipart (`getParts`, `@MultipartConfig`).
@@ -28,12 +28,12 @@ MVP fonctionnel end-to-end :
 
 ## Configuration
 
-| Clé | Défaut | Description |
+| Key | Default | Description |
 |---|---|---|
-| `vidocq.servlet.context-path` | `/` | préfixe de montage |
-| `vidocq.servlet.listener` | `default` | listener Chappe cible |
+| `vidocq.servlet.context-path` | `/` | mount path prefix |
+| `vidocq.servlet.listener` | `default` | target Chappe listener |
 
-## Usage minimal
+## Minimal usage
 
 ```java
 import jakarta.enterprise.context.ApplicationScoped;
@@ -57,7 +57,7 @@ public class HelloServlet extends HttpServlet {
 ```
 Request Chappe → ChappeServletBridge (Handler)
                   ↓
-         ServletDispatcher.find(path)  (précédence exact>prefix>ext>default)
+         ServletDispatcher.find(path)  (precedence exact>prefix>ext>default)
                   ↓
          HttpServletRequestImpl + HttpServletResponseImpl
                   ↓
@@ -65,5 +65,5 @@ Request Chappe → ChappeServletBridge (Handler)
                   ↓
          HttpServletResponseImpl (status + headers + buffer)
                   ↓
-         Response Chappe (immuable)
+         Response Chappe (immutable)
 ```

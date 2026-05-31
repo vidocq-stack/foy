@@ -1,3 +1,4 @@
+---
 <p align="center">
   <img src="foy-logo.png" alt="Foy" width="300">
 </p>
@@ -5,8 +6,8 @@
 <h1 align="center">Foy</h1>
 
 <p align="center">
-  <strong>Implémentation Jakarta Servlet 6.1 — moteur pur, transport HTTP via SPI, CDI optionnel</strong><br>
-  <a href="https://jakarta.ee/specifications/servlet/6.1/">Jakarta Servlet 6.1</a> | JPMS natif | Virtual Threads | JDK 25
+  <strong>Jakarta Servlet 6.1 implementation — pure engine, HTTP transport via SPI, optional CDI</strong><br>
+  <a href="https://jakarta.ee/specifications/servlet/6.1/">Jakarta Servlet 6.1</a> | Native JPMS | Virtual Threads | JDK 25
 </p>
 
 <p align="center">
@@ -18,54 +19,54 @@
 
 ---
 
-Implémentation **Jakarta Servlet 6.1** standalone — moteur Servlet pur, transport
-HTTP via SPI, CDI optionnel.
+Standalone **Jakarta Servlet 6.1** implementation — pure Servlet engine, HTTP transport
+via SPI, optional CDI.
 
-Extrait en avril 2026 du module
+Extracted in April 2026 from the
 [`vidocq-runtime-servlet-chappe-extension`](https://forge.vidocq.dev/vidocq/vidocq)
-pour devenir un projet indépendant utilisable hors écosystème Vidocq Runtime.
+module to become an independent project usable outside the Vidocq Runtime ecosystem.
 
 ## Modules
 
 | Module | Description |
 | --- | --- |
-| `foy-api` | Interfaces SPI publiques : `SessionStore`, `SecurityProvider`, `AuthenticatedUser`. Zéro dépendance hors `jakarta.servlet-api`. |
-| `foy-core` | Moteur Servlet 6.1 — dispatcher, filter chain, session, error pages, listeners, security, web.xml, multipart. |
-| `foy-cdi-vauban` | Pont vers le container CDI [Vauban](https://forge.vidocq.dev/vidocq/vauban) (`FoyVaubanBootstrap.beanManager()`). |
-| `foy-chappe` | Adapter HTTP [Chappe](https://forge.vidocq.dev/vidocq/chappe) (`FoyChappeBoot.builder().beanManager(bm).build()`). |
-| `foy-tck` | Harness Arquillian pour le TCK officiel Jakarta Servlet 6.1 (POM Model 4.0.0 standalone, hors reactor). |
+| `foy-api` | Public SPI interfaces: `SessionStore`, `SecurityProvider`, `AuthenticatedUser`. Zero dependencies beyond `jakarta.servlet-api`. |
+| `foy-core` | Servlet 6.1 engine — dispatcher, filter chain, session, error pages, listeners, security, web.xml, multipart. |
+| `foy-cdi-vauban` | Bridge to the [Vauban](https://forge.vidocq.dev/vidocq/vauban) CDI container (`FoyVaubanBootstrap.beanManager()`). |
+| `foy-chappe` | [Chappe](https://forge.vidocq.dev/vidocq/chappe) HTTP adapter (`FoyChappeBoot.builder().beanManager(bm).build()`). |
+| `foy-tck` | Arquillian harness for the official Jakarta Servlet 6.1 TCK (standalone POM Model 4.0.0, out-of-reactor). |
 
-## Statut
+## Status
 
-**M1 — extraction fonctionnelle** : le moteur tourne en mode standalone Vauban + Chappe.
-Le reactor (`foy-api`, `foy-core`, `foy-cdi-vauban`, `foy-chappe`) compile sans
-warning bloquant.
+**M1 — functional extraction**: the engine runs in standalone Vauban + Chappe mode.
+The reactor (`foy-api`, `foy-core`, `foy-cdi-vauban`, `foy-chappe`) compiles without
+blocking warnings.
 
-**TODO M2 — découplage transport** :
+**TODO M2 — transport decoupling**:
 
-- `foy-core` dépend encore directement de `chappe-api` (les bridges
+- `foy-core` still depends directly on `chappe-api` (the bridges
   `HttpServletRequestImpl`, `HttpServletResponseImpl`, `ServletOutputStreamImpl`
-  et `ChappeServletBridge` référencent `chappe.api.Request/Response`).
-  À découpler via une SPI `FoyHttpExchange` dans `foy-api` (pattern
-  Cassini : `CassiniHttpAdapter` + `CassiniHttpExchange`).
-- Promouvoir une SPI `BeanProvider` dans `foy-api` pour découpler
-  `WebAppDiscovery` du `BeanManager` direct (permet alors d'écrire des
-  intégrations CDI alternatives — Weld, OpenWebBeans).
-- Introduire un `FoyServletEngine` (équivalent `CassiniStack`) avec
-  `Builder` + `BuilderFactory` découvert via `ServiceLoader`.
+  and `ChappeServletBridge` reference `chappe.api.Request/Response`).
+  To be decoupled via a `FoyHttpExchange` SPI in `foy-api` (Cassini pattern:
+  `CassiniHttpAdapter` + `CassiniHttpExchange`).
+- Promote a `BeanProvider` SPI in `foy-api` to decouple
+  `WebAppDiscovery` from the direct `BeanManager` (enabling alternative CDI
+  integrations — Weld, OpenWebBeans).
+- Introduce a `FoyServletEngine` (equivalent to `CassiniStack`) with
+  `Builder` + `BuilderFactory` discovered via `ServiceLoader`.
 
-Une fois M2 acquis, on pourra écrire `foy-jdk-http`, `foy-jetty`, `foy-netty`
-sans toucher à `foy-core`.
+Once M2 is done, `foy-jdk-http`, `foy-jetty`, `foy-netty` can be written
+without touching `foy-core`.
 
-## Lancement TCK Jakarta Servlet 6.1
+## Running the Jakarta Servlet 6.1 TCK
 
 ```sh
 ./run-official-tck-servlet6.1.sh           # smoke test
-./run-official-tck-servlet6.1.sh --all     # suite complète
+./run-official-tck-servlet6.1.sh --all     # full suite
 ./run-official-tck-servlet6.1.sh -Dtest=ServletTests
 ```
 
-Prérequis : artifacts TCK officiels installés en local
+Prerequisites: official TCK artifacts installed locally
 (`jakarta.tck:servlet-tck-runtime:6.1.0`, `servlet-tck-util:6.1.0`,
 `servlet-tck:6.1.0`).
 

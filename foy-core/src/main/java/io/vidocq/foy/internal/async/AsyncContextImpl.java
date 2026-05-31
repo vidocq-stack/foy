@@ -20,16 +20,16 @@ import java.util.concurrent.TimeoutException;
 /**
  * {@link AsyncContext} Jakarta Servlet 6.1.
  *
- * <p>Contrat : le bridge appelle {@link #awaitCompletion()} après le retour du
- * service() du servlet, ce qui bloque le thread Chappe jusqu'à :</p>
+ * <p>Contract: the bridge calls {@link #awaitCompletion()} after the return of
+ * service() of the servlet, which blocks the Chappe thread until:</p>
  * <ul>
- *   <li>{@link #complete()} — la réponse est matérialisée en l'état</li>
- *   <li>{@link #dispatch(String)} — un redispatch {@link jakarta.servlet.DispatcherType#ASYNC} est planifié</li>
- *   <li>expiration du {@link #setTimeout timeout} — déclenche onTimeout</li>
+ *   <li>{@link #complete()} — the response is materialized as </li>
+ *   <li>{@link #dispatch(String)} — a redispatch {@link jakarta.servlet.DispatcherType#ASYNC} is planned</li>
+ *   <li>timeout of {@link #setTimeout timeout} — triggers onTimeout</li>
  * </ul>
  *
- * <p>Les {@link AsyncListener} reçoivent les événements onStartAsync (non émis au premier
- * startAsync, seulement si {@code startAsync} est ré-appelé après un dispatch, cf. §2.3.3.3),
+ * <p>The {@link AsyncListener} receive onStartAsync events (not emitted on the first
+ * startAsync, only if {@code startAsync} is re-called after a dispatch, cf. §2.3.3.3),
  * onComplete, onTimeout, onError.</p>
  */
 public final class AsyncContextImpl implements AsyncContext {
@@ -136,7 +136,7 @@ public final class AsyncContextImpl implements AsyncContext {
     @Override public void setTimeout(long timeout) { this.timeoutMs = timeout; }
     @Override public long getTimeout() { return timeoutMs; }
 
-    /** Bloque le thread appelant jusqu'à complete(), dispatch() ou expiration. */
+    /** Blocks the calling thread until complete(), dispatch() or timesout. */
     public void awaitCompletion() {
         try {
             if (timeoutMs <= 0) {
@@ -157,7 +157,7 @@ public final class AsyncContextImpl implements AsyncContext {
 
     public boolean hasDispatch() { return dispatchPath != null; }
     public String dispatchPath() { return dispatchPath; }
-    /** Contexte cible d'un cross-context dispatch — null pour un dispatch intra-contexte. */
+    /** Target context of a cross-context dispatch — null for an intra-context dispatch. */
     public ServletContext dispatchContext() { return dispatchContext; }
     public boolean timedOut() { return timedOut; }
     public boolean isCompleted() { return completed; }

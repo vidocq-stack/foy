@@ -4,10 +4,10 @@ import org.jboss.arquillian.container.spi.ConfigurationException;
 import org.jboss.arquillian.container.spi.client.container.ContainerConfiguration;
 
 /**
- * Configuration d'Arquillian pour le container Vidocq-Servlet-Chappe.
+ * Configuration of Arquillian for the Vidocq-Servlet-Chappe container.
  *
- * <p>Aucune propriété n'est requise pour l'instant — le container alloue un port
- * libre dynamiquement. L'hôte peut être surchargé via {@code arquillian.xml}.</p>
+ * <p>No properties are required at this time — the container allocates a port
+ * dynamically free. Host may be overloaded via {@code arquillian.xml}.</p>
  */
 public class VidocqContainerConfiguration implements ContainerConfiguration {
 

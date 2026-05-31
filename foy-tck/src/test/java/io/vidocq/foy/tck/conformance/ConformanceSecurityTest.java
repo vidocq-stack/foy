@@ -18,7 +18,7 @@ import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-/** Couverture conformance Servlet 6.1 §13 (security) via BASIC + @ServletSecurity. */
+/** Servlet 6.1 §13 (security) conformance coverage via BASIC + @ServletSecurity. */
 class ConformanceSecurityTest {
 
     @ServletSecurity(@HttpConstraint(rolesAllowed = "admin"))

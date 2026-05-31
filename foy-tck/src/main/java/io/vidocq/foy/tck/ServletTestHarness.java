@@ -24,15 +24,15 @@ import java.util.EventListener;
 import java.util.List;
 
 /**
- * Harness de conformance Servlet 6.1 : démarre un {@link Server} Chappe local
- * en branchant un {@link ChappeServletBridge} entièrement configuré, et expose
- * un {@link HttpClient} pour que les tests fassent des requêtes HTTP réelles.
+ * Servlet 6.1 conformance harness: starts a local Chappe {@link Server}
+ * wired with a fully configured {@link ChappeServletBridge}, and exposes
+ * an {@link HttpClient} so tests can issue real HTTP requests.
  *
- * <p>Ce harness joue le rôle d'un conteneur servlet pour une suite de tests de
- * conformance. L'intégration d'un TCK officiel (Arquillian DeployableContainer)
- * s'appuiera sur ce même point d'accrochage.</p>
+ * <p>This harness acts as a servlet container for conformance test suites.
+ * Official TCK integration (Arquillian DeployableContainer) builds on the
+ * same integration point.</p>
  *
- * <h2>Exemple</h2>
+ * <h2>Example</h2>
  * <pre>{@code
  * var harness = ServletTestHarness.builder()
  *         .servlet("/hello", new HelloServlet())
@@ -112,7 +112,7 @@ public final class ServletTestHarness implements AutoCloseable {
 
     public static Builder builder() { return new Builder(); }
 
-    /** Builder fluide qui configure une application servlet puis démarre Chappe. */
+    /** Fluid builder that configures a servlet application then starts Chappe. */
     public static final class Builder {
         private final List<ServletDispatcher.Mapping> servlets = new ArrayList<>();
         private final List<FilterMapping> filters = new ArrayList<>();
@@ -159,9 +159,9 @@ public final class ServletTestHarness implements AutoCloseable {
         public Builder reservedUrlPattern(String p) { reservedUrlPatterns.add(p); return this; }
 
         private java.util.Set<String> warClassNames = null; // null = pas d'isolation
-        /** Restreint les registrations dynamiques instanciées par nom/class aux
-         *  classes effectivement présentes dans le WAR — simule un WebAppClassLoader
-         *  isolé sans construire de ClassLoader séparé. */
+        /** Restricts dynamic registrations instantiated by name/class to
+         *  classes actually present in the WAR, simulating an isolated
+         *  WebAppClassLoader without creating a separate ClassLoader. */
         public Builder restrictToWarClasses(java.util.Set<String> classNames) {
             this.warClassNames = classNames == null ? null : java.util.Set.copyOf(classNames);
             return this;
@@ -370,10 +370,10 @@ public final class ServletTestHarness implements AutoCloseable {
                     initialized, initializedFilters, registry, ctx);
         }
 
-        /** Expose les servlets/filtres statiques (web.xml / @WebServlet) au {@link
-         *  VidocqServletContext} afin que {@code getServletRegistration(s)} les
-         *  retourne correctement. Les url-patterns sont "réservés" (empêche
-         *  addMapping dynamique de les écraser) via ce même chemin. */
+        /** Exposes static servlet/filter registrations (web.xml / @WebServlet) to
+         *  {@link VidocqServletContext} so {@code getServletRegistration(s)}
+         *  returns them correctly. URL patterns are also reserved through this
+         *  path to prevent dynamic {@code addMapping} from overriding them. */
         @SuppressWarnings("unchecked")
         private void materializeStaticRegistrations(VidocqServletContext ctx) {
             // Regroupe les url-patterns par servletName pour ne créer qu'une seule
@@ -402,9 +402,9 @@ public final class ServletTestHarness implements AutoCloseable {
             }
         }
 
-        /** Transfère les ServletRegistration.Dynamic / FilterRegistration.Dynamic du
-         *  context vers les listes servlets/filters — sans remplacer ce que le
-         *  web.xml a déjà déclaré (qui a précédence en cas de doublon). */
+        /** Transfers {@code ServletRegistration.Dynamic} / {@code FilterRegistration.Dynamic}
+         *  from the context to servlet/filter lists without overriding entries
+         *  already declared in web.xml (which has precedence on duplicates). */
         private void materializeDynamicRegistrations(VidocqServletContext ctx) {
             var cl = Thread.currentThread().getContextClassLoader();
             // Mapping par nom pour dédupliquer avec web.xml.

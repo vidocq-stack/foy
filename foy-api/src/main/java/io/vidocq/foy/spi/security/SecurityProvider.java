@@ -3,11 +3,11 @@ package io.vidocq.foy.spi.security;
 import java.util.Optional;
 
 /**
- * SPI de délégation pour l'authentification des utilisateurs.
+ * Delegation SPI for user authentication.
  *
- * <p>L'implémentation par défaut côté foy-core refuse toute authentification ;
- * une application qui souhaite activer BASIC/FORM remplace ce provider via le
- * ServletContext ou CDI.</p>
+ * <p>The default implementation on the foy-core side refuses any authentication;
+ * an application that wishes to activate BASIC/FORM replaces this provider via the
+ * ServletContext or CDI.</p>
  */
 public interface SecurityProvider {
 

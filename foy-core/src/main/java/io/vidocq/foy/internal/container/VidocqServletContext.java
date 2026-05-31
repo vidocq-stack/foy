@@ -21,11 +21,11 @@ import java.util.Map;
 import java.util.Set;
 
 /**
- * {@link ServletContext} minimal pour le jalon M2a.
+ * {@link ServletContext} minimum for milestone M2a.
  * <p>
- * Les opérations de configuration dynamique (addServlet/addFilter/...) ne sont pas
- * supportées dans ce jalon — on s'appuie uniquement sur la découverte CDI des
- * beans annotés {@code @WebServlet}.
+ * Dynamic configuration operations (addServlet/addFilter/...) are not
+ * supported in this milestone — we rely solely on the CDI discovery of
+ * beans annotated {@code @WebServlet}.
  * </p>
  */
 public final class VidocqServletContext implements ServletContext {
@@ -49,14 +49,14 @@ public final class VidocqServletContext implements ServletContext {
     private Map<String, String> localeEncodingMappings = Map.of();
     private final java.util.LinkedHashMap<String, DynamicServletRegistration> dynamicServlets = new java.util.LinkedHashMap<>();
     private final java.util.LinkedHashMap<String, DynamicFilterRegistration> dynamicFilters = new java.util.LinkedHashMap<>();
-    /** Registrations "statiques" (web.xml / @WebServlet) — exposées par
-     *  {@link #getServletRegistrations()} mais jamais matérialisées à nouveau
-     *  par le harness (elles sont déjà dans la liste des servlets actifs). */
+    /** Static registrations (web.xml / @WebServlet), exposed by
+     *  {@link #getServletRegistrations()} but not applied again by
+     *  the harness (they are already part of the active servlet list). */
     private final java.util.LinkedHashMap<String, DynamicServletRegistration> staticServlets = new java.util.LinkedHashMap<>();
     private final java.util.LinkedHashMap<String, DynamicFilterRegistration> staticFilters = new java.util.LinkedHashMap<>();
 
-    /** Enregistre une ServletRegistration "statique" (issue du web.xml/@WebServlet).
-     *  Le nom est aussi marqué réservé pour bloquer un éventuel addServlet dynamique. */
+    /** Registers a static servlet registration (from web.xml/@WebServlet).
+     *  The name is also marked reserved to block a later dynamic addServlet. */
     public DynamicServletRegistration registerStaticServlet(String name, Class<? extends Servlet> klass,
                                                             java.util.List<String> patterns,
                                                             java.util.Map<String, String> initParams,
@@ -80,10 +80,10 @@ public final class VidocqServletContext implements ServletContext {
         reservedFilterNames.add(name);
         return r;
     }
-    /** Noms réservés par le web.xml — un addServlet/addFilter avec ce nom doit retourner null. */
+    /** Names reserved by web.xml — an addServlet/addFilter with this name should return null. */
     private final java.util.Set<String> reservedServletNames = new java.util.HashSet<>();
     private final java.util.Set<String> reservedFilterNames = new java.util.HashSet<>();
-    /** URL patterns déjà mappés par le web.xml à un servlet statique. */
+    /** URL patterns already mapped by web.xml to a static servlet. */
     private final java.util.Set<String> reservedUrlPatterns = new java.util.HashSet<>();
     public void reserveServletName(String name) { reservedServletNames.add(name); }
     public void reserveFilterName(String name) { reservedFilterNames.add(name); }
@@ -91,10 +91,10 @@ public final class VidocqServletContext implements ServletContext {
         if (pattern != null && !pattern.isEmpty()) reservedUrlPatterns.add(pattern);
     }
 
-    /** Indique si {@code pattern} est déjà mappé à un servlet *autre* que
-     *  {@code selfName} — que ce soit par le web.xml ou par une autre
-     *  {@link DynamicServletRegistration}. Utilisé par addMapping (§4.4)
-     *  pour appliquer la sémantique "all or nothing" sur les conflits. */
+    /** Indicates whether {@code pattern} is already mapped to a servlet other than
+     *  {@code selfName}, either from web.xml or another
+     *  {@link DynamicServletRegistration}. Used by addMapping (§4.4)
+     *  to enforce all-or-nothing conflict semantics. */
     public boolean isUrlPatternMappedElsewhere(String selfName, String pattern) {
         if (pattern == null) return false;
         if (reservedUrlPatterns.contains(pattern)) return true;
@@ -112,11 +112,11 @@ public final class VidocqServletContext implements ServletContext {
         return java.util.Collections.unmodifiableMap(dynamicFilters);
     }
 
-    /** Active/désactive la phase "programmatic listener init" — pendant celle-ci,
-     *  les méthodes de configuration dynamique doivent throw UOE (§4.4.3). */
+    /** Enables/disables the "programmatic listener init" phase, during which
+     *  dynamic configuration methods must throw UOE (§4.4.3). */
     public void setProgrammaticListenerActive(boolean active) { this.programmaticListenerActive = active; }
 
-    /** Mapping &lt;locale&gt; → &lt;encoding&gt; issu du {@code web.xml} (Servlet 6.1 §14.4). */
+    /** Mapping &lt;locale&gt; → &lt;encoding&gt; from {@code web.xml} (Servlet 6.1 §14.4). */
     public void setLocaleEncodingMappings(Map<String, String> mappings) {
         this.localeEncodingMappings = mappings == null ? Map.of() : Map.copyOf(mappings);
     }
@@ -184,8 +184,8 @@ public final class VidocqServletContext implements ServletContext {
         this.serverInfo = "Vidocq Servlet/Chappe";
     }
 
-    /** Marqueur de fin d'initialisation (Servlet 6.1 §4.4) — après cet appel,
-     *  les méthodes de configuration dynamique doivent throw {@link IllegalStateException}. */
+    /** End-of-initialization marker (Servlet 6.1 §4.4); after this call,
+     *  dynamic configuration methods must throw {@link IllegalStateException}. */
     public void markInitialized() { this.initialized = true; }
 
     public void setListenerRegistry(ListenerRegistry registry) {
@@ -258,15 +258,15 @@ public final class VidocqServletContext implements ServletContext {
         };
     }
     /**
-     * Source de ressources du WAR — fournie par le DeployableContainer au démarrage
-     * du harness. Le provider expose les chemins connus et ouvre les flux.
+     * WAR resource source — provided by the DeployableContainer at startup
+     * of the harness. The provider exposes the known paths and opens the flows.
      */
     public interface ResourceProvider {
-        /** Liste les chemins immédiats sous {@code path} (type {@code /WEB-INF/}). */
+        /** Lists immediate paths under {@code path} (type {@code /WEB-INF/}). */
         Set<String> listPaths(String path);
         java.io.InputStream openStream(String path);
-        /** Retourne une URL (par exemple {@code file:}) qui expose {@code path}
-         *  dans une forme respectant la casse et la structure du path, ou null. */
+        /** Returns a URL (for example {@code file:}) exposing {@code path}
+         *  with original path case and structure, or {@code null}. */
         default java.net.URL toUrl(String path) { return null; }
     }
 
@@ -534,7 +534,7 @@ public final class VidocqServletContext implements ServletContext {
 
     private boolean contextInitializedPhase;
     /** Active/désactive la phase d'appel des {@code contextInitialized} des listeners
-     *  déclarés (web.xml/@WebListener) — pendant cette phase, addListener
+     *  declared (web.xml/@WebListener) — during this phase, addListener
      *  d'un ServletContextListener doit throw IllegalArgumentException (§4.4). */
     public void setContextInitializedPhase(boolean active) { this.contextInitializedPhase = active; }
 
@@ -592,7 +592,7 @@ public final class VidocqServletContext implements ServletContext {
                 ? EnumSet.of(SessionTrackingMode.COOKIE)
                 : EnumSet.copyOf(effectiveSessionTrackingModes);
     }
-    /** Flag "initialized" n'empêche plus la lecture des tracking modes depuis un contextInitialized. */
+    /** Flag "initialized" no longer prevents tracking modes from being read from a contextInitialized. */
     public boolean isInitializedInternal() { return initialized; }
     @Override public int getSessionTimeout() { return sessionTimeout; }
     @Override public void setSessionTimeout(int sessionTimeout) {

@@ -14,19 +14,20 @@ import jakarta.servlet.http.HttpServletResponse;
 import java.io.IOException;
 
 /**
- * {@link RequestDispatcher} pour forward/include.
+ * {@link RequestDispatcher} for forward/include.
  *
- * <p>Contrat Servlet 6.1 §9.4 (forward) : la réponse doit être non committed, le buffer
- * est vidé avant le dispatch, les attributs {@code jakarta.servlet.forward.*} sont positionnés
- * avec les valeurs originales.</p>
+ * <p>Servlet 6.1 contract §9.4 (forward): the response must be uncommitted, the
+ * buffer is cleared before dispatch, and {@code jakarta.servlet.forward.*}
+ * attributes are set to the original values.</p>
  *
- * <p>Contrat §9.3 (include) : la réponse primaire conserve ses headers/status (le wrapper
- * ignore les setters), les attributs {@code jakarta.servlet.include.*} exposent le chemin inclus.</p>
+ * <p>Servlet 6.1 contract §9.3 (include): the primary response keeps its headers/status
+ * (the wrapper ignores mutators), and {@code jakarta.servlet.include.*}
+ * attributes expose the included path.</p>
  */
 public final class RequestDispatcherImpl implements RequestDispatcher {
 
     public interface Invoker {
-        /** Exécute le dispatch : filter chain applicable + service() sur le servlet cible. */
+        /** Executes the dispatch: filter chain applicable + service() on the target servlet. */
         void invoke(DispatchTarget target, HttpServletRequest req, HttpServletResponse res,
                     DispatcherType type)
                 throws IOException, ServletException;
@@ -40,7 +41,7 @@ public final class RequestDispatcherImpl implements RequestDispatcher {
         this.invoker = invoker;
     }
 
-    /** Dispatcher stub pour un chemin sans ressource — forward/include émettent 404. */
+    /** Dispatcher stub for a path without resources — forward/include emit 404. */
     public static RequestDispatcher notFound(String path) {
         return new RequestDispatcher() {
             @Override public void forward(ServletRequest request, ServletResponse response)
@@ -105,9 +106,9 @@ public final class RequestDispatcherImpl implements RequestDispatcher {
         invoker.invoke(target, wrappedReq, wrappedRes, DispatcherType.INCLUDE);
     }
 
-    /** Unwrap via {@link jakarta.servlet.ServletRequestWrapper#getRequest()} jusqu'à
-     *  trouver un {@link HttpServletRequest}. Permet à un ServletRequestWrapper de
-     *  base (non-Http) de déclencher un forward/include. */
+    /** Unwrap via {@link jakarta.servlet.ServletRequestWrapper#getRequest()} until
+     *  finding a {@link HttpServletRequest}. Allows a base (non-HTTP)
+     *  {@link jakarta.servlet.ServletRequestWrapper} to trigger forward/include. */
     private static HttpServletRequest unwrapHttp(ServletRequest r) {
         while (r != null) {
             if (r instanceof HttpServletRequest h) return h;

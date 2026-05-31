@@ -3,8 +3,8 @@ package io.vidocq.foy.internal.dispatcher;
 import jakarta.servlet.Servlet;
 
 /**
- * Cible résolue d'un dispatch servlet : la servlet et les coordonnées
- * d'URL qu'elle verra ({@code servletPath}, {@code pathInfo}, {@code queryString}).
+ * Resolved target of a servlet dispatch: the servlet and contact details
+ * URL it will see ({@code servletPath}, {@code pathInfo}, {@code queryString}).
  */
 public record DispatchTarget(Servlet servlet,
                              String servletName,
@@ -12,7 +12,7 @@ public record DispatchTarget(Servlet servlet,
                              String servletPath,
                              String pathInfo,
                              String queryString) {
-    /** Clone with a new queryString (utilisé pour les async dispatches). */
+    /** Clone with a new queryString (used for async dispatches). */
     public DispatchTarget withQueryString(String qs) {
         return new DispatchTarget(servlet, servletName, path, servletPath, pathInfo, qs);
     }

@@ -10,17 +10,17 @@ import java.util.List;
 import java.util.Locale;
 
 /**
- * Parser {@code multipart/form-data} conforme au minimum RFC 7578 §4.
+ * Parser {@code multipart/form-data} compliant with minimum RFC 7578 §4.
  *
- * <p>MVP : chargement complet du body en mémoire, split sur {@code --boundary}, parse
- * des headers de chaque part, extraction du content jusqu'au boundary suivant.
- * Ne supporte pas le streaming partiel ni le transfert disque.</p>
+ * <p>MVP: full loading of the body into memory, split on {@code --boundary}, parse
+ * headers on each side, extraction of content up to the next boundary.
+ * Does not support partial streaming or disk transfer.</p>
  */
 public final class MultipartParser {
 
     private MultipartParser() {}
 
-    /** Extrait la valeur de boundary depuis un Content-Type multipart/form-data. */
+    /** Extracts the boundary value from a multipart/form-data Content-Type. */
     public static String extractBoundary(String contentType) {
         if (contentType == null) return null;
         int idx = contentType.toLowerCase(Locale.ROOT).indexOf("boundary=");

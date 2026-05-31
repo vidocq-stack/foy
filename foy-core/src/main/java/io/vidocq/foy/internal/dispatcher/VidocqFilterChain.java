@@ -12,11 +12,11 @@ import java.util.List;
 import java.util.Objects;
 
 /**
- * {@link FilterChain} qui itère sur une liste de {@link Filter} puis invoque
- * un {@link Servlet} final.
+ * {@link FilterChain} which iterates over a list of {@link Filter} then invokes
+ * a final {@link Servlet}.
  *
- * <p>Spec Servlet 6.1 §6.2 : un filtre qui n'appelle pas {@link #doFilter} court-circuite
- * le reste de la chaîne (et le servlet). L'ordre des filtres est celui de la liste.</p>
+ * <p>Spec Servlet 6.1 §6.2: a filter that does not call {@link #doFilter} short-circuits
+ * the rest of the chain (and the servlet). The order of the filters is that of the list.</p>
  */
 public final class VidocqFilterChain implements FilterChain {
 
@@ -40,7 +40,7 @@ public final class VidocqFilterChain implements FilterChain {
         }
     }
 
-    /** Liste immuable des filtres de la chaîne (pour diagnostic). */
+    /** Immutable list of chain filters (for diagnostics). */
     public List<Filter> filters() {
         return filters;
     }

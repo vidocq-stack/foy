@@ -10,7 +10,7 @@ import java.io.IOException;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-/** Couverture conformance Servlet 6.1 §6 (Filters). */
+/** Servlet 6.1 §6 conformance coverage (Filters). */
 class ConformanceFilterTest {
 
     @Test

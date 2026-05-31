@@ -7,8 +7,8 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletRequestWrapper;
 
 /**
- * Wrapper pour un redispatch initié par {@link jakarta.servlet.AsyncContext#dispatch(String)} :
- * reporte {@link DispatcherType#ASYNC} et les nouveaux {@code servletPath/pathInfo/queryString}.
+ * Wrapper for a redispatch initiated by {@link jakarta.servlet.AsyncContext#dispatch(String)}:
+ * reports {@link DispatcherType#ASYNC} and the new {@code servletPath/pathInfo/queryString}.
  */
 public final class AsyncDispatchRequest extends HttpServletRequestWrapper {
 
@@ -22,9 +22,9 @@ public final class AsyncDispatchRequest extends HttpServletRequestWrapper {
     }
 
     /**
-     * Construit un wrapper pour cross-context async dispatch : {@code overrideContext} est
-     * le {@link ServletContext} cible (différent du context d'origine) et son contextPath
-     * est substitué dans {@link #getRequestURI()} et {@link #getContextPath()}.
+     * Built a wrapper for cross-context async dispatch: {@code overrideContext} is
+     * the target {@link ServletContext} (different from the original context) and its contextPath
+     * is substituted in {@link #getRequestURI()} and {@link #getContextPath()}.
      */
     public AsyncDispatchRequest(HttpServletRequest original, DispatchTarget target,
                                 ServletContext overrideContext, String overrideContextPath) {

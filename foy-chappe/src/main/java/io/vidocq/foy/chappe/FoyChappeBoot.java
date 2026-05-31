@@ -17,14 +17,14 @@ import java.util.List;
 import java.util.Optional;
 
 /**
- * Bootstrap Foy sur le transport HTTP Chappe.
+ * Bootstrap Foy on Chappe HTTP transport.
  *
- * <p>Découvre les beans {@code @WebServlet}, {@code @WebFilter} et
+ * <p>Discovers the beans {@code @WebServlet}, {@code @WebFilter} and
  * {@code @WebListener} via le {@link BeanManager} fourni, monte la stack
- * Servlet 6.1 et expose un {@link Handler} Chappe prêt à être enregistré sur
- * un {@code ChappeMountPoint}.</p>
+ * Servlet 6.1 and exposes a {@link Handler} Chappe ready to be saved to
+ * a {@code ChappeMountPoint}.</p>
  *
- * <h3>Exemple d'usage</h3>
+ * <h3>Example of usage</h3>
  * <pre>{@code
  * Optional<FoyChappeBoot.Mounted> opt = FoyChappeBoot.builder()
  *         .beanManager(CDI.current().getBeanManager())
@@ -34,8 +34,8 @@ import java.util.Optional;
  * opt.ifPresent(mounted -> chappeMountPoint.mount(listener, mounted.mountPrefix(), mounted.handler()));
  * }</pre>
  *
- * <p>Le {@link Optional} est vide si aucun bean Servlet/Filter/Listener n'a
- * été découvert (l'application n'a rien à servir).</p>
+ * <p>The {@link Optional} is empty if no Servlet/Filter/Listener bean has
+ * been discovered (the application has no use).</p>
  */
 public final class FoyChappeBoot {
 
@@ -48,18 +48,18 @@ public final class FoyChappeBoot {
     }
 
     /**
-     * Résultat d'un bootstrap réussi : un handler prêt à monter et le
-     * préfixe de mount à utiliser ({@code ""} si le contextPath est {@code "/"}).
+     * Result of a successful bootstrap: a handler ready to mount and the
+     * mount prefix to use ({@code ""} if contextPath is {@code "/"}).
      */
     public record Mounted(Handler handler, String mountPrefix, VidocqServletContext servletContext,
                           ListenerRegistry listenerRegistry) {
 
-        /** Hook lifecycle à appeler après mount Chappe pour notifier les listeners. */
+        /** Hook lifecycle to call after mount Chappe to notify listeners. */
         public void fireContextInitialized() {
             listenerRegistry.fireContextInitialized(servletContext);
         }
 
-        /** Hook lifecycle à appeler avant l'arrêt pour notifier les listeners. */
+        /** Lifecycle hook to call before shutdown to notify listeners. */
         public void fireContextDestroyed() {
             listenerRegistry.fireContextDestroyed(servletContext);
         }

@@ -19,9 +19,9 @@ import java.util.Map;
 import java.util.Set;
 
 /**
- * Parser minimal du descripteur {@code web.xml} selon Servlet 6.1 §14.
+ * Minimal parser of descriptor {@code web.xml} according to Servlet 6.1 §14.
  *
- * <p>Éléments supportés : {@code context-param}, {@code servlet},
+ * <p>Supported elements: {@code context-param}, {@code servlet},
  * {@code servlet-mapping}, {@code filter}, {@code filter-mapping}, {@code listener},
  * {@code error-page}, {@code session-config/session-timeout}.</p>
  */

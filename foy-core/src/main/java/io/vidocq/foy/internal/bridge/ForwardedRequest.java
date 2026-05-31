@@ -7,13 +7,13 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletRequestWrapper;
 
 /**
- * {@link HttpServletRequestWrapper} utilisé pendant un
- * {@link RequestDispatcher#forward forward} : expose les nouveaux servletPath/pathInfo/queryString,
- * et reporte {@link DispatcherType#FORWARD}.
+ * {@link HttpServletRequestWrapper} used for a
+ * {@link RequestDispatcher#forward forward}: exposes the new servletPath/pathInfo/queryString,
+ * and reports {@link DispatcherType#FORWARD}.
  *
- * <p>Les attributs {@code jakarta.servlet.forward.*} sont positionnés sur la request
- * originale par {@link io.vidocq.foy.internal.dispatcher.RequestDispatcherImpl}
- * avant d'invoquer le wrapper.</p>
+ * <p>The original request receives {@code jakarta.servlet.forward.*}
+ * attributes in {@link io.vidocq.foy.internal.dispatcher.RequestDispatcherImpl}
+ * before this wrapper is invoked.</p>
  */
 public final class ForwardedRequest extends HttpServletRequestWrapper {
 

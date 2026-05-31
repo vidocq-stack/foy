@@ -9,7 +9,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 
 /**
- * Stockage mémoire (process local) des sessions. Pas de clustering.
+ * Memory storage (local process) of sessions. No clustering.
  */
 public final class InMemorySessionStore implements SessionStore {
 

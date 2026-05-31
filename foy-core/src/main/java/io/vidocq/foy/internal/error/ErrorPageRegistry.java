@@ -6,12 +6,12 @@ import java.util.Objects;
 import java.util.Optional;
 
 /**
- * Registre des error pages d'une application (spec Servlet 6.1 §9.9).
+ * Register of error pages of an application (Servlet 6.1 §9.9 spec).
  *
- * <p>Deux types de mapping :</p>
+ * <p>Two types of mapping:</p>
  * <ul>
- *   <li>par code HTTP — {@link #register(int, String)}</li>
- *   <li>par type d'exception — {@link #register(Class, String)} (le type le plus spécifique gagne)</li>
+ *   <li>by HTTP code — {@link #register(int, String)}</li>
+ *   <li>by exception type — {@link #register(Class, String)} (most specific type wins)</li>
  * </ul>
  */
 public final class ErrorPageRegistry {
@@ -40,8 +40,8 @@ public final class ErrorPageRegistry {
     }
 
     /**
-     * Trouve la page la plus spécifique matchant {@code throwable}.
-     * Remonte la chaîne d'héritage et de {@link Throwable#getCause() cause}.
+     * Find the most specific page matching {@code throwable}.
+     * Goes up the chain of inheritance and {@link Throwable#getCause() cause}.
      */
     public Optional<String> findByException(Throwable throwable) {
         if (throwable == null) return Optional.empty();

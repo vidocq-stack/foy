@@ -8,9 +8,9 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 
 /**
- * Configuration des cookies de session (Servlet 6.1 §7.1.2). Les setters ne sont
- * valides que pendant la phase d'initialisation du {@link VidocqServletContext}
- * (§4.4) — appels ultérieurs throw {@link IllegalStateException}.
+ * Configuration of session cookies (Servlet 6.1 §7.1.2). Setters are not
+ * valid only during the initialization phase of {@link VidocqServletContext}
+ * (§4.4) — subsequent calls throw {@link IllegalStateException}.
  */
 public final class VidocqSessionCookieConfig implements SessionCookieConfig {
 
