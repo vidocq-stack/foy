@@ -35,7 +35,7 @@
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <maven.compiler.release>25</maven.compiler.release>
         <foy.version>0.1.0-SNAPSHOT</foy.version>
-        <chappe.version>0.1.0-SNAPSHOT</chappe.version>
+        <chappe.version>0.2.0-SNAPSHOT</chappe.version>
         <vauban.version>0.1.0-SNAPSHOT</vauban.version>
     </properties>
 
