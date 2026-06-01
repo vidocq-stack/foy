@@ -46,6 +46,8 @@ import java.util.List;
  */
 public final class ServletTestHarness implements AutoCloseable {
 
+    private static final System.Logger LOG = System.getLogger(ServletTestHarness.class.getName());
+
     private final Server server;
     private final int port;
     private final HttpClient client;
@@ -283,8 +285,8 @@ public final class ServletTestHarness implements AutoCloseable {
             for (var sci : sciList) {
                 try { sci.onStartup(null, ctx); }
                 catch (jakarta.servlet.ServletException e) {
-                    System.err.println("[ServletTestHarness] SCI.onStartup failed ("
-                            + sci.getClass().getName() + "): " + e.getMessage());
+                    LOG.log(System.Logger.Level.WARNING,
+                            "SCI.onStartup failed (" + sci.getClass().getName() + ")", e);
                 }
             }
 
@@ -312,8 +314,8 @@ public final class ServletTestHarness implements AutoCloseable {
                     // Servlet 6.1 §2.3.3 : un servlet dont init() a failé doit renvoyer
                     // 500 (ou 503) à toute requête ultérieure, pas 404. On substitue un
                     // stub qui émet le 500 plutôt que d'exclure du dispatcher.
-                    System.err.println("[ServletTestHarness] init failed for "
-                            + m.servletName() + ": " + e.getMessage());
+                    LOG.log(System.Logger.Level.WARNING,
+                            "init failed for servlet " + m.servletName(), e);
                     // Re-throw la ServletException à chaque requête — permet aux
                     // <error-page> mappées sur jakarta.servlet.ServletException d'être
                     // activées (TCK GenericServletTests attend ce dispatch).
@@ -350,8 +352,8 @@ public final class ServletTestHarness implements AutoCloseable {
                     initializedFilters.add(fm.filter());
                     liveFilters.add(fm);
                 } catch (jakarta.servlet.ServletException e) {
-                    System.err.println("[ServletTestHarness] init failed for filter "
-                            + fm.filterName() + ": " + e.getMessage());
+                    LOG.log(System.Logger.Level.WARNING,
+                            "init failed for filter " + fm.filterName(), e);
                 }
             }
 
@@ -427,8 +429,8 @@ public final class ServletTestHarness implements AutoCloseable {
                         if (warClassNames != null && !warClassNames.contains(c.getName())) continue;
                         instance = c.getDeclaredConstructor().newInstance();
                     } catch (ReflectiveOperationException ex) {
-                        System.err.println("[ServletTestHarness] cannot instantiate dynamic servlet "
-                                + name + ": " + ex);
+                        LOG.log(System.Logger.Level.WARNING,
+                                "cannot instantiate dynamic servlet " + name, ex);
                         continue;
                     }
                 } else if (warClassNames != null && !warClassNames.contains(instance.getClass().getName())) {
@@ -460,8 +462,8 @@ public final class ServletTestHarness implements AutoCloseable {
                         if (warClassNames != null && !warClassNames.contains(c.getName())) continue;
                         instance = c.getDeclaredConstructor().newInstance();
                     } catch (ReflectiveOperationException ex) {
-                        System.err.println("[ServletTestHarness] cannot instantiate dynamic filter "
-                                + name + ": " + ex);
+                        LOG.log(System.Logger.Level.WARNING,
+                                "cannot instantiate dynamic filter " + name, ex);
                         continue;
                     }
                 } else if (warClassNames != null && !warClassNames.contains(instance.getClass().getName())) {
