@@ -47,7 +47,7 @@
         <jakarta.annotation.version>3.0.0</jakarta.annotation.version>
 
         <chappe.version>0.2.0-SNAPSHOT</chappe.version>
-        <vauban.version>0.1.0-SNAPSHOT</vauban.version>
+        <vauban.version>0.2.0-SNAPSHOT</vauban.version>
     </properties>
 
     <!--
