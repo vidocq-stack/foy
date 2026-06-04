@@ -39,7 +39,7 @@ on:
         description: "io.vidocq.vauban:* (all artifacts under io.vidocq.vauban) — stable version (must be released on Central first)"
         type: string
         required: true
-        default:     "0.1.0"
+        default:     "0.1.1"
 
 jobs:
   release:
