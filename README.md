@@ -14,7 +14,7 @@
   <img src="https://img.shields.io/badge/JDK-25-orange" alt="JDK">
   <img src="https://img.shields.io/badge/Maven-4.0--rc--5-purple" alt="Maven">
   <img src="https://img.shields.io/badge/Jakarta_Servlet-6.1-blue" alt="Jakarta Servlet">
-  <img src="https://img.shields.io/badge/license-Apache_2.0-green" alt="License">
+  <img src="https://img.shields.io/badge/license-EPL--2.0%20OR%20EUPL--1.2%20OR%20GPL--2.0--or--later-blue.svg" alt="License">
 </p>
 
 ---
