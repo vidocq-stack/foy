@@ -516,7 +516,13 @@ public final class ServletTestHarness implements AutoCloseable {
                 try (ServerSocket s = new ServerSocket(0)) { port = s.getLocalPort(); }
                 catch (Exception e) { throw new RuntimeException(e); }
                 try {
-                    Server server = Server.builder().host("127.0.0.1").port(port).handler(handler).build();
+                    // Short keep-alive idle timeout: some TCK clients (6.1.0
+                    // TrailerTest) read the response to EOF on a keep-alive
+                    // connection and rely on the container closing it — 60 s
+                    // (chappe default) would add a minute per such test.
+                    Server server = Server.builder().host("127.0.0.1").port(port)
+                            .idleTimeout(java.time.Duration.ofSeconds(5))
+                            .handler(handler).build();
                     server.start();
                     currentServer = server;
                     return port;

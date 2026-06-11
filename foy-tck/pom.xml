@@ -9,7 +9,9 @@
     crash avec "Bad artifact coordinates ... jar:".
 
     Dépendances internes (foy-api, foy-core, foy-chappe, foy-cdi-vauban) sont
-    gelées sur la version 0.1.0-SNAPSHOT installée dans le repo M2 local.
+    gelées sur la version du reactor installée dans le repo M2 local — la
+    propriété foy.version DOIT suivre les bumps du reactor, sinon le TCK
+    valide silencieusement des jars périmés (même piège que cassini-tck).
 
     Le lancement passe par le script :
         ./run-official-tck-servlet6.1.sh                     (smoke test)
@@ -34,7 +36,7 @@
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <maven.compiler.release>25</maven.compiler.release>
-        <foy.version>0.1.0-SNAPSHOT</foy.version>
+        <foy.version>0.2.0-SNAPSHOT</foy.version>
         <chappe.version>0.2.0-SNAPSHOT</chappe.version>
         <vauban.version>0.2.0-SNAPSHOT</vauban.version>
     </properties>

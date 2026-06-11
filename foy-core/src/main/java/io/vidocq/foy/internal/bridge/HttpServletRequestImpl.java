@@ -230,10 +230,14 @@ public final class HttpServletRequestImpl implements HttpServletRequest {
 
     private boolean encodingLocked;
 
+    /** Body stream wrapper kept for EOF tracking ({@link #isTrailerFieldsReady()}). */
+    private ServletInputStreamImpl trackedBody;
+
     @Override public ServletInputStream getInputStream() throws IOException {
         if (reader != null) throw new IllegalStateException("getReader() already called");
         if (inputStream == null) {
-            inputStream = new ServletInputStreamImpl(chappe.body().asInputStream());
+            trackedBody = new ServletInputStreamImpl(chappe.body().asInputStream());
+            inputStream = trackedBody;
             encodingLocked = true;
         }
         return inputStream;
@@ -249,11 +253,34 @@ public final class HttpServletRequestImpl implements HttpServletRequest {
                 // Servlet 6.1 §3.11 : encoding invalide → UnsupportedEncodingException.
                 throw new java.io.UnsupportedEncodingException(enc);
             }
-            reader = new BufferedReader(new InputStreamReader(
-                    chappe.body().asInputStream(), cs));
+            trackedBody = new ServletInputStreamImpl(chappe.body().asInputStream());
+            reader = new BufferedReader(new InputStreamReader(trackedBody, cs));
             encodingLocked = true;
         }
         return reader;
+    }
+
+    // ---- Trailer fields (Servlet 6.1, HTTP/1.1 chunked + HTTP/2) ----
+
+    @Override public Map<String, String> getTrailerFields() {
+        var trailers = chappe.trailers();
+        if (trailers.isEmpty()) return Map.of();
+        var out = new java.util.LinkedHashMap<String, String>();
+        for (var e : trailers) {
+            // Spec: keys are lowercase, without any validation or merging
+            out.put(e.name().toLowerCase(Locale.ROOT), e.value());
+        }
+        return out;
+    }
+
+    @Override public boolean isTrailerFieldsReady() {
+        // Ready unless a chunked body is still being decoded: chappe delivers
+        // the parsed trailers when the terminal chunk has been consumed, i.e.
+        // exactly when the body stream reaches EOF.
+        if (!"chunked".equalsIgnoreCase(chappe.headers().firstOrNull("Transfer-Encoding"))) {
+            return true;
+        }
+        return trackedBody != null && trackedBody.isFinished();
     }
     @Override public String getCharacterEncoding() {
         if (characterEncoding != null) return characterEncoding;
