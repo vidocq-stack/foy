@@ -5,6 +5,28 @@ First full-suite measurement run. Unlike cassini/champollion/vauban, this is a
 Vidocq runtime to serve Cassini-style stacks, and several spec chapters are not
 implemented yet. This report quantifies exactly which ones.
 
+## 0. Re-run after the trailer/idle-timeout fixes (2026-06-12)
+
+Same suite, re-run with the merged fix chain (chappe trailers + 
+`ForwardingRequest` + CHAPPE-005 idle timeout, foy `getTrailerFields()`,
+`foy-tck` version unfrozen — it had been validating stale 0.1.0 jars):
+
+| Metric | Baseline | **Re-run** |
+|---|---:|---:|
+| Tests run | 1714 | 1714 |
+| Passed | 920 | **921** |
+| `api.*` | 95.5 % | **95.6 %** |
+| Wall clock | ~50 min | **11 min** |
+
+`HttpServletRequest40Tests.TrailerTest` (the test that froze the very first
+run — BUG-20260611-01, fixed across four stacked causes, see `BUG.md`) now
+**passes**; the 9 remaining errors in that class are all the
+`httpServletMapping*` family (`getHttpServletMapping`, a separate chantier).
+The 0.1.0→0.2.0 jar refresh changed nothing else — the baseline structure
+below remains valid. The harness 5 s idle timeout cut the wall clock to
+11 min; 2 tests still hit the 120 s JUnit timeout
+(`HttpUpgradeHandlerTests.upgradeTest` — HTTP Upgrade not implemented, §3.6).
+
 ## 1. Result (baseline, 2026-06-11)
 
 | Metric | Value |
