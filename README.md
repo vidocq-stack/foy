@@ -42,6 +42,12 @@ module to become an independent project usable outside the Vidocq Runtime ecosys
 The reactor (`foy-api`, `foy-core`, `foy-cdi-vauban`, `foy-chappe`) compiles without
 blocking warnings.
 
+**TCK baseline measured (2026-06-11)** — full official Jakarta Servlet 6.1 suite:
+**920/1714 (53.7 %)** raw, but the core `api.*` family is at **95.5 %** and 81 %
+of all errors trace back to a single missing feature (web-fragment scanning,
+spec §8.2 — the whole `pluggability.*` family). Detailed per-family breakdown,
+root causes and roadmap in [`TCK.md`](TCK.md).
+
 **TODO M2 — transport decoupling**:
 
 - `foy-core` still depends directly on `chappe-api` (the bridges
