@@ -10,16 +10,16 @@ Référence technique consolidée. Cette page sert de point d'ancrage pour les l
 |===
 | Artefact | Rôle
 
-| `io.vidocq.foy:foy-api:0.1.0-SNAPSHOT`
+| `io.vidocq.foy:foy-api:0.2.0`
 | Interfaces SPI publiques : `SessionStore`, `SecurityProvider`, `AuthenticatedUser`. Zéro dépendance hors `jakarta.servlet-api`.
 
-| `io.vidocq.foy:foy-core:0.1.0-SNAPSHOT`
+| `io.vidocq.foy:foy-core:0.2.0`
 | Moteur Servlet 6.1 — dispatcher, filter chain, sessions, error pages, listeners, sécurité, parser `web.xml`, multipart.
 
-| `io.vidocq.foy:foy-chappe:0.1.0-SNAPSHOT`
+| `io.vidocq.foy:foy-chappe:0.2.0`
 | Pont HTTP vers xref:chappe::index.adoc[Chappe] (`FoyChappeBoot`, `ChappeServletBridge`).
 
-| `io.vidocq.foy:foy-cdi-vauban:0.1.0-SNAPSHOT`
+| `io.vidocq.foy:foy-cdi-vauban:0.2.0`
 | Pont CDI vers xref:vauban::index.adoc[Vauban] (`FoyVaubanBootstrap`).
 
 | `io.vidocq.foy:foy-tck`

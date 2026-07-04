@@ -6,7 +6,7 @@ Foy honours the Jakarta Servlet 6.1 spec to the letter — your `web.xml`, your 
 
 [CAUTION]
 ====
-Foy is at **0.1.0-SNAPSHOT** and the official TCK passes around 90 % (see xref:tck.adoc[TCK status]). Migration is not recommended in production until the listed gaps are closed.
+Foy is at **0.2.0** and the official TCK passes around 90 % (see xref:tck.adoc[TCK status]). Migration is not recommended in production until the listed gaps are closed.
 ====
 
 == From Tomcat

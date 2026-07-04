@@ -23,7 +23,7 @@ Standalone **Jakarta Servlet 6.1** implementation — pure Servlet engine, HTTP 
 via SPI, optional CDI.
 
 Extracted in April 2026 from the
-[`vidocq-runtime-servlet-chappe-extension`](https://forge.vidocq.dev/vidocq/vidocq)
+[`vidocq-runtime-servlet-chappe-extension`](https://codeberg.org/Vidocq/vidocq)
 module to become an independent project usable outside the Vidocq Runtime ecosystem.
 
 ## Modules

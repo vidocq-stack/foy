@@ -23,19 +23,19 @@ Premier servlet, container Foy, transport Chappe : moins de cinquante lignes de 
     <dependency>
         <groupId>io.vidocq.foy</groupId>
         <artifactId>foy-core</artifactId>
-        <version>0.1.0-SNAPSHOT</version>
+        <version>0.2.0</version>
     </dependency>
     <dependency>
         <groupId>io.vidocq.foy</groupId>
         <artifactId>foy-chappe</artifactId>
-        <version>0.1.0-SNAPSHOT</version>
+        <version>0.2.0</version>
         <scope>runtime</scope>
     </dependency>
     <!-- CDI optionnel via Vauban -->
     <dependency>
         <groupId>io.vidocq.foy</groupId>
         <artifactId>foy-cdi-vauban</artifactId>
-        <version>0.1.0-SNAPSHOT</version>
+        <version>0.2.0</version>
         <scope>runtime</scope>
     </dependency>
 </dependencies>
