@@ -34,7 +34,7 @@ on:
         description: "io.vidocq.chappe:* (all artifacts under io.vidocq.chappe) — stable version (must be released on Central first)"
         type: string
         required: true
-        default:     "0.1.0"
+        default:     "0.1.1"
       vauban_release:
         description: "io.vidocq.vauban:* (all artifacts under io.vidocq.vauban) — stable version (must be released on Central first)"
         type: string
@@ -49,6 +49,9 @@ jobs:
         with:
           fetch-depth: 0
           token: ${{ secrets.VIDOCQ_BOT_TOKEN }}
+          # Always checkout the current HEAD of the branch, not the SHA captured
+          # at dispatch time — ensures in-flight commits are included in the release.
+          ref: ${{ github.ref_name }}
 
       - uses: https://codeberg.org/Vidocq/ci/release-maven@main
         with:
