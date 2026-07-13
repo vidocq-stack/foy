@@ -21,7 +21,7 @@ The metaphor is direct: **Foy inherits the Chappe transport**. Just as Alphonse 
 | Implemented spec | {spec-servlet-6-1}[Jakarta Servlet 6.1]
 | Repo | {repo-foy}
 | Java | 25 (LTS), virtual threads
-| JPMS modules | `io.vidocq.foy.api`, `io.vidocq.foy.core`, `io.vidocq.foy.chappe`, `io.vidocq.foy.cdi.vauban`
+| Java modules | `io.vidocq.foy.api`, `io.vidocq.foy.core`, `io.vidocq.foy.chappe`, `io.vidocq.foy.cdi.vauban`
 | Runtime dependencies | `jakarta.servlet-api`, `jakarta.cdi-api` (static), {repo-chappe} (transport), {repo-vauban} (CDI)
 | TCK | ⚠️ partial — about 90 % of the official Jakarta Servlet 6.1 TCK on `api.*` packages. Details xref:tck.adoc[here].
 |===

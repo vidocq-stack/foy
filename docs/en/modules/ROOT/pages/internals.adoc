@@ -4,7 +4,7 @@
 [.lead]
 This page documents the implementation: what happens between the moment an HTTP connection lands on Chappe and the moment a Servlet writes its response. It complements xref:concepts.adoc[Concepts] (vocabulary) and xref:reference.adoc[Reference] (API).
 
-== Big picture: three layers, two JPMS modules
+== Big picture: three layers, two Java modules
 
 [plantuml]
 ....

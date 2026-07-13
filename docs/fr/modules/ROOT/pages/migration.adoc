@@ -110,4 +110,4 @@ Foy est en **0.2.0** et le TCK officiel passe à environ 90 % (voir xref:tck.ado
 * **Pas d'autoload `META-INF/services` runtime.** Foy n'utilise pas `ServiceLoader` au démarrage. Si une bibliothèque Servlet dépend d'un `ServletContainerInitializer` chargé par le scan, il faut le déclarer en bean CDI dans Vauban.
 * **`metadata-complete=true` respecté à la lettre.** Avec `false`, les annotations APT-détectées priment — comportement Servlet 6.1 standard.
 * **Pas de proxy dynamique runtime.** Les frameworks qui en posent (Spring AOP, certaines libs de profilage) ne fonctionnent pas tels quels. Privilégier les alternatives APT (Vauban, Class-File API).
-* **Modules JPMS stricts.** Si un legacy fait du `setAccessible(true)` réflexif, il faut un `--add-opens` explicite — préférer porter le legacy vers `@Inject`.
+* **Modules Java Modules stricts.** Si un legacy fait du `setAccessible(true)` réflexif, il faut un `--add-opens` explicite — préférer porter le legacy vers `@Inject`.

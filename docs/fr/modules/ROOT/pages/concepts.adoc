@@ -93,7 +93,7 @@ Toute la résolution se fait à la compilation par Vauban — aucun proxy dynami
 | `jakarta.servlet.*` (rebrand)
 | `jakarta.servlet.*` (stable)
 
-| Modules JPMS
+| Modules Java Modules
 | Optionnel
 | Recommandé — Foy l'impose
 
