@@ -1,5 +1,5 @@
 = Reference
-:description: Maven artefacts, JPMS modules, public API, configuration, Servlet 6.1 comparison.
+:description: Maven artefacts, Java modules, public API, configuration, Servlet 6.1 comparison.
 
 [.lead]
 Consolidated technical reference. Use this page as an anchor for external links (issues, RFCs, other Antora sites).
@@ -26,7 +26,7 @@ Consolidated technical reference. Use this page as an anchor for external links 
 | Arquillian harness for the official TCK — **standalone `modelVersion 4.0.0` POM, out of reactor** (see xref:tck.adoc[TCK status]).
 |===
 
-== JPMS modules and exports
+== Java modules and exports
 
 [source,java]
 ----
@@ -210,7 +210,7 @@ Foy reads the standard Servlet 6.1 `WEB-INF/web.xml`:
 * Java 25 (LTS)
 * Maven 3.9.16
 * Jakarta Servlet 6.1
-* Strict JPMS, virtual threads (one VT per request)
+* Strict Java Modules, virtual threads (one VT per request)
 * AOT-friendly (no reflection, no dynamic proxy)
 
 == Bugs and benchmarks

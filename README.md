@@ -7,7 +7,7 @@
 
 <p align="center">
   <strong>Jakarta Servlet 6.1 implementation — pure engine, HTTP transport via SPI, optional CDI</strong><br>
-  <a href="https://jakarta.ee/specifications/servlet/6.1/">Jakarta Servlet 6.1</a> | Native JPMS | Virtual Threads | JDK 25
+  <a href="https://jakarta.ee/specifications/servlet/6.1/">Jakarta Servlet 6.1</a> | Native Java Modules | Virtual Threads | JDK 25
 </p>
 
 <p align="center">

@@ -93,7 +93,7 @@ Resolution is fully build-time through Vauban — no dynamic proxy, no hot-path 
 | `jakarta.servlet.*` (rebrand)
 | `jakarta.servlet.*` (stable)
 
-| JPMS modules
+| Java modules
 | Optional
 | Recommended — Foy enforces it
 

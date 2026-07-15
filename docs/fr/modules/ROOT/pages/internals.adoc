@@ -4,7 +4,7 @@
 [.lead]
 Cette page documente l'implémentation : ce qui se passe entre le moment où la connexion HTTP arrive sur Chappe et celui où la Servlet écrit sa réponse. Elle complète xref:concepts.adoc[Concepts] (vocabulaire) et xref:reference.adoc[Référence] (API).
 
-== Vue d'ensemble : trois couches, deux modules JPMS
+== Vue d'ensemble : trois couches, deux modules Java
 
 [plantuml]
 ....
