@@ -33,7 +33,7 @@ below remains valid. The harness 5 s idle timeout cut the wall clock to
 |---|---|
 | TCK | `jakarta.tck:servlet-tck-runtime:6.1.0` (official, non-public artifacts) |
 | JDK | Eclipse Temurin 25 |
-| Harness | `foy-tck` (Arquillian, out-of-reactor POM Model 4.0.0), transport chappe, CDI vauban |
+| Harness | `foy-tck` (Arquillian, in-reactor behind the `tck` Maven profile), transport chappe, CDI vauban |
 | Command | `./run-official-tck-servlet6.1.sh --all` |
 | Tests run | **1714** |
 | Passed | **920** |

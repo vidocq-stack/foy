@@ -1,17 +1,18 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-    Projet Maven STANDALONE en Model Version 4.0.0, volontairement EN DEHORS
-    du reactor Foy (cf. ../pom.xml).
+    In-reactor TCK runner, gated by the `tck` Maven profile of foy-parent
+    (TCK harmonisation — same pattern as the vidocq-runtime-tck-* runners and
+    the dirac pilot): a plain `mvn install` neither downloads nor runs anything
+    TCK-related.
 
-    Pourquoi : ShrinkWrap Maven Resolver 3.3 (dép. transitive du TCK Jakarta)
-    utilise maven-resolver 1.9 / maven-model 3.9 qui ne savent pas parser
-    les POMs Model 4.1.0 du reactor Foy. Son ClasspathWorkspaceReader
-    crash avec "Bad artifact coordinates ... jar:".
+    History: this module used to be a STANDALONE out-of-reactor POM to work
+    around ShrinkWrap Maven Resolver 3.3 (could not parse Model 4.1.0 POMs).
+    That constraint disappeared with the Maven 3.9.16 / Model 4.0.0 migration.
 
-    Dépendances internes (foy-api, foy-core, foy-chappe, foy-cdi-vauban) sont
-    gelées sur la version du reactor installée dans le repo M2 local — la
-    propriété foy.version DOIT suivre les bumps du reactor, sinon le TCK
-    valide silencieusement des jars périmés (même piège que cassini-tck).
+    Internal dependencies (foy-api, foy-core, foy-chappe, foy-cdi-vauban) are
+    pinned to the reactor version installed in the local M2 repository — the
+    foy.version property MUST follow reactor bumps, otherwise the TCK silently
+    validates stale jars (same trap as cassini-tck).
 
     Le lancement passe par le script :
         ./run-official-tck-servlet6.1.sh                     (smoke test)
@@ -25,9 +26,13 @@
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
 
-    <groupId>io.vidocq.foy</groupId>
+    <parent>
+        <groupId>io.vidocq.foy</groupId>
+        <artifactId>foy-parent</artifactId>
+        <version>0.3.0-SNAPSHOT</version>
+    </parent>
+
     <artifactId>foy-tck</artifactId>
-    <version>0.3.0-SNAPSHOT</version>
     <packaging>jar</packaging>
 
     <name>Foy :: TCK Runner</name>
