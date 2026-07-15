@@ -34,7 +34,7 @@ module to become an independent project usable outside the Vidocq Runtime ecosys
 | `foy-core` | Servlet 6.1 engine — dispatcher, filter chain, session, error pages, listeners, security, web.xml, multipart. |
 | `foy-cdi-vauban` | Bridge to the [Vauban](https://forge.vidocq.dev/vidocq/vauban) CDI container (`FoyVaubanBootstrap.beanManager()`). |
 | `foy-chappe` | [Chappe](https://forge.vidocq.dev/vidocq/chappe) HTTP adapter (`FoyChappeBoot.builder().beanManager(bm).build()`). |
-| `foy-tck` | Arquillian harness for the official Jakarta Servlet 6.1 TCK (standalone POM Model 4.0.0, out-of-reactor). |
+| `foy-tck` | Arquillian harness for the official Jakarta Servlet 6.1 TCK (in-reactor, gated by the `tck` Maven profile). |
 
 ## Status
 

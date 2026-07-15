@@ -73,24 +73,9 @@ Ces tests requièrent un container Jakarta EE complet ou un service externe (JND
 
 == Architecture du runner
 
-`foy-tck` est **volontairement EXCLU** du `<modules>` du reactor `foy` et utilise un POM `modelVersion 4.0.0` standalone, sans `<parent>`.
+`foy-tck` est un **module in-reactor gardé derrière le profil Maven `tck`** (harmonisation TCK, même pattern que les runners `vidocq-runtime-tck-*`) : un `mvn install` normal ne télécharge ni n'exécute rien du TCK, et le reactor de release ne voit jamais le module. Invocation via `./run-official-tck-servlet6.1.sh`, ou directement `./mvnw -Ptck,tck-official -pl foy-tck test`.
 
-**Raison.** ShrinkWrap Maven Resolver 3.3 (transitive du TCK officiel Jakarta) repose sur `maven-resolver 1.9` / `maven-model 3.9` qui ne savent pas parser les POMs Maven `Model 4.1.0`. Son `ClasspathWorkspaceReader` scanne le reactor courant et plante sur tout POM Vidocq (version implicite via parent) avec un message du type :
-
-[source]
-----
-Bad artifact coordinates io.vidocq.foy:foy-core:jar:,
-expected format is <groupId>:<artifactId>[:<extension>[:<classifier>]]:<version>
-----
-
-Tant que ShrinkWrap upstream ne supporte pas Model 4.1, `foy-tck` **doit rester détaché** :
-
-* ne pas le réintégrer au `<modules>` parent ;
-* ne pas lui ajouter de `<parent>` ;
-* ne pas le builder via `mvn -pl` ;
-* toujours passer par `./run-official-tck-servlet6.1.sh`.
-
-Cette contrainte est documentée plus largement dans `lien:{repo-vidocq}/src/branch/main/CLAUDE.md` (section *TCK runners hors reactor*).
+**Note historique.** Le module était exclu du reactor (POM Model 4.0.0 standalone) : ShrinkWrap Maven Resolver 3.3 (dépendance transitive du TCK officiel Jakarta) ne savait pas parser les POMs `Model 4.1.0` qu'utilisait alors le workspace (`Bad artifact coordinates ... jar:`). Cette contrainte a disparu avec la migration du workspace vers Maven 3.9.16 / Model 4.0.0.
 
 == Reproduire localement
 

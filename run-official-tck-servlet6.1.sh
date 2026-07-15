@@ -36,7 +36,8 @@ echo "🚀 [1/3] Installation du reactor Foy dans le dépôt local..."
 mvn install -DskipTests
 
 echo "📂 [2/3] Navigation vers foy-tck (POM Model 4.0.0 standalone hors reactor)..."
-cd foy-tck
+# foy-tck est in-reactor, activé par le profil Maven `tck`
+# (harmonisation TCK, même pattern que les runners vidocq-runtime-tck-*).
 
 # Préparation des arguments
 # Si aucun test n'est spécifié et pas d'option --all, on lance un test simple
@@ -48,4 +49,4 @@ if [[ "$*" != *"-Dtest="* && "$USE_ALL" == "false" ]]; then
 fi
 
 echo "🧪 [3/3] Exécution de Maven avec le profil tck-official..."
-mvn test -Ptck-official $DEFAULT_TEST "${MVN_ARGS[@]}"
+mvn -P"tck,tck-official" -pl foy-tck test $DEFAULT_TEST "${MVN_ARGS[@]}"
