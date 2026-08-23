@@ -10,16 +10,16 @@ Consolidated technical reference. Use this page as an anchor for external links 
 |===
 | Artefact | Role
 
-| `io.vidocq.foy:foy-api:0.2.0`
+| `io.vidocq.foy:foy-api:{project-version}`
 | Public SPI: `SessionStore`, `SecurityProvider`, `AuthenticatedUser`. No dependency outside `jakarta.servlet-api`.
 
-| `io.vidocq.foy:foy-core:0.2.0`
+| `io.vidocq.foy:foy-core:{project-version}`
 | Servlet 6.1 engine — dispatcher, filter chain, sessions, error pages, listeners, security, `web.xml` parser, multipart.
 
-| `io.vidocq.foy:foy-chappe:0.2.0`
+| `io.vidocq.foy:foy-chappe:{project-version}`
 | HTTP bridge to xref:chappe::index.adoc[Chappe] (`FoyChappeBoot`, `ChappeServletBridge`).
 
-| `io.vidocq.foy:foy-cdi-vauban:0.2.0`
+| `io.vidocq.foy:foy-cdi-vauban:{project-version}`
 | CDI bridge to xref:vauban::index.adoc[Vauban] (`FoyVaubanBootstrap`).
 
 | `io.vidocq.foy:foy-tck`

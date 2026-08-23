@@ -12,7 +12,7 @@ First servlet, Foy container, Chappe transport: under fifty lines of Java, no ma
 
 == Maven coordinates
 
-[source,xml]
+[source,xml,subs=attributes+]
 ----
 <dependencies>
     <dependency>
@@ -23,19 +23,19 @@ First servlet, Foy container, Chappe transport: under fifty lines of Java, no ma
     <dependency>
         <groupId>io.vidocq.foy</groupId>
         <artifactId>foy-core</artifactId>
-        <version>0.2.0</version>
+        <version>{project-version}</version>
     </dependency>
     <dependency>
         <groupId>io.vidocq.foy</groupId>
         <artifactId>foy-chappe</artifactId>
-        <version>0.2.0</version>
+        <version>{project-version}</version>
         <scope>runtime</scope>
     </dependency>
     <!-- Optional CDI through Vauban -->
     <dependency>
         <groupId>io.vidocq.foy</groupId>
         <artifactId>foy-cdi-vauban</artifactId>
-        <version>0.2.0</version>
+        <version>{project-version}</version>
         <scope>runtime</scope>
     </dependency>
 </dependencies>

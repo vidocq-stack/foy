@@ -1,8 +1,0 @@
-* xref:index.adoc[Foy]
-** xref:getting-started.adoc[Démarrage rapide]
-** xref:usage.adoc[Cas d'usage]
-** xref:concepts.adoc[Concepts]
-** xref:internals.adoc[Fonctionnement interne]
-** xref:tck.adoc[TCK]
-** xref:reference.adoc[Référence]
-** xref:migration.adoc[Migration]
