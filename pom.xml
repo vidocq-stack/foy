@@ -19,7 +19,7 @@
 
     <name>Foy</name>
     <description>Implémentation Jakarta Servlet 6.1 standalone — moteur Servlet pur, transport HTTP via SPI, CDI optionnel</description>
-    <url>https://codeberg.org/Vidocq/foy</url>
+    <url>https://codefloe.com/Vidocq/foy</url>
 
     <developers>
         <developer>
@@ -54,9 +54,9 @@
     </licenses>
 
     <scm>
-        <connection>scm:git:https://codeberg.org/Vidocq/foy.git</connection>
+        <connection>scm:git:https://codefloe.com/Vidocq/foy.git</connection>
         <developerConnection>scm:git:ssh://git@forge.vidocq.dev:vidocq/foy.git</developerConnection>
-        <url>https://codeberg.org/Vidocq/foy</url>
+        <url>https://codefloe.com/Vidocq/foy</url>
     </scm>
 
     <properties>
