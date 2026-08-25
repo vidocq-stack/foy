@@ -32,7 +32,7 @@ Before diving into internals, let's pin down the vocabulary. The terms below com
 | `request.startAsync()` returns an `AsyncContext`. No platform pool to protect: each request runs on a *virtual thread*; async only decouples response from request on the program side.
 
 | **Multipart**
-| `@MultipartConfig` + `request.getParts()`. Streaming parse over the Chappe body.
+| `@MultipartConfig` + `request.getParts()`. Parsed by `MultipartParser`, **fully buffered in memory** (no streaming parse, no temp-file spill).
 |===
 
 == Metaphor: the layer above the transport
@@ -43,18 +43,21 @@ Foy **interprets those bytes**: it turns an HTTP connection into an `HttpServlet
 
 == Application discovery
 
-`foy-core` orchestrates the merge between annotations and descriptors:
+`foy-core` orchestrates the merge between annotations and the descriptor:
 
-. reading of **annotations** (`@WebServlet`, `@WebFilter`, `@WebListener`, `@MultipartConfig`) — resolved at compile time by an APT, exposed through the Vauban `BeanManager`;
-. reading of **descriptors** (`WEB-INF/web.xml`, `META-INF/web-fragment.xml`) via `WebXmlParser`, producing a `WebAppDescriptor`;
-. merge under `metadata-complete` (standard Servlet 6.1);
-. `WebAppDiscovery` performs the aggregation at `FoyChappeBoot` startup.
+. reading of **annotations** (`@WebServlet`, `@WebFilter`, `@WebListener`, `@MultipartConfig`) — resolved at compile time by an APT, exposed through the Vauban `BeanManager`; `WebAppDiscovery` performs that aggregation at `FoyChappeBoot` startup;
+. reading of the **descriptor** (`WEB-INF/web.xml`, supported subset — see xref:reference.adoc[Reference]) via `WebXmlParser`, producing a `WebAppDescriptor`; `WebXmlContributor` contributes it **after** annotation discovery, never overriding a name already discovered.
+
+[IMPORTANT]
+====
+`META-INF/web-fragment.xml` scanning and the `metadata-complete` attribute are **not implemented yet** — the merge is purely additive. This is the top known gap (81 % of the current TCK failures) — see xref:tck.adoc[TCK status].
+====
 
 No runtime classpath scan. All Servlet beans are already known to Vauban at compile time.
 
 == Chappe ↔ Servlet bridge
 
-`foy-chappe` hosts `ChappeServletBridge`, a Chappe `Handler` that:
+`foy-core` hosts `ChappeServletBridge` (package `io.vidocq.foy.internal.bridge`; `foy-chappe`'s `FoyChappeBoot` builds it), a Chappe `Handler` that:
 
 . exposes the Chappe `Request` as `HttpServletRequestImpl`;
 . exposes the Chappe `Response` as `HttpServletResponseImpl`;
@@ -66,20 +69,18 @@ The Servlet `OutputStream` is wired directly to Chappe streaming — no body cop
 == Application security
 
 * `BasicAuthenticator` — standard HTTP Basic (RFC 7617).
-* `SecurityConstraintEnforcer` — applies `<security-constraint>` from `web.xml`.
+* `SecurityConstraintEnforcer` — applies `@ServletSecurity` constraints (`@HttpConstraint`, `@HttpMethodConstraint`) read from the servlet class. `<security-constraint>` in `web.xml` is **not** parsed.
 * `AnonymousSecurityProvider` — open fallback for development.
 * Public SPI: `io.vidocq.foy.spi.security.SecurityProvider` for plugging custom providers (LDAP, JWT, OIDC).
 
-Form-based and Digest: `// TODO@user: document once stable`. Jakarta Authentication / Authorization: `// TODO@user: planned, later milestone`.
+Form-based and Digest authentication are **not implemented** (the `spec.security.*` TCK family passes 21/59). Jakarta Authentication / Authorization: not implemented, later milestone.
 
 == CDI: a single BeanManager
 
-`foy-cdi-vauban` grafts the Servlet API onto xref:vauban::index.adoc[Vauban]:
+`foy-cdi-vauban` connects Foy to xref:vauban::index.adoc[Vauban] through a single class: `FoyVaubanBootstrap`, which returns the current `VaubanContainer`'s `BeanManager` for `FoyChappeBoot`.
 
-* `ServletContext` is exposed as `@ApplicationScoped`;
-* `HttpServletRequest` as `@RequestScoped`;
-* `HttpSession` as `@SessionScoped` *(`// TODO@user: confirm M2 availability`)*;
-* `Servlet`/`Filter` can carry `@Inject`.
+* `Servlet`/`Filter`/`Listener` instances are resolved through the `BeanManager`, so they can carry `@Inject` for application beans.
+* `ServletContext`, `HttpServletRequest` and `HttpSession` are **not** exposed as CDI beans yet — no `@ApplicationScoped`/`@RequestScoped`/`@SessionScoped` producers exist for them.
 
 Resolution is fully build-time through Vauban — no dynamic proxy, no hot-path reflection, AOT-friendly (GraalVM, Leyden CDS).
 
@@ -107,7 +108,7 @@ Resolution is fully build-time through Vauban — no dynamic proxy, no hot-path 
 
 | WebSocket
 | Separate spec 2.1
-| Separate spec 2.2 — `// TODO@user: to implement`
+| Separate spec 2.2 — not implemented in Foy (planned, no date)
 
 | HTTP/3
 | Out of scope

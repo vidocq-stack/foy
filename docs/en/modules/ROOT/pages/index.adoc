@@ -23,7 +23,7 @@ The metaphor is direct: **Foy inherits the Chappe transport**. Just as Alphonse 
 | Java | 25 (LTS), virtual threads
 | Java modules | `io.vidocq.foy.api`, `io.vidocq.foy.core`, `io.vidocq.foy.chappe`, `io.vidocq.foy.cdi.vauban`
 | Runtime dependencies | `jakarta.servlet-api`, `jakarta.cdi-api` (static), {repo-chappe} (transport), {repo-vauban} (CDI)
-| TCK | ⚠️ partial — about 90 % of the official Jakarta Servlet 6.1 TCK on `api.*` packages. Details xref:tck.adoc[here].
+| TCK | ⚠️ baseline — **95.6 %** of the official Jakarta Servlet 6.1 TCK on the `api.*` family (core engine), **53.7 %** raw over the full suite. 81 % of the remaining errors come from a single missing feature: web-fragment scanning. Details xref:tck.adoc[here].
 |===
 
 == Position in the ecosystem
@@ -33,10 +33,10 @@ Foy is the servlet layer: it turns a Chappe HTTP connection into `Servlet`/`Filt
 [mermaid]
 ....
 flowchart TB
-    app["Servlet application<br/>@WebServlet · @WebFilter · @WebListener<br/>web.xml · web-fragment.xml"]
+    app["Servlet application<br/>@WebServlet · @WebFilter · @WebListener<br/>web.xml"]
     subgraph foy["Foy — Jakarta Servlet 6.1"]
-        foycore["foy-core<br/>dispatcher · filter chain · sessions<br/>error pages · multipart · security"]
-        foychappe["foy-chappe<br/>FoyChappeBoot · ChappeServletBridge"]
+        foycore["foy-core<br/>ChappeServletBridge · dispatcher · filter chain<br/>sessions · error pages · multipart · security"]
+        foychappe["foy-chappe<br/>FoyChappeBoot"]
         foycdi["foy-cdi-vauban<br/>FoyVaubanBootstrap"]
     end
     chappe["Chappe<br/>HTTP/1.1 · HTTP/2 · TLS 1.3<br/>virtual threads"]
@@ -64,4 +64,5 @@ Foy **shares the Chappe runtime** with xref:cassini::index.adoc[Cassini] (REST 4
 == Bugs and benchmarks
 
 * link:{repo-foy}/src/branch/main/BUG.md[BUG.md] — reproducible bugs, hypotheses, status.
-* link:{repo-foy}/src/branch/main/BENCH.md[BENCH.md] — JMH/wrk numbers, deltas vs previous run. No performance numbers inline in this doc.
+* link:{repo-foy}/src/branch/main/TCK.md[TCK.md] — full TCK measurement report (per-family tallies, root causes).
+* Benchmarks: no numbers recorded yet — a `BENCH.md` will be created with the first measured run (workspace convention). No performance numbers inline in this doc.

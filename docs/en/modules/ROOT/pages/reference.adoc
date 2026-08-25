@@ -14,10 +14,10 @@ Consolidated technical reference. Use this page as an anchor for external links 
 | Public SPI: `SessionStore`, `SecurityProvider`, `AuthenticatedUser`. No dependency outside `jakarta.servlet-api`.
 
 | `io.vidocq.foy:foy-core:{project-version}`
-| Servlet 6.1 engine — dispatcher, filter chain, sessions, error pages, listeners, security, `web.xml` parser, multipart.
+| Servlet 6.1 engine — dispatcher, filter chain, sessions, error pages, listeners, security, `web.xml` parser, multipart, and the Chappe bridge (`ChappeServletBridge`, package `io.vidocq.foy.internal.bridge`).
 
 | `io.vidocq.foy:foy-chappe:{project-version}`
-| HTTP bridge to xref:chappe::index.adoc[Chappe] (`FoyChappeBoot`, `ChappeServletBridge`).
+| Bootstrap on the xref:chappe::index.adoc[Chappe] transport (`FoyChappeBoot`, which builds the `foy-core` bridge).
 
 | `io.vidocq.foy:foy-cdi-vauban:{project-version}`
 | CDI bridge to xref:vauban::index.adoc[Vauban] (`FoyVaubanBootstrap`).
@@ -115,7 +115,7 @@ The `io.vidocq.foy.internal.*` packages are exported to allow advanced integrati
 | Returns `Optional<Mounted>`. Empty if no Servlet/Filter/Listener bean was discovered.
 
 | `Mounted.handler()`
-| The `io.vidocq.chappe.api.Handler` to mount on a `ChappeMountPoint`.
+| The `io.vidocq.chappe.api.Handler` to mount through a Chappe `Router.Builder.mount(mountPrefix, handler)`, or to pass directly to `Server.builder().handler(...)` when the contextPath is `/`.
 
 | `Mounted.mountPrefix()`
 | Mount prefix to use (`""` if `contextPath == "/"`).
@@ -148,19 +148,24 @@ The `io.vidocq.foy.internal.*` packages are exported to allow advanced integrati
 
 == `web.xml` configuration
 
-Foy reads the standard Servlet 6.1 `WEB-INF/web.xml`:
+`WebXmlParser` reads exactly this subset of the Servlet 6.1 `WEB-INF/web.xml` (contributed after annotation discovery, never overriding an already-discovered name):
 
-* `<servlet>` / `<servlet-mapping>`
-* `<filter>` / `<filter-mapping>`
-* `<listener>`
-* `<session-config>` (timeout, cookie config)
-* `<security-constraint>`, `<login-config>`, `<security-role>`
-* `<error-page>`
-* `<welcome-file-list>`
-* `<context-param>` exposed via `ServletContext.getInitParameter`
-* `<multipart-config>` at `<servlet>` level
+* `<display-name>`
+* `<context-param>` (`param-name`/`param-value`) exposed via `ServletContext.getInitParameter`
+* `<servlet>` (`servlet-name`, `servlet-class`, `init-param`, `async-supported`) / `<servlet-mapping>` (`servlet-name`, `url-pattern`)
+* `<filter>` (`filter-name`, `filter-class`, `init-param`) / `<filter-mapping>` (`filter-name`, `url-pattern`, `servlet-name`, `dispatcher` — defaults to `REQUEST`)
+* `<listener>` (`listener-class`)
+* `<error-page>` (`error-code`, `exception-type`, `location`)
+* `<session-config>` / `<session-timeout>` (timeout only — no cookie config)
+* `<locale-encoding-mapping-list>` / `<locale-encoding-mapping>` (`locale`, `encoding`)
+* the `version` attribute of `<web-app>`
 
-`META-INF/web-fragment.xml` fragments are merged under standard `metadata-complete`.
+Everything else is **not parsed** — notably `<security-constraint>`, `<login-config>`, `<security-role>`, `<welcome-file-list>`, `<multipart-config>`, `<mime-mapping>`, `<load-on-startup>` and `<jsp-config>`.
+
+[IMPORTANT]
+====
+`META-INF/web-fragment.xml` scanning and the `metadata-complete` attribute are **not implemented yet** — the top known TCK gap (81 % of failures, the whole `pluggability.*` family). See xref:tck.adoc[TCK status].
+====
 
 == Servlet 6.1 API comparison
 
@@ -174,31 +179,35 @@ Foy reads the standard Servlet 6.1 `WEB-INF/web.xml`:
 
 | `RequestDispatcher` (forward / include)
 | ✅
-| Cross-context (`getContext`) **not implemented** — see xref:tck.adoc[TCK].
+| Cross-context (`getContext`) **implemented** via `CrossContextRegistry` (strict contextPath match on contexts deployed in the same JVM).
+
+| Web fragments (`web-fragment.xml`, `metadata-complete`)
+| ❌
+| **Not implemented yet** — the top TCK gap (81 % of failures). See xref:tck.adoc[TCK].
 
 | Async (`AsyncContext`)
 | ⚠️
-| Standard cases OK; `setTimeout` + late dispatch: a few TCK errors.
+| Standard cases OK; non-blocking I/O listeners and part of the `spec.async` suite still fail (TCK 22/39 in errors).
 
 | Multipart (`@MultipartConfig`)
-| ✅
-| Streaming over the Chappe body.
+| ⚠️
+| **Buffered in memory** — no streaming parse, no temp-file spill; limit/threshold handling partial (8 of 14 `PartTests`/`Part1Tests` still fail).
 
 | Sessions
 | ✅
 | `InMemorySessionStore`; SPI `SessionStore` for distribution.
 
 | Security (Basic)
-| ✅
-| `BasicAuthenticator` + `<security-constraint>`.
+| ⚠️
+| `BasicAuthenticator` + `@ServletSecurity` constraints (`SecurityConstraintEnforcer`); `<security-constraint>` in `web.xml` is not parsed. 8 of 14 `secbasic` TCK tests still fail.
 
 | Security (Form, Digest, Jakarta Auth)
 | ❌
-| `// TODO@user: planned`.
+| Not implemented.
 
 | WebSocket (Servlet 6.1 upgrade)
 | ❌
-| `// TODO@user: planned`.
+| Not implemented (planned, no date).
 
 | JSP
 | ❌
@@ -216,4 +225,5 @@ Foy reads the standard Servlet 6.1 `WEB-INF/web.xml`:
 == Bugs and benchmarks
 
 * link:{repo-foy}/src/branch/main/BUG.md[BUG.md] — reproducible bugs, hypotheses, status.
-* link:{repo-foy}/src/branch/main/BENCH.md[BENCH.md] — JMH/wrk numbers, deltas vs previous run.
+* link:{repo-foy}/src/branch/main/TCK.md[TCK.md] — full TCK measurement report.
+* Benchmarks: no numbers recorded yet — a `BENCH.md` will be created with the first measured run (workspace convention).

@@ -68,10 +68,12 @@ The `@WebServlet` annotation is resolved at compile time by an APT. Zero classpa
 
 == Boot the container
 
-The public Chappe-side API is `FoyChappeBoot`. It takes a `BeanManager` (CDI) and exposes a Chappe `Handler` to mount on a `ChappeMountPoint`.
+The public Chappe-side API is `FoyChappeBoot`. It takes a `BeanManager` (CDI) and exposes a Chappe `Handler` (`Mounted.handler()`). Mounting is plain Chappe: hang the handler on a `Router.Builder.mount(prefix, handler)` — or pass it directly to `Server.builder().handler(...)` when the contextPath is `/`.
 
 [source,java]
 ----
+import io.vidocq.chappe.api.Router;
+import io.vidocq.chappe.api.Server;
 import io.vidocq.foy.chappe.FoyChappeBoot;
 import jakarta.enterprise.inject.spi.CDI;
 
@@ -83,8 +85,16 @@ void main() throws Exception {
             .build()
             .orElseThrow(() -> new IllegalStateException("No @WebServlet discovered"));
 
-    chappeMountPoint.mount(listener, mounted.mountPrefix(), mounted.handler());
-    mounted.fireContextInitialized();
+    var router = Router.builder()
+            .mount(mounted.mountPrefix(), mounted.handler())
+            .build();
+
+    try (var server = Server.builder().port(8080).handler(router).build()) {
+        server.start(); // non-blocking
+        mounted.fireContextInitialized();
+        // ... await your application's shutdown signal ...
+        mounted.fireContextDestroyed();
+    }
 }
 ----
 
@@ -92,15 +102,19 @@ void main() throws Exception {
 
 == Annotations or `web.xml`?
 
-Foy supports both and applies the standard `metadata-complete` semantics.
+Foy supports annotations and a `web.xml` subset:
 
-* `@WebServlet`, `@WebFilter`, `@WebListener`, `@MultipartConfig`: discovered at compile time by APT.
-* `WEB-INF/web.xml` and `META-INF/web-fragment.xml`: read at startup by `WebXmlParser` and merged through `WebAppDiscovery`.
-* If `metadata-complete=true`, annotations are ignored (standard Servlet 6.1 behaviour).
+* `@WebServlet`, `@WebFilter`, `@WebListener`, `@MultipartConfig`: discovered at compile time by APT, exposed through the Vauban `BeanManager`.
+* `WEB-INF/web.xml`: parsed by `WebXmlParser` (supported element subset — see xref:reference.adoc[Reference]) and contributed by `WebXmlContributor` after annotation discovery. A descriptor definition never overrides a name already discovered by annotation.
+
+[IMPORTANT]
+====
+`META-INF/web-fragment.xml` scanning and the `metadata-complete` attribute are **not implemented yet**. This is the top known gap: it alone accounts for 81 % of the current TCK failures (the whole `pluggability.*` family) — see xref:tck.adoc[TCK status].
+====
 
 == Wiring with Chappe
 
-The bridge is `ChappeServletBridge`, a Chappe `Handler` that:
+The bridge is `ChappeServletBridge` (in `foy-core`, package `io.vidocq.foy.internal.bridge`; `FoyChappeBoot` builds it), a Chappe `Handler` that:
 
 . exposes the Chappe `Request` as `HttpServletRequestImpl`;
 . exposes the Chappe `Response` as `HttpServletResponseImpl`;

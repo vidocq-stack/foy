@@ -20,6 +20,7 @@ package "Foy" {
   package "io.vidocq.foy.core" {
     [WebAppDiscovery]
     [WebAppDescriptor]
+    [ChappeServletBridge]
     [ServletDispatcher]
     [FilterRegistry]
     [SessionManager]
@@ -28,7 +29,6 @@ package "Foy" {
   }
   package "io.vidocq.foy.chappe" {
     [FoyChappeBoot]
-    [ChappeServletBridge]
   }
   package "io.vidocq.foy.cdi.vauban" {
     [FoyVaubanBootstrap]
@@ -73,7 +73,7 @@ sequenceDiagram
     Chappe->>Bridge: handle(Request, Response)
     Bridge->>Bridge: HttpServletRequestImpl / HttpServletResponseImpl
     Bridge->>Disp: dispatch(req, resp)
-    Disp->>Sec: enforce(security-constraint)
+    Disp->>Sec: enforce(@ServletSecurity)
     alt unauthorised
         Sec-->>Client: 401/403 (BasicAuthenticator)
     else authorised
@@ -99,7 +99,7 @@ No body copy: `ServletOutputStreamImpl` writes straight into the Chappe `Body`. 
 
 [NOTE]
 ====
-The bridge never `pin`s a VT on a Java monitor — every critical section uses `ReentrantLock` or lock-free structures. See link:{repo-foy}/src/branch/main/BENCH.md[BENCH.md] for the numbers.
+The bridge never `pin`s a VT on a Java monitor — every critical section uses `ReentrantLock` or lock-free structures. No benchmark numbers have been recorded yet — a `BENCH.md` will be created with the first measured run (workspace convention).
 ====
 
 == Container lifecycle
@@ -108,9 +108,9 @@ The bridge never `pin`s a VT on a Java monitor — every critical section uses `
 ....
 stateDiagram-v2
     [*] --> Discovery
-    Discovery: WebAppDiscovery scans the Vauban BeanManager\nWebXmlParser reads web.xml + web-fragment.xml
+    Discovery: WebAppDiscovery scans the Vauban BeanManager\nWebXmlParser reads WEB-INF/web.xml (subset)
     Discovery --> Built: FoyChappeBoot.builder().build() returns Mounted
-    Built --> Mounted: ChappeMountPoint.mount(handler)
+    Built --> Mounted: Router.Builder.mount(mountPrefix, handler)
     Mounted --> Started: fireContextInitialized() — @WebListener
     Started --> Serving: requests handled
     Serving --> Stopping: shutdown signal
@@ -122,12 +122,12 @@ stateDiagram-v2
 
 == CDI integration through Vauban
 
-`foy-cdi-vauban` works in two phases:
+`foy-cdi-vauban` is deliberately minimal: its single class, `FoyVaubanBootstrap`, returns the current `VaubanContainer`'s `BeanManager`, which the caller passes to `FoyChappeBoot`. `WebAppDiscovery` then resolves the Servlet/Filter/Listener instances through that `BeanManager`, so they can `@Inject` application beans (build-time resolution through Vauban).
 
-. **build-time (Vauban)** — Vauban's annotation processor generates *bean producers* for `ServletContext`, `HttpServletRequest` and `HttpSession`. No reflection, all `Class-File API` (JEP 484).
-. **runtime (Foy)** — `FoyVaubanBootstrap.beanManager()` returns the `BeanManager` injected into `FoyChappeBoot`. On every request, `ServletDispatcher` pushes the current `HttpServletRequest` instance into the `RequestScoped` context.
-
-Benefit: `@Inject HttpServletRequest req` works in any Servlet or Filter, with no runtime dynamic proxy.
+[IMPORTANT]
+====
+There are **no CDI producers** for `ServletContext`, `HttpServletRequest` or `HttpSession` yet — `@Inject HttpServletRequest` does **not** work. Scoped Servlet-object beans are a later milestone.
+====
 
 == Implementation choices
 
@@ -153,9 +153,11 @@ Benefit: `@Inject HttpServletRequest req` works in any Servlet or Filter, with n
 
 == Known limits
 
-* Cross-context dispatch (`ServletContext.getContext`): not implemented — see xref:tck.adoc[].
-* WebSocket Servlet 6.1: `// TODO@user: planned, no date`.
+* Web fragments (`META-INF/web-fragment.xml`) and `metadata-complete`: **not implemented** — the top TCK gap (81 % of failures), see xref:tck.adoc[].
+* Cross-context dispatch (`ServletContext.getContext`): **implemented** via `CrossContextRegistry` (strict contextPath match on the contexts deployed in the same JVM).
+* Multipart: fully buffered in memory, no streaming parse.
+* WebSocket Servlet 6.1: not implemented (planned, no date).
 * JSP: not supported, not planned.
-* Form-based authentication: `// TODO@user: in progress`.
+* Form-based and Digest authentication: not implemented.
 
-For comparative numbers (Tomcat, Jetty), see link:{repo-foy}/src/branch/main/BENCH.md[BENCH.md].
+No comparative numbers (Tomcat, Jetty) have been recorded yet — a `BENCH.md` will be created with the first measured run (workspace convention).
