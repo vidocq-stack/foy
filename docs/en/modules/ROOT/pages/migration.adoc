@@ -6,7 +6,7 @@ Foy honours the Jakarta Servlet 6.1 spec to the letter — your `web.xml`, your 
 
 [CAUTION]
 ====
-Foy is at **{project-version}** and the official TCK passes around 90 % on the `api.*` packages (see xref:tck.adoc[TCK status] for the full-suite picture). Migration is not recommended in production until the listed gaps are closed.
+Foy is at **{project-version}** and the official TCK passes **95.6 %** on the `api.*` family but only **53.7 %** raw over the full suite — 81 % of the errors come from the missing web-fragment scanning (see xref:tck.adoc[TCK status] for the full-suite picture). Migration is not recommended in production until the listed gaps are closed.
 ====
 
 == From Tomcat
@@ -17,19 +17,19 @@ Foy is at **{project-version}** and the official TCK passes around 90 % on the `
 
 | `server.xml` (`<Connector>`, `<Engine>`, `<Host>`)
 | `FoyChappeBoot.builder()` + xref:chappe::index.adoc[Chappe]
-| Programmatic configuration. The connector is Chappe, mounted through `ChappeMountPoint`.
+| Programmatic configuration. The connector is Chappe; the Foy handler is mounted through the Chappe router (`Router.Builder.mount(...)`).
 
 | `WEB-INF/web.xml`
-| Identical
-| Read by `WebXmlParser` at startup.
+| Supported subset
+| Read by `WebXmlParser` — see the exact element list in xref:reference.adoc[Reference].
 
 | `@WebServlet`, `@WebFilter`, `@WebListener`
 | Identical
 | Detected at compile time by APT — no runtime scan.
 
 | `META-INF/web-fragment.xml`
-| Identical
-| Likewise, merged with `web.xml` under `metadata-complete`.
+| ❌ **Not implemented yet**
+| Web-fragment scanning and `metadata-complete` are the top known gap (81 % of TCK failures) — see xref:tck.adoc[TCK].
 
 | Coyote (HTTP/1.1, HTTP/2)
 | xref:chappe::index.adoc[Chappe]
@@ -45,7 +45,7 @@ Foy is at **{project-version}** and the official TCK passes around 90 % on the `
 
 | `Context.xml` resources
 | CDI Vauban beans
-| `// TODO@user: clarify mapping for application JNDI resources.`
+| Foy ships no JNDI tree — port each `<Resource>` entry to a Vauban bean and inject it with `@Inject`.
 |===
 
 == From Jetty (Servlet)
@@ -55,19 +55,19 @@ Foy is at **{project-version}** and the official TCK passes around 90 % on the `
 | Jetty | Foy | Note
 
 | `Server` + `ServerConnector`
-| xref:chappe::index.adoc[Chappe] `ChappeBoot`
+| xref:chappe::index.adoc[Chappe] `Server.builder()`
 | The connector is Chappe.
 
 | `WebAppContext`
 | `FoyChappeBoot.builder().contextPath(...)`
-| `// TODO@user: direct WAR deploy once stabilised.`
+| WAR deploy is not supported — Foy boots embedded, programmatically.
 
 | `ServletContextHandler`
 | `VidocqServletContext` (internal)
 | Likewise.
 
 | `JettyWebSocketServletContainerInitializer`
-| `// TODO@user`
+| ❌ Not implemented
 | WebSocket Servlet 6.1 planned, no date.
 
 | Custom Jetty `Handler`
@@ -96,18 +96,21 @@ Foy is at **{project-version}** and the official TCK passes around 90 % on the `
 
 == From Helidon Servlet
 
-`// TODO@user: to document once a real-world migration case shows up.`
+No real-world migration has been documented yet — the Tomcat and Jetty tables above transpose directly (programmatic boot, Chappe transport, `SecurityProvider` SPI).
 
 == Known gaps
 
-* **WebSocket Servlet 6.1 / Jakarta WebSocket 2.2** — `// TODO@user: planned, no date`.
-* **Cross-context dispatch** (`ServletContext.getContext`) — not implemented, see xref:tck.adoc[TCK].
+* **Web fragments (`META-INF/web-fragment.xml`) and `metadata-complete`** — not implemented yet; the top known gap, 81 % of TCK failures. See xref:tck.adoc[TCK].
+* **WebSocket Servlet 6.1 / Jakarta WebSocket 2.2** — not implemented (planned, no date).
 * **JSP** — not supported, not planned. For dynamic pages use xref:cassini::index.adoc[Cassini] (REST) or HTML-emitting Servlets.
-* **Form-based / Digest authentication** — `// TODO@user: in progress`.
+* **Form-based / Digest authentication** — not implemented.
+* **Multipart** — fully buffered in memory; limit/threshold handling partial.
+
+Cross-context dispatch (`ServletContext.getContext`) **is implemented** via `CrossContextRegistry` — strict contextPath match on the contexts deployed in the same JVM.
 
 == Common pitfalls
 
 * **No runtime `META-INF/services` autoload.** Foy does not use `ServiceLoader` at startup. If a Servlet library relies on a `ServletContainerInitializer` loaded by scan, declare it as a CDI bean in Vauban.
-* **`metadata-complete=true` honoured to the letter.** With `false`, APT-detected annotations take precedence — standard Servlet 6.1 behaviour.
+* **`metadata-complete` is not honoured yet.** The attribute is not parsed: annotations and `web.xml` are always merged additively (a descriptor definition never overrides a name already discovered by annotation). If your application relies on `metadata-complete=true` to silence annotations, that behaviour is missing today.
 * **No runtime dynamic proxy.** Frameworks that rely on it (Spring AOP, some profiling libs) won't work as-is. Prefer APT alternatives (Vauban, Class-File API).
 * **Strict Java modules.** If a legacy uses reflective `setAccessible(true)`, it needs an explicit `--add-opens` — better to port the legacy to `@Inject`.

@@ -2,74 +2,64 @@
 :description: Conformance status against the Jakarta Servlet 6.1 Technology Compatibility Kit.
 
 [.lead]
-This page consolidates the status of the official Jakarta Servlet 6.1 TCK runs against Foy. It is regenerated on every release. The day-to-day source of truth remains the `TCK.md` of the link:{repo-foy}/src/branch/main/foy-tck/[`foy-tck`] folder.
+This page consolidates the status of the official Jakarta Servlet 6.1 TCK runs against Foy. It is regenerated on every release. The day-to-day source of truth remains link:{repo-foy}/src/branch/main/TCK.md[`TCK.md`] at the repo root.
 
 == Summary
 
-At the latest full run of the `tck-official` profile, roughly **90 %** of Jakarta Servlet 6.1 tests on the `api.*` packages pass.
+This is a **baseline measurement**, not a conformance claim. At the latest full run (`jakarta.tck:servlet-tck-runtime:6.1.0`, re-run of 2026-06-12 after the trailer/idle-timeout fixes):
 
-[cols="2,1,1,3",options="header"]
+* **1714** tests run, **921** passed, 0 failures / 793 errors — **53.7 %** raw;
+* **95.6 %** on the `api.*` family (the largest one — the Servlet engine itself);
+* **81 % of all errors come from a single missing feature**: web-fragment scanning (`META-INF/web-fragment.xml`, spec §8.2) — every `pluggability.*` war packages its servlets in `WEB-INF/lib/*.jar` fragments, which Foy does not scan, so every request 404s. Implementing fragment scanning + ordering would mechanically bring the overall score to ~91 %.
+
+Per-family breakdown (baseline run, 2026-06-11 — the raw score is misleading):
+
+[cols="2,1,1,1,3",options="header"]
 |===
-| Spec section | Total | Passed | Notes
+| Family | Run | Pass | Score | Reading
 
-| `api.jakarta_servlet.servlet.*`
-| ~XX
-| ~XX
-| ✅ Near-complete coverage. `// TODO@user: exact figures from the latest run`
+| `api.*` (core engine)
+| 859
+| 820
+| 95.5 % (95.6 % at the re-run)
+| ✅ The Servlet engine itself is solid
 
-| `api.jakarta_servlet.filter.*`
-| ~XX
-| ~XX
-| ✅
+| `pluggability.*`
+| 646
+| 5
+| 0.8 %
+| ❌ **One missing feature** — web fragments not scanned (641 errors)
 
-| `api.jakarta_servlet.http.*`
-| ~XX
-| ~XX
-| ⚠️ 3 errors on `HttpServletRequestTests` — `getRequestedSessionId` semantics + TCK substring bug
+| `spec.*` (behavioral)
+| 148
+| 74
+| 50.0 %
+| ⚠️ Async I/O, error pages, server push, requestdispatcher…
 
-| `api.jakarta_servlet.dispatchtest`
-| ~XX
-| ~XX-18
-| ❌ ~18 errors: cross-context dispatch (`ServletContext.getContext`) not implemented
+| `spec.security.*`
+| 59
+| 21
+| 35.6 %
+| ⚠️ FORM/BASIC auth (`secform` 17/25 and `secbasic` 8/14 in errors) and client-cert incomplete
 
-| `api.jakarta_servlet.registration`
-| ~XX
-| ~XX-10
-| ❌ 10 errors: `CommonServlets.jar` auto-attached to the WAR not scanned
-
-| `api.jakarta_servlet.asynccontext`
-| ~XX
-| ~XX-11
-| ⚠️ ~11 errors: edge cases of `setTimeout` / `startAsync` after dispatch
+| `compat.*`
+| 2
+| 0
+| 0 %
+| ❌ Leading-slash dispatch compat
 |===
 
 [NOTE]
 ====
-Exact figures live in `target/surefire-reports/` after an `--all` run. For historical detail, browse `git log -- foy-tck/` on the `main` branch.
+Exact figures live in `target/surefire-reports/` after an `--all` run and in link:{repo-foy}/src/branch/main/TCK.md[`TCK.md`] (per-family tallies, root causes §3, roadmap §4). For historical detail, browse `git log -- TCK.md` on the `main` branch.
 ====
 
-== Intentionally skipped tests
+== Nothing is skipped
 
-[cols="3,5",options="header"]
-|===
-| Test | Reason
+The full run reports `Skipped: 0` — no test battery is excluded. Two product decisions show up as errors rather than skips:
 
-| `sc40.addJsp*`, `sc40.addJspFile*`
-| Foy ships **no** JSP engine — not supported, not planned. For dynamic pages, use xref:cassini::index.adoc[Cassini] (REST) or pure Servlets.
-
-| TLD tests (`tagext.*`)
-| Same — no JSP engine.
-
-| `// TODO@user: list any extra batteries explicitly skipped in foy-tck/TCK.md`
-| `// TODO@user`
-|===
-
-== Tests skipped due to environment
-
-These tests require a full Jakarta EE container or an external service (application JNDI, JMS, JTA). They do not represent an applicative gap of Foy.
-
-* Application JNDI tests (`@Resource` JDBC) — Foy does not ship an integrated datasource pool; the application injects them through xref:vauban::index.adoc[Vauban].
-* `// TODO@user: complete from foy-tck/TCK.md`
+* **No JSP engine** (not supported, not planned) — JSP-dependent behaviours fail and are accepted gaps. For dynamic pages, use xref:cassini::index.adoc[Cassini] (REST) or pure Servlets.
+* **Hang safety net** — some TCK clients read raw sockets without `SO_TIMEOUT` and would hang forever on an unanswered request; `foy-tck` sets a global JUnit 120 s timeout (`SEPARATE_THREAD` mode). Tests hitting it (e.g. `HttpUpgradeHandlerTests.upgradeTest`, HTTP Upgrade not implemented) are counted as errors.
 
 == Runner architecture
 
