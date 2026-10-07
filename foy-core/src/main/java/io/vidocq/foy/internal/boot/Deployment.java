@@ -26,6 +26,11 @@ import io.vidocq.foy.internal.listener.ListenerRegistry;
 import jakarta.servlet.Filter;
 import jakarta.servlet.Servlet;
 
+import java.io.IOException;
+import java.io.UncheckedIOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.Comparator;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
 
@@ -42,15 +47,17 @@ public final class Deployment implements AutoCloseable {
     private final ListenerRegistry listeners;
     private final List<Servlet> initializedServlets;
     private final List<Filter> initializedFilters;
+    private final Path tempDir;
     private final AtomicBoolean closed = new AtomicBoolean();
 
     Deployment(Handler handler, VidocqServletContext servletContext, ListenerRegistry listeners,
-               List<Servlet> initializedServlets, List<Filter> initializedFilters) {
+               List<Servlet> initializedServlets, List<Filter> initializedFilters, Path tempDir) {
         this.handler = handler;
         this.servletContext = servletContext;
         this.listeners = listeners;
         this.initializedServlets = List.copyOf(initializedServlets);
         this.initializedFilters = List.copyOf(initializedFilters);
+        this.tempDir = tempDir;
     }
 
     /** The request handler to mount on a Chappe server. */
@@ -69,11 +76,21 @@ public final class Deployment implements AutoCloseable {
     /**
      * Undeploys: Servlet 6.1 §2.3.4 — {@code destroy()} in reverse {@code init()} order
      * (filters, then servlets), then {@code contextDestroyed}, then the context leaves the
-     * cross-context registry. A second call is a no-op.
+     * cross-context registry and its temp dir is removed. A second call is a no-op.
      */
     @Override
     public void close() {
         if (!closed.compareAndSet(false, true)) return;
+        undeploy(servletContext, listeners, initializedServlets, initializedFilters, tempDir);
+    }
+
+    /**
+     * Tears down a full or partial deployment. {@code contextListeners} is {@code null} when
+     * {@code contextInitialized} was never fired, so {@code contextDestroyed} is skipped;
+     * {@code tempDir} is {@code null} when none was created.
+     */
+    static void undeploy(VidocqServletContext servletContext, ListenerRegistry contextListeners,
+                         List<Servlet> initializedServlets, List<Filter> initializedFilters, Path tempDir) {
         for (int i = initializedFilters.size() - 1; i >= 0; i--) {
             Filter f = initializedFilters.get(i);
             try { f.destroy(); } catch (RuntimeException e) { warn("destroy failed for filter " + f, e); }
@@ -82,9 +99,24 @@ public final class Deployment implements AutoCloseable {
             Servlet s = initializedServlets.get(i);
             try { s.destroy(); } catch (RuntimeException e) { warn("destroy failed for servlet " + s, e); }
         }
-        try { listeners.fireContextDestroyed(servletContext); }
-        catch (RuntimeException e) { warn("contextDestroyed failed", e); }
+        if (contextListeners != null) {
+            try { contextListeners.fireContextDestroyed(servletContext); }
+            catch (RuntimeException e) { warn("contextDestroyed failed", e); }
+        }
         CrossContextRegistry.unregister(servletContext);
+        if (tempDir != null) deleteRecursively(tempDir);
+    }
+
+    /** Best effort: a failure is logged at FINE and the remaining entries are still tried. */
+    private static void deleteRecursively(Path root) {
+        try (var paths = Files.walk(root)) {
+            paths.sorted(Comparator.reverseOrder()).forEach(p -> {
+                try { Files.deleteIfExists(p); }
+                catch (IOException e) { LOG.log(System.Logger.Level.DEBUG, "cannot delete " + p, e); }
+            });
+        } catch (IOException | UncheckedIOException e) {
+            LOG.log(System.Logger.Level.DEBUG, "cannot delete temp dir " + root, e);
+        }
     }
 
     private static void warn(String message, RuntimeException e) {

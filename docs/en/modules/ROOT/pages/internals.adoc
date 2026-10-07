@@ -115,8 +115,8 @@ The deployment lifecycle lives in `foy-core` (`io.vidocq.foy.internal.boot`), no
 
 . `WebAppModel` describes the web application: servlets, filters, listeners, `web.xml` data and options such as `metadata-complete`.
 . `DescriptorMerger` merges the parsed `web.xml` with the annotated components (Servlet 6.1 §8.2.3: the descriptor wins on a same-name conflict, `metadata-complete="true"` ignores annotations).
-. `WebAppDeployer.deploy(model, DeployOptions)` runs the lifecycle — listeners, `ServletContainerInitializer`s, dynamic registrations, `load-on-startup` initialisation in order — and returns a `Deployment`.
-. `Deployment` exposes `handler()` (the Chappe `Handler`), `servletContext()` and `close()`, which destroys servlets and filters and fires `contextDestroyed`.
+. `WebAppDeployer.deploy(model, DeployOptions)` runs the lifecycle — listeners, `ServletContainerInitializer`s, dynamic registrations, `load-on-startup` initialisation in order — and returns a `Deployment`. A servlet whose `init()` throws (a `ServletException` or a runtime exception) answers 500 and the rest of the application keeps serving; a filter whose `init()` throws is left out of the chain. When the deployment itself fails (an initializer, a `contextInitialized` listener or a component that cannot be instantiated), what was already set up is torn down before the exception propagates.
+. `Deployment` exposes `handler()` (the Chappe `Handler`), `servletContext()` and `close()`, which destroys servlets and filters, fires `contextDestroyed` and removes the context temp directory (`jakarta.servlet.context.tempdir`).
 
 [mermaid]
 ....

@@ -188,4 +188,120 @@ class WebAppDeployerEndToEndTest {
         assertInstanceOf(java.io.File.class,
                 deployment.servletContext().getAttribute(ServletContext.TEMPDIR));
     }
+
+    public static class SessionProbe extends HttpServlet {
+        @Override protected void doGet(HttpServletRequest q, HttpServletResponse r) throws IOException {
+            r.getWriter().write(String.valueOf(q.getSession(true).getMaxInactiveInterval()));
+        }
+    }
+
+    static ServletDecl sessionProbe() {
+        return new ServletDecl("probe", SessionProbe.class, SessionProbe::new, List.of("/session"),
+                Map.of(), Integer.MIN_VALUE, true);
+    }
+
+    @Test
+    void configuredSessionTimeoutReachesCreatedSessions() throws Exception {
+        deploy(WebAppModel.builder("/").servlet(sessionProbe()).sessionTimeoutMinutes(5).build());
+        assertEquals("300", get("/session").body());
+    }
+
+    @Test
+    void sessionTimeoutDefaultsTo1800Seconds() throws Exception {
+        deploy(WebAppModel.builder("/").servlet(sessionProbe()).build());
+        assertEquals("1800", get("/session").body());
+    }
+
+    public static class RuntimeFailingInit extends HttpServlet {
+        @Override public void init() { throw new IllegalStateException("boom"); }
+    }
+
+    public static class RuntimeFailingFilter implements Filter {
+        @Override public void init(FilterConfig c) { throw new IllegalStateException("boom"); }
+        @Override public void doFilter(ServletRequest q, ServletResponse r, FilterChain chain) throws IOException {
+            r.getWriter().write("filtered");
+        }
+    }
+
+    @Test
+    void runtimeExceptionFromInitIsAnInitFailure() throws Exception {
+        deploy(WebAppModel.builder("/")
+                .servlet(new ServletDecl("bad", RuntimeFailingInit.class, RuntimeFailingInit::new,
+                        List.of("/bad"), Map.of(), 1, true))
+                .servlet(decl("good", 2, "/good"))
+                .filter(new FilterDecl("badFilter", RuntimeFailingFilter.class, RuntimeFailingFilter::new, Map.of(), true))
+                .filterMapping(new FilterMappingDecl("badFilter", "/good", null, Set.of(DispatcherType.REQUEST)))
+                .build());
+        assertEquals(500, get("/bad").statusCode());
+        var good = get("/good");
+        assertEquals(200, good.statusCode());
+        assertEquals("good:v-good", good.body());
+        assertEquals(List.of("good"), deployment.initializedServlets().stream()
+                .map(s -> ((Recording) s).id).toList());
+        assertTrue(deployment.initializedFilters().isEmpty());
+    }
+
+    static ServletContextListener recordingListener(String id) {
+        return new ServletContextListener() {
+            @Override public void contextInitialized(ServletContextEvent e) { EVENTS.add("ctxInit:" + id); }
+            @Override public void contextDestroyed(ServletContextEvent e) { EVENTS.add("ctxDestroyed:" + id); }
+        };
+    }
+
+    @Test
+    void failingContextInitializedCleansUpBeforePropagating() {
+        var tempDir = new java.util.concurrent.atomic.AtomicReference<java.io.File>();
+        ServletContainerInitializer sci = (c, ctx) -> {
+            tempDir.set((java.io.File) ctx.getAttribute(ServletContext.TEMPDIR));
+            ctx.addListener(recordingListener("first"));
+            ctx.addListener(new ServletContextListener() {
+                @Override public void contextInitialized(ServletContextEvent e) {
+                    throw new IllegalStateException("listener boom");
+                }
+            });
+        };
+        var model = WebAppModel.builder("/failing-listener")
+                .servlet(decl("s", 1, "/s")).initializer(sci).build();
+        var ex = assertThrows(IllegalStateException.class,
+                () -> WebAppDeployer.deploy(model, DeployOptions.defaults(getClass().getClassLoader())));
+        assertEquals("listener boom", ex.getMessage());
+        // contextDestroyed fired because contextInitialized was; no servlet was ever initialised.
+        assertEquals(List.of("ctxInit:first", "ctxDestroyed:first"), EVENTS);
+        assertNull(io.vidocq.foy.internal.container.CrossContextRegistry.lookup("/failing-listener"));
+        assertNotNull(tempDir.get());
+        assertFalse(tempDir.get().exists(), "temp dir must be removed");
+    }
+
+    @Test
+    void failingComponentSupplierLeaksNothing() throws Exception {
+        var before = vidocqTempDirs();
+        var model = WebAppModel.builder("/failing-supplier")
+                .servlet(decl("ok", 1, "/ok"))
+                .listener(new ListenerDecl(ServletContextListener.class, () -> {
+                    throw new IllegalStateException("cannot instantiate");
+                }))
+                .build();
+        assertThrows(IllegalStateException.class,
+                () -> WebAppDeployer.deploy(model, DeployOptions.defaults(getClass().getClassLoader())));
+        assertEquals(List.of(), EVENTS, "nothing initialised, nothing destroyed");
+        assertNull(io.vidocq.foy.internal.container.CrossContextRegistry.lookup("/failing-supplier"));
+        assertEquals(before, vidocqTempDirs(), "no temp dir leaked");
+    }
+
+    private static Set<java.nio.file.Path> vidocqTempDirs() throws IOException {
+        var tmp = java.nio.file.Path.of(System.getProperty("java.io.tmpdir"));
+        try (var s = java.nio.file.Files.list(tmp)) {
+            return new HashSet<>(s.filter(p -> p.getFileName().toString().startsWith("vidocq-servlet-")).toList());
+        }
+    }
+
+    @Test
+    void closeRemovesTempDir() throws Exception {
+        deploy(WebAppModel.builder("/").build());
+        var dir = (java.io.File) deployment.servletContext().getAttribute(ServletContext.TEMPDIR);
+        var sub = java.nio.file.Files.createDirectories(dir.toPath().resolve("sub"));
+        java.nio.file.Files.writeString(sub.resolve("file.txt"), "x");
+        deployment.close();
+        assertFalse(dir.exists(), "temp dir must be removed on close");
+    }
 }

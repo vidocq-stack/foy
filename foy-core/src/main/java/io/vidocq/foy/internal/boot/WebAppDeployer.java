@@ -71,58 +71,86 @@ public final class WebAppDeployer {
 
     private WebAppDeployer() {}
 
+    /** Session lifetime when the model sets none (Servlet 6.1 leaves it to the container). */
+    static final int DEFAULT_SESSION_TIMEOUT_SECONDS = 1800;
+
+    /**
+     * Deploys {@code model}. When anything escapes (a listener, an initializer, a component
+     * factory), what was already set up is torn down — destroy in reverse init order,
+     * {@code contextDestroyed} if {@code contextInitialized} was fired, temp dir removed —
+     * before the exception propagates.
+     */
     public static Deployment deploy(WebAppModel model, DeployOptions options) {
         Objects.requireNonNull(model, "model");
         Objects.requireNonNull(options, "options");
         ComponentFactory factory = options.componentFactory();
         VidocqServletContext ctx = newContext(model, options);
+        var initializedServlets = new ArrayList<Servlet>();
+        var initializedFilters = new ArrayList<Filter>();
+        Path tempDir = null;
+        ListenerRegistry contextInitializedListeners = null;
+        try {
+            var servlets = new ArrayList<ServletUnit>();
+            var filters = new ArrayList<FilterUnit>();
+            instantiateStatic(model, servlets, filters);
+            // Expose the servlets/filters declared in web.xml/@WebServlet through
+            // ServletContext.getServletRegistrations() — visibility required by the TCK
+            // (RegistrationTests.servletRegistrationsTest).
+            registerStatic(ctx, servlets, filters);
+            // <context-param> init params (web.xml) — must be set before markInitialized.
+            model.contextParams().forEach(ctx::setInitParameter);
+            tempDir = createTempDir(ctx);
+            var listeners = new ArrayList<EventListener>();
+            for (var l : model.listeners()) listeners.add(l.factory().get());
+            ListenerRegistry registry = new ListenerRegistry();
+            registry.registerAll(listeners);
+            ctx.setListenerRegistry(registry);
+            int sessionTimeoutSeconds = model.sessionTimeoutMinutes() > 0
+                    ? model.sessionTimeoutMinutes() * 60 : DEFAULT_SESSION_TIMEOUT_SECONDS;
+            SessionManager sessions = new SessionManager(new InMemorySessionStore(), ctx, sessionTimeoutSeconds);
+            sessions.setListenerRegistry(registry);
 
-        var servlets = new ArrayList<ServletUnit>();
-        var filters = new ArrayList<FilterUnit>();
-        instantiateStatic(model, servlets, filters);
-        // Expose the servlets/filters declared in web.xml/@WebServlet through
-        // ServletContext.getServletRegistrations() — visibility required by the TCK
-        // (RegistrationTests.servletRegistrationsTest).
-        registerStatic(ctx, servlets, filters);
-        // <context-param> init params (web.xml) — must be set before markInitialized.
-        model.contextParams().forEach(ctx::setInitParameter);
-        // Servlet 6.1 §4.8.1: the "jakarta.servlet.context.tempdir" attribute is required.
+            runInitializers(model, options, ctx);
+            contextInitializedListeners = registry;
+            registry.fireContextInitialized(ctx);
+
+            // Materialise the dynamic registrations (SCI + listener-initialized) before init().
+            var dynamicMappings = new ArrayList<FilterMapping>();
+            materializeDynamic(model, ctx, factory, servlets, filters, dynamicMappings);
+            List<FilterMapping> filterMappings = buildFilterMappings(model, servlets, filters, dynamicMappings);
+
+            var liveServlets = initServlets(ctx, servlets, initializedServlets);
+            var liveFilters = initFilters(ctx, filters, filterMappings, initializedFilters);
+
+            // End of the initialisation phase (Servlet 6.1 §4.4) — from now on the dynamic
+            // configuration methods must throw IllegalStateException.
+            ctx.markInitialized();
+            var bridge = new ChappeServletBridge(new ServletDispatcher(liveServlets),
+                    new FilterRegistry(liveFilters), ctx, sessions, model.contextPath());
+            // Register the context for cross-context lookups (§4.8 / cross-context async dispatch).
+            CrossContextRegistry.register(ctx);
+            return new Deployment(bridge, ctx, registry, initializedServlets, initializedFilters, tempDir);
+        } catch (RuntimeException | Error e) {
+            try {
+                Deployment.undeploy(ctx, contextInitializedListeners, initializedServlets, initializedFilters,
+                        tempDir);
+            } catch (RuntimeException cleanupFailure) {
+                e.addSuppressed(cleanupFailure);
+            }
+            throw e;
+        }
+    }
+
+    /** Servlet 6.1 §4.8.1: the "jakarta.servlet.context.tempdir" attribute is required. */
+    private static Path createTempDir(VidocqServletContext ctx) {
         try {
             Path tmp = Files.createTempDirectory("vidocq-servlet-");
-            tmp.toFile().deleteOnExit();
             ctx.setAttribute(ServletContext.TEMPDIR, tmp.toFile());
+            return tmp;
         } catch (IOException ignored) {
             // No temp dir available: the attribute stays absent.
+            return null;
         }
-        var listeners = new ArrayList<EventListener>();
-        for (var l : model.listeners()) listeners.add(l.factory().get());
-        ListenerRegistry registry = new ListenerRegistry();
-        registry.registerAll(listeners);
-        ctx.setListenerRegistry(registry);
-        SessionManager sessions = new SessionManager(new InMemorySessionStore(), ctx, 1800);
-        sessions.setListenerRegistry(registry);
-
-        runInitializers(model, options, ctx);
-        registry.fireContextInitialized(ctx);
-
-        // Materialise the dynamic registrations (SCI + listener-initialized) before init().
-        var dynamicMappings = new ArrayList<FilterMapping>();
-        materializeDynamic(model, ctx, factory, servlets, filters, dynamicMappings);
-        List<FilterMapping> filterMappings = buildFilterMappings(model, servlets, filters, dynamicMappings);
-
-        var initializedServlets = new ArrayList<Servlet>();
-        var liveServlets = initServlets(ctx, servlets, initializedServlets);
-        var initializedFilters = new ArrayList<Filter>();
-        var liveFilters = initFilters(ctx, filters, filterMappings, initializedFilters);
-
-        // End of the initialisation phase (Servlet 6.1 §4.4) — from now on the dynamic
-        // configuration methods must throw IllegalStateException.
-        ctx.markInitialized();
-        var bridge = new ChappeServletBridge(new ServletDispatcher(liveServlets),
-                new FilterRegistry(liveFilters), ctx, sessions, model.contextPath());
-        // Register the context for cross-context lookups (§4.8 / cross-context async dispatch).
-        CrossContextRegistry.register(ctx);
-        return new Deployment(bridge, ctx, registry, initializedServlets, initializedFilters);
     }
 
     private static VidocqServletContext newContext(WebAppModel model, DeployOptions options) {
@@ -294,11 +322,13 @@ public final class WebAppDeployer {
             try {
                 s.instance().init(new ServletConfigImpl(s.name(), ctx, s.initParams()));
                 initialized.add(s.instance());
-            } catch (ServletException e) {
+            } catch (ServletException | RuntimeException e) {
                 // Servlet 6.1 §2.3.3: a servlet whose init() failed must answer 500 (or 503)
-                // to every later request, not 404 — a stub stands in for it.
+                // to every later request, not 404 — a stub stands in for it. A runtime
+                // exception is an init failure too: one bad servlet must not kill the app.
                 LOG.log(System.Logger.Level.WARNING, "init failed for servlet " + s.name(), e);
-                failures.put(s, new InitFailureServlet(e));
+                failures.put(s, new InitFailureServlet(
+                        e instanceof ServletException se ? se : new ServletException(e)));
             }
         }
         var live = new ArrayList<ServletDispatcher.Mapping>();
@@ -322,7 +352,7 @@ public final class WebAppDeployer {
             try {
                 f.instance().init(new FilterConfigImpl(f.name(), ctx, f.initParams()));
                 initialized.add(f.instance());
-            } catch (ServletException e) {
+            } catch (ServletException | RuntimeException e) {
                 LOG.log(System.Logger.Level.WARNING, "init failed for filter " + f.name(), e);
                 failed.put(f.instance(), Boolean.TRUE);
             }

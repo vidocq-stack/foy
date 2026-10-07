@@ -109,7 +109,7 @@ The `io.vidocq.foy.internal.*` packages are exported to allow advanced integrati
 | URL prefix served by this container. Default: `"/"`.
 
 | `Builder.sessionTimeoutSeconds(int seconds)`
-| Session timeout in seconds. Default: `1800` (30 min).
+| Session timeout in seconds, rounded up to whole minutes; a `web.xml` `<session-timeout>` wins. Default: `1800` (30 min).
 
 | `Builder.classLoader(ClassLoader cl)`
 | Class loader used for resources and class resolution during deployment.
