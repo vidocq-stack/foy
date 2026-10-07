@@ -1,0 +1,338 @@
+/*
+ * Copyright (c) 2026 Yann Blazart, Antoine Sabot-Durand and the Vidocq contributors
+ *
+ * This program and the accompanying materials are made available under the
+ * terms of the Eclipse Public License 2.0 which is available at
+ * https://www.eclipse.org/legal/epl-2.0/
+ *
+ * This Source Code may also be made available under the following Secondary
+ * Licenses when the conditions for such availability set forth in the Eclipse
+ * Public License, v. 2.0 are satisfied: GNU General Public License, version 2
+ * or any later version, which is available at
+ * https://www.gnu.org/licenses/old-licenses/gpl-2.0.html
+ *
+ * It is also made available under the European Union Public Licence v. 1.2,
+ * which is available at
+ * https://joinup.ec.europa.eu/collection/eupl/eupl-text-eupl-12
+ *
+ * SPDX-License-Identifier: EPL-2.0 OR EUPL-1.2 OR GPL-2.0-or-later
+ */
+package io.vidocq.foy.internal.boot;
+
+import io.vidocq.foy.internal.boot.WebAppModel.FilterDecl;
+import io.vidocq.foy.internal.boot.WebAppModel.FilterMappingDecl;
+import io.vidocq.foy.internal.boot.WebAppModel.ServletDecl;
+import io.vidocq.foy.internal.bridge.ChappeServletBridge;
+import io.vidocq.foy.internal.container.CrossContextRegistry;
+import io.vidocq.foy.internal.container.FilterConfigImpl;
+import io.vidocq.foy.internal.container.ServletConfigImpl;
+import io.vidocq.foy.internal.container.VidocqServletContext;
+import io.vidocq.foy.internal.dispatcher.FilterMapping;
+import io.vidocq.foy.internal.dispatcher.FilterRegistry;
+import io.vidocq.foy.internal.dispatcher.ServletDispatcher;
+import io.vidocq.foy.internal.dispatcher.UrlPatternMatcher;
+import io.vidocq.foy.internal.listener.ListenerRegistry;
+import io.vidocq.foy.internal.session.InMemorySessionStore;
+import io.vidocq.foy.internal.session.SessionManager;
+import jakarta.servlet.DispatcherType;
+import jakarta.servlet.Filter;
+import jakarta.servlet.Servlet;
+import jakarta.servlet.ServletContext;
+import jakarta.servlet.ServletException;
+
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.EventListener;
+import java.util.HashSet;
+import java.util.IdentityHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Set;
+
+/**
+ * Deploys a {@link WebAppModel}: the Servlet 6.1 deployment lifecycle — static and dynamic
+ * registrations, initializers, {@code contextInitialized}, load-on-startup ordered
+ * {@code init()}, and the end of the configuration phase (§4.4).
+ */
+public final class WebAppDeployer {
+
+    private static final System.Logger LOG = System.getLogger(WebAppDeployer.class.getName());
+
+    /** A servlet instance with its mapping data, from the model or from the context API. */
+    private record ServletUnit(String name, Class<? extends Servlet> type, Servlet instance, List<String> patterns,
+                               Map<String, String> initParams, int loadOnStartup, boolean asyncSupported) {}
+
+    /** A filter instance with its init parameters. */
+    private record FilterUnit(String name, Class<? extends Filter> type, Filter instance, Map<String, String> initParams) {}
+
+    private WebAppDeployer() {}
+
+    public static Deployment deploy(WebAppModel model, DeployOptions options) {
+        Objects.requireNonNull(model, "model");
+        Objects.requireNonNull(options, "options");
+        ComponentFactory factory = options.componentFactory();
+        VidocqServletContext ctx = newContext(model, options);
+
+        var servlets = new ArrayList<ServletUnit>();
+        var filters = new ArrayList<FilterUnit>();
+        instantiateStatic(model, factory, servlets, filters);
+        // Expose the servlets/filters declared in web.xml/@WebServlet through
+        // ServletContext.getServletRegistrations() — visibility required by the TCK
+        // (RegistrationTests.servletRegistrationsTest).
+        registerStatic(ctx, servlets, filters);
+        // <context-param> init params (web.xml) — must be set before markInitialized.
+        model.contextParams().forEach(ctx::setInitParameter);
+        // Servlet 6.1 §4.8.1: the "jakarta.servlet.context.tempdir" attribute is required.
+        try {
+            Path tmp = Files.createTempDirectory("vidocq-servlet-");
+            tmp.toFile().deleteOnExit();
+            ctx.setAttribute(ServletContext.TEMPDIR, tmp.toFile());
+        } catch (IOException ignored) {
+            // No temp dir available: the attribute stays absent.
+        }
+        var listeners = new ArrayList<EventListener>();
+        for (var l : model.listeners()) listeners.add(l.factory().get());
+        ListenerRegistry registry = new ListenerRegistry();
+        registry.registerAll(listeners);
+        ctx.setListenerRegistry(registry);
+        SessionManager sessions = new SessionManager(new InMemorySessionStore(), ctx, 1800);
+        sessions.setListenerRegistry(registry);
+
+        runInitializers(model, options, ctx);
+        registry.fireContextInitialized(ctx);
+
+        // Materialise the dynamic registrations (SCI + listener-initialized) before init().
+        var dynamicMappings = new ArrayList<FilterMapping>();
+        materializeDynamic(model, ctx, factory, servlets, filters, dynamicMappings);
+        List<FilterMapping> filterMappings = buildFilterMappings(model, servlets, filters, dynamicMappings);
+
+        var initializedServlets = new ArrayList<Servlet>();
+        var liveServlets = initServlets(ctx, servlets, initializedServlets);
+        var initializedFilters = new ArrayList<Filter>();
+        var liveFilters = initFilters(ctx, filters, filterMappings, initializedFilters);
+
+        // End of the initialisation phase (Servlet 6.1 §4.4) — from now on the dynamic
+        // configuration methods must throw IllegalStateException.
+        ctx.markInitialized();
+        var bridge = new ChappeServletBridge(new ServletDispatcher(liveServlets),
+                new FilterRegistry(liveFilters), ctx, sessions, model.contextPath());
+        // Register the context for cross-context lookups (§4.8 / cross-context async dispatch).
+        CrossContextRegistry.register(ctx);
+        return new Deployment(bridge, ctx, registry, initializedServlets, initializedFilters);
+    }
+
+    private static VidocqServletContext newContext(WebAppModel model, DeployOptions options) {
+        VidocqServletContext ctx = new VidocqServletContext(model.contextPath());
+        ctx.setErrorPages(model.errorPages());
+        ctx.setLocaleEncodingMappings(model.localeEncodingMappings());
+        ctx.setEffectiveVersion(model.effectiveMajorVersion(), model.effectiveMinorVersion());
+        if (options.resourceProvider() != null) ctx.setResourceProvider(options.resourceProvider());
+        String name = options.servletContextName() != null ? options.servletContextName() : model.displayName();
+        if (name != null) ctx.setServletContextName(name);
+        if (model.sessionTimeoutMinutes() > 0) ctx.setSessionTimeoutInternal(model.sessionTimeoutMinutes());
+        options.reservedServletNames().forEach(ctx::reserveServletName);
+        options.reservedFilterNames().forEach(ctx::reserveFilterName);
+        options.reservedUrlPatterns().forEach(ctx::reserveUrlPattern);
+        if (options.securityProvider() != null) ctx.setSecurityProvider(options.securityProvider());
+        return ctx;
+    }
+
+    /** One instance per declaration; declarations the factory does not see are skipped. */
+    private static void instantiateStatic(WebAppModel model, ComponentFactory factory,
+                                          List<ServletUnit> servlets, List<FilterUnit> filters) {
+        for (ServletDecl d : model.servlets()) {
+            if (!factory.isVisible(d.type())) {
+                LOG.log(System.Logger.Level.WARNING, "skipping invisible servlet " + d.name());
+                continue;
+            }
+            servlets.add(new ServletUnit(d.name(), d.type(), d.factory().get(), d.urlPatterns(), d.initParams(),
+                    d.loadOnStartup(), d.asyncSupported()));
+        }
+        for (FilterDecl d : model.filters()) {
+            if (!factory.isVisible(d.type())) {
+                LOG.log(System.Logger.Level.WARNING, "skipping invisible filter " + d.name());
+                continue;
+            }
+            filters.add(new FilterUnit(d.name(), d.type(), d.factory().get(), d.initParams()));
+        }
+    }
+
+    /** Static registrations also reserve their URL patterns, so a dynamic addMapping cannot override them. */
+    private static void registerStatic(VidocqServletContext ctx, List<ServletUnit> servlets,
+                                       List<FilterUnit> filters) {
+        for (ServletUnit s : servlets) {
+            ctx.registerStaticServlet(s.name(), s.type(), s.patterns(), s.initParams(),
+                    s.asyncSupported());
+        }
+        for (FilterUnit f : filters) {
+            ctx.registerStaticFilter(f.name(), f.type(), f.initParams());
+        }
+    }
+
+    /**
+     * Servlet 6.1 §4.4: SCI onStartup() runs before the listeners' contextInitialized. During
+     * onStartup the dynamic APIs (addListener etc.) are allowed (the context is not yet
+     * "initialized" in the §4.4 sense).
+     */
+    private static void runInitializers(WebAppModel model, DeployOptions options, VidocqServletContext ctx) {
+        for (var sci : model.initializers()) {
+            try {
+                sci.onStartup(options.handlesTypes().resolve(sci), ctx);
+            } catch (ServletException e) {
+                LOG.log(System.Logger.Level.WARNING,
+                        "SCI.onStartup failed (" + sci.getClass().getName() + ")", e);
+            }
+        }
+    }
+
+    /**
+     * Transfers ServletRegistration.Dynamic / FilterRegistration.Dynamic from the context to
+     * the servlet/filter lists, without overriding names declared statically (web.xml has
+     * precedence on duplicates).
+     */
+    private static void materializeDynamic(WebAppModel model, VidocqServletContext ctx, ComponentFactory factory,
+                                           List<ServletUnit> servlets, List<FilterUnit> filters,
+                                           List<FilterMapping> dynamicMappings) {
+        var staticServletNames = new HashSet<String>();
+        for (ServletDecl d : model.servlets()) staticServletNames.add(d.name());
+        for (var e : ctx.dynamicServletRegistrations().entrySet()) {
+            String name = e.getKey();
+            var reg = e.getValue();
+            if (staticServletNames.contains(name)) continue;
+            Servlet instance = instantiate("servlet", name, reg.instance(), reg.klass(), reg.getClassName(),
+                    Servlet.class, factory);
+            if (instance == null || reg.getMappings().isEmpty()) continue;
+            servlets.add(new ServletUnit(name, instance.getClass(), instance, List.copyOf(reg.getMappings()),
+                    Map.copyOf(reg.getInitParameters()), reg.getLoadOnStartup(), true));
+        }
+
+        var staticFilterNames = new HashSet<String>();
+        for (FilterDecl d : model.filters()) staticFilterNames.add(d.name());
+        for (var e : ctx.dynamicFilterRegistrations().entrySet()) {
+            String name = e.getKey();
+            var reg = e.getValue();
+            if (staticFilterNames.contains(name)) continue;
+            Filter instance = instantiate("filter", name, reg.instance(), reg.klass(), reg.getClassName(),
+                    Filter.class, factory);
+            if (instance == null) continue;
+            int before = dynamicMappings.size();
+            for (var mapping : reg.allMappings()) {
+                for (String pattern : mapping.urlPatterns()) {
+                    dynamicMappings.add(filterMapping(pattern, instance, name, mapping.dispatchers()));
+                }
+                // servlet-name mappings: resolved to the url-patterns of the target servlets.
+                for (String servletName : mapping.servletNames()) {
+                    for (String pattern : patternsOf(servlets, servletName)) {
+                        dynamicMappings.add(filterMapping(pattern, instance, name, mapping.dispatchers()));
+                    }
+                }
+            }
+            // An unmapped dynamic filter is never invoked, hence never initialised.
+            if (dynamicMappings.size() > before) {
+                filters.add(new FilterUnit(name, instance.getClass(), instance, Map.copyOf(reg.getInitParameters())));
+            }
+        }
+    }
+
+    /** Returns the registered instance, or a new one; {@code null} when the component must be skipped. */
+    @SuppressWarnings("unchecked")
+    private static <T> T instantiate(String kind, String name, T instance, Class<? extends T> klass,
+                                     String className, Class<T> base, ComponentFactory factory) {
+        if (instance != null) return factory.isVisible(instance.getClass()) ? instance : null;
+        try {
+            Class<? extends T> c = klass;
+            if (c == null && className != null) c = factory.load(className).asSubclass(base);
+            if (c == null) return null; // addJspFile without a real implementation
+            // Class loader isolation: ignore classes absent from the WAR.
+            if (!factory.isVisible(c)) return null;
+            return factory.newInstance(c);
+        } catch (ClassNotFoundException | ServletException ex) {
+            LOG.log(System.Logger.Level.WARNING, "cannot instantiate dynamic " + kind + " " + name, ex);
+            return null;
+        }
+    }
+
+    /** Model mappings in declaration order, then the dynamic ones. */
+    private static List<FilterMapping> buildFilterMappings(WebAppModel model, List<ServletUnit> servlets,
+                                                           List<FilterUnit> filters,
+                                                           List<FilterMapping> dynamicMappings) {
+        var result = new ArrayList<FilterMapping>();
+        for (FilterMappingDecl m : model.filterMappings()) {
+            FilterUnit f = filters.stream().filter(u -> u.name().equals(m.filterName())).findFirst().orElse(null);
+            if (f == null) continue; // filter skipped as invisible
+            List<String> patterns = m.urlPattern() != null
+                    ? List.of(m.urlPattern()) : patternsOf(servlets, m.servletName());
+            for (String p : patterns) result.add(filterMapping(p, f.instance(), f.name(), m.dispatcherTypes()));
+        }
+        result.addAll(dynamicMappings);
+        return result;
+    }
+
+    private static List<String> patternsOf(List<ServletUnit> servlets, String servletName) {
+        var patterns = new ArrayList<String>();
+        for (ServletUnit s : servlets) if (s.name().equals(servletName)) patterns.addAll(s.patterns());
+        return patterns;
+    }
+
+    private static FilterMapping filterMapping(String pattern, Filter filter, String name, Set<DispatcherType> types) {
+        return new FilterMapping(UrlPatternMatcher.of(pattern), filter, name,
+                types == null ? Set.of(DispatcherType.REQUEST) : types);
+    }
+
+    /**
+     * Servlet 6.1 §2.3: init() before the first request — load-on-startup servlets first,
+     * ascending (stable on declaration order), then the others in declaration order (eager
+     * init of the rest is allowed by §2.3.1). Returns the dispatcher mappings in declaration order.
+     */
+    private static List<ServletDispatcher.Mapping> initServlets(VidocqServletContext ctx, List<ServletUnit> servlets,
+                                                                List<Servlet> initialized) {
+        var order = new ArrayList<ServletUnit>();
+        servlets.stream().filter(s -> s.loadOnStartup() >= 0)
+                .sorted(Comparator.comparingInt(ServletUnit::loadOnStartup)).forEach(order::add);
+        servlets.stream().filter(s -> s.loadOnStartup() < 0).forEach(order::add);
+
+        var failures = new IdentityHashMap<ServletUnit, Servlet>();
+        for (ServletUnit s : order) {
+            try {
+                s.instance().init(new ServletConfigImpl(s.name(), ctx, s.initParams()));
+                initialized.add(s.instance());
+            } catch (ServletException e) {
+                // Servlet 6.1 §2.3.3: a servlet whose init() failed must answer 500 (or 503)
+                // to every later request, not 404 — a stub stands in for it.
+                LOG.log(System.Logger.Level.WARNING, "init failed for servlet " + s.name(), e);
+                failures.put(s, new InitFailureServlet(e));
+            }
+        }
+        var live = new ArrayList<ServletDispatcher.Mapping>();
+        for (ServletUnit s : servlets) {
+            Servlet stub = failures.get(s);
+            for (String p : s.patterns()) {
+                live.add(stub != null
+                        ? new ServletDispatcher.Mapping(UrlPatternMatcher.of(p), stub, s.name())
+                        : new ServletDispatcher.Mapping(UrlPatternMatcher.of(p), s.instance(), s.name(),
+                                s.asyncSupported()));
+            }
+        }
+        return live;
+    }
+
+    /** init() filters in declaration order; a failing filter is logged and left out of the chain. */
+    private static List<FilterMapping> initFilters(VidocqServletContext ctx, List<FilterUnit> filters,
+                                                   List<FilterMapping> mappings, List<Filter> initialized) {
+        var failed = new IdentityHashMap<Filter, Boolean>();
+        for (FilterUnit f : filters) {
+            try {
+                f.instance().init(new FilterConfigImpl(f.name(), ctx, f.initParams()));
+                initialized.add(f.instance());
+            } catch (ServletException e) {
+                LOG.log(System.Logger.Level.WARNING, "init failed for filter " + f.name(), e);
+                failed.put(f.instance(), Boolean.TRUE);
+            }
+        }
+        return mappings.stream().filter(m -> !failed.containsKey(m.filter())).toList();
+    }
+}
