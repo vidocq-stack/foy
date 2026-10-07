@@ -87,7 +87,16 @@ cd foy
 ./run-official-tck-servlet6.1.sh                     # smoke test (fast)
 ./run-official-tck-servlet6.1.sh --all               # full suite (long)
 ./run-official-tck-servlet6.1.sh -Dtest=ServletTests # one class
+./run-official-tck-servlet6.1.sh --family compat     # one family: api | spec | pluggability | compat
+./run-official-tck-servlet6.1.sh --failing           # only the classes failing in tck-baseline.txt
+./run-official-tck-servlet6.1.sh --no-install --family api   # skip the reactor install
+./run-official-tck-servlet6.1.sh --dry-run --failing # print the Maven commands only
 ----
+
+`--no-install` skips the reactor build (use it when the code is unchanged),
+`--family` and `--failing` select tests (`--failing` reads the bad count of
+`foy-tck/tck-baseline.txt`, or the tally file given as argument), `--dry-run`
+prints the Maven commands, and `--help` lists every mode.
 
 === CI integration
 

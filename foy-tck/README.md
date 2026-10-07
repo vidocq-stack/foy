@@ -57,14 +57,33 @@ From the root of the **foy** repository:
 
 ```bash
 ./run-official-tck-servlet6.1.sh                     # smoke test (DoDestroyedTest)
-./run-official-tck-servlet6.1.sh --all               # full TCK suite (~10 min)
+./run-official-tck-servlet6.1.sh --all               # full TCK suite (~11 min)
 ./run-official-tck-servlet6.1.sh -Dtest=ServletTests # an entire test class
 ./run-official-tck-servlet6.1.sh -Dtest=ServletTests#DoInit1Test   # a single method
+./run-official-tck-servlet6.1.sh --family compat     # one family: api | spec | pluggability | compat
+./run-official-tck-servlet6.1.sh --failing           # only the classes failing in tck-baseline.txt
+./run-official-tck-servlet6.1.sh --no-install --family api   # skip the reactor install
+./run-official-tck-servlet6.1.sh --dry-run --failing # print the Maven commands only
 ```
 
-The script installs the Foy reactor into the local repository
-(`./mvnw -ntp install -DskipTests`), then runs
-`./mvnw -ntp -Ptck,tck-official -pl foy-tck test` with the passed arguments.
+Options (all combinable except where noted):
+
+| Option | Effect |
+|--------|--------|
+| `--all` | Runs the whole suite. |
+| `--family <api\|spec\|pluggability\|compat>` | Runs one TCK family (`-Dtest='servlet/tck/<family>/**/*'`). |
+| `--failing [tally-file]` | Runs only the classes whose bad count (3rd column) is above 0 in the tally (default `foy-tck/tck-baseline.txt`, format `<fqcn> <run> <bad>`, produced by `foy-tck/tck-tally.sh`). Combined with `--family`, narrows to that family. |
+| `--no-install` | Skips `./mvnw -ntp install -DskipTests`; use it when the code has not changed since the last build. |
+| `--dry-run` | Prints the Maven commands without running them. |
+| `-Dtest=...` | Forwarded to surefire; cannot be combined with `--family` / `--failing`. |
+| `-h`, `--help` | Prints the usage. |
+
+`--family` and `--failing` also pass `-Dsurefire.failIfNoSpecifiedTests=false`.
+Unknown options print the usage and exit with status 2.
+
+Unless `--no-install` is given, the script installs the Foy reactor into the
+local repository (`./mvnw -ntp install -DskipTests`), then runs
+`./mvnw -ntp -Ptck,tck-official -pl foy-tck test` with the selection.
 
 ### CI Integration
 
