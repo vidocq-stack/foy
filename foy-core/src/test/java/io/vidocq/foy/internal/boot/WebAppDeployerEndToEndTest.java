@@ -54,7 +54,11 @@ class WebAppDeployerEndToEndTest {
     }
 
     private void deploy(WebAppModel model) {
-        deployment = WebAppDeployer.deploy(model, DeployOptions.defaults(getClass().getClassLoader()));
+        deploy(model, DeployOptions.defaults(getClass().getClassLoader()));
+    }
+
+    private void deploy(WebAppModel model, DeployOptions options) {
+        deployment = WebAppDeployer.deploy(model, options);
         var r = io.vidocq.foy.internal.TestServerLauncherAccess.start(deployment.handler());
         server = r.server();
         port = r.port();
@@ -166,6 +170,16 @@ class WebAppDeployerEndToEndTest {
         deployment.close();
         deployment.close();
         assertEquals(List.of("destroy:throwing", "destroy:first", "ctxDestroyed"), EVENTS);
+    }
+
+    @Test
+    void visibilityRestrictsDynamicRegistrationsOnly() throws Exception {
+        ServletContainerInitializer sci = (c, ctx) -> ctx.addServlet("byClass", Recording.class).addMapping("/dyn");
+        var cl = getClass().getClassLoader();
+        deploy(WebAppModel.builder("/").servlet(decl("static", Integer.MIN_VALUE, "/s")).initializer(sci).build(),
+                DeployOptions.defaults(cl).withComponentFactory(ComponentFactory.reflective(cl, Set.of())));
+        assertEquals("static:v-static", get("/s").body());
+        assertEquals(404, get("/dyn").statusCode());
     }
 
     @Test

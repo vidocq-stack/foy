@@ -79,7 +79,7 @@ public final class WebAppDeployer {
 
         var servlets = new ArrayList<ServletUnit>();
         var filters = new ArrayList<FilterUnit>();
-        instantiateStatic(model, factory, servlets, filters);
+        instantiateStatic(model, servlets, filters);
         // Expose the servlets/filters declared in web.xml/@WebServlet through
         // ServletContext.getServletRegistrations() — visibility required by the TCK
         // (RegistrationTests.servletRegistrationsTest).
@@ -141,22 +141,17 @@ public final class WebAppDeployer {
         return ctx;
     }
 
-    /** One instance per declaration; declarations the factory does not see are skipped. */
-    private static void instantiateStatic(WebAppModel model, ComponentFactory factory,
-                                          List<ServletUnit> servlets, List<FilterUnit> filters) {
+    /**
+     * One instance per declaration. Static declarations are never filtered by
+     * {@link ComponentFactory#isVisible}: their classes are already resolved, and the
+     * visibility restriction (TCK war isolation) applies to dynamic registrations only.
+     */
+    private static void instantiateStatic(WebAppModel model, List<ServletUnit> servlets, List<FilterUnit> filters) {
         for (ServletDecl d : model.servlets()) {
-            if (!factory.isVisible(d.type())) {
-                LOG.log(System.Logger.Level.WARNING, "skipping invisible servlet " + d.name());
-                continue;
-            }
             servlets.add(new ServletUnit(d.name(), d.type(), d.factory().get(), d.urlPatterns(), d.initParams(),
                     d.loadOnStartup(), d.asyncSupported()));
         }
         for (FilterDecl d : model.filters()) {
-            if (!factory.isVisible(d.type())) {
-                LOG.log(System.Logger.Level.WARNING, "skipping invisible filter " + d.name());
-                continue;
-            }
             filters.add(new FilterUnit(d.name(), d.type(), d.factory().get(), d.initParams()));
         }
     }
@@ -262,8 +257,7 @@ public final class WebAppDeployer {
                                                            List<FilterMapping> dynamicMappings) {
         var result = new ArrayList<FilterMapping>();
         for (FilterMappingDecl m : model.filterMappings()) {
-            FilterUnit f = filters.stream().filter(u -> u.name().equals(m.filterName())).findFirst().orElse(null);
-            if (f == null) continue; // filter skipped as invisible
+            FilterUnit f = filters.stream().filter(u -> u.name().equals(m.filterName())).findFirst().orElseThrow();
             List<String> patterns = m.urlPattern() != null
                     ? List.of(m.urlPattern()) : patternsOf(servlets, m.servletName());
             for (String p : patterns) result.add(filterMapping(p, f.instance(), f.name(), m.dispatcherTypes()));

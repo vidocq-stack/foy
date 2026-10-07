@@ -33,7 +33,7 @@ public interface ComponentFactory {
 	<T> T newInstance(Class<T> type) throws ServletException;
 
 	/**
-	 * False for classes the deployment must ignore (TCK war isolation).
+	 * False for dynamically registered classes the deployment must ignore (TCK war isolation).
 	 */
 	default boolean isVisible(Class<?> type) {
 		return true;
