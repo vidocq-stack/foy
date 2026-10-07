@@ -105,7 +105,7 @@ void main() throws Exception {
 Foy supports annotations and a `web.xml` subset:
 
 * `@WebServlet`, `@WebFilter`, `@WebListener`, `@MultipartConfig`: discovered at compile time by APT, exposed through the Vauban `BeanManager`.
-* `WEB-INF/web.xml`: parsed by `WebXmlParser` (supported element subset — see xref:reference.adoc[Reference]) and contributed by `WebXmlContributor` after annotation discovery. A descriptor definition never overrides a name already discovered by annotation.
+* `WEB-INF/web.xml`: parsed by `WebXmlParser` (supported element subset — see xref:reference.adoc[Reference]) and merged with the annotated components by `DescriptorMerger` (Servlet 6.1 §8.2.3): on a same-name conflict the descriptor wins, and `metadata-complete="true"` ignores annotations.
 
 [IMPORTANT]
 ====

@@ -115,7 +115,8 @@ public final class WebXmlParser {
         return new WebAppDescriptor(contextParams, servlets, servletMappings, filters,
                 filterMappings, listenerClasses, errorPages, sessionTimeoutMinutes,
                 localeEncodingMappings).withVersion(root.getAttribute("version"))
-                .withDisplayName(displayName);
+                .withDisplayName(displayName)
+                .withMetadataComplete(Boolean.parseBoolean(root.getAttribute("metadata-complete").trim()));
     }
 
     private static WebAppDescriptor.ServletDef parseServlet(Element e) {
@@ -125,14 +126,24 @@ public final class WebXmlParser {
                 firstText(e, "servlet-name"),
                 firstText(e, "servlet-class"),
                 parseInitParams(e),
-                asyncSupported);
+                asyncSupported,
+                parseLoadOnStartup(e));
+    }
+
+    /** Absent element: {@code Integer.MIN_VALUE}; empty element: {@code 0}. */
+    private static int parseLoadOnStartup(Element e) {
+        String t = firstText(e, "load-on-startup");
+        if (t == null) return Integer.MIN_VALUE;
+        return t.isEmpty() ? 0 : Integer.parseInt(t);
     }
 
     private static WebAppDescriptor.FilterDef parseFilter(Element e) {
+        String async = firstText(e, "async-supported");
         return new WebAppDescriptor.FilterDef(
                 firstText(e, "filter-name"),
                 firstText(e, "filter-class"),
-                parseInitParams(e));
+                parseInitParams(e),
+                async != null && Boolean.parseBoolean(async.trim()));
     }
 
     private static List<WebAppDescriptor.FilterMappingDef> parseFilterMapping(Element e) {

@@ -134,6 +134,40 @@ class WebXmlParserTest {
     }
 
     @Test
+    void parsesMetadataCompleteAndLoadOnStartup() throws Exception {
+        String xml = """
+            <web-app xmlns="https://jakarta.ee/xml/ns/jakartaee" version="6.1" metadata-complete="true">
+              <servlet><servlet-name>s</servlet-name><servlet-class>a.S</servlet-class>
+                <load-on-startup>3</load-on-startup></servlet>
+            </web-app>""";
+        var d = WebXmlParser.parse(new ByteArrayInputStream(xml.getBytes()));
+        assertTrue(d.metadataComplete());
+        assertEquals(3, d.servlets().getFirst().loadOnStartup());
+    }
+
+    @Test
+    void loadOnStartupAbsentIsMinValue() throws Exception {
+        String xml = """
+            <web-app xmlns="https://jakarta.ee/xml/ns/jakartaee" version="6.1">
+              <servlet><servlet-name>s</servlet-name><servlet-class>a.S</servlet-class></servlet>
+            </web-app>""";
+        var d = WebXmlParser.parse(new ByteArrayInputStream(xml.getBytes()));
+        assertFalse(d.metadataComplete());
+        assertEquals(Integer.MIN_VALUE, d.servlets().getFirst().loadOnStartup());
+    }
+
+    @Test
+    void emptyLoadOnStartupIsZero() throws Exception {
+        String xml = """
+            <web-app>
+              <servlet><servlet-name>s</servlet-name><servlet-class>a.S</servlet-class>
+                <load-on-startup/></servlet>
+            </web-app>""";
+        var d = WebXmlParser.parse(new ByteArrayInputStream(xml.getBytes()));
+        assertEquals(0, d.servlets().getFirst().loadOnStartup());
+    }
+
+    @Test
     void patternsForReturnsOnlyMatching() throws IOException {
         String xml = """
                 <web-app>

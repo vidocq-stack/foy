@@ -34,13 +34,22 @@ import java.util.Set;
 public final class WebAppDescriptor {
 
     public record ServletDef(String name, String className, Map<String, String> initParams,
-                             boolean asyncSupported) {
+                             boolean asyncSupported, int loadOnStartup) {
+        public ServletDef(String name, String className, Map<String, String> initParams,
+                          boolean asyncSupported) {
+            this(name, className, initParams, asyncSupported, Integer.MIN_VALUE);
+        }
         public ServletDef(String name, String className, Map<String, String> initParams) {
-            this(name, className, initParams, false);
+            this(name, className, initParams, false, Integer.MIN_VALUE);
         }
     }
     public record ServletMappingDef(String servletName, String urlPattern) {}
-    public record FilterDef(String name, String className, Map<String, String> initParams) {}
+    public record FilterDef(String name, String className, Map<String, String> initParams,
+                            boolean asyncSupported) {
+        public FilterDef(String name, String className, Map<String, String> initParams) {
+            this(name, className, initParams, false);
+        }
+    }
     public record FilterMappingDef(String filterName, String urlPattern, String servletName,
                                    Set<DispatcherType> dispatcherTypes) {
         public FilterMappingDef(String filterName, String urlPattern, Set<DispatcherType> dispatcherTypes) {
@@ -63,6 +72,14 @@ public final class WebAppDescriptor {
     public String version() { return version; }
     public WebAppDescriptor withVersion(String v) {
         if (v != null && !v.isBlank()) this.version = v;
+        return this;
+    }
+
+    /** Value of the {@code metadata-complete} attribute (default {@code false}). */
+    private boolean metadataComplete;
+    public boolean metadataComplete() { return metadataComplete; }
+    public WebAppDescriptor withMetadataComplete(boolean v) {
+        this.metadataComplete = v;
         return this;
     }
 

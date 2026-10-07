@@ -46,7 +46,7 @@ Foy **interprets those bytes**: it turns an HTTP connection into an `HttpServlet
 `foy-core` orchestrates the merge between annotations and the descriptor:
 
 . reading of **annotations** (`@WebServlet`, `@WebFilter`, `@WebListener`, `@MultipartConfig`) — resolved at compile time by an APT, exposed through the Vauban `BeanManager`; `WebAppDiscovery` performs that aggregation at `FoyChappeBoot` startup;
-. reading of the **descriptor** (`WEB-INF/web.xml`, supported subset — see xref:reference.adoc[Reference]) via `WebXmlParser`, producing a `WebAppDescriptor`; `WebXmlContributor` contributes it **after** annotation discovery, never overriding a name already discovered.
+. reading of the **descriptor** (`WEB-INF/web.xml`, supported subset — see xref:reference.adoc[Reference]) via `WebXmlParser`, producing a `WebAppDescriptor`; `DescriptorMerger` merges it with the annotation-discovered components following Servlet 6.1 §8.2.3 (the descriptor wins on a same-name conflict; `metadata-complete="true"` ignores annotations).
 
 [IMPORTANT]
 ====
