@@ -89,16 +89,14 @@ void main() throws Exception {
             .mount(mounted.mountPrefix(), mounted.handler())
             .build();
 
-    try (var server = Server.builder().port(8080).handler(router).build()) {
+    try (mounted; var server = Server.builder().port(8080).handler(router).build()) {
         server.start(); // non-blocking
-        mounted.fireContextInitialized();
         // ... await your application's shutdown signal ...
-        mounted.fireContextDestroyed();
-    }
+    } // server stops first, then mounted.close() destroys the web application
 }
 ----
 
-`build()` returns an empty `Optional<Mounted>` when the application declares no Servlet/Filter/Listener bean — the caller decides whether that's an error or a degraded mode.
+`build()` deploys the web application: servlets marked `load-on-startup` are initialised and `contextInitialized` has already fired when it returns. `Mounted` is `AutoCloseable`: `close()` destroys servlets and filters and fires `contextDestroyed`. `build()` returns an empty `Optional<Mounted>` when the application declares no Servlet/Filter/Listener bean — the caller decides whether that's an error or a degraded mode.
 
 == Annotations or `web.xml`?
 
@@ -109,7 +107,7 @@ Foy supports annotations and a `web.xml` subset:
 
 [IMPORTANT]
 ====
-`META-INF/web-fragment.xml` scanning and the `metadata-complete` attribute are **not implemented yet**. This is the top known gap: it alone accounts for 81 % of the current TCK failures (the whole `pluggability.*` family) — see xref:tck.adoc[TCK status].
+`metadata-complete` and the §8.2.3 merge of `web.xml` with annotations are implemented, but `META-INF/web-fragment.xml` scanning is **not implemented yet**. This is the top known gap: it alone accounts for 81 % of the current TCK failures (the whole `pluggability.*` family) — see xref:tck.adoc[TCK status].
 ====
 
 == Wiring with Chappe

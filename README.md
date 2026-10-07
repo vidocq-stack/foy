@@ -56,7 +56,7 @@ root causes and roadmap in [`TCK.md`](TCK.md).
   To be decoupled via a `FoyHttpExchange` SPI in `foy-api` (Cassini pattern:
   `CassiniHttpAdapter` + `CassiniHttpExchange`).
 - Promote a `BeanProvider` SPI in `foy-api` to decouple
-  `WebAppDiscovery` from the direct `BeanManager` (enabling alternative CDI
+  `WebAppDiscovery` (which feeds `WebAppModel` for `WebAppDeployer`) from the direct `BeanManager` (enabling alternative CDI
   integrations — Weld, OpenWebBeans).
 - Introduce a `FoyServletEngine` (equivalent to `CassiniStack`) with
   `Builder` + `BuilderFactory` discovered via `ServiceLoader`.

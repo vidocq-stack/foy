@@ -46,7 +46,7 @@ public class StartupHook implements ServletContextListener {
 }
 ----
 
-`contextInitialized` / `contextDestroyed` events fire through `FoyChappeBoot.Mounted.fireContextInitialized()` / `fireContextDestroyed()`.
+`contextInitialized` fires when `FoyChappeBoot.Builder.build()` deploys the web application; `contextDestroyed` fires when the returned `FoyChappeBoot.Mounted` is closed (`Mounted` is `AutoCloseable`).
 
 == Async (`AsyncContext`)
 

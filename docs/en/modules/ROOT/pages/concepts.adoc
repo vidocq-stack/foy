@@ -50,7 +50,7 @@ Foy **interprets those bytes**: it turns an HTTP connection into an `HttpServlet
 
 [IMPORTANT]
 ====
-`META-INF/web-fragment.xml` scanning and the `metadata-complete` attribute are **not implemented yet** — the merge is purely additive. This is the top known gap (81 % of the current TCK failures) — see xref:tck.adoc[TCK status].
+`metadata-complete` and the §8.2.3 merge are implemented; `META-INF/web-fragment.xml` scanning is **not implemented yet**. This is the top known gap (81 % of the current TCK failures) — see xref:tck.adoc[TCK status].
 ====
 
 No runtime classpath scan. All Servlet beans are already known to Vauban at compile time.

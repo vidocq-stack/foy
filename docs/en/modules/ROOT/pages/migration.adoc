@@ -29,7 +29,7 @@ Foy is at **{project-version}** and the official TCK passes **95.6 %** on the `a
 
 | `META-INF/web-fragment.xml`
 | ❌ **Not implemented yet**
-| Web-fragment scanning and `metadata-complete` are the top known gap (81 % of TCK failures) — see xref:tck.adoc[TCK].
+| Web-fragment scanning is the top known gap (81 % of TCK failures) — see xref:tck.adoc[TCK].
 
 | Coyote (HTTP/1.1, HTTP/2)
 | xref:chappe::index.adoc[Chappe]
@@ -86,7 +86,7 @@ Foy is at **{project-version}** and the official TCK passes **95.6 %** on the `a
 | Two-step programmatic config: Chappe for transport, Foy for Servlet.
 
 | `DeploymentInfo`
-| Automatic `WebAppDiscovery` through `BeanManager`
+| `WebAppModel` built from the `BeanManager` and `web.xml`, deployed by `WebAppDeployer`
 | No explicit Servlet/Filter config — annotations + `web.xml`.
 
 | Undertow `HttpHandler`
@@ -100,7 +100,7 @@ No real-world migration has been documented yet — the Tomcat and Jetty tables 
 
 == Known gaps
 
-* **Web fragments (`META-INF/web-fragment.xml`) and `metadata-complete`** — not implemented yet; the top known gap, 81 % of TCK failures. See xref:tck.adoc[TCK].
+* **Web fragments (`META-INF/web-fragment.xml`)** — scanning not implemented yet; the top known gap, 81 % of TCK failures. See xref:tck.adoc[TCK].
 * **WebSocket Servlet 6.1 / Jakarta WebSocket 2.2** — not implemented (planned, no date).
 * **JSP** — not supported, not planned. For dynamic pages use xref:cassini::index.adoc[Cassini] (REST) or HTML-emitting Servlets.
 * **Form-based / Digest authentication** — not implemented.
@@ -111,6 +111,6 @@ Cross-context dispatch (`ServletContext.getContext`) **is implemented** via `Cro
 == Common pitfalls
 
 * **No runtime `META-INF/services` autoload.** Foy does not use `ServiceLoader` at startup. If a Servlet library relies on a `ServletContainerInitializer` loaded by scan, declare it as a CDI bean in Vauban.
-* **`metadata-complete` is not honoured yet.** The attribute is not parsed: annotations and `web.xml` are always merged additively (a descriptor definition never overrides a name already discovered by annotation). If your application relies on `metadata-complete=true` to silence annotations, that behaviour is missing today.
+* **`metadata-complete` is honoured.** With `metadata-complete="true"` annotations are ignored; otherwise `web.xml` and annotations are merged per Servlet 6.1 §8.2.3 (the descriptor wins on a same-name conflict).
 * **No runtime dynamic proxy.** Frameworks that rely on it (Spring AOP, some profiling libs) won't work as-is. Prefer APT alternatives (Vauban, Class-File API).
 * **Strict Java modules.** If a legacy uses reflective `setAccessible(true)`, it needs an explicit `--add-opens` — better to port the legacy to `@Inject`.

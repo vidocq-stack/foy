@@ -111,8 +111,14 @@ The `io.vidocq.foy.internal.*` packages are exported to allow advanced integrati
 | `Builder.sessionTimeoutSeconds(int seconds)`
 | Session timeout in seconds. Default: `1800` (30 min).
 
+| `Builder.classLoader(ClassLoader cl)`
+| Class loader used for resources and class resolution during deployment.
+
+| `Builder.webXml(InputStream in)`
+| Optional `web.xml` stream, merged with the annotated components per Servlet 6.1 §8.2.3.
+
 | `Builder.build()`
-| Returns `Optional<Mounted>`. Empty if no Servlet/Filter/Listener bean was discovered.
+| Deploys the web application through `WebAppDeployer`. Returns `Optional<Mounted>`. Empty if no Servlet/Filter/Listener bean was discovered.
 
 | `Mounted.handler()`
 | The `io.vidocq.chappe.api.Handler` to mount through a Chappe `Router.Builder.mount(mountPrefix, handler)`, or to pass directly to `Server.builder().handler(...)` when the contextPath is `/`.
@@ -123,11 +129,8 @@ The `io.vidocq.foy.internal.*` packages are exported to allow advanced integrati
 | `Mounted.servletContext()`
 | The container's `VidocqServletContext` — useful for observability.
 
-| `Mounted.fireContextInitialized()`
-| Fire `ServletContextListener.contextInitialized` (call after `mount`).
-
-| `Mounted.fireContextDestroyed()`
-| Fire `ServletContextListener.contextDestroyed` (call before `unmount`).
+| `Mounted.close()`
+| Destroys servlets and filters and fires `ServletContextListener.contextDestroyed`. `contextInitialized` already fired during `build()`.
 |===
 
 == Public SPI (`foy-api`)
@@ -164,7 +167,7 @@ Everything else is **not parsed** — notably `<security-constraint>`, `<login-c
 
 [IMPORTANT]
 ====
-`META-INF/web-fragment.xml` scanning and the `metadata-complete` attribute are **not implemented yet** — the top known TCK gap (81 % of failures, the whole `pluggability.*` family). See xref:tck.adoc[TCK status].
+`META-INF/web-fragment.xml` scanning is **not implemented yet** (`metadata-complete` is) — the top known TCK gap (81 % of failures, the whole `pluggability.*` family). See xref:tck.adoc[TCK status].
 ====
 
 == Servlet 6.1 API comparison
@@ -181,7 +184,7 @@ Everything else is **not parsed** — notably `<security-constraint>`, `<login-c
 | ✅
 | Cross-context (`getContext`) **implemented** via `CrossContextRegistry` (strict contextPath match on contexts deployed in the same JVM).
 
-| Web fragments (`web-fragment.xml`, `metadata-complete`)
+| Web fragments (`web-fragment.xml`)
 | ❌
 | **Not implemented yet** — the top TCK gap (81 % of failures). See xref:tck.adoc[TCK].
 

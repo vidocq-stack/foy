@@ -19,6 +19,10 @@ package "Application" {
 package "Foy" {
   package "io.vidocq.foy.core" {
     [WebAppDiscovery]
+    [WebAppModel]
+    [DescriptorMerger]
+    [WebAppDeployer]
+    [Deployment]
     [WebAppDescriptor]
     [ChappeServletBridge]
     [ServletDispatcher]
@@ -46,6 +50,9 @@ package "Vauban" {
 APP --> [VidocqServletContext]
 [FoyChappeBoot] --> [WebAppDiscovery]
 [WebAppDiscovery] --> [BeanManager]
+[FoyChappeBoot] --> [WebAppDeployer]
+[WebAppDeployer] --> [DescriptorMerger]
+[WebAppDeployer] --> [Deployment]
 [ChappeServletBridge] --> [ServletDispatcher]
 [ServletDispatcher] --> [FilterRegistry]
 [ServletDispatcher] --> [SecurityConstraintEnforcer]
@@ -104,21 +111,28 @@ The bridge never `pin`s a VT on a Java monitor — every critical section uses `
 
 == Container lifecycle
 
+The deployment lifecycle lives in `foy-core` (`io.vidocq.foy.internal.boot`), not in the transport or the TCK harness:
+
+. `WebAppModel` describes the web application: servlets, filters, listeners, `web.xml` data and options such as `metadata-complete`.
+. `DescriptorMerger` merges the parsed `web.xml` with the annotated components (Servlet 6.1 §8.2.3: the descriptor wins on a same-name conflict, `metadata-complete="true"` ignores annotations).
+. `WebAppDeployer.deploy(model, DeployOptions)` runs the lifecycle — listeners, `ServletContainerInitializer`s, dynamic registrations, `load-on-startup` initialisation in order — and returns a `Deployment`.
+. `Deployment` exposes `handler()` (the Chappe `Handler`), `servletContext()` and `close()`, which destroys servlets and filters and fires `contextDestroyed`.
+
 [mermaid]
 ....
 stateDiagram-v2
     [*] --> Discovery
     Discovery: WebAppDiscovery scans the Vauban BeanManager\nWebXmlParser reads WEB-INF/web.xml (subset)
-    Discovery --> Built: FoyChappeBoot.builder().build() returns Mounted
-    Built --> Mounted: Router.Builder.mount(mountPrefix, handler)
-    Mounted --> Started: fireContextInitialized() — @WebListener
-    Started --> Serving: requests handled
+    Discovery --> Modeled: WebAppModel + DescriptorMerger
+    Modeled --> Deployed: WebAppDeployer.deploy(model, options) — contextInitialized, load-on-startup
+    Deployed --> Mounted: Router.Builder.mount(mountPrefix, handler)
+    Mounted --> Serving: requests handled
     Serving --> Stopping: shutdown signal
-    Stopping --> Destroyed: fireContextDestroyed() — listeners
+    Stopping --> Destroyed: Mounted.close() — contextDestroyed
     Destroyed --> [*]
 ....
 
-`fireContextInitialized()` and `fireContextDestroyed()` are exposed by `FoyChappeBoot.Mounted` — the caller picks the exact moment (typically right after `mount` / right before `unmount`).
+`FoyChappeBoot.builder()...build()` performs discovery, modelling and deployment in one call and returns an `Optional<FoyChappeBoot.Mounted>`. `Mounted` is `AutoCloseable`; the caller closes it when the application stops (typically after the server). The TCK harness uses the same `WebAppDeployer` and only adapts Arquillian archives to a `WebAppModel`.
 
 == CDI integration through Vauban
 
@@ -153,7 +167,7 @@ There are **no CDI producers** for `ServletContext`, `HttpServletRequest` or `Ht
 
 == Known limits
 
-* Web fragments (`META-INF/web-fragment.xml`) and `metadata-complete`: **not implemented** — the top TCK gap (81 % of failures), see xref:tck.adoc[].
+* Web fragments (`META-INF/web-fragment.xml`): scanning **not implemented** — the top TCK gap (81 % of failures), see xref:tck.adoc[].
 * Cross-context dispatch (`ServletContext.getContext`): **implemented** via `CrossContextRegistry` (strict contextPath match on the contexts deployed in the same JVM).
 * Multipart: fully buffered in memory, no streaming parse.
 * WebSocket Servlet 6.1: not implemented (planned, no date).
