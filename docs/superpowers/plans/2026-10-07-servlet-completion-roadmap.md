@@ -49,6 +49,8 @@ tests can assert which path was taken. Pattern mirrored from cassini's
 `AdapterRegistry` / `RuntimeAdapterGenerator` and vauban's processor + BCE
 pipeline. A `foy-maven-plugin:generate` goal pre-enriches external jars
 (Phase 2b), as `cassini-maven-plugin:generate` and `vauban-maven-plugin` do.
+An external WAR is converted at build time (`war-import`, Phase 2b, option A)
+or, in degraded mode, deployed at runtime by `foy-war` (Phase 3b, option B).
 
 ## Phases
 
@@ -79,20 +81,62 @@ with Class-File API fallback then reflection, `FoyWebExtension` BCE,
 class index for `@HandlesTypes`. **Exit:** no `getAnnotation` /
 `getDeclaredConstructor` outside the reflective tier; TCK ≥ 921 with the TCK
 wars served through the Class-File tier.
-**Phase 2b:** `foy-maven-plugin:generate` for external jars; add
-`foy-processor` + `foy-cdi-vauban` to the vidocq runtime codegen bundle
-(cross-repo PR in `vidocq`).
+**Phase 2b — Enriching what was not compiled with Foy:**
+- `foy-maven-plugin:generate` — pre-generates `$$FoyComponent` classes and the
+  class index for external, non-enriched jars from their bytecode (Class-File
+  API, no sources), as `cassini-maven-plugin:generate` does (same split-package
+  / repackaging rules for named modules).
+- **Option A — `foy-maven-plugin:war-import`:** a WAR is a *build input*, not a
+  runtime artefact. The goal explodes the WAR into native artefacts —
+  `WEB-INF/classes` → an application jar, `WEB-INF/lib/*.jar` → dependencies,
+  `WEB-INF/web.xml` → `META-INF/web.xml`, root static content →
+  `META-INF/resources/` — then runs the bytecode generation above and the
+  vauban generator for its CDI beans. The result is AOT-friendly and goes
+  through the APT/BCE tiers like any native application.
+- Add `foy-processor` + `foy-cdi-vauban` to the vidocq runtime codegen bundle
+  (cross-repo PR in `vidocq`).
 
-### Phase 3 — Deployment descriptors and pluggability
-Full `web.xml` schema coverage (welcome-file-list, mime-mapping,
+### Phase 3 — Deployment descriptors and pluggability (native, war-less layout)
+The **native deployment model has no WAR**: the application is a set of jars on
+the module path. Mapping of the WAR concepts:
+
+| WAR | Native Foy / Vidocq |
+|---|---|
+| `WEB-INF/classes` | application classes, processed by `foy-processor` + `vauban-processor` |
+| `WEB-INF/lib/*.jar` | Maven dependencies |
+| `WEB-INF/web.xml` | `META-INF/web.xml` (`WEB-INF/web.xml` on the class path also accepted, Phase 1) |
+| `WEB-INF/lib/x.jar!/META-INF/web-fragment.xml` | `META-INF/web-fragment.xml` in every dependency jar |
+| static content at the WAR root | `META-INF/resources/` in any jar (§4.6 convention) |
+
+Scope: full `web.xml` schema coverage (welcome-file-list, mime-mapping,
 security-constraint, login-config, security-role, multipart-config,
-load-on-startup, metadata-complete, session-config/cookie-config/tracking-mode,
+session-config/cookie-config/tracking-mode,
 request/response-character-encoding, deny-uncovered-http-methods,
-default-context-path), **web fragments** (`WEB-INF/lib/*.jar!/META-INF/web-fragment.xml`),
-`<absolute-ordering>` / `<ordering>` (§8.2.2, including `<others/>` and cycle
-detection), `@HandlesTypes` resolution against the generated class index with
-a Class-File jar scan fallback, `META-INF/resources` static resources.
+default-context-path, tri-state `async-supported`); **web fragments** discovered
+as `META-INF/web-fragment.xml` resources of every jar of the application
+(and inside `WEB-INF/lib` jars for Phase 3b); `<absolute-ordering>` /
+`<ordering>` (§8.2.2, including `<others/>` and cycle detection);
+`@HandlesTypes` resolution against the generated class index with a
+Class-File jar scan fallback; `META-INF/resources` static resources.
 **TCK target:** `pluggability.*` 5 → ~640 (≈ +37 points, overall ≈ 91 %).
+
+### Phase 3b — Option B: runtime WAR deployment (`foy-war`, degraded mode)
+Optional product module for TCK and migration use, documented as **not AOT**:
+- `WarDeployment`: opens a WAR (file or exploded directory), builds a
+  dedicated **child-first class loader** over `WEB-INF/classes` +
+  `WEB-INF/lib/*.jar` (§10.7.2: container/Jakarta API classes always
+  parent-first), a `ResourceProvider` over the WAR root, parses `web.xml` +
+  fragments, and feeds `WebAppModel` → `WebAppDeployer`.
+- Components resolve through `WebComponentRegistry`'s Class-File tier, then
+  reflection (nothing in a WAR was processed at build time).
+- CDI: the WAR's beans go through vauban's runtime fallback
+  (`processEnhancementOnly` for unprocessed archives) — injection works but
+  without the build-time guarantees; the limitation is documented.
+- Several WARs → several contexts, using the existing `CrossContextRegistry`.
+- **The TCK harness (`VidocqDeployableContainer`) is rebuilt on `foy-war`**, so
+  the official TCK exercises the product WAR path instead of harness-only
+  logic. Exit: TCK ≥ the Phase 3 figure with the harness delegating to
+  `foy-war`.
 
 ### Phase 4 — Request/response and session core
 `getHttpServletMapping` / `MappingMatch`; `changeSessionId` +
