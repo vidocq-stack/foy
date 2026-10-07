@@ -5,6 +5,19 @@ First full-suite measurement run. Unlike cassini/champollion/vauban, this is a
 Vidocq runtime to serve Cassini-style stacks, and several spec chapters are not
 implemented yet. This report quantifies exactly which ones.
 
+## 0. Re-measurement on 0.4.0-SNAPSHOT (2026-10-07)
+
+`main` @ `65b1197`, chappe/vauban 0.4.0-SNAPSHOT, `./run-official-tck-servlet6.1.sh --all`:
+1714 run, **921 pass**, 793 errors, 11 min 12 s — identical to 2026-06-12.
+Per family: `api.*` 821/859, `pluggability.*` 5/646, `spec.*` 95/207,
+`compat.*` 0/2.
+
+**Caveat discovered by the 2026-10-07 audit:** the TCK harness
+(`ServletTestHarness`, `VidocqDeployableContainer`) performs the deployment
+lifecycle itself (init/destroy, web.xml, SCI, dynamic registrations). The
+product boot path does not yet. Scores above measure engine + harness;
+Phase 1 of `docs/superpowers/plans/` moves that lifecycle into foy-core.
+
 ## 0. Re-run after the trailer/idle-timeout fixes (2026-06-12)
 
 Same suite, re-run with the merged fix chain (chappe trailers + 

@@ -1,7 +1,16 @@
-# vidocq-servlet-chappe-tck-runner
+# foy-tck
 
 Conformance harness and runner for the **Jakarta Servlet 6.1 official TCK**
-for `vidocq-servlet-chappe-extension`.
+against Foy (transport chappe, CDI vauban).
+
+`foy-tck` is an **in-reactor module gated behind the `tck` Maven profile**:
+a plain `./mvnw install` neither downloads nor runs anything TCK-related.
+Run it through `../run-official-tck-servlet6.1.sh` (recommended) or
+`./mvnw -Ptck,tck-official -pl foy-tck test`.
+
+Historical note: the module used to live out of the reactor because
+ShrinkWrap Maven Resolver 3.3 could not parse Model 4.1.0 POMs; that
+constraint disappeared with the move to Maven 3.9.16 / Model 4.0.0.
 
 This module:
 
@@ -12,37 +21,6 @@ This module:
    packs the TCK's ShrinkWrap `WebArchive` archives onto this harness.
 3. Runs the **Jakarta Servlet 6.1.0 TCK** (Eclipse Foundation) via the
    Maven profile `-Ptck-official`.
-
-## Why This Module Is Out of the Main Reactor
-
-> 📌 **This is important if you want to run the TCK in CI.**
-
-`vidocq-servlet-chappe-tck-runner` is intentionally **OUTSIDE** the
-`<modules>` of `vidocq-core-extensions`. It uses a standalone
-`modelVersion 4.0.0` POM (no `<parent>`).
-
-**Reason**: ShrinkWrap Maven Resolver 3.3 (transitive dependency of the
-official Jakarta TCK) relies on `maven-resolver 1.9` / `maven-model 3.9`
-which cannot parse `Model 4.1.0` POMs. Its
-`ClasspathWorkspaceReader` scans the current reactor to resolve local
-artifacts and fails as soon as it encounters a Vidocq POM (implicit
-version via parent):
-
-```
-Bad artifact coordinates io.vidocq.runtime:vidocq-servlet-chappe-extension:jar:,
-expected format is <groupId>:<artifactId>[:<extension>[:<classifier>]]:<version>
-```
-
-Keeping the module in the `Model 4.1.0` reactor makes any TCK launch
-from the root impossible. Considered alternatives:
-
-- Force `maven-model-builder 4.0.0-rc-5`: does not resolve, the crash
-  is upstream in `ClasspathWorkspaceReader.createFoundArtifact`.
-- Wait for a ShrinkWrap release compatible with Maven 4.1: no date.
-- Fork ShrinkWrap: heavy for marginal gain.
-
-Until upstream ShrinkWrap handles Model 4.1, the module stays
-detached from the reactor and is launched via the dedicated script.
 
 ## User Workflow
 
@@ -58,16 +36,16 @@ curl -Lo /tmp/jakarta-servlet-tck-6.1.0.zip \
 unzip /tmp/jakarta-servlet-tck-6.1.0.zip -d /tmp/servlet-tck
 
 # Install the 3 artifacts into ~/.m2
-mvn install:install-file \
+./mvnw install:install-file \
   -Dfile=/tmp/servlet-tck/jakarta-servlet-tck/lib/servlet-tck-runtime-6.1.0.jar \
   -DgroupId=jakarta.tck -DartifactId=servlet-tck-runtime -Dversion=6.1.0 \
   -Dpackaging=jar
-mvn install:install-file \
+./mvnw install:install-file \
   -Dfile=/tmp/servlet-tck/jakarta-servlet-tck/lib/servlet-tck-util-6.1.0.jar \
   -DgroupId=jakarta.tck -DartifactId=servlet-tck-util -Dversion=6.1.0 \
   -Dpackaging=jar
 # The aggregate POM (optional, referenced by some pluggability tests)
-mvn install:install-file \
+./mvnw install:install-file \
   -Dfile=/tmp/servlet-tck/jakarta-servlet-tck/pom.xml \
   -DgroupId=jakarta.tck -DartifactId=servlet-tck -Dversion=6.1.0 \
   -Dpackaging=pom
@@ -75,7 +53,7 @@ mvn install:install-file \
 
 ### Running the TCK
 
-From the **root** of the Vidocq project:
+From the root of the **foy** repository:
 
 ```bash
 ./run-official-tck-servlet6.1.sh                     # smoke test (DoDestroyedTest)
@@ -84,14 +62,9 @@ From the **root** of the Vidocq project:
 ./run-official-tck-servlet6.1.sh -Dtest=ServletTests#DoInit1Test   # a single method
 ```
 
-The script:
-
-1. First installs in the local repository the modules the TCK runner depends on:
-   `vidocq-spi`, `vidocq-core`, `vidocq-chappe-extension`,
-   `vidocq-servlet-chappe-extension`.
-2. Changes to `vidocq-core-extensions/vidocq-servlet-chappe-tck-runner/`
-   (required: the `cwd` must contain the Model 4.0 POM).
-3. Runs `mvn test -Ptck-official` with the passed arguments.
+The script installs the Foy reactor into the local repository
+(`./mvnw -ntp install -DskipTests`), then runs
+`./mvnw -ntp -Ptck,tck-official -pl foy-tck test` with the passed arguments.
 
 ### CI Integration
 
@@ -99,7 +72,7 @@ In a pipeline (GitHub Actions, GitLab CI, etc.):
 
 ```yaml
 - name: Build reactor
-  run: mvn install -DskipTests
+  run: ./mvnw -ntp install -DskipTests
 
 - name: Run Jakarta Servlet 6.1 TCK
   run: ./run-official-tck-servlet6.1.sh --all
@@ -133,19 +106,7 @@ Supported features:
 
 ## Jakarta Servlet 6.1 TCK Conformance Status
 
-On the last full run (see `target/surefire-reports/`), the
-`tck-official` profile passes **~90%** of the Jakarta Servlet 6.1 tests on
-the `api.*` packages. Remaining non-conformances:
-
-| Cluster | Reason |
-|---|---|
-| `dispatchtest.DispatchTests` (~18 errors) | Cross-context dispatch (`ServletContext.getContext`) not implemented |
-| `registration.RegistrationTests` (10 errors) | `CommonServlets.jar` auto-attached to WAR not scanned |
-| `asynccontext.*` (~11 errors) | Edge cases of timeout / startAsync after dispatch |
-| `httpservletrequest.HttpServletRequestTests` (3 errors) | `getRequestedSessionId` semantics + TCK substring bug |
-| JSP tests (`sc40.addJsp*`, TLD) | No JSP engine |
-
-Details are in the git history (branch `main`, search `TCK`).
+Current figures: see `../TCK.md`.
 
 ## Arquillian Implementation
 
