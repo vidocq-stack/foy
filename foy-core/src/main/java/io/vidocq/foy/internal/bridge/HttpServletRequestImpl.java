@@ -182,29 +182,55 @@ public final class HttpServletRequestImpl implements HttpServletRequest {
         return v == null ? -1 : Long.parseLong(v);
     }
 
-    // ---- Parameters (query-string only for this milestone) ----
+    // ---- Parameters (query string, then form body — Servlet 6.1 §3.1) ----
     //
     // On reparse chappe.query() nous-mêmes pour préserver les valeurs multiples
     // (?p=a&p=b retourne {"p": ["a","b"]}), ce que chappe.queryParams() ne
     // fait pas (map de String→String, une seule valeur par clé).
 
     private Map<String, List<String>> parsedParams;
+    /** True once the form body was consumed by parameter parsing (§3.1.1). */
+    private boolean bodyConsumedByParameters;
+
     private Map<String, List<String>> parameters() {
         if (parsedParams != null) return parsedParams;
         var out = new java.util.LinkedHashMap<String, List<String>>();
-        String q = chappe.query();
-        if (q != null && !q.isEmpty()) {
-            for (String pair : q.split("&")) {
-                int eq = pair.indexOf('=');
-                String k = eq < 0 ? pair : pair.substring(0, eq);
-                String v = eq < 0 ? "" : pair.substring(eq + 1);
-                if (k.isEmpty()) continue;
-                k = java.net.URLDecoder.decode(k, StandardCharsets.UTF_8);
-                v = java.net.URLDecoder.decode(v, StandardCharsets.UTF_8);
-                out.computeIfAbsent(k, _ -> new ArrayList<>()).add(v);
+        decodeInto(out, chappe.query(), StandardCharsets.UTF_8);
+        if (isFormPost() && inputStream == null && reader == null) {
+            try {
+                byte[] raw = chappe.body().asInputStream().readAllBytes();
+                bodyConsumedByParameters = true;
+                Charset cs = getCharacterEncoding() != null
+                        ? Charset.forName(getCharacterEncoding())
+                        : StandardCharsets.ISO_8859_1;
+                decodeInto(out, new String(raw, StandardCharsets.ISO_8859_1), cs);
+            } catch (IOException e) {
+                throw new java.io.UncheckedIOException("cannot read form body", e);
             }
         }
         return parsedParams = out;
+    }
+
+    private boolean isFormPost() {
+        if (!"POST".equalsIgnoreCase(getMethod())) return false;
+        String ct = getContentType();
+        if (ct == null) return false;
+        int semi = ct.indexOf(';');
+        String mime = (semi < 0 ? ct : ct.substring(0, semi)).trim();
+        return "application/x-www-form-urlencoded".equalsIgnoreCase(mime);
+    }
+
+    private static void decodeInto(Map<String, List<String>> out, String encoded, Charset cs) {
+        if (encoded == null || encoded.isEmpty()) return;
+        for (String pair : encoded.split("&")) {
+            int eq = pair.indexOf('=');
+            String k = eq < 0 ? pair : pair.substring(0, eq);
+            String v = eq < 0 ? "" : pair.substring(eq + 1);
+            if (k.isEmpty()) continue;
+            k = java.net.URLDecoder.decode(k, cs);
+            v = java.net.URLDecoder.decode(v, cs);
+            out.computeIfAbsent(k, _ -> new ArrayList<>()).add(v);
+        }
     }
 
     @Override public String getParameter(String name) {
@@ -236,7 +262,10 @@ public final class HttpServletRequestImpl implements HttpServletRequest {
     @Override public ServletInputStream getInputStream() throws IOException {
         if (reader != null) throw new IllegalStateException("getReader() already called");
         if (inputStream == null) {
-            trackedBody = new ServletInputStreamImpl(chappe.body().asInputStream());
+            java.io.InputStream source = bodyConsumedByParameters
+                    ? java.io.InputStream.nullInputStream()
+                    : chappe.body().asInputStream();
+            trackedBody = new ServletInputStreamImpl(source);
             inputStream = trackedBody;
             encodingLocked = true;
         }
@@ -253,7 +282,10 @@ public final class HttpServletRequestImpl implements HttpServletRequest {
                 // Servlet 6.1 §3.11 : encoding invalide → UnsupportedEncodingException.
                 throw new java.io.UnsupportedEncodingException(enc);
             }
-            trackedBody = new ServletInputStreamImpl(chappe.body().asInputStream());
+            java.io.InputStream source = bodyConsumedByParameters
+                    ? java.io.InputStream.nullInputStream()
+                    : chappe.body().asInputStream();
+            trackedBody = new ServletInputStreamImpl(source);
             reader = new BufferedReader(new InputStreamReader(trackedBody, cs));
             encodingLocked = true;
         }

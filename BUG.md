@@ -53,3 +53,13 @@ Statuts : `OPEN` → `INVESTIGATING` → `FIXED` (commit hash) → `CLOSED`.
     Also fixed here: `foy-tck` froze `foy.version=0.1.0-SNAPSHOT` while the
     reactor is 0.2.0 — the TCK was validating stale M2 jars (same trap as
     cassini-tck); bumped, with a warning comment. `TrailerTest` now PASSES.
+
+## BUG-20261007-01 — form POST parameters ignored
+
+- **Date** : 2026-10-07
+- **Statut** : FIXED (this commit)
+- **Module touché** : `foy-core` / `HttpServletRequestImpl`
+- **Symptôme** : `getParameter*` only read the query string; an
+  `application/x-www-form-urlencoded` POST body never became parameters (§3.1.1).
+- **Reproduction minimale** : `ServletFormParametersEndToEndTest`.
+- **Hypothèse de cause** : M1 shortcut ("query-string only for this milestone").
