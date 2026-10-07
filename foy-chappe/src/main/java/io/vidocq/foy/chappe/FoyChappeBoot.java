@@ -20,28 +20,32 @@
 package io.vidocq.foy.chappe;
 
 import io.vidocq.chappe.api.Handler;
+import io.vidocq.foy.internal.boot.ComponentFactory;
+import io.vidocq.foy.internal.boot.DeployOptions;
+import io.vidocq.foy.internal.boot.DescriptorMerger;
+import io.vidocq.foy.internal.boot.DescriptorMerger.AnnotatedComponents;
+import io.vidocq.foy.internal.boot.Deployment;
+import io.vidocq.foy.internal.boot.WebAppDeployer;
 import io.vidocq.foy.internal.boot.WebAppDiscovery;
-import io.vidocq.foy.internal.bridge.ChappeServletBridge;
+import io.vidocq.foy.internal.boot.WebAppModel;
 import io.vidocq.foy.internal.container.VidocqServletContext;
-import io.vidocq.foy.internal.dispatcher.FilterMapping;
-import io.vidocq.foy.internal.dispatcher.FilterRegistry;
-import io.vidocq.foy.internal.dispatcher.ServletDispatcher;
-import io.vidocq.foy.internal.listener.ListenerRegistry;
-import io.vidocq.foy.internal.session.InMemorySessionStore;
-import io.vidocq.foy.internal.session.SessionManager;
+import io.vidocq.foy.internal.webxml.WebAppDescriptor;
+import io.vidocq.foy.internal.webxml.WebXmlParser;
 import jakarta.enterprise.inject.spi.BeanManager;
+import jakarta.servlet.ServletException;
 
-import java.util.EventListener;
-import java.util.List;
+import java.io.IOException;
+import java.io.InputStream;
 import java.util.Optional;
 
 /**
  * Bootstrap Foy on Chappe HTTP transport.
  *
- * <p>Discovers the beans {@code @WebServlet}, {@code @WebFilter} and
- * {@code @WebListener} via le {@link BeanManager} fourni, monte la stack
- * Servlet 6.1 and exposes a {@link Handler} Chappe ready to be saved to
- * a {@code ChappeMountPoint}.</p>
+ * <p>Merges the CDI-discovered {@code @WebServlet}, {@code @WebFilter} and
+ * {@code @WebListener} components with the {@code web.xml} descriptor (explicit stream,
+ * else {@code WEB-INF/web.xml}, else {@code META-INF/web.xml} from the class loader),
+ * deploys the result through {@link WebAppDeployer} and exposes a {@link Handler} ready to be
+ * mounted on Chappe.</p>
  *
  * <h3>Example of usage</h3>
  * <pre>{@code
@@ -51,10 +55,12 @@ import java.util.Optional;
  *         .sessionTimeoutSeconds(1800)
  *         .build();
  * opt.ifPresent(mounted -> chappeMountPoint.mount(listener, mounted.mountPrefix(), mounted.handler()));
+ * // on shutdown: mounted.close()
  * }</pre>
  *
- * <p>The {@link Optional} is empty if no Servlet/Filter/Listener bean has
- * been discovered (the application has no use).</p>
+ * <p>The {@link Optional} is empty if the application declares no servlet, filter or listener.
+ * {@code contextInitialized} fires during {@code build()}; {@link Mounted#close()} fires
+ * {@code contextDestroyed}.</p>
  */
 public final class FoyChappeBoot {
 
@@ -67,20 +73,20 @@ public final class FoyChappeBoot {
     }
 
     /**
-     * Result of a successful bootstrap: a handler ready to mount and the
-     * mount prefix to use ({@code ""} if contextPath is {@code "/"}).
+     * Result of a successful bootstrap: a handler ready to mount, the mount prefix to use
+     * ({@code ""} if contextPath is {@code "/"}) and the live deployment.
      */
-    public record Mounted(Handler handler, String mountPrefix, VidocqServletContext servletContext,
-                          ListenerRegistry listenerRegistry) {
+    public record Mounted(Handler handler, String mountPrefix, Deployment deployment)
+            implements AutoCloseable {
 
-        /** Hook lifecycle to call after mount Chappe to notify listeners. */
-        public void fireContextInitialized() {
-            listenerRegistry.fireContextInitialized(servletContext);
+        public VidocqServletContext servletContext() {
+            return deployment.servletContext();
         }
 
-        /** Lifecycle hook to call before shutdown to notify listeners. */
-        public void fireContextDestroyed() {
-            listenerRegistry.fireContextDestroyed(servletContext);
+        /** Destroys the application: servlets, filters, then {@code contextDestroyed}. */
+        @Override
+        public void close() {
+            deployment.close();
         }
     }
 
@@ -88,56 +94,72 @@ public final class FoyChappeBoot {
         private BeanManager beanManager;
         private String contextPath = "/";
         private int sessionTimeoutSeconds = 30 * 60;
+        private ClassLoader classLoader = Thread.currentThread().getContextClassLoader();
+        private InputStream webXml;
 
         public Builder beanManager(BeanManager bm) { this.beanManager = bm; return this; }
         public Builder contextPath(String path) { this.contextPath = path == null ? "/" : path; return this; }
         public Builder sessionTimeoutSeconds(int seconds) { this.sessionTimeoutSeconds = seconds; return this; }
 
-        public Optional<Mounted> build() {
-            if (beanManager == null) {
-                throw new IllegalStateException("beanManager is required");
-            }
+        /** Class loader used to load components and to look up {@code web.xml}. */
+        public Builder classLoader(ClassLoader cl) { this.classLoader = cl; return this; }
 
-            List<ServletDispatcher.Mapping> servletMappings = WebAppDiscovery.discoverServlets(beanManager);
-            List<FilterMapping> filterMappings = WebAppDiscovery.discoverFilters(beanManager);
-            List<EventListener> eventListeners = WebAppDiscovery.discoverListeners(beanManager);
+        /** Explicit descriptor; wins over the class loader lookup. */
+        public Builder webXml(InputStream in) { this.webXml = in; return this; }
 
-            if (servletMappings.isEmpty() && filterMappings.isEmpty() && eventListeners.isEmpty()) {
+        public Optional<Mounted> build() throws ServletException {
+            ClassLoader loader = classLoader != null ? classLoader : FoyChappeBoot.class.getClassLoader();
+            AnnotatedComponents annotated = beanManager == null
+                    ? AnnotatedComponents.none() : WebAppDiscovery.discover(beanManager);
+            WebAppDescriptor descriptor = loadDescriptor(loader);
+
+            if (descriptor.isEmpty() && annotated.servlets().isEmpty() && annotated.filters().isEmpty()
+                    && annotated.listeners().isEmpty()) {
                 LOG.log(System.Logger.Level.INFO,
-                        "No @WebServlet / @WebFilter / @WebListener beans discovered — Foy inactive");
+                        "No @WebServlet / @WebFilter / @WebListener beans or web.xml discovered — Foy inactive");
                 return Optional.empty();
             }
 
-            ServletDispatcher dispatcher = new ServletDispatcher(servletMappings);
-            FilterRegistry filterRegistry = new FilterRegistry(filterMappings);
-            ListenerRegistry listeners = new ListenerRegistry();
-            listeners.registerAll(eventListeners);
+            WebAppModel.Builder modelBuilder = WebAppModel.builder(contextPath);
+            DescriptorMerger.merge(descriptor, annotated, ComponentFactory.reflective(loader), modelBuilder);
+            // The merger copies the web.xml timeout (-1 when absent); the builder default applies then.
+            if (descriptor.sessionTimeoutMinutes() < 0) {
+                modelBuilder.sessionTimeoutMinutes((sessionTimeoutSeconds + 59) / 60);
+            }
+            WebAppModel model = modelBuilder.build();
 
-            VidocqServletContext servletContext = new VidocqServletContext(contextPath);
-            servletContext.setListenerRegistry(listeners);
-            SessionManager sessionManager = new SessionManager(
-                    new InMemorySessionStore(), servletContext, sessionTimeoutSeconds);
-            sessionManager.setListenerRegistry(listeners);
-
-            ChappeServletBridge bridge = new ChappeServletBridge(
-                    dispatcher, filterRegistry, servletContext, sessionManager, contextPath);
+            Deployment deployment;
+            try {
+                deployment = WebAppDeployer.deploy(model, DeployOptions.defaults(loader));
+            } catch (RuntimeException e) {
+                throw new ServletException("Foy deployment failed: " + e.getMessage(), e);
+            }
 
             String mountPrefix = "/".equals(contextPath) ? "" : contextPath;
+            for (var s : model.servlets()) {
+                LOG.log(System.Logger.Level.INFO, "Mapped servlet {0} -> {1}", s.name(), s.urlPatterns());
+            }
+            for (var m : model.filterMappings()) {
+                LOG.log(System.Logger.Level.INFO, "Mapped filter {0} -> {1} [{2}]", m.filterName(),
+                        m.urlPattern() != null ? m.urlPattern() : "servlet:" + m.servletName(),
+                        m.dispatcherTypes());
+            }
+            for (var l : model.listeners()) {
+                LOG.log(System.Logger.Level.INFO, "Registered listener: {0}", l.type().getName());
+            }
+            return Optional.of(new Mounted(deployment.handler(), mountPrefix, deployment));
+        }
 
-            for (ServletDispatcher.Mapping m : servletMappings) {
-                LOG.log(System.Logger.Level.INFO,
-                        "Mapped servlet {0} -> {1}", m.servletName(), m.matcher().pattern());
+        private WebAppDescriptor loadDescriptor(ClassLoader loader) throws ServletException {
+            InputStream found = webXml;
+            if (found == null) found = loader.getResourceAsStream("WEB-INF/web.xml");
+            if (found == null) found = loader.getResourceAsStream("META-INF/web.xml");
+            if (found == null) return WebAppDescriptor.empty();
+            try (InputStream in = found) {
+                return WebXmlParser.parse(in);
+            } catch (IOException e) {
+                throw new ServletException("Cannot read web.xml", e);
             }
-            for (FilterMapping m : filterMappings) {
-                LOG.log(System.Logger.Level.INFO,
-                        "Mapped filter {0} -> {1} [{2}]",
-                        m.filterName(), m.matcher().pattern(), m.dispatcherTypes());
-            }
-            for (EventListener l : eventListeners) {
-                LOG.log(System.Logger.Level.INFO, "Registered listener: {0}", l.getClass().getName());
-            }
-
-            return Optional.of(new Mounted(bridge, mountPrefix, servletContext, listeners));
         }
     }
 }
