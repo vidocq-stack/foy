@@ -42,6 +42,15 @@ class ComponentFactoryTest {
 		assertInstanceOf(Ok.class, f.newInstance(c));
 	}
 
+	public static final class NonPublicCtor extends HttpServlet {
+		NonPublicCtor() {}
+	}
+
+	@Test
+	void instantiatesThroughANonPublicNoArgConstructor() throws Exception {
+		assertInstanceOf(NonPublicCtor.class, f.newInstance(NonPublicCtor.class));
+	}
+
 	@Test
 	void constructorFailureBecomesServletException() {
 		var e = assertThrows(ServletException.class, () -> f.newInstance(Boom.class));

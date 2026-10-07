@@ -59,7 +59,7 @@ public interface ComponentFactory {
 		@Override
 		public <T> T newInstance(Class<T> type) throws ServletException {
 			try {
-				return type.getConstructor().newInstance();
+				return type.getDeclaredConstructor().newInstance();
 			} catch (ReflectiveOperationException e) {
 				throw new ServletException("cannot instantiate " + type.getName(), e);
 			}
