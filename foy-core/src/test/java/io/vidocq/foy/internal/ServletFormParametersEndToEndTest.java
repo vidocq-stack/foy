@@ -117,4 +117,37 @@ class ServletFormParametersEndToEndTest {
         });
         assertEquals("café", post("", "application/x-www-form-urlencoded", "q=caf%E9"));
     }
+
+    @Test
+    void quotedCharsetIsHonoured() throws Exception {
+        start(new HttpServlet() {
+            @Override protected void doPost(HttpServletRequest req, HttpServletResponse resp) throws IOException {
+                resp.setCharacterEncoding("UTF-8");
+                resp.getWriter().write(req.getParameter("q"));
+            }
+        });
+        assertEquals("café",
+                post("", "application/x-www-form-urlencoded; charset=\"UTF-8\"", "q=caf%C3%A9"));
+    }
+
+    @Test
+    void unknownCharsetFallsBackToIso88591() throws Exception {
+        start(new HttpServlet() {
+            @Override protected void doPost(HttpServletRequest req, HttpServletResponse resp) throws IOException {
+                resp.setCharacterEncoding("UTF-8");
+                resp.getWriter().write(req.getParameter("q"));
+            }
+        });
+        assertEquals("café", post("", "application/x-www-form-urlencoded; charset=nope", "q=caf%E9"));
+    }
+
+    @Test
+    void malformedPercentEncodingSkipsOnlyThatPair() throws Exception {
+        start(new HttpServlet() {
+            @Override protected void doPost(HttpServletRequest req, HttpServletResponse resp) throws IOException {
+                resp.getWriter().write(req.getParameter("a") + "|" + req.getParameter("b"));
+            }
+        });
+        assertEquals("null|ok", post("", "application/x-www-form-urlencoded", "a=%zz&b=ok"));
+    }
 }

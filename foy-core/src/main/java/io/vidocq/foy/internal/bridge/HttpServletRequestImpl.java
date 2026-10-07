@@ -200,15 +200,24 @@ public final class HttpServletRequestImpl implements HttpServletRequest {
             try {
                 byte[] raw = chappe.body().asInputStream().readAllBytes();
                 bodyConsumedByParameters = true;
-                Charset cs = getCharacterEncoding() != null
-                        ? Charset.forName(getCharacterEncoding())
-                        : StandardCharsets.ISO_8859_1;
+                Charset cs = formBodyCharset();
                 decodeInto(out, new String(raw, StandardCharsets.ISO_8859_1), cs);
             } catch (IOException e) {
                 throw new java.io.UncheckedIOException("cannot read form body", e);
             }
         }
         return parsedParams = out;
+    }
+
+    /** Body charset for form parameters; unknown or illegal names fall back to ISO-8859-1. */
+    private Charset formBodyCharset() {
+        String enc = getCharacterEncoding();
+        if (enc == null) return StandardCharsets.ISO_8859_1;
+        try {
+            return Charset.forName(enc);
+        } catch (RuntimeException e) {
+            return StandardCharsets.ISO_8859_1;
+        }
     }
 
     private boolean isFormPost() {
@@ -227,8 +236,12 @@ public final class HttpServletRequestImpl implements HttpServletRequest {
             String k = eq < 0 ? pair : pair.substring(0, eq);
             String v = eq < 0 ? "" : pair.substring(eq + 1);
             if (k.isEmpty()) continue;
-            k = java.net.URLDecoder.decode(k, cs);
-            v = java.net.URLDecoder.decode(v, cs);
+            try {
+                k = java.net.URLDecoder.decode(k, cs);
+                v = java.net.URLDecoder.decode(v, cs);
+            } catch (IllegalArgumentException e) {
+                continue; // malformed %-encoding: skip this pair only
+            }
             out.computeIfAbsent(k, _ -> new ArrayList<>()).add(v);
         }
     }
@@ -320,7 +333,16 @@ public final class HttpServletRequestImpl implements HttpServletRequest {
         String ct = getHeader("Content-Type");
         if (ct != null) {
             int idx = ct.toLowerCase(Locale.ROOT).indexOf("charset=");
-            if (idx >= 0) return ct.substring(idx + 8).trim();
+            if (idx >= 0) {
+                String v = ct.substring(idx + 8);
+                int semi = v.indexOf(';');
+                if (semi >= 0) v = v.substring(0, semi);
+                v = v.trim();
+                if (v.length() >= 2 && v.startsWith("\"") && v.endsWith("\"")) {
+                    v = v.substring(1, v.length() - 1).trim();
+                }
+                return v;
+            }
         }
         return null;
     }
