@@ -193,3 +193,11 @@ updated to the final status; `TCK.md` final report; certification decision.
 - Virtual threads for anything scheduled (session reaper, async timeouts).
 - Zero runtime dependencies beyond the Jakarta APIs; build-time tools
   (processor, maven plugin) may depend on what they need, named in the docs.
+
+## Phase 1 follow-ups (triaged by the Phase 1 final review, 2026-10-07)
+
+- **Phase 2:** default `@WebServlet`/`@WebFilter` name must be the FQCN (§8.1.1; today the simple name, which breaks the §8.2.3 by-name merge for FQCN-named web.xml entries); `ComponentFactory.Reflective` copies its name set and wraps `LinkageError`/`ExceptionInInitializerError`; `ClassCastException` in instantiate skips the component instead of aborting; honour dynamic `setAsyncSupported` and filter `asyncSupported`; same instance under two names; test the CDI discovery path.
+- **Phase 3:** tri-state `async-supported` merge; `NumberFormatException` on malformed `load-on-startup`; tests for error-page / context-param copy and `FilterMappingDecl` invariants; unmapped dynamic vs static filter asymmetry.
+- **Phase 4:** `ServletContext.setSessionTimeout()` from an SCI/listener must reach the session manager; `fireContextDestroyed` must isolate throwing listeners; make the temp-dir leak test independent of the shared `java.io.tmpdir`.
+- **Phase 7:** form body size cap; parameter parsing locks the request encoding (§3.12); retry after a failed body read.
+- **Cosmetic:** `tck-tally.sh` argument check; harness `start()` closes the deployment if the server fails to start.
