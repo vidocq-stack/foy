@@ -151,19 +151,19 @@ The `io.vidocq.foy.internal.*` packages are exported to allow advanced integrati
 
 == `web.xml` configuration
 
-`WebXmlParser` reads exactly this subset of the Servlet 6.1 `WEB-INF/web.xml` (contributed after annotation discovery, never overriding an already-discovered name):
+`WebXmlParser` reads exactly this subset of the Servlet 6.1 `WEB-INF/web.xml` (merged with the annotated components per Servlet 6.1 §8.2.3: on a same-name conflict the descriptor wins, and `metadata-complete="true"` ignores annotations):
 
 * `<display-name>`
 * `<context-param>` (`param-name`/`param-value`) exposed via `ServletContext.getInitParameter`
-* `<servlet>` (`servlet-name`, `servlet-class`, `init-param`, `async-supported`) / `<servlet-mapping>` (`servlet-name`, `url-pattern`)
+* `<servlet>` (`servlet-name`, `servlet-class`, `init-param`, `async-supported`, `load-on-startup`) / `<servlet-mapping>` (`servlet-name`, `url-pattern`)
 * `<filter>` (`filter-name`, `filter-class`, `init-param`) / `<filter-mapping>` (`filter-name`, `url-pattern`, `servlet-name`, `dispatcher` — defaults to `REQUEST`)
 * `<listener>` (`listener-class`)
 * `<error-page>` (`error-code`, `exception-type`, `location`)
 * `<session-config>` / `<session-timeout>` (timeout only — no cookie config)
 * `<locale-encoding-mapping-list>` / `<locale-encoding-mapping>` (`locale`, `encoding`)
-* the `version` attribute of `<web-app>`
+* the `version` and `metadata-complete` attributes of `<web-app>`
 
-Everything else is **not parsed** — notably `<security-constraint>`, `<login-config>`, `<security-role>`, `<welcome-file-list>`, `<multipart-config>`, `<mime-mapping>`, `<load-on-startup>` and `<jsp-config>`.
+Everything else is **not parsed** — notably `<security-constraint>`, `<login-config>`, `<security-role>`, `<welcome-file-list>`, `<multipart-config>`, `<mime-mapping>` and `<jsp-config>`.
 
 [IMPORTANT]
 ====
