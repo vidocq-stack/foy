@@ -44,8 +44,14 @@ import java.util.function.Supplier;
  * components are ignored entirely. The {@code web.xml} descriptor only carries
  * {@code async-supported} as a plain boolean, so an annotated {@code asyncSupported = true}
  * is kept when the descriptor does not say {@code true}.</p>
+ *
+ * <p>A {@code web.xml} servlet, filter or listener whose class does not have the expected type
+ * is skipped with one WARNING (with its mappings); the rest of the application deploys. A
+ * missing class or a misused Servlet annotation fails the merge with a {@link ServletException}.</p>
  */
 public final class DescriptorMerger {
+
+    private static final System.Logger LOG = System.getLogger(DescriptorMerger.class.getName());
 
     private DescriptorMerger() {}
 
@@ -68,7 +74,8 @@ public final class DescriptorMerger {
     /**
      * Fills {@code target} from web.xml + annotations following Servlet 6.1 §8.2.3.
      *
-     * @throws ServletException when a descriptor class cannot be loaded or has the wrong type
+     * @throws ServletException when a descriptor class cannot be loaded, or misuses the Servlet
+     *         annotations, or when an error-page exception type is not a {@link Throwable}
      */
     public static void merge(WebAppDescriptor webXml, AnnotatedComponents annotated,
                              ComponentFactory factory, WebAppModel.Builder target)
@@ -95,7 +102,11 @@ public final class DescriptorMerger {
         Set<String> done = new HashSet<>();
         for (var def : webXml.servlets()) {
             ServletDecl a = annotatedByName.get(def.name());
-            Class<? extends Servlet> type = load(factory, def.className(), Servlet.class, "servlet", def.name());
+            // The web.xml declaration overrides the annotated one of the same name, even when skipped.
+            done.add(def.name());
+            Class<? extends Servlet> type = loadComponent(factory, def.className(), Servlet.class, "servlet",
+                    def.name());
+            if (type == null) continue;
             List<String> xmlPatterns = webXml.patternsFor(def.name());
             List<String> patterns = !xmlPatterns.isEmpty() || a == null ? xmlPatterns : a.urlPatterns();
             Map<String, String> params = new LinkedHashMap<>();
@@ -106,10 +117,10 @@ public final class DescriptorMerger {
             boolean async = def.asyncSupported() || (a != null && a.asyncSupported());
             // §13.4.1: @ServletSecurity applies to the class, whatever declared the servlet
             // (unless metadata-complete turns annotation processing off, §8.1).
-            var security = webXml.metadataComplete() ? null : factory.descriptor(type).servletSecurity();
+            var security = webXml.metadataComplete() ? null
+                    : descriptor(factory, type, "servlet", def.name()).servletSecurity();
             target.servlet(new ServletDecl(def.name(), type, supplier(factory, type), patterns,
                     params, load, async, security));
-            done.add(def.name());
         }
         for (ServletDecl a : ann.servlets()) {
             if (done.contains(a.name())) continue;
@@ -126,15 +137,21 @@ public final class DescriptorMerger {
         for (FilterDecl f : ann.filters()) annotatedByName.put(f.name(), f);
 
         Set<String> done = new HashSet<>();
+        Set<String> skipped = new HashSet<>();
         for (var def : webXml.filters()) {
             FilterDecl a = annotatedByName.get(def.name());
-            Class<? extends Filter> type = load(factory, def.className(), Filter.class, "filter", def.name());
+            done.add(def.name());
+            Class<? extends Filter> type = loadComponent(factory, def.className(), Filter.class, "filter",
+                    def.name());
+            if (type == null) {
+                skipped.add(def.name());
+                continue;
+            }
             Map<String, String> params = new LinkedHashMap<>();
             if (a != null) params.putAll(a.initParams());
             params.putAll(def.initParams());
             boolean async = def.asyncSupported() || (a != null && a.asyncSupported());
             target.filter(new FilterDecl(def.name(), type, supplier(factory, type), params, async));
-            done.add(def.name());
         }
         for (FilterDecl a : ann.filters()) {
             if (!done.contains(a.name())) target.filter(a);
@@ -143,12 +160,15 @@ public final class DescriptorMerger {
         // web.xml mappings come first and replace the annotation mappings of the same filter.
         Set<String> mappedInXml = new HashSet<>();
         for (var m : webXml.filterMappings()) {
+            mappedInXml.add(m.filterName());
+            if (skipped.contains(m.filterName())) continue;
             target.filterMapping(new FilterMappingDecl(m.filterName(), m.urlPattern(),
                     m.servletName(), m.dispatcherTypes()));
-            mappedInXml.add(m.filterName());
         }
         for (FilterMappingDecl m : ann.filterMappings()) {
-            if (!mappedInXml.contains(m.filterName())) target.filterMapping(m);
+            if (!mappedInXml.contains(m.filterName()) && !skipped.contains(m.filterName())) {
+                target.filterMapping(m);
+            }
         }
     }
 
@@ -157,9 +177,9 @@ public final class DescriptorMerger {
             throws ServletException {
         Set<Class<?>> seen = new HashSet<>();
         for (String className : webXml.listenerClasses()) {
-            Class<? extends EventListener> type = load(factory, className, EventListener.class,
+            Class<? extends EventListener> type = loadComponent(factory, className, EventListener.class,
                     "listener", className);
-            if (seen.add(type)) target.listener(new ListenerDecl(type, supplier(factory, type)));
+            if (type != null && seen.add(type)) target.listener(new ListenerDecl(type, supplier(factory, type)));
         }
         for (ListenerDecl l : ann.listeners()) {
             if (seen.add(l.type())) target.listener(l);
@@ -194,12 +214,49 @@ public final class DescriptorMerger {
         }
     }
 
+    /**
+     * Like {@link #load}, but a class of the wrong type is skipped: one WARNING naming the
+     * component and the class, then {@code null}.
+     */
+    private static <T> Class<? extends T> loadComponent(ComponentFactory factory, String className,
+                                                        Class<T> expected, String kind, String name)
+            throws ServletException {
+        if (className == null) {
+            throw new ServletException("web.xml " + kind + " '" + name + "' declares no class");
+        }
+        Class<?> loaded;
+        try {
+            loaded = factory.load(className);
+        } catch (ClassNotFoundException e) {
+            throw new ServletException("web.xml " + kind + " '" + name + "': cannot use class "
+                    + className, e);
+        }
+        if (!expected.isAssignableFrom(loaded)) {
+            LOG.log(System.Logger.Level.WARNING, "web.xml " + kind + " '" + name + "' skipped: class "
+                    + className + " does not implement " + expected.getName());
+            return null;
+        }
+        return loaded.asSubclass(expected);
+    }
+
+    /** The class's static metadata; annotation misuse becomes a {@link ServletException}. */
+    private static io.vidocq.foy.spi.gen.WebComponentDescriptor descriptor(ComponentFactory factory, Class<?> type,
+                                                                           String kind, String name)
+            throws ServletException {
+        try {
+            return factory.descriptor(type);
+        } catch (IllegalArgumentException e) {
+            throw new ServletException("web.xml " + kind + " '" + name + "': " + e.getMessage(), e);
+        }
+    }
+
     private static <T> Supplier<T> supplier(ComponentFactory factory, Class<? extends T> type) {
         return () -> {
             try {
                 return factory.newInstance(type);
             } catch (ServletException e) {
-                throw new IllegalStateException("cannot instantiate " + type.getName(), e);
+                // The factory message already reads "cannot instantiate <class>: <reason>".
+                throw new IllegalStateException(e.getMessage(), e);
             }
         };
     }

@@ -167,7 +167,8 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
         req = new HttpServletRequestImpl(request, servletContext, contextPath, servletPath, pathInfo,
                 sessionManager);
         req.bindResponse(res);
-        req.setAsyncSupported(m.asyncSupported());
+        // §2.3.3.3: async only when the servlet and every filter of the chain support it.
+        req.setAsyncSupported(m.asyncSupported() && filterRegistry.asyncSupported(path, DispatcherType.REQUEST));
         req.setUrlSessionId(finalUrlSessionId);
 
         registry.fireRequestInitialized(servletContext, req);

@@ -114,8 +114,14 @@ public final class FoyChappeBoot {
             // One registry for discovery, web.xml classes, dynamic registrations and @HandlesTypes.
             WebComponentRegistry registry = WebComponentRegistry.forClassLoader(loader);
             ComponentFactory factory = new RegistryComponentFactory(registry, loader);
-            AnnotatedComponents annotated = beanManager == null
-                    ? AnnotatedComponents.none() : WebAppDiscovery.discover(beanManager, registry);
+            AnnotatedComponents annotated;
+            try {
+                annotated = beanManager == null
+                        ? AnnotatedComponents.none() : WebAppDiscovery.discover(beanManager, registry);
+            } catch (IllegalArgumentException e) {
+                // A component misusing the Servlet annotations: a deployment failure.
+                throw new ServletException("Foy deployment failed: " + e.getMessage(), e);
+            }
             WebAppDescriptor descriptor = loadDescriptor(loader);
 
             if (descriptor.isEmpty() && annotated.servlets().isEmpty() && annotated.filters().isEmpty()

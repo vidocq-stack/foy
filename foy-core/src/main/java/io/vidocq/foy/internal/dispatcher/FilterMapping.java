@@ -28,12 +28,20 @@ import java.util.Set;
 
 /**
  * Association of a {@link Filter} with a url-pattern and a subset
- * of {@link DispatcherType} (Servlet 6.1 spec section 6.2).
+ * of {@link DispatcherType} (Servlet 6.1 spec section 6.2). {@code asyncSupported} is the
+ * filter's declared async support (§2.3.3.3).
  */
 public record FilterMapping(UrlPatternMatcher matcher,
                             Filter filter,
                             String filterName,
-                            Set<DispatcherType> dispatcherTypes) {
+                            Set<DispatcherType> dispatcherTypes,
+                            boolean asyncSupported) {
+
+    /** A mapping of an async-capable filter. */
+    public FilterMapping(UrlPatternMatcher matcher, Filter filter, String filterName,
+                         Set<DispatcherType> dispatcherTypes) {
+        this(matcher, filter, filterName, dispatcherTypes, true);
+    }
 
     public FilterMapping {
         Objects.requireNonNull(matcher, "matcher");

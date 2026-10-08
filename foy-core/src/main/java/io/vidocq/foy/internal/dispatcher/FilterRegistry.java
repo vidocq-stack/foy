@@ -53,4 +53,16 @@ public final class FilterRegistry {
         }
         return out;
     }
+
+    /**
+     * §2.3.3.3: a request supports async only when every filter of its chain does.
+     *
+     * @return false when a filter applying to {@code path} for {@code type} is not async-capable
+     */
+    public boolean asyncSupported(String path, DispatcherType type) {
+        for (FilterMapping m : mappings) {
+            if (!m.asyncSupported() && m.applies(path, type)) return false;
+        }
+        return true;
+    }
 }

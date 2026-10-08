@@ -22,6 +22,7 @@ package io.vidocq.foy.internal.boot;
 import io.vidocq.chappe.api.Server;
 import io.vidocq.foy.internal.boot.WebAppModel.*;
 import jakarta.servlet.*;
+import jakarta.servlet.annotation.WebServlet;
 import jakarta.servlet.http.HttpServlet;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
@@ -360,5 +361,140 @@ class WebAppDeployerEndToEndTest {
                 .build());
         assertEquals(403, get("/denied").statusCode());
         assertEquals(200, get("/open").statusCode());
+    }
+
+    /** Reports isAsyncSupported() and whether startAsync() is refused. */
+    public static class AsyncProbe extends HttpServlet {
+        @Override protected void doGet(HttpServletRequest q, HttpServletResponse r) throws IOException {
+            String start;
+            try {
+                q.startAsync().complete();
+                start = "started";
+            } catch (IllegalStateException e) {
+                start = "ISE";
+            }
+            r.getWriter().write(q.isAsyncSupported() + ":" + start);
+        }
+    }
+
+    public static class PassThrough implements Filter {
+        @Override public void doFilter(ServletRequest q, ServletResponse r, FilterChain chain)
+                throws IOException, ServletException {
+            chain.doFilter(q, r);
+        }
+    }
+
+    @Test
+    void dynamicServletAsyncSupportedIsHonoured() throws Exception {
+        ServletContainerInitializer sci = (classes, ctx) -> {
+            var off = ctx.addServlet("off", new AsyncProbe());
+            off.setAsyncSupported(false);
+            off.addMapping("/off");
+            var on = ctx.addServlet("on", new AsyncProbe());
+            on.setAsyncSupported(true);
+            on.addMapping("/on");
+            ctx.addServlet("default", new AsyncProbe()).addMapping("/default");
+        };
+        deploy(WebAppModel.builder("/").initializer(sci).build());
+        assertEquals("false:ISE", get("/off").body());
+        assertEquals("true:started", get("/on").body());
+        assertEquals("false:ISE", get("/default").body(), "a dynamic registration is not async by default");
+    }
+
+    @Test
+    void aNonAsyncFilterMakesTheChainNonAsync() throws Exception {
+        ServletContainerInitializer sci = (classes, ctx) -> {
+            for (String p : List.of("/dyn-plain", "/dyn-async")) {
+                var s = ctx.addServlet(p, new AsyncProbe());
+                s.setAsyncSupported(true);
+                s.addMapping(p);
+            }
+            ctx.addFilter("dynPlain", new PassThrough())
+                    .addMappingForUrlPatterns(null, false, "/dyn-plain");
+            var asyncFilter = ctx.addFilter("dynAsync", new PassThrough());
+            asyncFilter.setAsyncSupported(true);
+            asyncFilter.addMappingForUrlPatterns(null, false, "/dyn-async");
+        };
+        deploy(WebAppModel.builder("/")
+                .servlet(new ServletDecl("sPlain", AsyncProbe.class, AsyncProbe::new, List.of("/static-plain"),
+                        Map.of(), Integer.MIN_VALUE, true))
+                .servlet(new ServletDecl("sAsync", AsyncProbe.class, AsyncProbe::new, List.of("/static-async"),
+                        Map.of(), Integer.MIN_VALUE, true))
+                .filter(new FilterDecl("plain", PassThrough.class, PassThrough::new, Map.of(), false))
+                .filter(new FilterDecl("async", PassThrough.class, PassThrough::new, Map.of(), true))
+                .filterMapping(new FilterMappingDecl("plain", "/static-plain", null, Set.of(DispatcherType.REQUEST)))
+                .filterMapping(new FilterMappingDecl("async", "/static-async", null, Set.of(DispatcherType.REQUEST)))
+                .initializer(sci)
+                .build());
+        assertEquals("false:ISE", get("/static-plain").body(), "§2.3.3.3: every filter must support async");
+        assertEquals("true:started", get("/static-async").body());
+        assertEquals("false:ISE", get("/dyn-plain").body());
+        assertEquals("true:started", get("/dyn-async").body());
+    }
+
+    public static class CountingServlet extends HttpServlet {
+        final java.util.concurrent.atomic.AtomicInteger inits = new java.util.concurrent.atomic.AtomicInteger();
+        final java.util.concurrent.atomic.AtomicInteger destroys = new java.util.concurrent.atomic.AtomicInteger();
+        @Override public void init() { inits.incrementAndGet(); }
+        @Override public void destroy() { destroys.incrementAndGet(); }
+        @Override protected void doGet(HttpServletRequest q, HttpServletResponse r) throws IOException {
+            r.getWriter().write("counted");
+        }
+    }
+
+    @Test
+    void oneInstanceUnderTwoNamesIsInitialisedAndDestroyedOnce() throws Exception {
+        var shared = new CountingServlet();
+        ServletContainerInitializer sci = (classes, ctx) -> {
+            ctx.addServlet("a", shared).addMapping("/a");
+            ctx.addServlet("b", shared).addMapping("/b");
+        };
+        deploy(WebAppModel.builder("/").initializer(sci).build());
+        assertEquals("counted", get("/a").body());
+        assertEquals("counted", get("/b").body());
+        assertEquals(1, shared.inits.get());
+        deployment.close();
+        assertEquals(1, shared.destroys.get());
+    }
+
+    /** Spec-forbidden: 'value' and 'urlPatterns' together. */
+    @WebServlet(value = "/x", urlPatterns = "/y")
+    public static class BothPatterns extends HttpServlet {}
+
+    /** Spec-forbidden: {@code @WebServlet} on a class that is not a servlet. */
+    @WebServlet("/l")
+    public static class ServletAnnotatedListener implements ServletContextListener {}
+
+    @Test
+    void dynamicAnnotationMisuseFollowsTheServletContextContracts() throws Exception {
+        var createServlet = new java.util.concurrent.atomic.AtomicReference<Throwable>();
+        var addListener = new java.util.concurrent.atomic.AtomicReference<Throwable>();
+        ServletContainerInitializer sci = (classes, ctx) -> {
+            try {
+                ctx.createServlet(BothPatterns.class);
+            } catch (Throwable t) {
+                createServlet.set(t);
+            }
+            try {
+                ctx.addListener(ServletAnnotatedListener.class);
+            } catch (Throwable t) {
+                addListener.set(t);
+            }
+            // addServlet declares no ServletException: the misuse is reported when the
+            // registration is materialised, and only this component is skipped.
+            ctx.addServlet("byInstance", new BothPatterns()).addMapping("/by-instance");
+            ctx.addServlet("byClass", BothPatterns.class).addMapping("/by-class");
+            ctx.addServlet("ok", new Recording("ok")).addMapping("/ok");
+        };
+        try (var log = io.vidocq.foy.internal.LogCapture.of(WebAppDeployer.class.getName())) {
+            deploy(WebAppModel.builder("/").initializer(sci).build());
+            assertEquals(2, log.warnings().size(), log.warnings().toString());
+        }
+        assertInstanceOf(ServletException.class, createServlet.get(), "createServlet declares ServletException");
+        assertInstanceOf(IllegalArgumentException.class, addListener.get(), "addListener declares no checked exception");
+        assertInstanceOf(ServletException.class, addListener.get().getCause());
+        assertEquals(404, get("/by-instance").statusCode());
+        assertEquals(404, get("/by-class").statusCode());
+        assertEquals("ok:null", get("/ok").body());
     }
 }

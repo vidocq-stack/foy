@@ -106,4 +106,61 @@ class FoyChappeBootTest {
         var ex = assertThrows(ServletException.class, builder::build);
         assertNotNull(ex.getCause(), "the underlying failure is kept as the cause");
     }
+
+    public static class Still extends HttpServlet {
+        @Override protected void doGet(HttpServletRequest q, HttpServletResponse r) throws IOException {
+            r.getWriter().write("hello " + getInitParameter("who"));
+        }
+    }
+
+    @Test
+    void servletOfTheWrongTypeIsSkippedAndTheRestDeploys() throws Exception {
+        String xml = """
+            <web-app xmlns="https://jakarta.ee/xml/ns/jakartaee" version="6.1">
+              <servlet><servlet-name>notAServlet</servlet-name><servlet-class>java.lang.Object</servlet-class></servlet>
+              <servlet-mapping><servlet-name>notAServlet</servlet-name><url-pattern>/bad</url-pattern></servlet-mapping>
+              <servlet><servlet-name>h</servlet-name><servlet-class>%s</servlet-class>
+                <init-param><param-name>who</param-name><param-value>still</param-value></init-param></servlet>
+              <servlet-mapping><servlet-name>h</servlet-name><url-pattern>/hello</url-pattern></servlet-mapping>
+            </web-app>""".formatted(Still.class.getName());
+
+        var mounted = FoyChappeBoot.builder().contextPath("/")
+                .classLoader(getClass().getClassLoader())
+                .webXml(new ByteArrayInputStream(xml.getBytes()))
+                .build().orElseThrow();
+        int port;
+        try (var s = new ServerSocket(0)) { port = s.getLocalPort(); }
+        Server server = Server.builder().host("127.0.0.1").port(port).handler(mounted.handler()).build();
+        server.start();
+        try {
+            var client = HttpClient.newHttpClient();
+            assertEquals("hello still", client.send(
+                    HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port + "/hello")).build(),
+                    HttpResponse.BodyHandlers.ofString()).body());
+            assertEquals(404, client.send(
+                    HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port + "/bad")).build(),
+                    HttpResponse.BodyHandlers.ofString()).statusCode());
+            assertNull(mounted.servletContext().getServletRegistration("notAServlet"));
+        } finally {
+            server.stop();
+            mounted.close();
+        }
+    }
+
+    /** Spec-forbidden: 'value' and 'urlPatterns' together. */
+    @jakarta.servlet.annotation.WebServlet(value = "/a", urlPatterns = "/b")
+    public static class BothPatterns extends HttpServlet {}
+
+    @Test
+    void annotationMisuseSurfacesAsServletException() {
+        String xml = """
+            <web-app xmlns="https://jakarta.ee/xml/ns/jakartaee" version="6.1">
+              <servlet><servlet-name>m</servlet-name><servlet-class>%s</servlet-class></servlet>
+            </web-app>""".formatted(BothPatterns.class.getName());
+        var builder = FoyChappeBoot.builder().contextPath("/")
+                .classLoader(getClass().getClassLoader())
+                .webXml(new ByteArrayInputStream(xml.getBytes()));
+        var ex = assertThrows(ServletException.class, builder::build);
+        assertTrue(ex.getMessage().contains(BothPatterns.class.getName()), ex.getMessage());
+    }
 }

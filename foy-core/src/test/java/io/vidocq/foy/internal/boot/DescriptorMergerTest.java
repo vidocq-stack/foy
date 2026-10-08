@@ -229,4 +229,76 @@ class DescriptorMergerTest {
                 </web-app>""".formatted(Unnamed.class.getName()), AnnotatedComponents.none());
         assertNull(m.servlets().getFirst().servletSecurity());
     }
+
+    @Test
+    void componentsOfTheWrongTypeAreSkippedWithOneWarningEach() throws Exception {
+        WebAppModel m;
+        try (var log = io.vidocq.foy.internal.LogCapture.of(DescriptorMerger.class.getName())) {
+            m = merge(HEAD + """
+                    >
+                      <servlet><servlet-name>bad</servlet-name><servlet-class>java.lang.Object</servlet-class></servlet>
+                      <servlet><servlet-name>good</servlet-name><servlet-class>%s</servlet-class></servlet>
+                      <servlet-mapping><servlet-name>bad</servlet-name><url-pattern>/bad</url-pattern></servlet-mapping>
+                      <servlet-mapping><servlet-name>good</servlet-name><url-pattern>/good</url-pattern></servlet-mapping>
+                      <filter><filter-name>badFilter</filter-name><filter-class>java.lang.Object</filter-class></filter>
+                      <filter><filter-name>f1</filter-name><filter-class>%s</filter-class></filter>
+                      <filter-mapping><filter-name>badFilter</filter-name><url-pattern>/*</url-pattern></filter-mapping>
+                      <filter-mapping><filter-name>f1</filter-name><url-pattern>/*</url-pattern></filter-mapping>
+                      <listener><listener-class>java.lang.Object</listener-class></listener>
+                      <listener><listener-class>%s</listener-class></listener>
+                    </web-app>""".formatted(FromXml.class.getName(), F1.class.getName(), L1.class.getName()),
+                    AnnotatedComponents.none());
+            List<String> warnings = log.warnings();
+            assertEquals(3, warnings.size(), warnings.toString());
+            assertTrue(warnings.get(0).contains("'bad'") && warnings.get(0).contains("java.lang.Object"),
+                    warnings.get(0));
+            assertTrue(warnings.get(1).contains("'badFilter'"), warnings.get(1));
+            assertTrue(warnings.get(2).contains("java.lang.Object"), warnings.get(2));
+        }
+        assertEquals(List.of("good"), m.servlets().stream().map(ServletDecl::name).toList());
+        assertEquals(List.of("f1"), m.filters().stream().map(FilterDecl::name).toList());
+        assertEquals(List.of("f1"), m.filterMappings().stream().map(FilterMappingDecl::filterName).toList());
+        assertEquals(List.of(L1.class), m.listeners().stream().map(ListenerDecl::type).toList());
+    }
+
+    @Test
+    void missingClassStillFailsTheDeployment() {
+        assertThrows(jakarta.servlet.ServletException.class, () -> merge(HEAD + """
+                >
+                  <servlet><servlet-name>x</servlet-name><servlet-class>no.such.Servlet</servlet-class></servlet>
+                </web-app>""", AnnotatedComponents.none()));
+    }
+
+    /** Spec-forbidden: 'value' and 'urlPatterns' together. */
+    @WebServlet(value = "/a", urlPatterns = "/b")
+    public static class BothPatterns extends HttpServlet {}
+
+    @Test
+    void annotationMisuseOfAWebXmlServletIsAServletException() {
+        var e = assertThrows(jakarta.servlet.ServletException.class, () -> merge(HEAD + """
+                >
+                  <servlet><servlet-name>x</servlet-name><servlet-class>%s</servlet-class></servlet>
+                </web-app>""".formatted(BothPatterns.class.getName()), AnnotatedComponents.none()));
+        assertInstanceOf(IllegalArgumentException.class, e.getCause());
+        assertTrue(e.getMessage().contains(BothPatterns.class.getName()), e.getMessage());
+    }
+
+    @WebServlet("/pc")
+    public static class PrivateCtor extends HttpServlet { private PrivateCtor() {} }
+
+    @Test
+    void instantiationFailureNamesTheClassOnce() throws Exception {
+        var d = WebXmlParser.parse(new ByteArrayInputStream((HEAD + """
+                >
+                  <servlet><servlet-name>x</servlet-name><servlet-class>%s</servlet-class></servlet>
+                </web-app>""".formatted(PrivateCtor.class.getName())).getBytes()));
+        var b = WebAppModel.builder("/");
+        DescriptorMerger.merge(d, AnnotatedComponents.none(),
+                io.vidocq.foy.internal.gen.RegistryComponentFactory.forClassLoader(getClass().getClassLoader()), b);
+        var supplier = b.build().servlets().getFirst().factory();
+        var e = assertThrows(IllegalStateException.class, supplier::get);
+        String name = PrivateCtor.class.getName();
+        assertEquals("cannot instantiate " + name + ": " + name + " has no non-private no-arg constructor",
+                e.getMessage());
+    }
 }

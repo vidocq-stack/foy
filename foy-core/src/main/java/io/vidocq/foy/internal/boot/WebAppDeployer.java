@@ -68,8 +68,9 @@ public final class WebAppDeployer {
                                Map<String, String> initParams, int loadOnStartup, boolean asyncSupported,
                                ServletSecurityElement security) {}
 
-    /** A filter instance with its init parameters. */
-    private record FilterUnit(String name, Class<? extends Filter> type, Filter instance, Map<String, String> initParams) {}
+    /** A filter instance with its init parameters and declared async support. */
+    private record FilterUnit(String name, Class<? extends Filter> type, Filter instance, Map<String, String> initParams,
+                              boolean asyncSupported) {}
 
     private WebAppDeployer() {}
 
@@ -183,7 +184,7 @@ public final class WebAppDeployer {
                     d.loadOnStartup(), d.asyncSupported(), d.servletSecurity()));
         }
         for (FilterDecl d : model.filters()) {
-            filters.add(new FilterUnit(d.name(), d.type(), d.factory().get(), d.initParams()));
+            filters.add(new FilterUnit(d.name(), d.type(), d.factory().get(), d.initParams(), d.asyncSupported()));
         }
     }
 
@@ -195,7 +196,7 @@ public final class WebAppDeployer {
                     s.asyncSupported());
         }
         for (FilterUnit f : filters) {
-            ctx.registerStaticFilter(f.name(), f.type(), f.initParams());
+            ctx.registerStaticFilter(f.name(), f.type(), f.initParams(), f.asyncSupported());
         }
     }
 
@@ -233,10 +234,21 @@ public final class WebAppDeployer {
                     Servlet.class, factory);
             if (instance == null || reg.getMappings().isEmpty()) continue;
             // setServletSecurity wins; otherwise the class's @ServletSecurity applies (§13.4.1).
-            ServletSecurityElement security = reg.getServletSecurity() != null
-                    ? reg.getServletSecurity() : factory.descriptor(instance.getClass()).servletSecurity();
+            ServletSecurityElement security = reg.getServletSecurity();
+            if (security == null) {
+                try {
+                    security = factory.descriptor(instance.getClass()).servletSecurity();
+                } catch (IllegalArgumentException misuse) {
+                    // addServlet declares no checked exception: the misuse is reported here and
+                    // only this component is left out, like an instantiation failure.
+                    LOG.log(System.Logger.Level.WARNING, "cannot register dynamic servlet " + name,
+                            new ServletException(misuse.getMessage(), misuse));
+                    continue;
+                }
+            }
+            // Dynamic registrations are not async unless setAsyncSupported(true) was called.
             servlets.add(new ServletUnit(name, instance.getClass(), instance, List.copyOf(reg.getMappings()),
-                    Map.copyOf(reg.getInitParameters()), reg.getLoadOnStartup(), true, security));
+                    Map.copyOf(reg.getInitParameters()), reg.getLoadOnStartup(), reg.isAsyncSupported(), security));
         }
 
         var staticFilterNames = new HashSet<String>();
@@ -249,20 +261,22 @@ public final class WebAppDeployer {
                     Filter.class, factory);
             if (instance == null) continue;
             int before = dynamicMappings.size();
+            boolean async = reg.isAsyncSupported();
             for (var mapping : reg.allMappings()) {
                 for (String pattern : mapping.urlPatterns()) {
-                    dynamicMappings.add(filterMapping(pattern, instance, name, mapping.dispatchers()));
+                    dynamicMappings.add(filterMapping(pattern, instance, name, mapping.dispatchers(), async));
                 }
                 // servlet-name mappings: resolved to the url-patterns of the target servlets.
                 for (String servletName : mapping.servletNames()) {
                     for (String pattern : patternsOf(servlets, servletName)) {
-                        dynamicMappings.add(filterMapping(pattern, instance, name, mapping.dispatchers()));
+                        dynamicMappings.add(filterMapping(pattern, instance, name, mapping.dispatchers(), async));
                     }
                 }
             }
             // An unmapped dynamic filter is never invoked, hence never initialised.
             if (dynamicMappings.size() > before) {
-                filters.add(new FilterUnit(name, instance.getClass(), instance, Map.copyOf(reg.getInitParameters())));
+                filters.add(new FilterUnit(name, instance.getClass(), instance, Map.copyOf(reg.getInitParameters()),
+                        async));
             }
         }
     }
@@ -294,7 +308,9 @@ public final class WebAppDeployer {
             FilterUnit f = filters.stream().filter(u -> u.name().equals(m.filterName())).findFirst().orElseThrow();
             List<String> patterns = m.urlPattern() != null
                     ? List.of(m.urlPattern()) : patternsOf(servlets, m.servletName());
-            for (String p : patterns) result.add(filterMapping(p, f.instance(), f.name(), m.dispatcherTypes()));
+            for (String p : patterns) {
+                result.add(filterMapping(p, f.instance(), f.name(), m.dispatcherTypes(), f.asyncSupported()));
+            }
         }
         result.addAll(dynamicMappings);
         return result;
@@ -306,9 +322,10 @@ public final class WebAppDeployer {
         return patterns;
     }
 
-    private static FilterMapping filterMapping(String pattern, Filter filter, String name, Set<DispatcherType> types) {
+    private static FilterMapping filterMapping(String pattern, Filter filter, String name, Set<DispatcherType> types,
+                                               boolean asyncSupported) {
         return new FilterMapping(UrlPatternMatcher.of(pattern), filter, name,
-                types == null ? Set.of(DispatcherType.REQUEST) : types);
+                types == null ? Set.of(DispatcherType.REQUEST) : types, asyncSupported);
     }
 
     /**
@@ -323,8 +340,11 @@ public final class WebAppDeployer {
                 .sorted(Comparator.comparingInt(ServletUnit::loadOnStartup)).forEach(order::add);
         servlets.stream().filter(s -> s.loadOnStartup() < 0).forEach(order::add);
 
-        var failures = new IdentityHashMap<ServletUnit, Servlet>();
+        var failures = new IdentityHashMap<Servlet, Servlet>();
+        // One instance registered under several names is initialised (and destroyed) once.
+        var seen = java.util.Collections.newSetFromMap(new IdentityHashMap<Servlet, Boolean>());
         for (ServletUnit s : order) {
+            if (!seen.add(s.instance())) continue;
             try {
                 s.instance().init(new ServletConfigImpl(s.name(), ctx, s.initParams()));
                 initialized.add(s.instance());
@@ -333,13 +353,13 @@ public final class WebAppDeployer {
                 // to every later request, not 404 — a stub stands in for it. A runtime
                 // exception is an init failure too: one bad servlet must not kill the app.
                 LOG.log(System.Logger.Level.WARNING, "init failed for servlet " + s.name(), e);
-                failures.put(s, new InitFailureServlet(
+                failures.put(s.instance(), new InitFailureServlet(
                         e instanceof ServletException se ? se : new ServletException(e)));
             }
         }
         var live = new ArrayList<ServletDispatcher.Mapping>();
         for (ServletUnit s : servlets) {
-            Servlet stub = failures.get(s);
+            Servlet stub = failures.get(s.instance());
             for (String p : s.patterns()) {
                 live.add(stub != null
                         ? new ServletDispatcher.Mapping(UrlPatternMatcher.of(p), stub, s.name())
@@ -354,7 +374,9 @@ public final class WebAppDeployer {
     private static List<FilterMapping> initFilters(VidocqServletContext ctx, List<FilterUnit> filters,
                                                    List<FilterMapping> mappings, List<Filter> initialized) {
         var failed = new IdentityHashMap<Filter, Boolean>();
+        var seen = java.util.Collections.newSetFromMap(new IdentityHashMap<Filter, Boolean>());
         for (FilterUnit f : filters) {
+            if (!seen.add(f.instance())) continue;
             try {
                 f.instance().init(new FilterConfigImpl(f.name(), ctx, f.initParams()));
                 initialized.add(f.instance());

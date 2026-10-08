@@ -92,9 +92,11 @@ public final class VidocqServletContext implements ServletContext {
     }
 
     public DynamicFilterRegistration registerStaticFilter(String name, Class<? extends Filter> klass,
-                                                          java.util.Map<String, String> initParams) {
+                                                          java.util.Map<String, String> initParams,
+                                                          boolean asyncSupported) {
         DynamicFilterRegistration r = new DynamicFilterRegistration(name, klass);
         if (initParams != null) r.setInitParameters(new java.util.LinkedHashMap<>(initParams));
+        r.setAsyncSupported(asyncSupported);
         staticFilters.put(name, r);
         reservedFilterNames.add(name);
         return r;
