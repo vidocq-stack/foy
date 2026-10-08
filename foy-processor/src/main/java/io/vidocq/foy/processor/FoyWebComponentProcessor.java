@@ -91,7 +91,7 @@ public final class FoyWebComponentProcessor extends AbstractProcessor {
     private void note(TypeElement type, String reason) {
         processingEnv.getMessager().printMessage(Diagnostic.Kind.NOTE,
                 "foy: no generated component for " + type.getQualifiedName() + " (" + reason
-                        + "); it will be resolved at runtime");
+                        + "); it will be resolved at runtime", type);
     }
 
     private void finish() {

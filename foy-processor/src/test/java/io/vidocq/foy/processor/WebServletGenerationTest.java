@@ -107,4 +107,29 @@ class WebServletGenerationTest {
         assertEquals("com.acme.Hello$$FoyComponent",
                 r.resource("META-INF/services/io.vidocq.foy.spi.gen.WebComponent").strip());
     }
+
+    @Test
+    void nestedClassDefaultNameIsTheBinaryName() throws Exception {
+        var r = CompileHarness.compile(out, Map.of("com.acme.Outer", """
+                package com.acme;
+                public class Outer {
+                    @jakarta.servlet.annotation.WebServlet("/n")
+                    public static class Inner extends jakarta.servlet.http.HttpServlet {}
+                }
+                """));
+        assertTrue(r.success(), r.messages());
+        assertEquals("com.acme.Outer$Inner", load(r, "com.acme.Outer$Inner$$FoyComponent").descriptor().name());
+    }
+
+    @Test
+    void checkedExceptionConstructorGetsNoteAndNoGeneratedClass() throws Exception {
+        var r = CompileHarness.compile(out, Map.of("com.acme.T", """
+                package com.acme;
+                @jakarta.servlet.annotation.WebServlet("/t")
+                public class T extends jakarta.servlet.http.HttpServlet { public T() throws Exception {} }
+                """));
+        assertTrue(r.success(), r.messages());
+        assertThrows(ClassNotFoundException.class, () -> r.loader().loadClass("com.acme.T$$FoyComponent"));
+        assertTrue(r.messages().contains("NOTE") && r.messages().contains("checked exceptions"), r.messages());
+    }
 }

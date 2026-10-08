@@ -120,7 +120,7 @@ record ComponentModel(String packageName,
         String binarySimple = pkg.isEmpty() ? fqcn : fqcn.substring(pkg.length() + 1);
         String canonical = type.getQualifiedName().toString();
         return Optional.of(new ComponentModel(pkg, binarySimple, canonical, Kind.SERVLET,
-                name.isEmpty() ? canonical : name, patterns, params,
+                name.isEmpty() ? fqcn : name, patterns, params,
                 load < 0 ? Integer.MIN_VALUE : load, async, List.of(), List.of()));
     }
 
@@ -149,6 +149,9 @@ record ComponentModel(String packageName,
         boolean hasNoArg = false;
         for (ExecutableElement c : ElementFilter.constructorsIn(type.getEnclosedElements())) {
             if (c.getParameters().isEmpty()) {
+                if (!c.getThrownTypes().isEmpty()) {
+                    return "no-arg constructor declares checked exceptions";
+                }
                 hasNoArg = !c.getModifiers().contains(Modifier.PRIVATE);
             }
         }
