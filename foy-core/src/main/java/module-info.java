@@ -37,6 +37,7 @@ module io.vidocq.foy.core {
     exports io.vidocq.foy.internal.container;
     exports io.vidocq.foy.internal.dispatcher;
     exports io.vidocq.foy.internal.error;
+    exports io.vidocq.foy.internal.gen;
     exports io.vidocq.foy.internal.http;
     exports io.vidocq.foy.internal.listener;
     exports io.vidocq.foy.internal.security;
