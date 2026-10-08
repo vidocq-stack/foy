@@ -5,7 +5,26 @@ First full-suite measurement run. Unlike cassini/champollion/vauban, this is a
 Vidocq runtime to serve Cassini-style stacks, and several spec chapters are not
 implemented yet. This report quantifies exactly which ones.
 
-## 0. Phase 2 exit: build-time code generation (2026-10-08)
+## 0. Phase 3 exit: descriptors and pluggability (2026-10-09)
+
+`pr/ybl/servlet-completion-phase3`, `./run-official-tck-servlet6.1.sh --all`:
+1714 run, **1587 pass**, 127 errors, 13 min 52 s (Phase 2: 928). Per family:
+`api.*` 821/859 (unchanged), `pluggability.*` 639/646 (was 5), `spec.*` 127/207
+(was 102), `compat.*` 0/2. The per-class tally (`foy-tck/tck-tally.sh`) was diffed
+against the previous `foy-tck/tck-baseline.txt`: zero class regression, 63 classes
+improved, no new class. `foy-tck/tck-baseline.txt` is refreshed to this tally.
+
+All 205 `tiers=Stats` lines show `reflection=0`. The harness now deploys through
+the product descriptor and fragment merge, with the `WEB-INF/lib` fragments.
+
+Residual `pluggability.*` failures (7, in 6 classes) are the twins of failures
+that also exist in `api.*` (except the last): `filterrequestdispatcher` (2, filter invoked twice,
+BUG-20261008-02), `httpservletresponse`, `httpservletresponse30`,
+`httpservletresponsewrapper30`, `sessioncookieconfig` (1 each) and
+`fragment.FragmentTests` (1). They belong to the request/response phase (default
+servlet, welcome files) and the security phase.
+
+## 0.1 Phase 2 exit: build-time code generation (2026-10-08)
 
 `pr/ybl/servlet-completion-phase2`, `./run-official-tck-servlet6.1.sh --all`:
 1714 run, **928 pass**, 786 errors, 11 min 19 s (Phase 1: 921). Per family:
