@@ -30,6 +30,8 @@ import java.io.InputStream;
 import java.net.MalformedURLException;
 import java.net.URI;
 import java.net.URL;
+import java.nio.file.FileSystemNotFoundException;
+import java.nio.file.Path;
 import java.security.CodeSource;
 import java.util.ArrayList;
 import java.util.Collection;
@@ -207,15 +209,15 @@ public final class ApplicationSources {
      * {@code @HandlesTypes} class-bytes scan expects them. Roots that are not {@code file:} locations
      * (remote or nested archives) are left out: they cannot be walked.
      */
-    public static List<java.nio.file.Path> scanRoots(Collection<URL> roots) {
-        var out = new java.util.LinkedHashSet<java.nio.file.Path>();
+    public static List<Path> scanRoots(Collection<URL> roots) {
+        var out = new LinkedHashSet<Path>();
         for (URL root : roots) {
             try {
                 URI uri = URI.create(Fragment.sourceKey(root));
                 if ("file".equalsIgnoreCase(uri.getScheme()) && uri.getAuthority() == null) {
-                    out.add(java.nio.file.Path.of(uri));
+                    out.add(Path.of(uri));
                 }
-            } catch (IllegalArgumentException | java.nio.file.FileSystemNotFoundException e) {
+            } catch (IllegalArgumentException | FileSystemNotFoundException e) {
                 // not a local location: not scanned
             }
         }

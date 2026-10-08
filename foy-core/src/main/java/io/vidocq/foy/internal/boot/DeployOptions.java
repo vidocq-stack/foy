@@ -74,7 +74,8 @@ public record DeployOptions(SecurityProvider securityProvider,
      * (jars and directories) that ship no {@code META-INF/foy/class-index.list}. The roots are the
      * application roots, the ordered fragments' jars and the jars of the retained initializers.
      */
-    public static DeployOptions defaults(ClassLoader loader, io.vidocq.foy.internal.gen.WebComponentRegistry registry,
+    public static DeployOptions defaults(ClassLoader loader,
+                                         io.vidocq.foy.internal.gen.WebComponentRegistry registry,
                                          java.util.List<java.nio.file.Path> handlesTypesRoots) {
         Objects.requireNonNull(registry, "registry");
         return new DeployOptions(null, null, null, Set.of(), Set.of(), Set.of(),

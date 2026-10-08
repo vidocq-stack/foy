@@ -61,6 +61,7 @@ public final class IndexedHandlesTypesResolver implements HandlesTypesResolver {
     private final WebComponentRegistry registry;
     private final ClassLoader loader;
     private final Supplier<List<ClassFileHandlesTypesScanner.Entry>> scanner;
+    private final boolean useIndex;
     private volatile List<IndexEntry> entries;
 
     /** Class index only. */
@@ -80,6 +81,22 @@ public final class IndexedHandlesTypesResolver implements HandlesTypesResolver {
     /** Class index, plus entries from an arbitrary scan, run once at the first resolution. */
     public IndexedHandlesTypesResolver(WebComponentRegistry registry, ClassLoader loader,
                                        Supplier<List<ClassFileHandlesTypesScanner.Entry>> scanner) {
+        this(registry, loader, scanner, true);
+    }
+
+    /**
+     * Resolution over the entries of {@code scanner} alone: the loader-wide class indexes are not
+     * merged. For a deployment that must see its own classes only.
+     */
+    public static IndexedHandlesTypesResolver scanOnly(WebComponentRegistry registry, ClassLoader loader,
+                                                      Supplier<List<ClassFileHandlesTypesScanner.Entry>> scanner) {
+        return new IndexedHandlesTypesResolver(registry, loader, scanner, false);
+    }
+
+    private IndexedHandlesTypesResolver(WebComponentRegistry registry, ClassLoader loader,
+                                        Supplier<List<ClassFileHandlesTypesScanner.Entry>> scanner,
+                                        boolean useIndex) {
+        this.useIndex = useIndex;
         this.registry = Objects.requireNonNull(registry, "registry");
         this.loader = Objects.requireNonNull(loader, "loader");
         this.scanner = Objects.requireNonNull(scanner, "scanner");
@@ -122,6 +139,18 @@ public final class IndexedHandlesTypesResolver implements HandlesTypesResolver {
 
     private List<IndexEntry> readIndex() {
         Map<String, IndexEntry> byName = new LinkedHashMap<>();
+        if (useIndex) {
+            readIndexes(byName);
+        }
+        for (var scanned : scanner.get()) {
+            Set<String> related = new HashSet<>(scanned.supertypes());
+            related.addAll(scanned.annotations());
+            byName.putIfAbsent(scanned.name(), new IndexEntry(scanned.name(), related));
+        }
+        return List.copyOf(byName.values());
+    }
+
+    private void readIndexes(Map<String, IndexEntry> byName) {
         try {
             var urls = loader.getResources(INDEX_RESOURCE);
             while (urls.hasMoreElements()) {
@@ -139,12 +168,6 @@ public final class IndexedHandlesTypesResolver implements HandlesTypesResolver {
         } catch (IOException e) {
             LOG.log(Level.WARNING, "Cannot enumerate class indexes: {0}", e.toString());
         }
-        for (var scanned : scanner.get()) {
-            Set<String> related = new HashSet<>(scanned.supertypes());
-            related.addAll(scanned.annotations());
-            byName.putIfAbsent(scanned.name(), new IndexEntry(scanned.name(), related));
-        }
-        return List.copyOf(byName.values());
     }
 
     private static void parse(String line, URL url, Map<String, IndexEntry> byName) {

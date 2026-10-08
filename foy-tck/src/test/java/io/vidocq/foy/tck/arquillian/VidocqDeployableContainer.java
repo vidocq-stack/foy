@@ -20,15 +20,15 @@
 package io.vidocq.foy.tck.arquillian;
 
 import io.vidocq.foy.internal.boot.HandlesTypesResolver;
+import io.vidocq.foy.internal.gen.ClassFileDescriptorReader;
 import io.vidocq.foy.internal.gen.ClassFileHandlesTypesScanner;
 import io.vidocq.foy.internal.gen.IndexedHandlesTypesResolver;
-import io.vidocq.foy.internal.gen.ClassFileDescriptorReader;
 import io.vidocq.foy.internal.gen.WebComponentRegistry;
+import io.vidocq.foy.internal.webxml.WebAppDescriptor;
+import io.vidocq.foy.internal.webxml.WebXmlParser;
 import io.vidocq.foy.spi.gen.WebComponent;
 import io.vidocq.foy.spi.gen.WebComponentDescriptor;
 import io.vidocq.foy.tck.ServletTestHarness;
-import io.vidocq.foy.internal.webxml.WebAppDescriptor;
-import io.vidocq.foy.internal.webxml.WebXmlParser;
 import jakarta.servlet.DispatcherType;
 import jakarta.servlet.Filter;
 import jakarta.servlet.Servlet;
@@ -381,7 +381,7 @@ public class VidocqDeployableContainer implements DeployableContainer<VidocqCont
      */
     private static HandlesTypesResolver warHandlesTypes(WebComponentRegistry registry, List<String> warClassNames,
                                                         ClassLoader cl) {
-        return new IndexedHandlesTypesResolver(registry, cl,
+        return IndexedHandlesTypesResolver.scanOnly(registry, cl,
                 () -> ClassFileHandlesTypesScanner.scanNamed(warClassNames, cl));
     }
 

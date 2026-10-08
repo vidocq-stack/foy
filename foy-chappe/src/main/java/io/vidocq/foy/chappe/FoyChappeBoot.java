@@ -250,7 +250,8 @@ public final class FoyChappeBoot {
             try {
                 VidocqServletContext.ResourceProvider resources = resourceProvider != null ? resourceProvider
                         : new ClassPathResourceProvider(loader, List.copyOf(resourceRoots));
-                deployment = WebAppDeployer.deploy(model, DeployOptions.defaults(loader, registry, ApplicationSources.scanRoots(scanRoots))
+                deployment = WebAppDeployer.deploy(model, DeployOptions
+                        .defaults(loader, registry, ApplicationSources.scanRoots(scanRoots))
                         .withComponentFactory(factory).withResourceProvider(resources));
             } catch (RuntimeException e) {
                 throw new ServletException("Foy deployment failed: " + e.getMessage(), e);

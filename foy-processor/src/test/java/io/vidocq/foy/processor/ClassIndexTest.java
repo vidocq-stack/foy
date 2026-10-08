@@ -50,7 +50,8 @@ class ClassIndexTest {
     @Test
     void usesBinaryNamesForNestedAnnotationsAndErasesGenericSupertypes() throws Exception {
         var r = CompileHarness.compile(out, Map.of(
-                "a.Outer", "package a; public class Outer { public @interface Ann {} }",
+                "a.Outer", "package a; public class Outer { @java.lang.annotation.Retention(java.lang.annotation.RetentionPolicy.RUNTIME) "
+                        + "public @interface Ann {} }",
                 "a.Impl", "package a; @Outer.Ann public class Impl implements Comparable<Impl> "
                         + "{ public int compareTo(Impl o) { return 0; } }"));
         assertTrue(r.success(), r.messages());
@@ -74,5 +75,30 @@ class ClassIndexTest {
         assertTrue(lines.stream().noneMatch(l -> l.contains("$$FoyComponent")), lines.toString());
         var names = lines.stream().skip(1).map(l -> l.substring(0, l.indexOf('|'))).toList();
         assertEquals(names.stream().sorted().toList(), names);
+    }
+
+    /** Same sources and expectations as {@code ClassFileHandlesTypesScannerTest#annotationColumnParity} in foy-core. */
+    @Test
+    void annotationColumnHoldsRuntimeAnnotationsOnTypeFieldMethodAndConstructor() throws Exception {
+        var r = CompileHarness.compile(out, Map.of(
+                "a.Ann", "package a; @java.lang.annotation.Retention(java.lang.annotation.RetentionPolicy.RUNTIME) "
+                        + "public @interface Ann {}",
+                "a.Cls", "package a; public @interface Cls {}",
+                "a.OnType", "package a; @Ann @Cls public class OnType {}",
+                "a.OnField", "package a; public class OnField { @Ann int f; }",
+                "a.OnMethod", "package a; public class OnMethod { @Ann void m() {} }",
+                "a.OnCtor", "package a; public class OnCtor { @Ann OnCtor() {} }",
+                "a.ClassOnly", "package a; @Cls public class ClassOnly { @Cls void m() {} }"));
+        assertTrue(r.success(), r.messages());
+        var lines = r.resource("META-INF/foy/class-index.list").lines().toList();
+        for (String name : new String[] {"OnType", "OnField", "OnMethod", "OnCtor"}) {
+            assertEquals("a.Ann", column(lines, "a." + name), name);
+        }
+        assertEquals("", column(lines, "a.ClassOnly"));
+    }
+
+    private static String column(java.util.List<String> lines, String type) {
+        String line = lines.stream().filter(l -> l.startsWith(type + "|")).findFirst().orElseThrow();
+        return line.split("\\|", -1)[2];
     }
 }

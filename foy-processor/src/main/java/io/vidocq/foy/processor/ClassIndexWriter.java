@@ -21,7 +21,9 @@ package io.vidocq.foy.processor;
 
 import javax.annotation.processing.ProcessingEnvironment;
 import javax.lang.model.element.AnnotationMirror;
+import javax.lang.model.element.Element;
 import javax.lang.model.element.TypeElement;
+import javax.lang.model.element.VariableElement;
 import javax.lang.model.type.DeclaredType;
 import javax.lang.model.type.TypeMirror;
 import javax.tools.FileObject;
@@ -33,11 +35,13 @@ import java.util.TreeMap;
 import java.util.TreeSet;
 
 /**
- * Collects every compiled type with its transitive supertypes and type-level annotations, and
+ * Collects every compiled type with its transitive supertypes and its {@code RUNTIME}-retained
+ * annotations (on the type, its fields, methods and constructors), and
  * writes {@code META-INF/foy/class-index.list} (consumed by the runtime {@code @HandlesTypes}
  * resolver). Line format:
  * {@code <binary name>|<supertype binary names>|<annotation binary names>}, sorted by binary name.
- * Every column uses binary names (nested types as {@code Outer$Inner}).
+ * Every column uses binary names (nested types as {@code Outer$Inner}). Annotations retained
+ * {@code CLASS} or {@code SOURCE} are left out, matching what the runtime class-bytes scanner reads.
  */
 final class ClassIndexWriter {
 
@@ -75,15 +79,41 @@ final class ClassIndexWriter {
             }
         }
         var annotations = new TreeSet<String>();
-        for (AnnotationMirror m : type.getAnnotationMirrors()) {
-            if (m.getAnnotationType().asElement() instanceof TypeElement te) {
-                annotations.add(env.getElementUtils().getBinaryName(te).toString());
+        collectRuntimeAnnotations(type, annotations);
+        for (Element member : type.getEnclosedElements()) {
+            switch (member.getKind()) {
+                case FIELD, ENUM_CONSTANT, METHOD, CONSTRUCTOR -> collectRuntimeAnnotations(member, annotations);
+                default -> { }
             }
         }
         lines.put(binary, binary + "|" + String.join(",", supers) + "|" + String.join(",", annotations));
         if (origin == null) {
             origin = type;
         }
+    }
+
+    /** Adds the binary names of the {@code RUNTIME}-retained annotations on {@code element}. */
+    private void collectRuntimeAnnotations(Element element, TreeSet<String> into) {
+        for (AnnotationMirror m : element.getAnnotationMirrors()) {
+            if (m.getAnnotationType().asElement() instanceof TypeElement te && isRuntimeRetained(te)) {
+                into.add(env.getElementUtils().getBinaryName(te).toString());
+            }
+        }
+    }
+
+    /** {@code true} when the annotation type is {@code @Retention(RUNTIME)}; the default, CLASS, is not. */
+    private static boolean isRuntimeRetained(TypeElement annotationType) {
+        for (AnnotationMirror m : annotationType.getAnnotationMirrors()) {
+            if (m.getAnnotationType().asElement() instanceof TypeElement te
+                    && te.getQualifiedName().contentEquals("java.lang.annotation.Retention")) {
+                for (var value : m.getElementValues().values()) {
+                    if (value.getValue() instanceof VariableElement constant) {
+                        return constant.getSimpleName().contentEquals("RUNTIME");
+                    }
+                }
+            }
+        }
+        return false;
     }
 
     /** Writes the index; does nothing when no type was seen. */
