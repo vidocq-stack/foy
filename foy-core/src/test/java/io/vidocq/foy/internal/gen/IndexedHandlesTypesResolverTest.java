@@ -72,8 +72,9 @@ class IndexedHandlesTypesResolverTest {
     }
 
     @Test
-    void handlesTypesWithoutMatchYieldsEmptySet() {
-        assertEquals(Set.of(), resolver.resolve(new NoMatchSci()));
+    void handlesTypesWithoutMatchYieldsNull() {
+        // ServletContainerInitializer#onStartup: "or null if there are no matches".
+        assertNull(resolver.resolve(new NoMatchSci()));
     }
 
     @Test

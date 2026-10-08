@@ -23,6 +23,7 @@ import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServlet;
 import org.junit.jupiter.api.Test;
 
+import java.util.HashSet;
 import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -63,6 +64,42 @@ class ComponentFactoryTest {
 		assertTrue(restricted.isVisible(Ok.class));
 		assertFalse(restricted.isVisible(Boom.class));
 		assertTrue(f.isVisible(Boom.class));
+	}
+
+	@Test
+	void visibleNamesAreCopiedAtCreation() {
+		var names = new HashSet<>(Set.of(Ok.class.getName()));
+		var restricted = ComponentFactory.reflective(getClass().getClassLoader(), names);
+		names.add(Boom.class.getName());
+		names.remove(Ok.class.getName());
+		assertTrue(restricted.isVisible(Ok.class), "later removal by the caller has no effect");
+		assertFalse(restricted.isVisible(Boom.class), "later addition by the caller has no effect");
+	}
+
+	static void fail() { throw new IllegalStateException("static init failed"); }
+
+	/** Static initializer failure when loaded (initialized) by name. */
+	public static final class BadInitOnLoad extends HttpServlet {
+		static { fail(); }
+	}
+
+	/** Static initializer failure when instantiated. */
+	public static final class BadInitOnNew extends HttpServlet {
+		static { fail(); }
+	}
+
+	@Test
+	void linkageErrorWhileLoadingBecomesServletException() {
+		var e = assertThrows(ServletException.class, () -> f.load(BadInitOnLoad.class.getName()));
+		assertInstanceOf(ExceptionInInitializerError.class, e.getCause());
+		assertTrue(e.getMessage().contains(BadInitOnLoad.class.getName()), e.getMessage());
+	}
+
+	@Test
+	void linkageErrorWhileInstantiatingBecomesServletException() {
+		var e = assertThrows(ServletException.class, () -> f.newInstance(BadInitOnNew.class));
+		assertInstanceOf(LinkageError.class, e.getCause());
+		assertTrue(e.getMessage().contains(BadInitOnNew.class.getName()), e.getMessage());
 	}
 
 	@Test

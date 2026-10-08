@@ -31,7 +31,13 @@ import java.util.Set;
  * {@link #reflective(ClassLoader)} stays for tests and as an explicit opt-out.
  */
 public interface ComponentFactory {
-	Class<?> load(String className) throws ClassNotFoundException;
+	/**
+	 * Loads and initializes {@code className}.
+	 *
+	 * @throws ClassNotFoundException when the class does not exist
+	 * @throws ServletException when it exists but cannot be linked or initialized ({@link LinkageError})
+	 */
+	Class<?> load(String className) throws ClassNotFoundException, ServletException;
 
 	<T> T newInstance(Class<T> type) throws ServletException;
 
@@ -61,20 +67,29 @@ public interface ComponentFactory {
 	}
 
 	/**
-	 * Reflective implementation of ComponentFactory.
+	 * Reflective implementation of ComponentFactory. The visible names are copied: later changes
+	 * to the caller's set have no effect.
 	 */
 	record Reflective(ClassLoader loader, Set<String> visibleClassNames) implements ComponentFactory {
+		public Reflective {
+			visibleClassNames = visibleClassNames == null ? null : Set.copyOf(visibleClassNames);
+		}
+
 		@Override
-		public Class<?> load(String className) throws ClassNotFoundException {
-			return Class.forName(className, true, loader);
+		public Class<?> load(String className) throws ClassNotFoundException, ServletException {
+			try {
+				return Class.forName(className, true, loader);
+			} catch (LinkageError e) {
+				throw new ServletException("cannot load " + className + ": " + e, e);
+			}
 		}
 
 		@Override
 		public <T> T newInstance(Class<T> type) throws ServletException {
 			try {
 				return type.getDeclaredConstructor().newInstance();
-			} catch (ReflectiveOperationException e) {
-				throw new ServletException("cannot instantiate " + type.getName(), e);
+			} catch (ReflectiveOperationException | LinkageError e) {
+				throw new ServletException("cannot instantiate " + type.getName() + ": " + e, e);
 			}
 		}
 

@@ -153,8 +153,9 @@ class WebComponentRegistryTest {
     void unreachableConstructorFailsWithServletException() {
         var f = new RegistryComponentFactory(registry, getClass().getClassLoader());
         var e = assertThrows(ServletException.class, () -> f.newInstance(PrivateCtor.class));
-        assertTrue(e.getMessage().contains("PrivateCtor"), e.getMessage());
-        assertFalse(e.getMessage().contains("opens"), e.getMessage());
+        String name = PrivateCtor.class.getName();
+        assertEquals("cannot instantiate " + name + ": " + name + " has no non-private no-arg constructor",
+                e.getMessage(), "the class is named once");
     }
 
     @Test
@@ -198,6 +199,29 @@ class WebComponentRegistryTest {
 
     @Test
     void closedPackageFailsWithServletExceptionNamingTheOpens(@TempDir Path tmp) throws Exception {
+        Class<?> closed = closedModuleServlet(tmp);
+        var f = new RegistryComponentFactory(registry, closed.getClassLoader());
+        var e = assertThrows(ServletException.class, () -> f.newInstance(closed));
+        assertTrue(e.getMessage().contains("m.closed.Closed"), e.getMessage());
+        assertTrue(e.getMessage().contains("opens m.closed"), e.getMessage());
+    }
+
+    @Test
+    void closedPackageReachesTheReflectiveTierWithOneWarning(@TempDir Path tmp) throws Exception {
+        Class<?> closed = closedModuleServlet(tmp);
+        try (var log = io.vidocq.foy.internal.LogCapture.of(WebComponentRegistry.class.getName())) {
+            registry.lookup(closed);
+            registry.lookup(closed);
+            assertEquals(Tier.REFLECTION, registry.tierOf(closed));
+            assertEquals(1, registry.stats().reflection());
+            List<String> warnings = log.warnings();
+            assertEquals(1, warnings.size(), warnings.toString());
+            assertTrue(warnings.getFirst().contains("m.closed.Closed resolved by reflection"), warnings.getFirst());
+        }
+    }
+
+    /** A servlet in package {@code m.closed} of a named module that opens nothing to foy-core. */
+    private static Class<?> closedModuleServlet(Path tmp) throws Exception {
         Path src = tmp.resolve("src");
         Files.createDirectories(src.resolve("m/closed"));
         Files.writeString(src.resolve("module-info.java"), "module m.closed { requires jakarta.servlet; }");
@@ -217,11 +241,20 @@ class WebComponentRegistryTest {
                 ClassLoader.getSystemClassLoader()).layer();
         Class<?> closed = layer.findLoader("m.closed").loadClass("m.closed.Closed");
         assertTrue(closed.getModule().isNamed());
+        return closed;
+    }
 
-        var f = new RegistryComponentFactory(registry, closed.getClassLoader());
-        var e = assertThrows(ServletException.class, () -> f.newInstance(closed));
-        assertTrue(e.getMessage().contains("m.closed.Closed"), e.getMessage());
-        assertTrue(e.getMessage().contains("opens m.closed"), e.getMessage());
+    @Test
+    void linkageErrorWhileLoadingBecomesServletException() {
+        var f = new RegistryComponentFactory(registry, getClass().getClassLoader());
+        var e = assertThrows(ServletException.class, () -> f.load(BadInit.class.getName()));
+        assertInstanceOf(ExceptionInInitializerError.class, e.getCause());
+    }
+
+    static void fail() { throw new IllegalStateException("static init failed"); }
+
+    public static class BadInit extends HttpServlet {
+        static { fail(); }
     }
 
     /** The class path root (directory or jar) a class was loaded from. */

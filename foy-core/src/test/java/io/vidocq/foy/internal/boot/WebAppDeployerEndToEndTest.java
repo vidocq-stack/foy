@@ -312,7 +312,7 @@ class WebAppDeployerEndToEndTest {
         final ComponentFactory delegate = io.vidocq.foy.internal.gen.RegistryComponentFactory.forClassLoader(
                 WebAppDeployerEndToEndTest.class.getClassLoader());
         final List<Class<?>> created = new CopyOnWriteArrayList<>();
-        @Override public Class<?> load(String className) throws ClassNotFoundException {
+        @Override public Class<?> load(String className) throws ClassNotFoundException, ServletException {
             return delegate.load(className);
         }
         @Override public <T> T newInstance(Class<T> type) throws ServletException {

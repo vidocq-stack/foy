@@ -72,8 +72,12 @@ public final class RegistryComponentFactory implements ComponentFactory {
     }
 
     @Override
-    public Class<?> load(String className) throws ClassNotFoundException {
-        return WebComponentRegistry.loadClass(className, loader);
+    public Class<?> load(String className) throws ClassNotFoundException, ServletException {
+        try {
+            return WebComponentRegistry.loadClass(className, loader);
+        } catch (LinkageError e) {
+            throw new ServletException("cannot load " + className + ": " + e, e);
+        }
     }
 
     @Override
@@ -85,11 +89,18 @@ public final class RegistryComponentFactory implements ComponentFactory {
     public <T> T newInstance(Class<T> type) throws ServletException {
         try {
             return type.cast(registry.lookup(type).newInstance());
-        } catch (Exception e) {
+        } catch (Exception | LinkageError e) {
             // Exception, not RuntimeException: a generated or hidden-class factory calls the
             // constructor directly, so a checked exception it declares escapes undeclared.
-            throw new ServletException("cannot instantiate " + type.getName() + ": " + e.getMessage(), e);
+            throw new ServletException(instantiationMessage(type, e), e);
         }
+    }
+
+    /** "cannot instantiate X: reason", naming the class once even when the reason already does. */
+    static String instantiationMessage(Class<?> type, Throwable cause) {
+        String prefix = "cannot instantiate " + type.getName();
+        String detail = cause.getMessage() != null ? cause.getMessage() : cause.toString();
+        return detail.startsWith(prefix) ? detail : prefix + ": " + detail;
     }
 
     @Override

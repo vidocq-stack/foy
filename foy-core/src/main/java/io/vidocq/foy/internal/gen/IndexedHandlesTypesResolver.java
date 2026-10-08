@@ -43,8 +43,10 @@ import java.util.Set;
  * {@code binaryName|supertypes|annotations}, all binary names).
  *
  * <p>A class matches when one of its supertypes or type-level annotations is among the
- * initializer's {@code @HandlesTypes}; the handled types themselves are excluded. The
- * index is read lazily, once per resolver instance.
+ * initializer's {@code @HandlesTypes}; the handled types themselves are excluded. As
+ * {@link ServletContainerInitializer#onStartup} specifies, the result is {@code null} when the
+ * initializer has no {@code @HandlesTypes} or when no class matches. The index is read lazily,
+ * once per resolver instance.
  */
 public final class IndexedHandlesTypesResolver implements HandlesTypesResolver {
 
@@ -80,7 +82,7 @@ public final class IndexedHandlesTypesResolver implements HandlesTypesResolver {
                 LOG.log(Level.DEBUG, "Skipping indexed class {0}: not loadable ({1})", entry.name(), e.toString());
             }
         }
-        return result;
+        return result.isEmpty() ? null : result;
     }
 
     private List<IndexEntry> entries() {
