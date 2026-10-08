@@ -164,9 +164,11 @@ public final class ClassPathResourceProvider implements ResourceProvider {
         for (Loc.Root root : ordered) add(out, root.at(rel));
         // Roots that declare META-INF/resources/ itself are read like the ordered ones: no
         // directory entry is needed below it.
-        collect(ROOT_NAME, out, base -> base.resolve(rel));
+        collect(ROOT_NAME, out, base -> base.resolve(rel), false);
         String name = ROOT + (rel.endsWith("/") ? rel.substring(0, rel.length() - 1) : rel);
-        collect(name, out, loc -> loc);
+        // Directory roots are fully covered by the lookup above, where every hit is checked against
+        // the root's real path: only the jar hits of the per-file lookup are kept.
+        collect(name, out, loc -> loc, true);
         return new ArrayList<>(out.values());
     }
 
@@ -177,14 +179,15 @@ public final class ClassPathResourceProvider implements ResourceProvider {
     }
 
     /** Adds the class-loader resources {@code name} outside the ordered roots, mapped by {@code f}. */
-    private void collect(String name, Map<String, Loc> out, java.util.function.UnaryOperator<Loc> f) {
+    private void collect(String name, Map<String, Loc> out, java.util.function.UnaryOperator<Loc> f,
+                         boolean jarsOnly) {
         try {
             Enumeration<URL> urls = loader.getResources(name);
             while (urls.hasMoreElements()) {
                 URL url = urls.nextElement();
                 if (orderedKeys.contains(Fragment.sourceKey(rootOf(url, name)))) continue;
                 Loc loc = Loc.of(url, this::index);
-                if (loc != null) add(out, f.apply(loc));
+                if (loc != null && !(jarsOnly && loc instanceof DirLoc)) add(out, f.apply(loc));
             }
         } catch (IOException e) {
             // unreadable roots are skipped
@@ -371,7 +374,7 @@ public final class ClassPathResourceProvider implements ResourceProvider {
             try (Stream<Path> s = Files.list(path)) {
                 return s.filter(this::inside)
                         .map(p -> p.getFileName() + (Files.isDirectory(p) ? "/" : "")).sorted().toList();
-            } catch (IOException e) {
+            } catch (IOException | java.io.UncheckedIOException e) {
                 return List.of();
             }
         }

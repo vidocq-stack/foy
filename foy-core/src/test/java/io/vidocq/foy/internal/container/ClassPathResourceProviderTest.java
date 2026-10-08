@@ -228,4 +228,35 @@ class ClassPathResourceProviderTest {
         assertEquals(Set.of("/a/"), p.listPaths("/"));
         assertEquals("OK", read(p.openStream("/a/ok.txt")));
     }
+
+    @Test
+    void symbolicLinksCannotLeaveAClassLoaderDirectoryRoot(@TempDir Path dir) throws Exception {
+        Path root = dir.resolve("exploded/META-INF/resources");
+        Files.createDirectories(root.resolve("a"));
+        Files.writeString(root.resolve("a/ok.txt"), "OK");
+        Path outside = dir.resolve("outside");
+        Files.createDirectories(outside);
+        Files.writeString(outside.resolve("secret.txt"), "SECRET");
+        try {
+            Files.createSymbolicLink(root.resolve("a/hop1"), outside.resolve("secret.txt"));
+            Files.createSymbolicLink(root.resolve("a/chain.txt"), root.resolve("a/hop1"));
+            Files.createSymbolicLink(root.resolve("a/hopdir"), outside);
+            Files.createSymbolicLink(root.resolve("a/chaindir"), root.resolve("a/hopdir"));
+            Files.createSymbolicLink(root.resolve("a/relout.txt"), Path.of("../../../outside/secret.txt"));
+            Files.createSymbolicLink(root.resolve("a/inside.txt"), Path.of("ok.txt"));
+        } catch (UnsupportedOperationException | java.io.IOException e) {
+            org.junit.jupiter.api.Assumptions.abort("symbolic links unavailable: " + e);
+        }
+        var p = new ClassPathResourceProvider(
+                new URLClassLoader(new URL[] {dir.resolve("exploded").toUri().toURL()}, null), List.of());
+        for (String bad : new String[] {"/a/chain.txt", "/a/chaindir/secret.txt", "/a/relout.txt",
+                "/a/hop1", "/a/hopdir/secret.txt"}) {
+            assertNull(p.openStream(bad), bad);
+            assertNull(p.toUrl(bad), bad);
+        }
+        assertNull(p.listPaths("/a/chaindir/"));
+        assertEquals(Set.of("/a/ok.txt", "/a/inside.txt"), p.listPaths("/a/"));
+        assertEquals("OK", read(p.openStream("/a/ok.txt")));
+        assertEquals("OK", read(p.openStream("/a/inside.txt")), "a link staying under the root works");
+    }
 }
