@@ -33,10 +33,50 @@
             <artifactId>vauban-core</artifactId>
         </dependency>
 
+        <!-- Test only: BceCapabilitySpikeTest compiles tiny apps in-process with vauban's
+             annotation processor to observe what build-time BCEs support. -->
+        <dependency>
+            <groupId>io.vidocq.vauban</groupId>
+            <artifactId>vauban-processor</artifactId>
+            <version>${vauban.version}</version>
+            <scope>test</scope>
+        </dependency>
         <dependency>
             <groupId>org.junit.jupiter</groupId>
             <artifactId>junit-jupiter</artifactId>
             <scope>test</scope>
         </dependency>
     </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <executions>
+                    <!-- BceCapabilitySpikeTest drives javac in-process (javax.tools), which the
+                         main module does not read. -->
+                    <execution>
+                        <id>default-testCompile</id>
+                        <configuration>
+                            <compilerArgs>
+                                <arg>--add-modules</arg>
+                                <arg>java.compiler</arg>
+                                <arg>--add-reads</arg>
+                                <arg>io.vidocq.foy.cdi.vauban=java.compiler</arg>
+                            </compilerArgs>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <configuration>
+                    <!-- Same reason: the in-process compilation needs java.compiler. -->
+                    <useModulePath>false</useModulePath>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
 </project>
