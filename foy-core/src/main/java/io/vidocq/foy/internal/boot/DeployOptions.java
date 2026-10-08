@@ -68,6 +68,21 @@ public record DeployOptions(SecurityProvider securityProvider,
                 new io.vidocq.foy.internal.gen.IndexedHandlesTypesResolver(registry, loader));
     }
 
+    /**
+     * As {@link #defaults(ClassLoader, io.vidocq.foy.internal.gen.WebComponentRegistry)}, and the
+     * {@code @HandlesTypes} resolution also scans the class bytes of {@code handlesTypesRoots}
+     * (jars and directories) that ship no {@code META-INF/foy/class-index.list}. The roots are the
+     * application roots, the ordered fragments' jars and the jars of the retained initializers.
+     */
+    public static DeployOptions defaults(ClassLoader loader, io.vidocq.foy.internal.gen.WebComponentRegistry registry,
+                                         java.util.List<java.nio.file.Path> handlesTypesRoots) {
+        Objects.requireNonNull(registry, "registry");
+        return new DeployOptions(null, null, null, Set.of(), Set.of(), Set.of(),
+                new io.vidocq.foy.internal.gen.RegistryComponentFactory(registry, loader),
+                new io.vidocq.foy.internal.gen.IndexedHandlesTypesResolver(registry, loader,
+                        java.util.List.copyOf(handlesTypesRoots)));
+    }
+
     public DeployOptions withComponentFactory(ComponentFactory f) {
         return new DeployOptions(securityProvider, resourceProvider, servletContextName,
                 reservedServletNames, reservedFilterNames, reservedUrlPatterns, f, handlesTypes);

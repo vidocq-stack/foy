@@ -32,6 +32,7 @@ import java.net.URI;
 import java.net.URL;
 import java.security.CodeSource;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.LinkedHashSet;
@@ -199,6 +200,26 @@ public final class ApplicationSources {
                                                   Set<URL> applicationJars) {
         Predicate<URL> keep = ordering(absoluteOrdering, ordered, allFragmentJars, applicationJars);
         return all.stream().filter(i -> keep.test(i.jar())).toList();
+    }
+
+    /**
+     * The jars and directories among {@code roots}, normalised, deduplicated and in order, as the
+     * {@code @HandlesTypes} class-bytes scan expects them. Roots that are not {@code file:} locations
+     * (remote or nested archives) are left out: they cannot be walked.
+     */
+    public static List<java.nio.file.Path> scanRoots(Collection<URL> roots) {
+        var out = new java.util.LinkedHashSet<java.nio.file.Path>();
+        for (URL root : roots) {
+            try {
+                URI uri = URI.create(Fragment.sourceKey(root));
+                if ("file".equalsIgnoreCase(uri.getScheme()) && uri.getAuthority() == null) {
+                    out.add(java.nio.file.Path.of(uri));
+                }
+            } catch (IllegalArgumentException | java.nio.file.FileSystemNotFoundException e) {
+                // not a local location: not scanned
+            }
+        }
+        return List.copyOf(out);
     }
 
     /** Normalised root of {@code type}'s code source; {@code null} without one. */

@@ -54,4 +54,34 @@
             <scope>test</scope>
         </dependency>
     </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <executions>
+                    <!-- ClassFileHandlesTypesScannerTest compiles fixtures in-process (javax.tools),
+                         which the main module does not read. -->
+                    <execution>
+                        <id>default-testCompile</id>
+                        <configuration>
+                            <compilerArgs>
+                                <arg>--add-modules</arg>
+                                <arg>java.compiler</arg>
+                                <arg>--add-reads</arg>
+                                <arg>io.vidocq.foy.core=java.compiler</arg>
+                            </compilerArgs>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+            <plugin>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <configuration>
+                    <!-- Keep the module path; only add the JDK module the test reads. -->
+                    <argLine>--add-modules java.compiler --add-reads io.vidocq.foy.core=java.compiler</argLine>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
 </project>

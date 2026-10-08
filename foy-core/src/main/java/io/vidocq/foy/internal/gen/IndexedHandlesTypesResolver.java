@@ -28,6 +28,7 @@ import java.io.InputStreamReader;
 import java.lang.System.Logger.Level;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Path;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashSet;
@@ -36,6 +37,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.function.Supplier;
 
 /**
  * Resolves the class set passed to a {@link ServletContainerInitializer} (§8.2.4) from the
@@ -46,7 +48,8 @@ import java.util.Set;
  * initializer's {@code @HandlesTypes}; the handled types themselves are excluded. As
  * {@link ServletContainerInitializer#onStartup} specifies, the result is {@code null} when the
  * initializer has no {@code @HandlesTypes} or when no class matches. The index is read lazily,
- * once per resolver instance.
+ * once per resolver instance, together with the optional class-bytes scan of the jars that ship
+ * no index.
  */
 public final class IndexedHandlesTypesResolver implements HandlesTypesResolver {
 
@@ -57,11 +60,29 @@ public final class IndexedHandlesTypesResolver implements HandlesTypesResolver {
 
     private final WebComponentRegistry registry;
     private final ClassLoader loader;
+    private final Supplier<List<ClassFileHandlesTypesScanner.Entry>> scanner;
     private volatile List<IndexEntry> entries;
 
+    /** Class index only. */
     public IndexedHandlesTypesResolver(WebComponentRegistry registry, ClassLoader loader) {
+        this(registry, loader, List.of());
+    }
+
+    /**
+     * Class index, plus a {@link ClassFileHandlesTypesScanner class-bytes scan} of the
+     * {@code scanRoots} (jars and directories); a root that ships a class index is left to it.
+     */
+    public IndexedHandlesTypesResolver(WebComponentRegistry registry, ClassLoader loader, List<Path> scanRoots) {
+        this(registry, loader, scanRoots.isEmpty() ? List::of
+                : () -> ClassFileHandlesTypesScanner.scan(scanRoots, loader));
+    }
+
+    /** Class index, plus entries from an arbitrary scan, run once at the first resolution. */
+    public IndexedHandlesTypesResolver(WebComponentRegistry registry, ClassLoader loader,
+                                       Supplier<List<ClassFileHandlesTypesScanner.Entry>> scanner) {
         this.registry = Objects.requireNonNull(registry, "registry");
         this.loader = Objects.requireNonNull(loader, "loader");
+        this.scanner = Objects.requireNonNull(scanner, "scanner");
     }
 
     @Override
@@ -117,6 +138,11 @@ public final class IndexedHandlesTypesResolver implements HandlesTypesResolver {
             }
         } catch (IOException e) {
             LOG.log(Level.WARNING, "Cannot enumerate class indexes: {0}", e.toString());
+        }
+        for (var scanned : scanner.get()) {
+            Set<String> related = new HashSet<>(scanned.supertypes());
+            related.addAll(scanned.annotations());
+            byName.putIfAbsent(scanned.name(), new IndexEntry(scanned.name(), related));
         }
         return List.copyOf(byName.values());
     }

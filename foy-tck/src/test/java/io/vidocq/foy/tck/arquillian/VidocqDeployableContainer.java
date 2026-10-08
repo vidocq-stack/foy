@@ -20,6 +20,8 @@
 package io.vidocq.foy.tck.arquillian;
 
 import io.vidocq.foy.internal.boot.HandlesTypesResolver;
+import io.vidocq.foy.internal.gen.ClassFileHandlesTypesScanner;
+import io.vidocq.foy.internal.gen.IndexedHandlesTypesResolver;
 import io.vidocq.foy.internal.gen.ClassFileDescriptorReader;
 import io.vidocq.foy.internal.gen.WebComponentRegistry;
 import io.vidocq.foy.spi.gen.WebComponent;
@@ -135,7 +137,7 @@ public class VidocqDeployableContainer implements DeployableContainer<VidocqCont
         var registry = WebComponentRegistry.forClassLoader(cl);
         builder.registry(registry);
         List<String> registered = new ArrayList<>();
-        var warClasses = new ArrayList<Class<?>>();
+        var warClassList = new ArrayList<String>();
 
         // 1) Classes @WebServlet/@WebFilter/@WebListener dans /WEB-INF/classes/
         //    + collecte des class-names du WAR pour simuler l'isolation classloader
@@ -152,11 +154,11 @@ public class VidocqDeployableContainer implements DeployableContainer<VidocqCont
             Class<?> cls;
             try { cls = WebComponentRegistry.loadClass(className, cl); }
             catch (Throwable t) { continue; }
-            warClasses.add(cls);
+            warClassList.add(className);
             registerIfAnnotated(builder, cls, registry, registered);
         }
         builder.restrictToWarClasses(warClassNames);
-        builder.handlesTypes(warHandlesTypes(registry, warClasses, cl));
+        builder.handlesTypes(warHandlesTypes(registry, warClassList, cl));
 
         // 2) web.xml : enregistre les servlets/filters/listeners déclarés
         Node webXml = war.get("/WEB-INF/web.xml");
@@ -373,67 +375,14 @@ public class VidocqDeployableContainer implements DeployableContainer<VidocqCont
     }
 
     /**
-     * {@code @HandlesTypes} resolution over the WAR's own classes (§8.2.4): a class matches when it
-     * extends or implements a handled type, or carries a handled annotation on the class, a field
-     * or a method (read from its class bytes). The handled types themselves are excluded;
-     * {@code null} when the initializer handles nothing or nothing matches.
+     * {@code @HandlesTypes} resolution over the WAR's own classes (§8.2.4), by the class-bytes scanner
+     * ({@link ClassFileHandlesTypesScanner#scanNamed}): supertypes, and annotations on the class, its fields
+     * and its methods. The handled types themselves are excluded; {@code null} when nothing matches.
      */
-    private static HandlesTypesResolver warHandlesTypes(WebComponentRegistry registry, List<Class<?>> warClasses,
+    private static HandlesTypesResolver warHandlesTypes(WebComponentRegistry registry, List<String> warClassNames,
                                                         ClassLoader cl) {
-        return sci -> {
-            List<String> handled = registry.lookup(sci.getClass()).descriptor().handlesTypes();
-            if (handled.isEmpty()) return null;
-            var handledClasses = new LinkedHashSet<Class<?>>();
-            for (String name : handled) {
-                try {
-                    handledClasses.add(WebComponentRegistry.loadClass(name, cl));
-                } catch (ClassNotFoundException | LinkageError ignored) {}
-            }
-            Set<String> handledAnnotations = new HashSet<>();
-            for (Class<?> h : handledClasses) if (h.isAnnotation()) handledAnnotations.add(h.getName());
-            Set<Class<?>> result = new LinkedHashSet<>();
-            for (Class<?> c : warClasses) {
-                if (handledClasses.contains(c)) continue;
-                boolean match = false;
-                for (Class<?> h : handledClasses) {
-                    if (!h.isAnnotation() && h.isAssignableFrom(c)) { match = true; break; }
-                }
-                if (!match && !handledAnnotations.isEmpty()) {
-                    match = annotationsOf(c).stream().anyMatch(handledAnnotations::contains);
-                }
-                if (match) result.add(c);
-            }
-            return result.isEmpty() ? null : result;
-        };
-    }
-
-    /** Binary names of the annotations on {@code c}, its fields and its methods, from its class bytes. */
-    private static Set<String> annotationsOf(Class<?> c) {
-        ClassLoader loader = c.getClassLoader();
-        if (loader == null) return Set.of();
-        try (InputStream in = loader.getResourceAsStream(c.getName().replace('.', '/') + ".class")) {
-            if (in == null) return Set.of();
-            ClassModel model = ClassFile.of().parse(in.readAllBytes());
-            Set<String> names = new HashSet<>();
-            model.findAttribute(Attributes.runtimeVisibleAnnotations()).ifPresent(a -> addAll(names, a.annotations()));
-            model.findAttribute(Attributes.runtimeInvisibleAnnotations()).ifPresent(a -> addAll(names, a.annotations()));
-            for (FieldModel f : model.fields()) {
-                f.findAttribute(Attributes.runtimeVisibleAnnotations()).ifPresent(a -> addAll(names, a.annotations()));
-            }
-            for (MethodModel m : model.methods()) {
-                m.findAttribute(Attributes.runtimeVisibleAnnotations()).ifPresent(a -> addAll(names, a.annotations()));
-            }
-            return names;
-        } catch (IOException | RuntimeException e) {
-            return Set.of();
-        }
-    }
-
-    private static void addAll(Set<String> names, List<Annotation> annotations) {
-        for (Annotation a : annotations) {
-            String d = a.className().stringValue(); // "Lpkg/Outer$Inner;"
-            names.add(d.substring(1, d.length() - 1).replace('/', '.'));
-        }
+        return new IndexedHandlesTypesResolver(registry, cl,
+                () -> ClassFileHandlesTypesScanner.scanNamed(warClassNames, cl));
     }
 
     private static java.util.Map<org.jboss.shrinkwrap.api.ArchivePath, Node> flatten(WebArchive war) {

@@ -200,6 +200,8 @@ public final class FoyChappeBoot {
             List<Initializer> initializers = List.of();
             // Static resource roots, by priority: application roots, then the ordered fragments' jars.
             Set<URL> resourceRoots = new LinkedHashSet<>(applicationRoots);
+            // Jars and directories whose classes @HandlesTypes may match (those with a class index are skipped).
+            Set<URL> scanRoots = new LinkedHashSet<>(applicationRoots);
             if (discoverPluggability) {
                 List<Fragment> fragments = ApplicationSources.fragments(loader);
                 ordered = FragmentOrderer.order(descriptor.absoluteOrdering(), fragments);
@@ -210,6 +212,7 @@ public final class FoyChappeBoot {
                 appRoots.addAll(ApplicationSources.codeSources(annotated));
                 resourceRoots.addAll(appRoots);
                 for (Fragment f : ordered) resourceRoots.add(f.jar());
+                scanRoots.addAll(resourceRoots);
                 // metadata-complete fragments' jars are dropped by DescriptorMerger itself.
                 annotated = annotated.excludingSources(ApplicationSources.excludedJars(fragments, ordered));
                 try {
@@ -233,7 +236,10 @@ public final class FoyChappeBoot {
                     : effective.defaultContextPath() != null ? effective.defaultContextPath() : "/";
             WebAppModel.Builder modelBuilder = WebAppModel.builder(path);
             DescriptorMerger.mergeMerged(effective, ordered, annotated, factory, modelBuilder);
-            for (Initializer i : initializers) modelBuilder.initializer(i.sci());
+            for (Initializer i : initializers) {
+                modelBuilder.initializer(i.sci());
+                if (i.jar() != null) scanRoots.add(i.jar());
+            }
             // The merger copies the descriptors' timeout (-1 when absent); the builder default applies then.
             if (effective.sessionTimeoutMinutes() < 0) {
                 modelBuilder.sessionTimeoutMinutes((sessionTimeoutSeconds + 59) / 60);
@@ -244,7 +250,7 @@ public final class FoyChappeBoot {
             try {
                 VidocqServletContext.ResourceProvider resources = resourceProvider != null ? resourceProvider
                         : new ClassPathResourceProvider(loader, List.copyOf(resourceRoots));
-                deployment = WebAppDeployer.deploy(model, DeployOptions.defaults(loader, registry)
+                deployment = WebAppDeployer.deploy(model, DeployOptions.defaults(loader, registry, ApplicationSources.scanRoots(scanRoots))
                         .withComponentFactory(factory).withResourceProvider(resources));
             } catch (RuntimeException e) {
                 throw new ServletException("Foy deployment failed: " + e.getMessage(), e);
