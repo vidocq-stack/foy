@@ -107,8 +107,56 @@ class FragmentOrdererTest {
     }
 
     @Test
-    void nameConstraintContradictingGroupsIsACycle() throws Exception {
-        var in = List.of(f("H", new Ordering(List.of(), true, List.of("M"), false)), f("M", Ordering.NONE));
+    void beforeOthersButAfterNamedFragmentDeploys() throws Exception {
+        var in = List.of(f("H", new Ordering(List.of(), true, List.of("M"), false)), f("M", Ordering.NONE),
+                f("X", Ordering.NONE));
+        assertEquals(List.of("M", "H", "X"), names(FragmentOrderer.order(null, in)));
+    }
+
+    @Test
+    void afterOthersButBeforeNamedFragmentDeploys() throws Exception {
+        var in = List.of(f("T", new Ordering(List.of("M"), false, List.of(), true)), f("M", Ordering.NONE),
+                f("X", Ordering.NONE));
+        assertEquals(List.of("X", "T", "M"), names(FragmentOrderer.order(null, in)));
+    }
+
+    @Test
+    void genuineConflictWithOthersGroupIsACycle() throws Exception {
+        var in = List.of(f("H", BEFORE_OTHERS), f("M", before("H")));
         assertThrows(ServletException.class, () -> FragmentOrderer.order(null, in));
+    }
+
+    @Test
+    void repeatedNameInAbsoluteOrderingEmitsOnce() throws Exception {
+        var in = List.of(f("A", Ordering.NONE), f("B", Ordering.NONE));
+        assertEquals(List.of("B", "A"), names(FragmentOrderer.order(List.of("B", "A", "B"), in)));
+    }
+
+    @Test
+    void othersTwiceInAbsoluteOrderingEmitsOnce() throws Exception {
+        var in = List.of(f("A", Ordering.NONE), f("B", Ordering.NONE), f("C", Ordering.NONE));
+        var o = WebAppDescriptor.OTHERS;
+        assertEquals(List.of("C", "A", "B"), names(FragmentOrderer.order(List.of("C", o, o), in)));
+    }
+
+    @Test
+    void threeNodeCycleNamesAllThree() throws Exception {
+        var in = List.of(f("A", after("C")), f("B", after("A")), f("C", after("B")), f("D", Ordering.NONE));
+        var e = assertThrows(ServletException.class, () -> FragmentOrderer.order(null, in));
+        assertTrue(e.getMessage().contains("A") && e.getMessage().contains("B") && e.getMessage().contains("C"),
+                e.getMessage());
+        assertFalse(e.getMessage().contains("D"), e.getMessage());
+    }
+
+    @Test
+    void emptyAbsoluteOrderingExcludesAll() throws Exception {
+        var in = List.of(f("A", Ordering.NONE), f("B", Ordering.NONE));
+        assertEquals(List.of(), FragmentOrderer.order(List.of(), in));
+    }
+
+    @Test
+    void duplicateNamesFailEvenWithAbsoluteOrdering() throws Exception {
+        var in = List.of(f("A", Ordering.NONE), f("A", Ordering.NONE));
+        assertThrows(ServletException.class, () -> FragmentOrderer.order(List.of("A"), in));
     }
 }

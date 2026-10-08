@@ -69,7 +69,10 @@ public final class FragmentOrderer {
         boolean othersDone = false;
         for (String n : list) {
             if (WebAppDescriptor.OTHERS.equals(n)) {
-                if (othersDone) continue;
+                if (othersDone) {
+                    LOG.log(System.Logger.Level.WARNING, "<others/> repeated in absolute-ordering; ignoring repeat");
+                    continue;
+                }
                 othersDone = true;
                 for (Fragment f : fragments) {
                     String fn = f.descriptor().fragmentName();
@@ -79,7 +82,7 @@ public final class FragmentOrderer {
             }
             Integer idx = byName.get(n);
             if (idx == null) {
-                LOG.log(System.Logger.Level.DEBUG, "absolute-ordering names unknown fragment '" + n + "'");
+                LOG.log(System.Logger.Level.DEBUG, () -> "absolute-ordering names unknown fragment '" + n + "'");
             } else if (!emitted.add(n)) {
                 LOG.log(System.Logger.Level.WARNING,
                         "fragment '" + n + "' repeated in absolute-ordering; ignoring repeat");
@@ -106,7 +109,10 @@ public final class FragmentOrderer {
         for (int i = 0; i < n; i++) out.add(new TreeSet<>());
         for (int i = 0; i < n; i++) {
             for (int j = 0; j < n; j++) {
-                if (group[i] < group[j]) out.get(i).add(j);
+                if (group[i] < group[j] && !(group[i] != 1 && names(fragments.get(i), fragments.get(j)))
+                        && !(group[j] != 1 && names(fragments.get(j), fragments.get(i)))) {
+                    out.get(i).add(j);
+                }
             }
             Ordering o = fragments.get(i).descriptor().ordering();
             for (String b : o.before()) {
@@ -154,7 +160,15 @@ public final class FragmentOrderer {
 
     private static void logUnknown(Fragment f, String name) {
         LOG.log(System.Logger.Level.DEBUG,
-                "web-fragment " + label(f) + " orders against unknown fragment '" + name + "'");
+                () -> "web-fragment " + label(f) + " orders against unknown fragment '" + name + "'");
+    }
+
+    /** True when {@code a}'s before/after lists name {@code b}; a pair is exempt from the others-groups only when the fragment declaring {@code <others/>} names the other. */
+    private static boolean names(Fragment a, Fragment b) {
+        String bn = b.descriptor().fragmentName();
+        if (bn == null) return false;
+        Ordering o = a.descriptor().ordering();
+        return o.before().contains(bn) || o.after().contains(bn);
     }
 
     private static String label(Fragment f) {
