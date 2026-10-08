@@ -159,16 +159,22 @@ Add `foy-processor` to the compiler's annotation processor path. It generates, a
                 <artifactId>vauban-processor</artifactId>
                 <version>${vauban.version}</version>
             </path>
+            <path>
+                <groupId>io.vidocq.foy</groupId>
+                <artifactId>foy-cdi-vauban</artifactId>
+                <version>${foy.version}</version>
+            </path>
         </annotationProcessorPaths>
     </configuration>
 </plugin>
 ----
 
-* Only the first `path` is needed without CDI. The `vauban-processor` path is for applications using `foy-cdi-vauban`; it is build-time only.
+* Only the first `path` is needed without CDI. The `vauban-processor` and `foy-cdi-vauban` paths are for applications using `foy-cdi-vauban`; they are build-time only.
+* `foy-cdi-vauban` must be on the processor path too, not only on the compile class path: once `annotationProcessorPaths` is set, javac looks for processors and their service providers on those entries alone, so vauban-processor finds the `FoyWebExtension` build compatible extension only there. Without it the extension never runs: unscoped web components do not become `@Dependent` beans, so Foy never sees them, and the others get no `CdiWebComponents` index entry. Foy still discovers such a bean by walking the `Servlet`, `Filter` and `EventListener` beans, but logs one `WARNING` per class when another archive does carry an index.
 * In a named Java Module, the processor suggests (as a compiler note) the `provides io.vidocq.foy.spi.gen.WebComponent with ...` clause to add to your `module-info.java`.
 * Spec misuse (for example a `@WebServlet` class that is not a `Servlet`) fails the compilation.
 * In a named module, the name-based companion lookup uses `publicLookup`: either declare `provides io.vidocq.foy.spi.gen.WebComponent with ...` (as the processor note suggests; no export needed) or export the package. Otherwise resolution falls to the Class-File tier, which then needs `opens`.
-* Classes that were not processed (third-party jars) still work: Foy decodes their annotations from the class bytes. In a named module this needs `opens <package> to io.vidocq.foy.core`; class-path code needs nothing. See xref:internals.adoc#_component_resolution_tiers[Component resolution tiers].
+* Classes that were not processed (third-party jars) still work: Foy decodes their annotations from the class bytes. In a named module this needs `opens <package> to io.vidocq.foy.core`; class-path code needs nothing. See xref:internals.adoc#component-resolution-tiers[Component resolution tiers].
 
 == CDI integration through Vauban
 

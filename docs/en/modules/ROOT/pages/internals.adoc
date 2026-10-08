@@ -136,7 +136,7 @@ stateDiagram-v2
 
 == CDI integration through Vauban
 
-`foy-cdi-vauban` is deliberately minimal: its single class, `FoyVaubanBootstrap`, returns the current `VaubanContainer`'s `BeanManager`, which the caller passes to `FoyChappeBoot`. `WebAppDiscovery` then resolves the Servlet/Filter/Listener instances through that `BeanManager`, so they can `@Inject` application beans (build-time resolution through Vauban).
+`foy-cdi-vauban` is deliberately minimal: its single class, `FoyVaubanBootstrap`, returns the current `VaubanContainer`'s `BeanManager`, which the caller passes to `FoyChappeBoot`. `WebAppDiscovery` then resolves the Servlet/Filter/Listener instances through that `BeanManager`, so they can `@Inject` application beans (build-time resolution through Vauban). The component classes come first from the `CdiWebComponents` index beans that `FoyWebExtension` registers, one per archive built with `foy-cdi-vauban` on the processor path; the `Servlet`, `Filter` and `EventListener` beans are walked as well, and a web-annotated bean missing from every index (an archive built without `foy-cdi-vauban`) is still discovered, after the indexed classes, with one `WARNING` naming the class. Without any index (a CDI container other than Vauban), the walk is the only source and one `INFO` line says so.
 
 [IMPORTANT]
 ====
@@ -168,7 +168,13 @@ At deployment, `WebComponentRegistry` (`io.vidocq.foy.internal.gen`) resolves ev
 | Last resort, only when the hidden class cannot be defined. Like the Class-File tier, it needs `opens <package> to io.vidocq.foy.core` for a component in a named module.
 |===
 
-Product code is free of `getAnnotation`, `getDeclaredConstructor` and `Class.forName` outside the registry; the guard test `NoProductReflectionTest` enforces it.
+The guard test `NoProductReflectionTest` scans the main sources of `foy-core` for three patterns, `getAnnotation(`, `getDeclaredConstructor(` and `Class.forName(`, and fails on any match outside an allow-list of three files:
+
+* `WebComponentRegistry` — the tiers themselves (loading a class by name, the generated companion, the reflective tier);
+* `ComponentFactory` — its `Reflective` factory, used only on explicit opt-out and in tests;
+* `IndexedHandlesTypesResolver` — loads the `META-INF/foy/class-index.list` entries with `Class.forName(name, false, loader)`, without initialising them.
+
+The guard covers `foy-core` only: `foy-cdi-vauban`'s `CdiWebComponentsCreator` also loads the class names recorded at build time with `Class.forName(name, false, loader)` (no initialisation, no reflective instantiation).
 
 *Logging policy.* One `INFO` line per class resolved through the Class-File tier, one `WARNING` per class on the reflective tier (naming the reason), and nothing per request.
 
