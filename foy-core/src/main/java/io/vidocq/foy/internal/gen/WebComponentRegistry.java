@@ -44,8 +44,10 @@ import java.util.function.Supplier;
  * <ol>
  *   <li>{@link Tier#SERVICE_LOADER}: a {@code WebComponent} service provider declaring the type;</li>
  *   <li>{@link Tier#GENERATED_CLASS}: the {@code X$$FoyComponent} companion generated at build time;</li>
- *   <li>{@link Tier#CLASS_FILE}: descriptor read from the class bytes, hidden-class factory;</li>
- *   <li>{@link Tier#REFLECTION}: reflective instantiation (last resort, logged as a warning).</li>
+ *   <li>{@link Tier#CLASS_FILE}: descriptor read from the class bytes, hidden-class factory (or a
+ *       failing factory when the class has no reachable no-arg constructor, which no tier could call);</li>
+ *   <li>{@link Tier#REFLECTION}: reflective instantiation (last resort when the hidden-class factory
+ *       cannot be defined, e.g. a package not open to foy-core; logged as a warning).</li>
  * </ol>
  * Results are cached per {@link Class} object (identity, never by name), so two classes with the
  * same name from different class loaders are resolved independently.
@@ -158,6 +160,17 @@ public final class WebComponentRegistry {
         Optional<WebComponentDescriptor> read = ClassFileDescriptorReader.read(type);
         // Readable non-web classes (AsyncListener, HttpUpgradeHandler, helpers) still get a hidden factory.
         WebComponentDescriptor descriptor = read.orElseGet(() -> WebComponentDescriptor.plain().withKind(kindOf(type)));
+        String blocker = HiddenFactoryEmitter.notInstantiableReason(type);
+        if (blocker != null) {
+            // No tier can call a constructor that does not exist or is private; reflection
+            // would only add a warning. Instantiation fails, lookup and metadata still work.
+            LOG.log(Level.INFO, MessageFormat.format(
+                    "foy: {0} resolved through the Class-File tier, not instantiable ({1})", type.getName(), blocker));
+            Supplier<Object> failing = () -> {
+                throw new IllegalStateException("cannot instantiate " + type.getName() + ": " + blocker);
+            };
+            return new Entry(new FactoryComponent(type, descriptor, failing), Tier.CLASS_FILE);
+        }
         String reason;
         try {
             Supplier<Object> factory = HiddenFactoryEmitter.factoryFor(type);

@@ -104,12 +104,15 @@ class WebComponentRegistryTest {
     }
 
     @Test
-    void nonComponentClassFallsBackToPlainReflection() {
+    void classWithoutReachableNoArgConstructorStaysInClassFileTierAndFailsOnInstantiation() {
+        // Reflection cannot instantiate it either: the reflective tier would only add a WARNING.
         var c = registry.lookup(Helper.class);
         assertNotNull(c);
         assertEquals(WebComponentDescriptor.Kind.PLAIN, c.descriptor().kind());
-        assertEquals(Tier.REFLECTION, registry.tierOf(Helper.class));
-        assertEquals(1, registry.stats().reflection());
+        assertEquals(Tier.CLASS_FILE, registry.tierOf(Helper.class));
+        assertEquals(0, registry.stats().reflection());
+        var e = assertThrows(IllegalStateException.class, c::newInstance);
+        assertTrue(e.getMessage().contains(Helper.class.getName()), e.getMessage());
     }
 
     public static class Async implements jakarta.servlet.AsyncListener {

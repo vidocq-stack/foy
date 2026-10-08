@@ -100,9 +100,23 @@ public final class HiddenFactoryEmitter {
      * When the bytes are not readable the check is skipped and the factory is emitted anyway.
      */
     private static void checkInstantiable(Class<?> type) throws IllegalAccessException {
+        String reason = notInstantiableReason(type);
+        if (reason != null) {
+            throw new IllegalAccessException(reason);
+        }
+    }
+
+    /**
+     * Why no constructor call, generated or reflective, can instantiate {@code type}: abstract
+     * type or interface, or no non-private no-arg constructor. Read from the class bytes.
+     *
+     * @param type the class to check
+     * @return the reason, or {@code null} when instantiable or when the bytes are not readable
+     */
+    static String notInstantiableReason(Class<?> type) {
         byte[] bytes = ClassFileDescriptorReader.bytesOf(type);
         if (bytes == null) {
-            return;
+            return null;
         }
         boolean abstractType;
         boolean hasNoArg;
@@ -113,13 +127,14 @@ public final class HiddenFactoryEmitter {
                     && m.methodType().equalsString("()V")
                     && (m.flags().flagsMask() & ClassFile.ACC_PRIVATE) == 0);
         } catch (RuntimeException e) {
-            return; // unreadable bytes: let the constructor lookup decide
+            return null; // unreadable bytes: let the constructor lookup decide
         }
         if (abstractType) {
-            throw new IllegalAccessException(type.getName() + " is abstract or an interface and cannot be instantiated");
+            return type.getName() + " is abstract or an interface and cannot be instantiated";
         }
         if (!hasNoArg) {
-            throw new IllegalAccessException(type.getName() + " has no non-private no-arg constructor");
+            return type.getName() + " has no non-private no-arg constructor";
         }
+        return null;
     }
 }
