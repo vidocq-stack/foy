@@ -108,11 +108,11 @@ class WebXmlParserFragmentTest {
     }
 
     @Test
-    void emptyLoadOnStartupIsLazy() throws IOException {
+    void emptyLoadOnStartupIsZero() throws IOException {
         var d = WebXmlParser.parse(xml("""
                 <web-app><servlet><servlet-name>s</servlet-name><servlet-class>x.S</servlet-class>
                   <load-on-startup/></servlet></web-app>"""));
-        assertEquals(Integer.MIN_VALUE, d.servlets().getFirst().loadOnStartup());
+        assertEquals(0, d.servlets().getFirst().loadOnStartup());
     }
 
     @Test
@@ -120,6 +120,48 @@ class WebXmlParserFragmentTest {
         var e = assertThrows(IOException.class, () -> WebXmlParser.parse(xml("""
                 <web-app><filter-mapping><filter-name>f</filter-name><url-pattern>/*</url-pattern>
                   <dispatcher>TELEPORT</dispatcher></filter-mapping></web-app>""")));
-        assertTrue(e.getMessage().contains("TELEPORT") || String.valueOf(e.getCause()).contains("TELEPORT"));
+        assertTrue(e.getMessage().contains("TELEPORT") && e.getMessage().contains("'f'"), e.getMessage());
+    }
+
+    @Test
+    void badSessionTimeoutNamesTheElement() {
+        var e = assertThrows(IOException.class, () -> WebXmlParser.parse(xml(
+                "<web-app><session-config><session-timeout>x</session-timeout></session-config></web-app>")));
+        assertTrue(e.getMessage().contains("session-timeout") && e.getMessage().contains("'x'"), e.getMessage());
+    }
+
+    @Test
+    void badErrorCodeNamesTheElement() {
+        var e = assertThrows(IOException.class, () -> WebXmlParser.parse(xml(
+                "<web-app><error-page><error-code>abc</error-code><location>/e</location></error-page></web-app>")));
+        assertTrue(e.getMessage().contains("error-code") && e.getMessage().contains("'abc'"), e.getMessage());
+    }
+
+    @Test
+    void absoluteOrderingInFragmentIsIgnored() throws IOException {
+        var d = WebXmlParser.parseFragment(xml(
+                "<web-fragment><name>A</name><absolute-ordering><name>B</name></absolute-ordering></web-fragment>"));
+        assertNull(d.absoluteOrdering());
+        assertEquals(Ordering.NONE, d.ordering());
+    }
+
+    @Test
+    void orderingInWebXmlIsIgnored() throws IOException {
+        var d = WebXmlParser.parse(xml(
+                "<web-app><ordering><after><name>B</name></after></ordering></web-app>"));
+        assertEquals(Ordering.NONE, d.ordering());
+    }
+
+    @Test
+    void multipleBeforeAndAfterChildrenAreMerged() throws IOException {
+        var d = WebXmlParser.parseFragment(xml("""
+                <web-fragment><ordering>
+                  <after><name>B</name></after><after><name>C</name><others/></after>
+                  <before><name>D</name></before><before><name>E</name></before>
+                </ordering></web-fragment>"""));
+        assertEquals(List.of("B", "C"), d.ordering().after());
+        assertTrue(d.ordering().afterOthers());
+        assertEquals(List.of("D", "E"), d.ordering().before());
+        assertFalse(d.ordering().beforeOthers());
     }
 }

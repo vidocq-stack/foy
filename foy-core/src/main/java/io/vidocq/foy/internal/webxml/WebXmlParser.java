@@ -61,6 +61,7 @@ public final class WebXmlParser {
     }
 
     private static WebAppDescriptor parse(InputStream in, String expectedRoot) throws IOException {
+        String what = expectedRoot.equals("web-app") ? "web.xml" : "web-fragment.xml";
         Document doc;
         try {
             var factory = DocumentBuilderFactory.newInstance();
@@ -71,7 +72,7 @@ public final class WebXmlParser {
             DocumentBuilder builder = factory.newDocumentBuilder();
             doc = builder.parse(in);
         } catch (Exception e) {
-            throw new IOException("invalid " + (expectedRoot.equals("web-app") ? "web.xml" : "web-fragment.xml"), e);
+            throw new IOException("invalid " + what, e);
         }
         Element root = doc.getDocumentElement();
         root.normalize();
@@ -82,8 +83,7 @@ public final class WebXmlParser {
         try {
             return parse(root, expectedRoot.equals("web-fragment"));
         } catch (RuntimeException e) {
-            throw new IOException("invalid " + (expectedRoot.equals("web-app") ? "web.xml" : "web-fragment.xml")
-                    + ": " + e.getMessage(), e);
+            throw new IOException("invalid " + what + ": " + e.getMessage(), e);
         }
     }
 
@@ -143,7 +143,7 @@ public final class WebXmlParser {
                 case "error-page" -> errorPages.add(parseErrorPage(e));
                 case "session-config" -> {
                     String t = firstText(e, "session-timeout");
-                    if (t != null) sessionTimeoutMinutes = Integer.parseInt(t.trim());
+                    if (t != null) sessionTimeoutMinutes = parseInt(t, "<session-timeout> in <session-config>");
                 }
                 case "locale-encoding-mapping-list" -> {
                     for (Element m : childrenByTag(e, "locale-encoding-mapping")) {
@@ -183,18 +183,27 @@ public final class WebXmlParser {
     }
 
     /**
-     * Absent, empty or malformed element: {@code Integer.MIN_VALUE} (lazy; the schema allows an
-     * empty element, meaning the container loads the servlet whenever it chooses).
+     * Absent or malformed element: {@code Integer.MIN_VALUE} (lazy). Empty element: {@code 0}
+     * (present, so load at startup with order 0).
      */
     private static int parseLoadOnStartup(Element e, String servletName) {
         String t = firstText(e, "load-on-startup");
-        if (t == null || t.isEmpty()) return Integer.MIN_VALUE;
+        if (t == null) return Integer.MIN_VALUE;
+        if (t.isEmpty()) return 0; // present but empty: load at startup, order 0
         try {
             return Integer.parseInt(t.trim());
         } catch (NumberFormatException nfe) {
             LOG.log(System.Logger.Level.WARNING, "servlet '" + servletName
                     + "': invalid <load-on-startup> value '" + t + "', treated as lazy");
             return Integer.MIN_VALUE;
+        }
+    }
+
+    private static int parseInt(String text, String where) {
+        try {
+            return Integer.parseInt(text.trim());
+        } catch (NumberFormatException e) {
+            throw new IllegalArgumentException("invalid " + where + " value '" + text + "'", e);
         }
     }
 
@@ -254,7 +263,8 @@ public final class WebXmlParser {
             try {
                 types.add(DispatcherType.valueOf(v));
             } catch (IllegalArgumentException ex) {
-                throw new IllegalArgumentException("unknown <dispatcher> value '" + v + "'", ex);
+                throw new IllegalArgumentException("invalid <dispatcher> value '" + v
+                        + "' in <filter-mapping> of filter '" + filterName + "'", ex);
             }
         }
         if (types.isEmpty()) types = EnumSet.of(DispatcherType.REQUEST);
@@ -270,7 +280,7 @@ public final class WebXmlParser {
 
     private static WebAppDescriptor.ErrorPageDef parseErrorPage(Element e) {
         String codeText = firstText(e, "error-code");
-        Integer code = codeText == null ? null : Integer.parseInt(codeText.trim());
+        Integer code = codeText == null ? null : parseInt(codeText, "<error-code> in <error-page>");
         String exceptionType = firstText(e, "exception-type");
         String location = firstText(e, "location");
         return new WebAppDescriptor.ErrorPageDef(code, exceptionType, location);

@@ -157,14 +157,14 @@ class WebXmlParserTest {
     }
 
     @Test
-    void emptyLoadOnStartupIsLazy() throws Exception {
+    void emptyLoadOnStartupIsZero() throws Exception {
         String xml = """
             <web-app>
               <servlet><servlet-name>s</servlet-name><servlet-class>a.S</servlet-class>
                 <load-on-startup/></servlet>
             </web-app>""";
         var d = WebXmlParser.parse(new ByteArrayInputStream(xml.getBytes()));
-        assertEquals(Integer.MIN_VALUE, d.servlets().getFirst().loadOnStartup());
+        assertEquals(0, d.servlets().getFirst().loadOnStartup());
     }
 
     @Test
