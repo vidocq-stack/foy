@@ -33,13 +33,13 @@ import java.net.URL;
 import java.security.CodeSource;
 import java.util.ArrayList;
 import java.util.Collections;
-import java.util.Comparator;
 import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.ServiceLoader;
 import java.util.Set;
 import java.util.TreeMap;
+import java.util.function.Predicate;
 
 /**
  * What a class/module-path application is made of, discovered through its class loader: the web
@@ -92,22 +92,29 @@ public final class ApplicationSources {
     }
 
     /**
-     * The initializers {@link ServiceLoader} finds through {@code loader}, each with the root of
-     * its provider type's code source, sorted by that root (initializers without code source
-     * first, in service order). Providers are instantiated by {@link ServiceLoader}, never by
-     * reflection.
-     *
-     * @throws java.util.ServiceConfigurationError when a provider cannot be loaded or instantiated
+     * Every initializer {@link ServiceLoader} finds through {@code loader}, in discovery order;
+     * equivalent to {@code initializers(loader, root -> true)}.
      */
     public static List<Initializer> initializers(ClassLoader loader) {
+        return initializers(loader, root -> true);
+    }
+
+    /**
+     * The initializers {@link ServiceLoader} finds through {@code loader} whose root (the
+     * normalised code source of the provider type, {@code null} without code source) is accepted
+     * by {@code retained}, in {@link ServiceLoader} discovery order — the class-loading
+     * delegation order §8.2.4 requires. Only retained providers are instantiated (by
+     * {@link ServiceLoader}, never by reflection): an excluded initializer's constructor never runs.
+     *
+     * @throws java.util.ServiceConfigurationError when a provider cannot be loaded, or a retained
+     *         one cannot be instantiated
+     */
+    public static List<Initializer> initializers(ClassLoader loader, Predicate<URL> retained) {
         var out = new ArrayList<Initializer>();
         ServiceLoader.load(ServletContainerInitializer.class, loader).stream().forEach(p -> {
-            CodeSource cs = p.type().getProtectionDomain().getCodeSource();
-            URL location = cs == null ? null : cs.getLocation();
-            URL jar = location == null ? null : toUrl(Fragment.sourceKey(location), location);
-            out.add(new Initializer(p.get(), jar));
+            URL jar = root(p.type());
+            if (retained.test(jar)) out.add(new Initializer(p.get(), jar));
         });
-        out.sort(Comparator.comparing((Initializer i) -> i.jar() == null ? "" : Fragment.sourceKey(i.jar())));
         return List.copyOf(out);
     }
 
@@ -127,6 +134,20 @@ public final class ApplicationSources {
         return Collections.unmodifiableSet(out);
     }
 
+    /** The normalised code-source roots of the classes of {@code annotated}'s components. */
+    public static Set<URL> codeSources(DescriptorMerger.AnnotatedComponents annotated) {
+        var out = new LinkedHashSet<URL>();
+        annotated.servlets().forEach(s -> addRoot(out, s.type()));
+        annotated.filters().forEach(f -> addRoot(out, f.type()));
+        annotated.listeners().forEach(l -> addRoot(out, l.type()));
+        return Collections.unmodifiableSet(out);
+    }
+
+    private static void addRoot(Set<URL> out, Class<?> type) {
+        URL root = root(type);
+        if (root != null) out.add(root);
+    }
+
     /** The jars of the discovered fragments ({@code all}) that the ordering left out ({@code ordered}). */
     public static Set<URL> excludedJars(List<Fragment> all, List<Fragment> ordered) {
         Set<String> kept = new HashSet<>();
@@ -137,15 +158,17 @@ public final class ApplicationSources {
     }
 
     /**
-     * Servlet 6.1 §8.2.4: drops the initializers of the jars excluded by an absolute ordering.
-     * An initializer is kept, in the order of {@code all}, when its root:
+     * Servlet 6.1 §8.2.4 as a filter on an initializer's root: the initializers of the jars
+     * excluded by an absolute ordering are not run. A root is accepted when it:
      * <ol>
-     *   <li>holds a fragment kept by the ordering ({@code ordered}) — kept;</li>
-     *   <li>else holds a fragment ({@code allFragmentJars}) the ordering excluded — dropped;</li>
-     *   <li>else is a root of the application itself ({@code applicationJars}) — kept;</li>
-     *   <li>else is unknown (no code source) — kept, it cannot belong to an excluded jar;</li>
-     *   <li>else is a jar without fragment, an unnamed fragment for this purpose: dropped when
-     *       {@code absoluteOrdering} is present without {@code <others/>}, kept otherwise.</li>
+     *   <li>holds a fragment kept by the ordering ({@code ordered}) — accepted;</li>
+     *   <li>else holds a fragment ({@code allFragmentJars}) the ordering excluded — rejected;</li>
+     *   <li>else is a root of the application itself ({@code applicationJars}) — accepted;</li>
+     *   <li>else is unknown ({@code null}, no code source) — accepted, it cannot belong to an
+     *       excluded jar;</li>
+     *   <li>else is a library jar without fragment, an unnamed fragment for this purpose:
+     *       rejected when {@code absoluteOrdering} is present without {@code <others/>} (its
+     *       initializers are then not run), accepted otherwise.</li>
      * </ol>
      * A {@code metadata-complete} web.xml changes nothing here: its fragments are not merged but
      * their ordering still filters the initializers.
@@ -153,29 +176,36 @@ public final class ApplicationSources {
      * @param absoluteOrdering web.xml's absolute ordering ({@link WebAppDescriptor#OTHERS} for
      *                         {@code <others/>}), {@code null} when absent
      */
-    public static List<Initializer> retainOrdered(List<Initializer> all, List<String> absoluteOrdering,
-                                                  List<Fragment> ordered, Set<URL> allFragmentJars,
-                                                  Set<URL> applicationJars) {
+    public static Predicate<URL> ordering(List<String> absoluteOrdering, List<Fragment> ordered,
+                                          Set<URL> allFragmentJars, Set<URL> applicationJars) {
         Set<String> orderedKeys = new HashSet<>();
         for (Fragment f : ordered) orderedKeys.add(Fragment.sourceKey(f.jar()));
         Set<String> fragmentKeys = keys(allFragmentJars);
         Set<String> appKeys = keys(applicationJars);
         boolean unnamedExcluded = absoluteOrdering != null && !absoluteOrdering.contains(WebAppDescriptor.OTHERS);
-        var out = new ArrayList<Initializer>();
-        for (Initializer i : all) {
-            if (i.jar() == null) {
-                out.add(i);
-                continue;
-            }
-            String key = Fragment.sourceKey(i.jar());
-            boolean keep;
-            if (orderedKeys.contains(key)) keep = true;
-            else if (fragmentKeys.contains(key)) keep = false;
-            else if (appKeys.contains(key)) keep = true;
-            else keep = !unnamedExcluded;
-            if (keep) out.add(i);
-        }
-        return List.copyOf(out);
+        return jar -> {
+            if (jar == null) return true;
+            String key = Fragment.sourceKey(jar);
+            if (orderedKeys.contains(key)) return true;
+            if (fragmentKeys.contains(key)) return false;
+            if (appKeys.contains(key)) return true;
+            return !unnamedExcluded;
+        };
+    }
+
+    /** {@code all} filtered by {@link #ordering}, in the order of {@code all}. */
+    public static List<Initializer> retainOrdered(List<Initializer> all, List<String> absoluteOrdering,
+                                                  List<Fragment> ordered, Set<URL> allFragmentJars,
+                                                  Set<URL> applicationJars) {
+        Predicate<URL> keep = ordering(absoluteOrdering, ordered, allFragmentJars, applicationJars);
+        return all.stream().filter(i -> keep.test(i.jar())).toList();
+    }
+
+    /** Normalised root of {@code type}'s code source; {@code null} without one. */
+    private static URL root(Class<?> type) {
+        CodeSource cs = type.getProtectionDomain().getCodeSource();
+        URL location = cs == null ? null : cs.getLocation();
+        return location == null ? null : toUrl(Fragment.sourceKey(location), location);
     }
 
     private static Set<String> keys(Set<URL> urls) {

@@ -43,7 +43,7 @@ import java.util.jar.JarOutputStream;
 import static org.junit.jupiter.api.Assertions.*;
 
 /** Native discovery of web fragments and container initializers on the class path. */
-class FoyChappeBootFragmentsTest {
+public class FoyChappeBootFragmentsTest {
 
     /** Servlet of the application itself (test classes), declared by an explicit web.xml. */
     public static class AppServlet extends HttpServlet {
@@ -111,8 +111,54 @@ class FoyChappeBootFragmentsTest {
         return jar;
     }
 
-    private static URLClassLoader loader(Path jar) throws Exception {
-        return new URLClassLoader(new URL[] {jar.toUri().toURL()}, FoyChappeBootFragmentsTest.class.getClassLoader());
+    /**
+     * A jar {@code name} holding initializer {@code pkg.Sci} (constructor {@code ctorBody},
+     * {@code onStartup} body {@code startBody}, {@code ctx} in scope) and, when {@code fragmentName}
+     * is not null, an empty fragment of that name.
+     */
+    private static Path sciJar(Path dir, String name, String pkg, String ctorBody, String startBody,
+                               String fragmentName) throws Exception {
+        Path src = dir.resolve("src-" + pkg).resolve(pkg);
+        Files.createDirectories(src);
+        Files.writeString(src.resolve("Sci.java"), """
+                package %s;
+                public class Sci implements jakarta.servlet.ServletContainerInitializer {
+                    public Sci() { %s }
+                    public void onStartup(java.util.Set<Class<?>> c, jakarta.servlet.ServletContext ctx) { %s }
+                }""".formatted(pkg, ctorBody, startBody));
+        Path classes = dir.resolve("classes-" + pkg);
+        String servletApi = Path.of(HttpServlet.class.getProtectionDomain().getCodeSource().getLocation().toURI())
+                .toString();
+        int rc = java.util.spi.ToolProvider.findFirst("javac").orElseThrow().run(System.out, System.err,
+                "-cp", servletApi + java.io.File.pathSeparator + testClasses(), "-d", classes.toString(),
+                src.resolve("Sci.java").toString());
+        assertEquals(0, rc, "test initializer must compile");
+        Path jar = dir.resolve(name);
+        try (var out = new JarOutputStream(Files.newOutputStream(jar))) {
+            out.putNextEntry(new JarEntry(pkg + "/Sci.class"));
+            out.write(Files.readAllBytes(classes.resolve(pkg).resolve("Sci.class")));
+            out.closeEntry();
+            out.putNextEntry(new JarEntry("META-INF/services/jakarta.servlet.ServletContainerInitializer"));
+            out.write((pkg + ".Sci\n").getBytes());
+            out.closeEntry();
+            if (fragmentName != null) {
+                out.putNextEntry(new JarEntry("META-INF/web-fragment.xml"));
+                out.write(("<web-fragment xmlns=\"https://jakarta.ee/xml/ns/jakartaee\" version=\"6.1\"><name>"
+                        + fragmentName + "</name></web-fragment>").getBytes());
+                out.closeEntry();
+            }
+        }
+        return jar;
+    }
+
+    private static String testClasses() throws Exception {
+        return Path.of(AppServlet.class.getProtectionDomain().getCodeSource().getLocation().toURI()).toString();
+    }
+
+    private static URLClassLoader loader(Path... jars) throws Exception {
+        URL[] urls = new URL[jars.length];
+        for (int i = 0; i < jars.length; i++) urls[i] = jars[i].toUri().toURL();
+        return new URLClassLoader(urls, FoyChappeBootFragmentsTest.class.getClassLoader());
     }
 
     private static String webXml(String extra) {
@@ -157,7 +203,9 @@ class FoyChappeBootFragmentsTest {
     @Test
     void absoluteOrderingExcludingTheFragmentDropsItsServletAndItsInitializer(@TempDir Path dir)
             throws Exception {
-        try (var l = loader(fragmentJar(dir))) {
+        // boom.jar's fragment is excluded too: its initializer must not even be constructed.
+        Path boom = sciJar(dir, "boom.jar", "boompkg", "throw new IllegalStateException(\"boom\");", "", "Boom");
+        try (var l = loader(fragmentJar(dir), boom)) {
             String xml = webXml("<absolute-ordering><name>Other</name></absolute-ordering>");
             var mounted = FoyChappeBoot.builder().classLoader(l)
                     .webXml(new ByteArrayInputStream(xml.getBytes())).build().orElseThrow();
@@ -178,7 +226,25 @@ class FoyChappeBootFragmentsTest {
     @Test
     void discoveryCanBeTurnedOff(@TempDir Path dir) throws Exception {
         try (var l = loader(fragmentJar(dir))) {
-            assertTrue(FoyChappeBoot.builder().classLoader(l).discoverFragments(false).build().isEmpty());
+            assertTrue(FoyChappeBoot.builder().classLoader(l).discoverPluggability(false).build().isEmpty());
+        }
+    }
+
+    @Test
+    void absoluteOrderingWithoutOthersSkipsLibraryInitializersButRunsTheApplicationOnes(@TempDir Path dir)
+            throws Exception {
+        String start = "ctx.addServlet(\"own\", new " + AppServlet.class.getCanonicalName() + "()).addMapping(\"/own\");";
+        Path app = sciJar(dir, "app.jar", "apppkg", "", start, null);
+        String xml = webXml("<absolute-ordering><name>Other</name></absolute-ordering>");
+        try (var l = loader(app)) {
+            var library = FoyChappeBoot.builder().classLoader(l)
+                    .webXml(new ByteArrayInputStream(xml.getBytes())).build().orElseThrow();
+            assertArrayEquals(new String[] {"200:app", "404"}, get(library, "/app", "/own"),
+                    "a fragment-less jar is an unnamed fragment, excluded without <others/>");
+            var own = FoyChappeBoot.builder().classLoader(l).applicationRoot(app.toUri().toURL())
+                    .webXml(new ByteArrayInputStream(xml.getBytes())).build().orElseThrow();
+            assertArrayEquals(new String[] {"200:app", "200:app"}, get(own, "/app", "/own"),
+                    "the application's own initializer always runs");
         }
     }
 

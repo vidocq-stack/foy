@@ -55,13 +55,19 @@ class ApplicationSourcesTest {
 
     /** Compiles {@code pkg.Sci} (an empty initializer) and returns its class files. */
     private static Map<String, byte[]> compileSci(Path dir, String pkg) throws Exception {
+        return compileSci(dir, pkg, "");
+    }
+
+    /** As {@link #compileSci(Path, String)}, with {@code ctorBody} as the constructor body. */
+    private static Map<String, byte[]> compileSci(Path dir, String pkg, String ctorBody) throws Exception {
         Path src = dir.resolve("src-" + pkg).resolve(pkg);
         Files.createDirectories(src);
         Files.writeString(src.resolve("Sci.java"), """
                 package %s;
                 public class Sci implements jakarta.servlet.ServletContainerInitializer {
+                    public Sci() { %s }
                     public void onStartup(java.util.Set<Class<?>> c, jakarta.servlet.ServletContext ctx) {}
-                }""".formatted(pkg));
+                }""".formatted(pkg, ctorBody));
         Path classes = dir.resolve("classes-" + pkg);
         String servletApi = Path.of(HttpServlet.class.getProtectionDomain().getCodeSource().getLocation().toURI())
                 .toString();
@@ -93,9 +99,13 @@ class ApplicationSourcesTest {
     }
 
     private static URLClassLoader loader(Path... roots) throws Exception {
+        return loader(ApplicationSourcesTest.class.getClassLoader(), roots);
+    }
+
+    private static URLClassLoader loader(ClassLoader parent, Path... roots) throws Exception {
         URL[] urls = new URL[roots.length];
         for (int i = 0; i < roots.length; i++) urls[i] = roots[i].toUri().toURL();
-        return new URLClassLoader(urls, ApplicationSourcesTest.class.getClassLoader());
+        return new URLClassLoader(urls, parent);
     }
 
     private static String key(Path p) throws Exception {
@@ -109,7 +119,10 @@ class ApplicationSourcesTest {
         var e = compileSci(dir, "apkg");
         e.put("META-INF/web-fragment.xml", fragment("A").getBytes());
         Path a = jar(dir, "a.jar", e);
-        try (var l = loader(a, a)) {
+        // The same jar on a parent and a child loader: getResources reports it twice.
+        try (var parent = loader(a); var l = loader(parent, a)) {
+            assertEquals(2, java.util.Collections.list(l.getResources("META-INF/web-fragment.xml")).size(),
+                    "precondition: the loader reports the fragment twice");
             List<Fragment> fragments = ApplicationSources.fragments(l);
             assertEquals(1, fragments.size(), fragments::toString);
             assertEquals("A", fragments.getFirst().id());
@@ -161,11 +174,38 @@ class ApplicationSourcesTest {
             var found = ApplicationSources.initializers(l).stream()
                     .filter(i -> i.jar() != null && (key(i.jar()).equals(keyQuiet(a)) || key(i.jar()).equals(keyQuiet(b))))
                     .toList();
-            assertEquals(List.of("apkg.Sci", "bpkg.Sci"),
-                    found.stream().map(i -> i.sci().getClass().getName()).toList(), "jar URL order");
-            assertEquals(keyQuiet(a), key(found.getFirst().jar()));
+            assertEquals(List.of("bpkg.Sci", "apkg.Sci"),
+                    found.stream().map(i -> i.sci().getClass().getName()).toList(),
+                    "ServiceLoader discovery order (class path order), not jar URL order");
+            assertEquals(keyQuiet(b), key(found.getFirst().jar()));
             assertSame(l, found.getFirst().sci().getClass().getClassLoader());
         }
+    }
+
+    @Test
+    void rejectedInitializersAreNeverInstantiated(@TempDir Path dir) throws Exception {
+        Path boom = jar(dir, "boom.jar", compileSci(dir, "boompkg", "throw new IllegalStateException(\"boom\");"));
+        Path ok = jar(dir, "ok.jar", compileSci(dir, "okpkg"));
+        try (var l = loader(boom, ok)) {
+            String boomKey = key(boom);
+            var found = ApplicationSources.initializers(l, root -> root == null || !key(root).equals(boomKey));
+            assertTrue(found.stream().anyMatch(i -> i.sci().getClass().getName().equals("okpkg.Sci")));
+            assertTrue(found.stream().noneMatch(i -> i.sci().getClass().getName().equals("boompkg.Sci")));
+            assertThrows(java.util.ServiceConfigurationError.class, () -> ApplicationSources.initializers(l),
+                    "precondition: instantiating the rejected one fails");
+        }
+    }
+
+    public static class OwnServlet extends HttpServlet {}
+
+    @Test
+    void codeSourcesAreTheRootsOfTheAnnotatedComponentClasses() throws Exception {
+        var ann = new DescriptorMerger.AnnotatedComponents(
+                List.of(new WebAppModel.ServletDecl("own", OwnServlet.class, OwnServlet::new, List.of("/own"),
+                        Map.of(), Integer.MIN_VALUE, false)), List.of(), List.of(), List.of());
+        URL testClasses = OwnServlet.class.getProtectionDomain().getCodeSource().getLocation();
+        assertEquals(List.of(key(testClasses)),
+                ApplicationSources.codeSources(ann).stream().map(Fragment::sourceKey).toList());
     }
 
     private static String key(URL u) { return Fragment.sourceKey(u); }

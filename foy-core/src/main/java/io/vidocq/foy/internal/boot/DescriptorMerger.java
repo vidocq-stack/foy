@@ -136,7 +136,17 @@ public final class DescriptorMerger {
     public static void merge(WebAppDescriptor webXml, List<Fragment> fragments,
                              AnnotatedComponents annotated, ComponentFactory factory,
                              WebAppModel.Builder target) throws ServletException {
-        WebAppDescriptor effective = FragmentMerger.merge(webXml, fragments);
+        mergeMerged(FragmentMerger.merge(webXml, fragments), fragments, annotated, factory, target);
+    }
+
+    /**
+     * As {@link #merge(WebAppDescriptor, List, AnnotatedComponents, ComponentFactory,
+     * WebAppModel.Builder)} for a caller that already holds {@code effective}, the result of
+     * {@code FragmentMerger.merge(webXml, fragments)}, so the fragments are not merged twice.
+     */
+    public static void mergeMerged(WebAppDescriptor effective, List<Fragment> fragments,
+                                   AnnotatedComponents annotated, ComponentFactory factory,
+                                   WebAppModel.Builder target) throws ServletException {
         Set<URL> complete = new HashSet<>();
         for (Fragment f : fragments) if (f.descriptor().metadataComplete()) complete.add(f.jar());
         mergeEffective(effective, annotated.excludingSources(complete), factory, target);

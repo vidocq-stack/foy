@@ -44,8 +44,10 @@ import jakarta.servlet.ServletException;
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.URL;
+import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.ServiceConfigurationError;
 import java.util.Set;
@@ -110,7 +112,8 @@ public final class FoyChappeBoot {
         private int sessionTimeoutSeconds = 30 * 60;
         private ClassLoader classLoader = Thread.currentThread().getContextClassLoader();
         private InputStream webXml;
-        private boolean discoverFragments = true;
+        private boolean discoverPluggability = true;
+        private final List<URL> applicationRoots = new ArrayList<>();
 
         public Builder beanManager(BeanManager bm) { this.beanManager = bm; return this; }
 
@@ -119,6 +122,11 @@ public final class FoyChappeBoot {
          * {@code <default-context-path>} applies, else {@code "/"}.
          */
         public Builder contextPath(String path) { this.contextPath = path == null ? "/" : path; return this; }
+
+        /**
+         * Session timeout used only when neither web.xml nor any merged web fragment declares a
+         * {@code <session-timeout>}; rounded up to whole minutes.
+         */
         public Builder sessionTimeoutSeconds(int seconds) { this.sessionTimeoutSeconds = seconds; return this; }
 
         /** Class loader used to load components and to look up {@code web.xml}. */
@@ -128,19 +136,37 @@ public final class FoyChappeBoot {
         public Builder webXml(InputStream in) { this.webXml = in; return this; }
 
         /**
-         * Whether the web fragments ({@code META-INF/web-fragment.xml}) and the
-         * {@link jakarta.servlet.ServletContainerInitializer}s ({@link java.util.ServiceLoader})
-         * visible to the class loader are discovered; {@code true} by default. Embedders that
-         * assemble the application themselves turn it off.
+         * Whether the pluggability sources visible to the class loader are discovered: the web
+         * fragments ({@code META-INF/web-fragment.xml}) <em>and</em> the
+         * {@link jakarta.servlet.ServletContainerInitializer}s ({@link java.util.ServiceLoader});
+         * {@code true} by default. Embedders that assemble the application themselves turn it off.
          */
-        public Builder discoverFragments(boolean discover) { this.discoverFragments = discover; return this; }
+        public Builder discoverPluggability(boolean discover) { this.discoverPluggability = discover; return this; }
+
+        /**
+         * Declares jars or directories as the application itself (code-source URLs, compared
+         * through {@code Fragment.sourceKey}): their initializers always run, whatever the
+         * absolute ordering. The roots holding a {@code META-INF/web.xml} or
+         * {@code WEB-INF/web.xml} without a fragment, and those of the CDI-discovered annotated
+         * components, are application roots without being declared.
+         */
+        public Builder applicationRoot(URL... roots) {
+            for (URL r : roots) applicationRoots.add(Objects.requireNonNull(r, "root"));
+            return this;
+        }
 
         /**
          * Discovers and deploys the application: web.xml, then the fragments ordered per
          * §8.2.2 ({@link FragmentOrderer}), merged with the annotated components per §8.2.3
          * (the annotations of jars whose fragment is excluded by the ordering or
          * {@code metadata-complete} are dropped), then the container initializers the ordering
-         * retains (§8.2.4, {@link ApplicationSources#retainOrdered}).
+         * retains (§8.2.4, {@link ApplicationSources#ordering}), in {@link java.util.ServiceLoader}
+         * order.
+         *
+         * <p>Under an absolute ordering without {@code <others/>}, the initializers of library
+         * jars that carry no fragment are not run (see {@link #applicationRoot}). Any retained
+         * initializer on the path is enough for Foy to start, even without servlet, filter,
+         * listener or descriptor.</p>
          */
         public Optional<Mounted> build() throws ServletException {
             ClassLoader loader = classLoader != null ? classLoader : FoyChappeBoot.class.getClassLoader();
@@ -157,26 +183,25 @@ public final class FoyChappeBoot {
             }
             WebAppDescriptor descriptor = loadDescriptor(loader);
 
-            List<Fragment> fragments = List.of();
             List<Fragment> ordered = List.of();
             List<Initializer> initializers = List.of();
-            if (discoverFragments) {
-                fragments = ApplicationSources.fragments(loader);
+            if (discoverPluggability) {
+                List<Fragment> fragments = ApplicationSources.fragments(loader);
                 ordered = FragmentOrderer.order(descriptor.absoluteOrdering(), fragments);
                 Set<URL> fragmentJars = new HashSet<>();
                 for (Fragment f : fragments) fragmentJars.add(f.jar());
-                Set<URL> dropped = new HashSet<>(ApplicationSources.excludedJars(fragments, ordered));
-                for (Fragment f : ordered) if (f.descriptor().metadataComplete()) dropped.add(f.jar());
-                annotated = annotated.excludingSources(dropped);
+                Set<URL> appRoots = new HashSet<>(applicationRoots);
+                appRoots.addAll(ApplicationSources.applicationRoots(loader, fragmentJars));
+                appRoots.addAll(ApplicationSources.codeSources(annotated));
+                // metadata-complete fragments' jars are dropped by DescriptorMerger itself.
+                annotated = annotated.excludingSources(ApplicationSources.excludedJars(fragments, ordered));
                 try {
-                    initializers = ApplicationSources.retainOrdered(ApplicationSources.initializers(loader),
-                            descriptor.absoluteOrdering(), ordered, fragmentJars,
-                            ApplicationSources.applicationRoots(loader, fragmentJars));
+                    initializers = ApplicationSources.initializers(loader, ApplicationSources.ordering(
+                            descriptor.absoluteOrdering(), ordered, fragmentJars, appRoots));
                 } catch (ServiceConfigurationError e) {
                     throw new ServletException("Foy deployment failed: " + e.getMessage(), e);
                 }
             }
-            // Fresh descriptor each call: only read here for emptiness and the default context path.
             WebAppDescriptor effective = FragmentMerger.merge(descriptor, ordered);
 
             if (effective.isEmpty() && initializers.isEmpty() && annotated.servlets().isEmpty()
@@ -190,7 +215,7 @@ public final class FoyChappeBoot {
             String path = contextPath != null ? contextPath
                     : effective.defaultContextPath() != null ? effective.defaultContextPath() : "/";
             WebAppModel.Builder modelBuilder = WebAppModel.builder(path);
-            DescriptorMerger.merge(descriptor, ordered, annotated, factory, modelBuilder);
+            DescriptorMerger.mergeMerged(effective, ordered, annotated, factory, modelBuilder);
             for (Initializer i : initializers) modelBuilder.initializer(i.sci());
             // The merger copies the descriptors' timeout (-1 when absent); the builder default applies then.
             if (effective.sessionTimeoutMinutes() < 0) {
