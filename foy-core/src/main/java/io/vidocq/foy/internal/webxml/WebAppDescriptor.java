@@ -45,6 +45,11 @@ public final class WebAppDescriptor {
     private Ordering ordering = Ordering.NONE;
     private List<String> absoluteOrdering;
 
+    /** Test factory: an empty {@link Kind#WEB_FRAGMENT} descriptor with the given name and ordering. */
+    static WebAppDescriptor fragmentForTest(String name, Ordering ordering) {
+        return empty().withKind(Kind.WEB_FRAGMENT).withFragmentName(name).withOrdering(ordering);
+    }
+
     public Kind kind() { return kind; }
     public WebAppDescriptor withKind(Kind k) {
         this.kind = k;
