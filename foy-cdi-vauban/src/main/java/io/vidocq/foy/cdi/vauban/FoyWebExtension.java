@@ -26,6 +26,7 @@ import jakarta.enterprise.context.Dependent;
 import jakarta.enterprise.context.NormalScope;
 import jakarta.enterprise.context.RequestScoped;
 import jakarta.enterprise.context.SessionScoped;
+import jakarta.enterprise.inject.Model;
 import jakarta.enterprise.inject.Stereotype;
 import jakarta.enterprise.inject.build.compatible.spi.BeanInfo;
 import jakarta.enterprise.inject.build.compatible.spi.BuildCompatibleExtension;
@@ -50,9 +51,10 @@ import jakarta.servlet.annotation.WebServlet;
 import java.lang.annotation.Annotation;
 import java.util.EventListener;
 import java.util.HashMap;
-import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.TreeMap;
 
 /**
  * Build compatible extension making {@code @WebServlet}, {@code @WebFilter} and
@@ -85,13 +87,26 @@ public class FoyWebExtension implements BuildCompatibleExtension {
     /** Name of the synthetic bean parameter holding the comma-joined binary class names. */
     static final String CLASSES_PARAM = "classes";
 
-    /** Built-in scopes and pseudo-scopes, in case the model does not expose their meta-annotations. */
-    private static final Set<String> BUILT_IN_SCOPES = Set.of(
+    /** Built-in scopes, pseudo-scopes and the {@code @Model} stereotype, matched by name before the model is asked. */
+    private static final Set<String> BUILT_IN_BEAN_DEFINING = Set.of(
             Dependent.class.getName(), ApplicationScoped.class.getName(), RequestScoped.class.getName(),
-            SessionScoped.class.getName(), ConversationScoped.class.getName(), Singleton.class.getName());
+            SessionScoped.class.getName(), ConversationScoped.class.getName(), Singleton.class.getName(),
+            Model.class.getName());
 
-    /** Collected web components by binary class name, in the order first seen. */
-    private final Map<String, Component> components = new LinkedHashMap<>();
+    /**
+     * Packages whose annotation types are never scopes or stereotypes (the built-in scopes are
+     * matched first, by name), so an unresolvable declaration there does not block {@code @Dependent}.
+     */
+    private static final List<String> KNOWN_API_PACKAGES = List.of(
+            "java.", "javax.", "jdk.", "jakarta.servlet.", "jakarta.annotation.", "jakarta.inject.",
+            "jakarta.enterprise.", "jakarta.interceptor.", "jakarta.decorator.");
+
+    /**
+     * Collected web components by binary class name, sorted: vauban's enhancement and registration
+     * order is not a contract, and a sorted index keeps the build output and the error messages
+     * reproducible.
+     */
+    private final Map<String, Component> components = new TreeMap<>();
 
     /** Public no-arg constructor, required by {@code ServiceLoader}. */
     public FoyWebExtension() {}
@@ -121,7 +136,7 @@ public class FoyWebExtension implements BuildCompatibleExtension {
         if (bean.isClassBean()) record(bean.declaringClass());
     }
 
-    /** Records {@code cls} when it carries a Web* annotation; the first record of a class wins. */
+    /** Records {@code cls} when it carries a Web* annotation; recording a class twice is harmless. */
     private void record(ClassInfo cls) {
         String servletName = nameOf(cls, WebServlet.class, "name");
         String filterName = nameOf(cls, WebFilter.class, "filterName");
@@ -183,31 +198,39 @@ public class FoyWebExtension implements BuildCompatibleExtension {
         return name == null || name.isEmpty() ? cls.name() : name;
     }
 
+    /**
+     * Whether {@code cls} already has a scope or a stereotype, or may have one: an annotation type
+     * the model cannot resolve (a library stereotype or scope, say) counts as bean-defining, so the
+     * class is left alone rather than given a second scope. Annotation types of the JDK, the Servlet
+     * API and the CDI / injection APIs are known not to be scopes or stereotypes unless listed in
+     * {@link #BUILT_IN_BEAN_DEFINING} or meta-annotated as such.
+     */
     private static boolean hasBeanDefiningAnnotation(ClassInfo cls) {
         for (AnnotationInfo annotation : cls.annotations()) {
-            if (BUILT_IN_SCOPES.contains(annotation.name())) return true;
-            ClassInfo declaration = declarationOf(annotation);
-            if (declaration != null
-                    && (declaration.hasAnnotation(NormalScope.class)
-                        || declaration.hasAnnotation(Scope.class)
-                        || declaration.hasAnnotation(Stereotype.class))) {
+            String name = annotation.name();
+            if (BUILT_IN_BEAN_DEFINING.contains(name)) return true;
+            ClassInfo declaration;
+            try {
+                declaration = annotation.declaration();
+            } catch (IllegalArgumentException e) {
+                // vauban's model throws for an annotation type it has not indexed.
+                if (isKnownApiAnnotation(name)) continue;
+                return true;
+            }
+            if (declaration.hasAnnotation(NormalScope.class)
+                    || declaration.hasAnnotation(Scope.class)
+                    || declaration.hasAnnotation(Stereotype.class)) {
                 return true;
             }
         }
         return false;
     }
 
-    /**
-     * The annotation type's declaration, or {@code null} when the model cannot provide it: vauban's
-     * runtime model only knows the indexed classes and throws for any other annotation type
-     * ({@code @WebServlet} itself, for one).
-     */
-    private static ClassInfo declarationOf(AnnotationInfo annotation) {
-        try {
-            return annotation.declaration();
-        } catch (IllegalArgumentException e) {
-            return null;
+    private static boolean isKnownApiAnnotation(String annotationName) {
+        for (String prefix : KNOWN_API_PACKAGES) {
+            if (annotationName.startsWith(prefix)) return true;
         }
+        return false;
     }
 
     private record Component(String className, String servletName, String filterName) {}

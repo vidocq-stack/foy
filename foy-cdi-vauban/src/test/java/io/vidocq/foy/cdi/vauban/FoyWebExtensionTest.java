@@ -237,8 +237,8 @@ class FoyWebExtensionTest {
             assertEquals(Singleton.class, scopeOf(bm, loader.loadClass("scope.app.Scoped")));
 
             var components = withTccl(loader, () -> bm.createInstance().select(CdiWebComponents.class).get());
-            var names = components.componentClasses().stream().map(Class::getName).collect(Collectors.toSet());
-            assertEquals(Set.of("scope.app.Plain", "scope.app.Scoped", "scope.app.Listener"), names);
+            var names = components.componentClasses().stream().map(Class::getName).toList();
+            assertEquals(List.of("scope.app.Listener", "scope.app.Plain", "scope.app.Scoped"), names, "sorted by binary name");
             for (var cls : components.componentClasses()) {
                 assertEquals(loader, cls.getClassLoader(), "loaded from the application loader: " + cls);
             }
@@ -302,9 +302,75 @@ class FoyWebExtensionTest {
         }
     }
 
+    @Test
+    @DisplayName("end to end: two archives built with the extension give two indexes, merged by Foy")
+    void twoArchivesAreServedTogether() throws Exception {
+        var library = compile(ProcessorPath.CLASS_PATH, """
+                package two.lib;
+
+                @jakarta.servlet.annotation.WebServlet("/lib")
+                public class LibServlet extends jakarta.servlet.http.HttpServlet {
+                    @Override
+                    protected void doGet(jakarta.servlet.http.HttpServletRequest q,
+                            jakarta.servlet.http.HttpServletResponse r) throws java.io.IOException {
+                        r.getWriter().write("lib");
+                    }
+                }
+                """);
+        assertTrue(library.success(), library::messages);
+        var app = compile(ProcessorPath.CLASS_PATH, List.of(library.classes()), """
+                package two.app;
+
+                @jakarta.servlet.annotation.WebServlet("/app")
+                public class AppServlet extends jakarta.servlet.http.HttpServlet {
+                    @Override
+                    protected void doGet(jakarta.servlet.http.HttpServletRequest q,
+                            jakarta.servlet.http.HttpServletResponse r) throws java.io.IOException {
+                        r.getWriter().write("app");
+                    }
+                }
+                """);
+        assertTrue(app.success(), app::messages);
+
+        try (var loader = loaderOver(app.classes(), library.classes());
+             var container = withTccl(loader, () -> boot(loader))) {
+            var bm = container.getBeanManager();
+            assertEquals(2, bm.getBeans(CdiWebComponents.class).size(), "one index per archive");
+
+            var mounted = withTccl(loader, () -> FoyChappeBoot.builder()
+                    .beanManager(bm).classLoader(loader).contextPath("/").build().orElseThrow());
+            int port;
+            try (var s = new ServerSocket(0)) {
+                port = s.getLocalPort();
+            }
+            Server server = Server.builder().host("127.0.0.1").port(port).handler(mounted.handler()).build();
+            server.start();
+            try {
+                var client = HttpClient.newHttpClient();
+                for (var path : List.of("app", "lib")) {
+                    var response = client.send(
+                            HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port + "/" + path)).build(),
+                            HttpResponse.BodyHandlers.ofString());
+                    assertEquals(200, response.statusCode(), path + ": " + response.body());
+                    assertEquals(path, response.body());
+                }
+            } finally {
+                server.stop();
+                mounted.close();
+            }
+        }
+    }
+
     // ---- harness ----
 
     private enum ProcessorPath { CLASS_PATH, MODULE_PATH }
+
+    /** One application loader over several compiled archives. */
+    private static URLClassLoader loaderOver(Path... archives) throws IOException {
+        var urls = new URL[archives.length];
+        for (int i = 0; i < archives.length; i++) urls[i] = archives[i].toUri().toURL();
+        return new URLClassLoader(urls, FoyWebExtensionTest.class.getClassLoader());
+    }
 
     private static Class<?> scopeOf(jakarta.enterprise.inject.spi.BeanManager bm, Class<?> type) {
         var beans = bm.getBeans(type);
@@ -328,6 +394,11 @@ class FoyWebExtensionTest {
     }
 
     private Result compile(ProcessorPath processorPath, String... sources) throws Exception {
+        return compile(processorPath, List.of(), sources);
+    }
+
+    /** Compiles {@code sources} with {@code libraries} (earlier outputs) on the class path. */
+    private Result compile(ProcessorPath processorPath, List<Path> libraries, String... sources) throws Exception {
         var compiler = ToolProvider.getSystemJavaCompiler();
         var diagnostics = new DiagnosticCollector<JavaFileObject>();
         var root = Files.createTempDirectory(tempDir, "app");
@@ -337,7 +408,7 @@ class FoyWebExtensionTest {
         var files = new ArrayList<File>();
         for (var source : sources) {
             var pkg = match(source, "package\\s+([\\w.]+)\\s*;");
-            var name = match(source, "public\\s+(?:class|interface|enum|record)\\s+(\\w+)");
+            var name = match(source, "public\\s+@?(?:class|interface|enum|record)\\s+(\\w+)");
             var file = src.resolve(pkg.replace('.', '/')).resolve(name + ".java");
             Files.createDirectories(file.getParent());
             Files.writeString(file, source);
@@ -354,7 +425,9 @@ class FoyWebExtensionTest {
              var fm = compiler.getStandardFileManager(diagnostics, Locale.ROOT, StandardCharsets.UTF_8)) {
             fm.setLocation(StandardLocation.CLASS_OUTPUT, List.of(classes.toFile()));
             fm.setLocation(StandardLocation.SOURCE_OUTPUT, List.of(generated.toFile()));
-            fm.setLocation(StandardLocation.CLASS_PATH, path);
+            var classPath = new ArrayList<>(path);
+            for (var library : libraries) classPath.add(library.toFile());
+            fm.setLocation(StandardLocation.CLASS_PATH, classPath);
             var task = compiler.getTask(null, fm, diagnostics, options, null, fm.getJavaFileObjectsFromFiles(files));
             if (processorLoader != null) task.setProcessors(processorsOf(processorLoader));
             boolean ok = task.call();
@@ -478,7 +551,7 @@ class FoyWebExtensionTest {
         }
 
         URLClassLoader loader() throws IOException {
-            return new URLClassLoader(new URL[] {classes.toUri().toURL()}, FoyWebExtensionTest.class.getClassLoader());
+            return loaderOver(classes);
         }
     }
 }
