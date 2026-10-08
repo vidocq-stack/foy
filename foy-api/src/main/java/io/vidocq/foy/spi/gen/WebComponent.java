@@ -17,12 +17,28 @@
  *
  * SPDX-License-Identifier: EPL-2.0 OR EUPL-1.2 OR GPL-2.0-or-later
  */
-module io.vidocq.foy.api {
-    requires transitive jakarta.servlet;
-    requires static jakarta.annotation;
+package io.vidocq.foy.spi.gen;
 
-    exports io.vidocq.foy.spi.session;
-    exports io.vidocq.foy.spi.security;
-    exports io.vidocq.foy.spi.gen;
-    exports io.vidocq.foy.spi.cdi;
+/**
+ * Build-time generated (or runtime-derived) description of one web component class.
+ *
+ * <p>An annotation processor emits one implementation per web component class and
+ * registers it as a service, so the container can learn about servlets, filters,
+ * listeners and initializers without reflective annotation scanning.
+ */
+public interface WebComponent {
+
+    /** The described web component class. */
+    Class<?> type();
+
+    /** The static metadata of the component (mapping, init parameters, security, ...). */
+    WebComponentDescriptor descriptor();
+
+    /**
+     * Creates a new instance of the component. Generated code calls the no-arg
+     * constructor directly, avoiding reflection.
+     *
+     * @return a new, uninitialised instance of {@link #type()}
+     */
+    Object newInstance();
 }

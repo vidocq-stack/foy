@@ -17,12 +17,20 @@
  *
  * SPDX-License-Identifier: EPL-2.0 OR EUPL-1.2 OR GPL-2.0-or-later
  */
-module io.vidocq.foy.api {
-    requires transitive jakarta.servlet;
-    requires static jakarta.annotation;
+package io.vidocq.foy.spi.cdi;
 
-    exports io.vidocq.foy.spi.session;
-    exports io.vidocq.foy.spi.security;
-    exports io.vidocq.foy.spi.gen;
-    exports io.vidocq.foy.spi.cdi;
+import java.util.List;
+
+/**
+ * Synthetic bean registered at build time by foy-cdi-vauban's build-compatible
+ * extension: the web component classes that are CDI-managed.
+ */
+public interface CdiWebComponents {
+
+    /**
+     * The web component classes whose instances are created by the CDI container.
+     *
+     * @return the CDI-managed web component classes, never {@code null}
+     */
+    List<Class<?>> componentClasses();
 }
