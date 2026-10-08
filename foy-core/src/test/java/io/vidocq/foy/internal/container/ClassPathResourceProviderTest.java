@@ -186,4 +186,46 @@ class ClassPathResourceProviderTest {
         assertFalse(ClassPathResourceProvider.isServable("//x"));
         assertFalse(ClassPathResourceProvider.isServable("//"));
     }
+
+    @Test
+    void dotSegmentsAreRejected(@TempDir Path dir) throws Exception {
+        Path exploded = dir.resolve("exploded");
+        Files.createDirectories(exploded.resolve("META-INF/resources/a"));
+        Files.createDirectories(exploded.resolve("META-INF/resources/WEB-INF"));
+        Files.createDirectories(exploded.resolve("META-INF/resources/META-INF"));
+        Files.writeString(exploded.resolve("META-INF/resources/a/x.txt"), "X");
+        Files.writeString(exploded.resolve("META-INF/resources/WEB-INF/web.xml"), "W");
+        Files.writeString(exploded.resolve("META-INF/resources/META-INF/x"), "M");
+        var p = new ClassPathResourceProvider(loader(), List.of(exploded.toUri().toURL()));
+        for (String bad : new String[] {"/./WEB-INF/web.xml", "/./META-INF/x", "/a/x.txt/.", "/a/./x.txt"}) {
+            assertFalse(ClassPathResourceProvider.isServable(bad), bad);
+            assertNull(p.openStream(bad), bad);
+            assertNull(p.toUrl(bad), bad);
+        }
+        assertNotNull(p.openStream("/WEB-INF/web.xml"), "reachable through getResource, not servable");
+    }
+
+    @Test
+    void symbolicLinksCannotLeaveAnExplodedRoot(@TempDir Path dir) throws Exception {
+        Path root = dir.resolve("exploded/META-INF/resources");
+        Files.createDirectories(root.resolve("a"));
+        Files.writeString(root.resolve("a/ok.txt"), "OK");
+        Path outside = dir.resolve("outside");
+        Files.createDirectories(outside);
+        Files.writeString(outside.resolve("secret.txt"), "SECRET");
+        try {
+            Files.createSymbolicLink(root.resolve("linkdir"), outside);
+            Files.createSymbolicLink(root.resolve("a/linkfile.txt"), outside.resolve("secret.txt"));
+        } catch (UnsupportedOperationException | java.io.IOException e) {
+            org.junit.jupiter.api.Assumptions.abort("symbolic links unavailable: " + e);
+        }
+        var p = new ClassPathResourceProvider(loader(), List.of(dir.resolve("exploded").toUri().toURL()));
+        assertNull(p.openStream("/linkdir/secret.txt"));
+        assertNull(p.toUrl("/linkdir/secret.txt"));
+        assertNull(p.listPaths("/linkdir/"));
+        assertNull(p.openStream("/a/linkfile.txt"));
+        assertEquals(Set.of("/a/ok.txt"), p.listPaths("/a/"), "escaping links are not listed");
+        assertEquals(Set.of("/a/"), p.listPaths("/"));
+        assertEquals("OK", read(p.openStream("/a/ok.txt")));
+    }
 }
