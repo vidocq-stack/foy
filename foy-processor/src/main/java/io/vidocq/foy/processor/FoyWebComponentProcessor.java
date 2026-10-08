@@ -44,6 +44,7 @@ public final class FoyWebComponentProcessor extends AbstractProcessor {
 
     private final Set<String> generated = new LinkedHashSet<>();
     private Element anyOrigin;
+    private ClassIndexWriter classIndex;
 
     @Override
     public SourceVersion getSupportedSourceVersion() {
@@ -66,6 +67,7 @@ public final class FoyWebComponentProcessor extends AbstractProcessor {
         if (!(element instanceof TypeElement type)) {
             return;
         }
+        classIndex().add(type);
         var model = ComponentModel.from(type, processingEnv);
         if (model.isPresent()) {
             String reason = ComponentModel.notGeneratableReason(type);
@@ -92,7 +94,22 @@ public final class FoyWebComponentProcessor extends AbstractProcessor {
                         + "); it will be resolved at runtime", type);
     }
 
+    private ClassIndexWriter classIndex() {
+        if (classIndex == null) {
+            classIndex = new ClassIndexWriter(processingEnv);
+        }
+        return classIndex;
+    }
+
     private void finish() {
+        if (classIndex != null) {
+            try {
+                classIndex.write();
+            } catch (IOException e) {
+                processingEnv.getMessager().printMessage(Diagnostic.Kind.ERROR,
+                        "foy: cannot write the class index: " + e);
+            }
+        }
         if (generated.isEmpty()) {
             return;
         }
