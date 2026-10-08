@@ -48,6 +48,20 @@ class ClassIndexTest {
     }
 
     @Test
+    void usesBinaryNamesForNestedAnnotationsAndErasesGenericSupertypes() throws Exception {
+        var r = CompileHarness.compile(out, Map.of(
+                "a.Outer", "package a; public class Outer { public @interface Ann {} }",
+                "a.Impl", "package a; @Outer.Ann public class Impl implements Comparable<Impl> "
+                        + "{ public int compareTo(Impl o) { return 0; } }"));
+        assertTrue(r.success(), r.messages());
+        var lines = r.resource("META-INF/foy/class-index.list").lines().toList();
+        String impl = lines.stream().filter(l -> l.startsWith("a.Impl|")).findFirst().orElseThrow();
+        var parts = impl.split("\\|", -1);
+        assertEquals("a.Outer$Ann", parts[2], impl);
+        assertTrue(parts[1].contains("java.lang.Comparable") && !parts[1].contains("<"), impl);
+    }
+
+    @Test
     void indexesNestedTypesAndSkipsGeneratedCompanions() throws Exception {
         var r = CompileHarness.compile(out, Map.of(
                 "a.Outer", "package a; public class Outer { public interface In {} }",

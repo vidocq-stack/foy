@@ -36,7 +36,8 @@ import java.util.TreeSet;
  * Collects every compiled type with its transitive supertypes and type-level annotations, and
  * writes {@code META-INF/foy/class-index.list} (consumed by the runtime {@code @HandlesTypes}
  * resolver). Line format:
- * {@code <binary name>|<supertype binary names>|<annotation FQCNs>}, sorted by binary name.
+ * {@code <binary name>|<supertype binary names>|<annotation binary names>}, sorted by binary name.
+ * Every column uses binary names (nested types as {@code Outer$Inner}).
  */
 final class ClassIndexWriter {
 
@@ -76,7 +77,7 @@ final class ClassIndexWriter {
         var annotations = new TreeSet<String>();
         for (AnnotationMirror m : type.getAnnotationMirrors()) {
             if (m.getAnnotationType().asElement() instanceof TypeElement te) {
-                annotations.add(te.getQualifiedName().toString());
+                annotations.add(env.getElementUtils().getBinaryName(te).toString());
             }
         }
         lines.put(binary, binary + "|" + String.join(",", supers) + "|" + String.join(",", annotations));
