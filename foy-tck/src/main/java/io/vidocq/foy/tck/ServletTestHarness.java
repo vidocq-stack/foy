@@ -21,8 +21,8 @@ package io.vidocq.foy.tck;
 
 import io.vidocq.chappe.api.Handler;
 import io.vidocq.chappe.api.Server;
-import io.vidocq.foy.internal.boot.ComponentFactory;
 import io.vidocq.foy.internal.boot.DeployOptions;
+import io.vidocq.foy.internal.boot.HandlesTypesResolver;
 import io.vidocq.foy.internal.boot.Deployment;
 import io.vidocq.foy.internal.boot.WebAppDeployer;
 import io.vidocq.foy.internal.boot.WebAppModel;
@@ -32,6 +32,8 @@ import io.vidocq.foy.internal.boot.WebAppModel.ListenerDecl;
 import io.vidocq.foy.internal.boot.WebAppModel.ServletDecl;
 import io.vidocq.foy.internal.container.VidocqServletContext;
 import io.vidocq.foy.internal.error.ErrorPageRegistry;
+import io.vidocq.foy.internal.gen.RegistryComponentFactory;
+import io.vidocq.foy.internal.gen.WebComponentRegistry;
 import io.vidocq.foy.spi.security.SecurityProvider;
 import jakarta.servlet.DispatcherType;
 import jakarta.servlet.Filter;
@@ -291,34 +293,44 @@ public final class ServletTestHarness implements AutoCloseable {
             return this;
         }
 
+        private WebComponentRegistry registry;
+        /** The registry resolving every component of the deployment; a fresh one by default. */
+        public Builder registry(WebComponentRegistry r) { this.registry = r; return this; }
+
+        private HandlesTypesResolver handlesTypes;
+        /** Overrides the class-index {@code @HandlesTypes} resolution (TCK wars carry no index). */
+        public Builder handlesTypes(HandlesTypesResolver r) { this.handlesTypes = r; return this; }
+
         public ServletTestHarness start() {
-            var model = toModel();
             var cl = Thread.currentThread().getContextClassLoader();
-            var factory = warClassNames == null
-                    ? ComponentFactory.reflective(cl)
-                    : ComponentFactory.reflective(cl, warClassNames);
-            var options = DeployOptions.defaults(cl)
+            var reg = registry != null ? registry : WebComponentRegistry.forClassLoader(cl);
+            var model = toModel(reg);
+            var factory = new RegistryComponentFactory(reg, cl, warClassNames);
+            var options = DeployOptions.defaults(cl, reg)
                     .withComponentFactory(factory)
                     .withSecurityProvider(securityProvider)
                     .withResourceProvider(resourceProvider)
                     .withServletContextName(servletContextName)
                     .withReserved(reservedServletNames, reservedFilterNames, reservedUrlPatterns);
+            if (handlesTypes != null) options = options.withHandlesTypes(handlesTypes);
             Deployment d = WebAppDeployer.deploy(model, options);
             int port = startServerWithRetry(d.handler());
             return new ServletTestHarness(currentServer, port, contextPath, d);
         }
 
         /** The accumulated configuration as a deployment description; components are pre-built instances. */
-        private WebAppModel toModel() {
+        private WebAppModel toModel(WebComponentRegistry reg) {
             var b = WebAppModel.builder(contextPath)
                     .errorPages(errorPages)
                     .localeEncodingMappings(localeEncodingMappings)
                     .effectiveVersion(effectiveMajor, effectiveMinor)
                     .sessionTimeoutMinutes(sessionTimeoutMinutes);
             contextInitParams.forEach(b::contextParam);
+            // @ServletSecurity comes from the class's descriptor (§13.4.1), never from reflection.
             servlets.forEach((name, s) -> b.servlet(new ServletDecl(name,
                     s.instance().getClass(), s::instance, s.patterns(), s.initParams(),
-                    Integer.MIN_VALUE, s.asyncSupported())));
+                    Integer.MIN_VALUE, s.asyncSupported(),
+                    reg.lookup(s.instance().getClass()).descriptor().servletSecurity())));
             filters.forEach((name, f) -> b.filter(new FilterDecl(name,
                     f.instance().getClass(), f::instance, f.initParams(), true)));
             filterMappings.forEach(b::filterMapping);

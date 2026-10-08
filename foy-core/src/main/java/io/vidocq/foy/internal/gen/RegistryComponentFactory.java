@@ -20,6 +20,7 @@
 package io.vidocq.foy.internal.gen;
 
 import io.vidocq.foy.internal.boot.ComponentFactory;
+import io.vidocq.foy.spi.gen.WebComponentDescriptor;
 import jakarta.servlet.ServletException;
 
 import java.util.Objects;
@@ -55,6 +56,16 @@ public final class RegistryComponentFactory implements ComponentFactory {
         this.visibleNames = visibleNames;
     }
 
+    /**
+     * A factory over a fresh registry for {@code loader}, every class visible.
+     *
+     * @param loader the web application class loader
+     * @return a new factory
+     */
+    public static RegistryComponentFactory forClassLoader(ClassLoader loader) {
+        return new RegistryComponentFactory(WebComponentRegistry.forClassLoader(loader), loader);
+    }
+
     /** @return the backing registry */
     public WebComponentRegistry registry() {
         return registry;
@@ -62,14 +73,21 @@ public final class RegistryComponentFactory implements ComponentFactory {
 
     @Override
     public Class<?> load(String className) throws ClassNotFoundException {
-        return Class.forName(className, true, loader);
+        return WebComponentRegistry.loadClass(className, loader);
+    }
+
+    @Override
+    public WebComponentDescriptor descriptor(Class<?> type) {
+        return registry.lookup(type).descriptor();
     }
 
     @Override
     public <T> T newInstance(Class<T> type) throws ServletException {
         try {
             return type.cast(registry.lookup(type).newInstance());
-        } catch (RuntimeException e) {
+        } catch (Exception e) {
+            // Exception, not RuntimeException: a generated or hidden-class factory calls the
+            // constructor directly, so a checked exception it declares escapes undeclared.
             throw new ServletException("cannot instantiate " + type.getName() + ": " + e.getMessage(), e);
         }
     }

@@ -49,7 +49,7 @@ public final class DescriptorMerger {
 
     private DescriptorMerger() {}
 
-    /** Annotation-derived declarations (from CDI discovery now, generated components in Phase 2). */
+    /** Annotation-derived declarations; their names default to the binary class name (§8.1.1). */
     public record AnnotatedComponents(List<ServletDecl> servlets, List<FilterDecl> filters,
                                       List<FilterMappingDecl> filterMappings,
                                       List<ListenerDecl> listeners) {
@@ -104,15 +104,18 @@ public final class DescriptorMerger {
             int load = def.loadOnStartup() != Integer.MIN_VALUE || a == null
                     ? def.loadOnStartup() : a.loadOnStartup();
             boolean async = def.asyncSupported() || (a != null && a.asyncSupported());
+            // §13.4.1: @ServletSecurity applies to the class, whatever declared the servlet
+            // (unless metadata-complete turns annotation processing off, §8.1).
+            var security = webXml.metadataComplete() ? null : factory.descriptor(type).servletSecurity();
             target.servlet(new ServletDecl(def.name(), type, supplier(factory, type), patterns,
-                    params, load, async));
+                    params, load, async, security));
             done.add(def.name());
         }
         for (ServletDecl a : ann.servlets()) {
             if (done.contains(a.name())) continue;
             List<String> xmlPatterns = webXml.patternsFor(a.name());
             target.servlet(xmlPatterns.isEmpty() ? a : new ServletDecl(a.name(), a.type(), a.factory(),
-                    xmlPatterns, a.initParams(), a.loadOnStartup(), a.asyncSupported()));
+                    xmlPatterns, a.initParams(), a.loadOnStartup(), a.asyncSupported(), a.servletSecurity()));
         }
     }
 

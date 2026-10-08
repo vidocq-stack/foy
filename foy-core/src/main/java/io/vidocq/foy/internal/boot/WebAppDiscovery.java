@@ -24,6 +24,9 @@ import io.vidocq.foy.internal.boot.WebAppModel.FilterDecl;
 import io.vidocq.foy.internal.boot.WebAppModel.FilterMappingDecl;
 import io.vidocq.foy.internal.boot.WebAppModel.ListenerDecl;
 import io.vidocq.foy.internal.boot.WebAppModel.ServletDecl;
+import io.vidocq.foy.internal.gen.WebComponentRegistry;
+import io.vidocq.foy.spi.cdi.CdiWebComponents;
+import io.vidocq.foy.spi.gen.WebComponentDescriptor;
 import jakarta.enterprise.inject.Any;
 import jakarta.enterprise.inject.spi.Bean;
 import jakarta.enterprise.inject.spi.BeanManager;
@@ -32,86 +35,107 @@ import jakarta.enterprise.util.AnnotationLiteral;
 import jakarta.servlet.DispatcherType;
 import jakarta.servlet.Filter;
 import jakarta.servlet.Servlet;
-import jakarta.servlet.annotation.WebFilter;
-import jakarta.servlet.annotation.WebInitParam;
-import jakarta.servlet.annotation.WebListener;
-import jakarta.servlet.annotation.WebServlet;
 
 import java.util.ArrayList;
 import java.util.EnumSet;
 import java.util.EventListener;
-import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
-import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.function.Supplier;
 
 /**
- * Scans the {@link BeanManager} (Vauban) for CDI beans annotated {@code @WebServlet},
- * {@code @WebFilter} or {@code @WebListener} and returns them as {@link AnnotatedComponents},
+ * Finds the CDI-managed web components ({@code @WebServlet}, {@code @WebFilter},
+ * {@code @WebListener}) of a {@link BeanManager} and returns them as {@link AnnotatedComponents},
  * to be merged with {@code web.xml} by {@link DescriptorMerger}.
  *
- * <p>Annotation values (URL patterns, init params, load-on-startup, async support, filter
- * servlet names and dispatcher types) are read through reflection on the bean class; Phase 2
- * replaces this with the generated index. Each component factory resolves the CDI reference
- * lazily; the deployer calls it once, so servlets and filters are singletons (Servlet 6.1 §2.2).</p>
+ * <p>The component classes come from the {@link CdiWebComponents} bean registered at build time
+ * by foy-cdi-vauban; without it (another CDI container), the {@code Servlet}, {@code Filter} and
+ * {@code EventListener} beans are walked instead. Metadata (names, URL patterns, init params,
+ * load-on-startup, async support, filter dispatcher types and servlet names, security) always
+ * comes from {@link WebComponentRegistry#lookup(Class)}, never from runtime annotation reflection.
+ * Instances come from {@link BeanManager#getReference}, so CDI injection applies; the deployer
+ * calls each factory once, so servlets and filters are singletons (Servlet 6.1 §2.2).</p>
  */
 public final class WebAppDiscovery {
 
+    private static final System.Logger LOG = System.getLogger(WebAppDiscovery.class.getName());
     private static final AnnotationLiteral<Any> ANY = new AnnotationLiteral<Any>() {};
 
-    public static AnnotatedComponents discover(BeanManager bm) {
+    /**
+     * @param bm the CDI bean manager
+     * @param registry the registry giving each class its descriptor
+     * @return the annotated components, in discovery order
+     * @throws IllegalArgumentException when a component misuses the Servlet annotations
+     */
+    public static AnnotatedComponents discover(BeanManager bm, WebComponentRegistry registry) {
+        Objects.requireNonNull(bm, "bm");
+        Objects.requireNonNull(registry, "registry");
         List<ServletDecl> servlets = new ArrayList<>();
         List<FilterDecl> filters = new ArrayList<>();
         List<FilterMappingDecl> filterMappings = new ArrayList<>();
         List<ListenerDecl> listeners = new ArrayList<>();
 
-        for (Bean<?> bean : bm.getBeans(Servlet.class, ANY)) {
-            Class<?> cls = bean.getBeanClass();
-            WebServlet ann = cls.getAnnotation(WebServlet.class);
-            if (ann == null) continue;
-            String name = ann.name().isEmpty() ? cls.getSimpleName() : ann.name();
-            servlets.add(new ServletDecl(name, cls.asSubclass(Servlet.class),
-                    reference(bm, bean, Servlet.class),
-                    List.of(effectivePatterns(ann.urlPatterns(), ann.value())),
-                    initParams(ann.initParams()), ann.loadOnStartup(), ann.asyncSupported()));
-        }
-
-        for (Bean<?> bean : bm.getBeans(Filter.class, ANY)) {
-            Class<?> cls = bean.getBeanClass();
-            WebFilter ann = cls.getAnnotation(WebFilter.class);
-            if (ann == null) continue;
-            String name = ann.filterName().isEmpty() ? cls.getSimpleName() : ann.filterName();
-            filters.add(new FilterDecl(name, cls.asSubclass(Filter.class),
-                    reference(bm, bean, Filter.class), initParams(ann.initParams()), ann.asyncSupported()));
-            Set<DispatcherType> types = ann.dispatcherTypes().length == 0
-                    ? EnumSet.of(DispatcherType.REQUEST)
-                    : EnumSet.copyOf(List.of(ann.dispatcherTypes()));
-            for (String pattern : effectivePatterns(ann.urlPatterns(), ann.value())) {
-                filterMappings.add(new FilterMappingDecl(name, pattern, null, types));
+        for (Candidate c : candidates(bm)) {
+            Class<?> cls = c.type();
+            WebComponentDescriptor d = registry.lookup(cls).descriptor();
+            switch (d.kind()) {
+                case SERVLET -> {
+                    if (!Servlet.class.isAssignableFrom(cls)) continue;
+                    servlets.add(new ServletDecl(d.name(), cls.asSubclass(Servlet.class),
+                            reference(bm, c.bean(), Servlet.class), d.urlPatterns(), d.initParams(),
+                            d.loadOnStartup(), d.asyncSupported(), d.servletSecurity()));
+                }
+                case FILTER -> {
+                    if (!Filter.class.isAssignableFrom(cls)) continue;
+                    filters.add(new FilterDecl(d.name(), cls.asSubclass(Filter.class),
+                            reference(bm, c.bean(), Filter.class), d.initParams(), d.asyncSupported()));
+                    Set<DispatcherType> types = d.dispatcherTypes().isEmpty()
+                            ? EnumSet.of(DispatcherType.REQUEST) : EnumSet.copyOf(d.dispatcherTypes());
+                    for (String pattern : d.urlPatterns()) {
+                        filterMappings.add(new FilterMappingDecl(d.name(), pattern, null, types));
+                    }
+                    for (String servletName : d.servletNames()) {
+                        filterMappings.add(new FilterMappingDecl(d.name(), null, servletName, types));
+                    }
+                }
+                case LISTENER -> {
+                    if (!EventListener.class.isAssignableFrom(cls)) continue;
+                    listeners.add(new ListenerDecl(cls.asSubclass(EventListener.class),
+                            reference(bm, c.bean(), EventListener.class)));
+                }
+                default -> { /* not a web component */ }
             }
-            for (String servletName : ann.servletNames()) {
-                filterMappings.add(new FilterMappingDecl(name, null, servletName, types));
-            }
-        }
-
-        for (Bean<?> bean : bm.getBeans(EventListener.class, ANY)) {
-            Class<?> cls = bean.getBeanClass();
-            if (cls.getAnnotation(WebListener.class) == null) continue;
-            listeners.add(new ListenerDecl(cls.asSubclass(EventListener.class),
-                    reference(bm, bean, EventListener.class)));
         }
         return new AnnotatedComponents(servlets, filters, filterMappings, listeners);
     }
 
-    /** Returns {@code urlPatterns} if not empty, otherwise {@code value}. */
-    private static String[] effectivePatterns(String[] urlPatterns, String[] value) {
-        return urlPatterns.length > 0 ? urlPatterns : value;
-    }
+    private record Candidate(Class<?> type, Bean<?> bean) {}
 
-    private static Map<String, String> initParams(WebInitParam[] params) {
-        Map<String, String> result = new LinkedHashMap<>();
-        for (WebInitParam p : params) result.put(p.name(), p.value());
+    /** The CDI-managed component classes, each with its bean, without duplicates. */
+    private static List<Candidate> candidates(BeanManager bm) {
+        var seen = new LinkedHashSet<Class<?>>();
+        var result = new ArrayList<Candidate>();
+        Set<Bean<?>> index = bm.getBeans(CdiWebComponents.class, ANY);
+        if (!index.isEmpty()) {
+            Bean<?> indexBean = bm.resolve(index);
+            CdiWebComponents components = reference(bm, indexBean, CdiWebComponents.class).get();
+            for (Class<?> cls : components.componentClasses()) {
+                Set<Bean<?>> beans = bm.getBeans(cls, ANY);
+                if (beans.isEmpty() || !seen.add(cls)) continue;
+                result.add(new Candidate(cls, bm.resolve(beans)));
+            }
+            return result;
+        }
+        LOG.log(System.Logger.Level.INFO, "foy: no " + CdiWebComponents.class.getSimpleName()
+                + " bean (CDI container other than Vauban); walking the Servlet, Filter and EventListener beans");
+        for (Class<?> base : List.of(Servlet.class, Filter.class, EventListener.class)) {
+            for (Bean<?> bean : bm.getBeans(base, ANY)) {
+                Class<?> cls = bean.getBeanClass();
+                if (seen.add(cls)) result.add(new Candidate(cls, bean));
+            }
+        }
         return result;
     }
 

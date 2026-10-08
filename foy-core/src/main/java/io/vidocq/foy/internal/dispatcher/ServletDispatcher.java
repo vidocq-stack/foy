@@ -20,6 +20,7 @@
 package io.vidocq.foy.internal.dispatcher;
 
 import jakarta.servlet.Servlet;
+import jakarta.servlet.ServletSecurityElement;
 
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -35,13 +36,18 @@ public final class ServletDispatcher {
 
     /** Pattern-to-servlet association. {@code asyncSupported} reflects
      *  {@code <async-supported>} from web.xml (or {@code @WebServlet(asyncSupported=...)});
-     *  default is {@code true} for constructors without this argument. */
+     *  default is {@code true} for constructors without this argument. {@code security} holds
+     *  the servlet's {@code @ServletSecurity} constraints (or {@code setServletSecurity}),
+     *  {@code null} for none. */
     public record Mapping(UrlPatternMatcher matcher, Servlet servlet, String servletName,
-                          boolean asyncSupported) {
+                          boolean asyncSupported, ServletSecurityElement security) {
         public Mapping {
             Objects.requireNonNull(matcher);
             Objects.requireNonNull(servlet);
             Objects.requireNonNull(servletName);
+        }
+        public Mapping(UrlPatternMatcher matcher, Servlet servlet, String servletName, boolean asyncSupported) {
+            this(matcher, servlet, servletName, asyncSupported, null);
         }
         public Mapping(UrlPatternMatcher matcher, Servlet servlet, String servletName) {
             this(matcher, servlet, servletName, true);

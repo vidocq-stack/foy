@@ -39,6 +39,7 @@ import jakarta.servlet.Filter;
 import jakarta.servlet.Servlet;
 import jakarta.servlet.ServletContext;
 import jakarta.servlet.ServletException;
+import jakarta.servlet.ServletSecurityElement;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -64,7 +65,8 @@ public final class WebAppDeployer {
 
     /** A servlet instance with its mapping data, from the model or from the context API. */
     private record ServletUnit(String name, Class<? extends Servlet> type, Servlet instance, List<String> patterns,
-                               Map<String, String> initParams, int loadOnStartup, boolean asyncSupported) {}
+                               Map<String, String> initParams, int loadOnStartup, boolean asyncSupported,
+                               ServletSecurityElement security) {}
 
     /** A filter instance with its init parameters. */
     private record FilterUnit(String name, Class<? extends Filter> type, Filter instance, Map<String, String> initParams) {}
@@ -166,6 +168,7 @@ public final class WebAppDeployer {
         options.reservedFilterNames().forEach(ctx::reserveFilterName);
         options.reservedUrlPatterns().forEach(ctx::reserveUrlPattern);
         if (options.securityProvider() != null) ctx.setSecurityProvider(options.securityProvider());
+        ctx.setComponentFactory(options.componentFactory());
         return ctx;
     }
 
@@ -177,7 +180,7 @@ public final class WebAppDeployer {
     private static void instantiateStatic(WebAppModel model, List<ServletUnit> servlets, List<FilterUnit> filters) {
         for (ServletDecl d : model.servlets()) {
             servlets.add(new ServletUnit(d.name(), d.type(), d.factory().get(), d.urlPatterns(), d.initParams(),
-                    d.loadOnStartup(), d.asyncSupported()));
+                    d.loadOnStartup(), d.asyncSupported(), d.servletSecurity()));
         }
         for (FilterDecl d : model.filters()) {
             filters.add(new FilterUnit(d.name(), d.type(), d.factory().get(), d.initParams()));
@@ -229,8 +232,11 @@ public final class WebAppDeployer {
             Servlet instance = instantiate("servlet", name, reg.instance(), reg.klass(), reg.getClassName(),
                     Servlet.class, factory);
             if (instance == null || reg.getMappings().isEmpty()) continue;
+            // setServletSecurity wins; otherwise the class's @ServletSecurity applies (§13.4.1).
+            ServletSecurityElement security = reg.getServletSecurity() != null
+                    ? reg.getServletSecurity() : factory.descriptor(instance.getClass()).servletSecurity();
             servlets.add(new ServletUnit(name, instance.getClass(), instance, List.copyOf(reg.getMappings()),
-                    Map.copyOf(reg.getInitParameters()), reg.getLoadOnStartup(), true));
+                    Map.copyOf(reg.getInitParameters()), reg.getLoadOnStartup(), true, security));
         }
 
         var staticFilterNames = new HashSet<String>();
@@ -338,7 +344,7 @@ public final class WebAppDeployer {
                 live.add(stub != null
                         ? new ServletDispatcher.Mapping(UrlPatternMatcher.of(p), stub, s.name())
                         : new ServletDispatcher.Mapping(UrlPatternMatcher.of(p), s.instance(), s.name(),
-                                s.asyncSupported()));
+                                s.asyncSupported(), s.security()));
             }
         }
         return live;

@@ -140,16 +140,12 @@ public final class AsyncContextImpl implements AsyncContext {
 
     @Override public <T extends AsyncListener> T createListener(Class<T> clazz)
             throws jakarta.servlet.ServletException {
-        // §2.3.3.4 : createListener doit throw ServletException en cas d'échec
-        // d'instanciation (le TCK asyncListenerTest1/6 en dépend avec ACListenerBad).
-        try {
-            return clazz.getDeclaredConstructor().newInstance();
-        } catch (ReflectiveOperationException e) {
-            Throwable cause = e instanceof java.lang.reflect.InvocationTargetException ite && ite.getCause() != null
-                    ? ite.getCause() : e;
-            throw new jakarta.servlet.ServletException(
-                    "cannot instantiate listener " + clazz.getName() + ": " + cause.getMessage(), cause);
-        }
+        // §2.3.3.4: createListener must throw ServletException when instantiation fails
+        // (TCK asyncListenerTest1/6 relies on it with ACListenerBad).
+        var factory = servletContext instanceof io.vidocq.foy.internal.container.VidocqServletContext v
+                ? v.componentFactory()
+                : io.vidocq.foy.internal.gen.RegistryComponentFactory.forClassLoader(clazz.getClassLoader());
+        return factory.newInstance(clazz);
     }
 
     @Override public void setTimeout(long timeout) { this.timeoutMs = timeout; }

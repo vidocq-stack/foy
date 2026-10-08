@@ -57,7 +57,12 @@ public record DeployOptions(SecurityProvider securityProvider,
 
     /** Registry-backed component factory (generated, Class-File, then reflective tiers) and class-index {@code @HandlesTypes} resolution on {@code loader}, nothing reserved. */
     public static DeployOptions defaults(ClassLoader loader) {
-        var registry = io.vidocq.foy.internal.gen.WebComponentRegistry.forClassLoader(loader);
+        return defaults(loader, io.vidocq.foy.internal.gen.WebComponentRegistry.forClassLoader(loader));
+    }
+
+    /** As {@link #defaults(ClassLoader)}, over an existing {@code registry} (shared with discovery). */
+    public static DeployOptions defaults(ClassLoader loader, io.vidocq.foy.internal.gen.WebComponentRegistry registry) {
+        Objects.requireNonNull(registry, "registry");
         return new DeployOptions(null, null, null, Set.of(), Set.of(), Set.of(),
                 new io.vidocq.foy.internal.gen.RegistryComponentFactory(registry, loader),
                 new io.vidocq.foy.internal.gen.IndexedHandlesTypesResolver(registry, loader));
@@ -66,6 +71,11 @@ public record DeployOptions(SecurityProvider securityProvider,
     public DeployOptions withComponentFactory(ComponentFactory f) {
         return new DeployOptions(securityProvider, resourceProvider, servletContextName,
                 reservedServletNames, reservedFilterNames, reservedUrlPatterns, f, handlesTypes);
+    }
+
+    public DeployOptions withHandlesTypes(HandlesTypesResolver r) {
+        return new DeployOptions(securityProvider, resourceProvider, servletContextName,
+                reservedServletNames, reservedFilterNames, reservedUrlPatterns, componentFactory, r);
     }
 
     public DeployOptions withSecurityProvider(SecurityProvider p) {

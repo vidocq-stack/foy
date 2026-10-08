@@ -19,13 +19,16 @@
  */
 package io.vidocq.foy.internal.boot;
 
+import io.vidocq.foy.internal.gen.ClassFileDescriptorReader;
+import io.vidocq.foy.spi.gen.WebComponentDescriptor;
 import jakarta.servlet.ServletException;
 
 import java.util.Set;
 
 /**
- * Loads and instantiates web components. Phase 1: reflective; Phase 2 replaces
- * the default with the generated-code registry (APT → Class-File → reflection).
+ * Loads and instantiates web components. The product default is the registry-backed
+ * {@code RegistryComponentFactory} (generated, Class-File, then reflective tier);
+ * {@link #reflective(ClassLoader)} stays for tests and as an explicit opt-out.
  */
 public interface ComponentFactory {
 	Class<?> load(String className) throws ClassNotFoundException;
@@ -37,6 +40,16 @@ public interface ComponentFactory {
 	 */
 	default boolean isVisible(Class<?> type) {
 		return true;
+	}
+
+	/**
+	 * Static metadata of {@code type} (mapping, security, ...). The default reads the class
+	 * bytes; an unreadable or unannotated class gets a plain descriptor.
+	 *
+	 * @throws IllegalArgumentException when the class misuses the Servlet annotations
+	 */
+	default WebComponentDescriptor descriptor(Class<?> type) {
+		return ClassFileDescriptorReader.read(type).orElseGet(WebComponentDescriptor::plain);
 	}
 
 	static ComponentFactory reflective(ClassLoader loader) {

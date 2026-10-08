@@ -24,6 +24,7 @@ import jakarta.servlet.DispatcherType;
 import jakarta.servlet.Filter;
 import jakarta.servlet.Servlet;
 import jakarta.servlet.ServletContainerInitializer;
+import jakarta.servlet.ServletSecurityElement;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -81,18 +82,29 @@ public record WebAppModel(String contextPath,
         localeEncodingMappings = copyOf(localeEncodingMappings);
     }
 
-    /** A servlet declaration. {@code loadOnStartup == Integer.MIN_VALUE} means absent. */
+    /**
+     * A servlet declaration. {@code loadOnStartup == Integer.MIN_VALUE} means absent;
+     * {@code servletSecurity} is the class's {@code @ServletSecurity} constraint, {@code null} for none.
+     */
     public record ServletDecl(String name, Class<? extends Servlet> type,
                               Supplier<? extends Servlet> factory,
                               List<String> urlPatterns, Map<String, String> initParams,
                               int loadOnStartup,
-                              boolean asyncSupported) {
+                              boolean asyncSupported,
+                              ServletSecurityElement servletSecurity) {
         public ServletDecl {
             Objects.requireNonNull(name, "name");
             Objects.requireNonNull(type, "type");
             Objects.requireNonNull(factory, "factory");
             urlPatterns = List.copyOf(urlPatterns);
             initParams = copyOf(initParams);
+        }
+
+        /** A declaration without security constraints. */
+        public ServletDecl(String name, Class<? extends Servlet> type, Supplier<? extends Servlet> factory,
+                           List<String> urlPatterns, Map<String, String> initParams, int loadOnStartup,
+                           boolean asyncSupported) {
+            this(name, type, factory, urlPatterns, initParams, loadOnStartup, asyncSupported, null);
         }
     }
 

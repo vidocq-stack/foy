@@ -175,7 +175,7 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
         try {
             var enforcer = new io.vidocq.foy.internal.security.SecurityConstraintEnforcer(
                     servletContext.securityProvider());
-            if (!enforcer.enforce(m.servlet().getClass(), req, res)) {
+            if (!enforcer.enforce(m.security(), req, res)) {
                 registry.fireRequestDestroyed(servletContext, req);
                 return toChappeResponse(res);
             }

@@ -29,6 +29,8 @@ import io.vidocq.foy.internal.boot.WebAppDeployer;
 import io.vidocq.foy.internal.boot.WebAppDiscovery;
 import io.vidocq.foy.internal.boot.WebAppModel;
 import io.vidocq.foy.internal.container.VidocqServletContext;
+import io.vidocq.foy.internal.gen.RegistryComponentFactory;
+import io.vidocq.foy.internal.gen.WebComponentRegistry;
 import io.vidocq.foy.internal.webxml.WebAppDescriptor;
 import io.vidocq.foy.internal.webxml.WebXmlParser;
 import jakarta.enterprise.inject.spi.BeanManager;
@@ -109,8 +111,11 @@ public final class FoyChappeBoot {
 
         public Optional<Mounted> build() throws ServletException {
             ClassLoader loader = classLoader != null ? classLoader : FoyChappeBoot.class.getClassLoader();
+            // One registry for discovery, web.xml classes, dynamic registrations and @HandlesTypes.
+            WebComponentRegistry registry = WebComponentRegistry.forClassLoader(loader);
+            ComponentFactory factory = new RegistryComponentFactory(registry, loader);
             AnnotatedComponents annotated = beanManager == null
-                    ? AnnotatedComponents.none() : WebAppDiscovery.discover(beanManager);
+                    ? AnnotatedComponents.none() : WebAppDiscovery.discover(beanManager, registry);
             WebAppDescriptor descriptor = loadDescriptor(loader);
 
             if (descriptor.isEmpty() && annotated.servlets().isEmpty() && annotated.filters().isEmpty()
@@ -121,7 +126,7 @@ public final class FoyChappeBoot {
             }
 
             WebAppModel.Builder modelBuilder = WebAppModel.builder(contextPath);
-            DescriptorMerger.merge(descriptor, annotated, ComponentFactory.reflective(loader), modelBuilder);
+            DescriptorMerger.merge(descriptor, annotated, factory, modelBuilder);
             // The merger copies the web.xml timeout (-1 when absent); the builder default applies then.
             if (descriptor.sessionTimeoutMinutes() < 0) {
                 modelBuilder.sessionTimeoutMinutes((sessionTimeoutSeconds + 59) / 60);
@@ -130,7 +135,7 @@ public final class FoyChappeBoot {
 
             Deployment deployment;
             try {
-                deployment = WebAppDeployer.deploy(model, DeployOptions.defaults(loader));
+                deployment = WebAppDeployer.deploy(model, DeployOptions.defaults(loader, registry).withComponentFactory(factory));
             } catch (RuntimeException e) {
                 throw new ServletException("Foy deployment failed: " + e.getMessage(), e);
             }

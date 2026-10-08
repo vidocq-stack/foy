@@ -22,8 +22,6 @@ package io.vidocq.foy.internal.gen;
 import io.vidocq.foy.spi.gen.WebComponent;
 import io.vidocq.foy.spi.gen.WebComponentDescriptor;
 import io.vidocq.foy.spi.gen.WebComponentDescriptor.Kind;
-import jakarta.servlet.Filter;
-import jakarta.servlet.Servlet;
 import jakarta.servlet.ServletContainerInitializer;
 
 import java.lang.invoke.MethodHandle;
@@ -31,7 +29,6 @@ import java.lang.invoke.MethodHandles;
 import java.lang.invoke.MethodType;
 import java.lang.System.Logger.Level;
 import java.text.MessageFormat;
-import java.util.EventListener;
 import java.util.IdentityHashMap;
 import java.util.Map;
 import java.util.Optional;
@@ -118,6 +115,19 @@ public final class WebComponentRegistry {
      */
     public Tier tierOf(Class<?> type) {
         return entry(type).tier();
+    }
+
+    /**
+     * Loads and initializes a component class by name, the single by-name class lookup of the
+     * container (web.xml class names, {@code addListener(String)}, ...).
+     *
+     * @param className the binary class name
+     * @param loader the class loader, {@code null} for the bootstrap loader
+     * @return the loaded class
+     * @throws ClassNotFoundException when the class cannot be found
+     */
+    public static Class<?> loadClass(String className, ClassLoader loader) throws ClassNotFoundException {
+        return Class.forName(className, true, loader);
     }
 
     /** @return the number of cached components per tier */

@@ -304,4 +304,61 @@ class WebAppDeployerEndToEndTest {
         deployment.close();
         assertFalse(dir.exists(), "temp dir must be removed on close");
     }
+
+    public static class CountingListener implements ServletRequestListener {}
+
+    /** Delegates to the registry-backed factory and records every class it instantiates. */
+    static final class RecordingFactory implements ComponentFactory {
+        final ComponentFactory delegate = io.vidocq.foy.internal.gen.RegistryComponentFactory.forClassLoader(
+                WebAppDeployerEndToEndTest.class.getClassLoader());
+        final List<Class<?>> created = new CopyOnWriteArrayList<>();
+        @Override public Class<?> load(String className) throws ClassNotFoundException {
+            return delegate.load(className);
+        }
+        @Override public <T> T newInstance(Class<T> type) throws ServletException {
+            created.add(type);
+            return delegate.newInstance(type);
+        }
+    }
+
+    private static DeployOptions options(ComponentFactory factory) {
+        return new DeployOptions(null, null, null, Set.of(), Set.of(), Set.of(), factory, HandlesTypesResolver.NONE);
+    }
+
+    @Test
+    void contextCreateAndAddListenerGoThroughTheDeploymentFactory() {
+        var factory = new RecordingFactory();
+        ServletContainerInitializer sci = (classes, ctx) -> {
+            ctx.addServlet("dyn", ctx.createServlet(Recording.class)).addMapping("/dyn");
+            ctx.addListener(CountingListener.class);
+            ctx.addListener(CountingListener.class.getName());
+        };
+        deploy(WebAppModel.builder("/").initializer(sci).build(), options(factory));
+        assertEquals(List.of(Recording.class, CountingListener.class, CountingListener.class), factory.created);
+    }
+
+    @Test
+    void dynamicSetServletSecurityIsEnforced() throws Exception {
+        ServletContainerInitializer sci = (classes, ctx) -> ctx.addServlet("sec", Recording.class)
+                .setServletSecurity(new ServletSecurityElement(
+                        new HttpConstraintElement(jakarta.servlet.annotation.ServletSecurity.EmptyRoleSemantic.DENY)));
+        ServletContainerInitializer mapping = (classes, ctx) ->
+                ctx.getServletRegistration("sec").addMapping("/sec");
+        deploy(WebAppModel.builder("/").initializer(sci).initializer(mapping).build(),
+                options(new RecordingFactory()));
+        assertEquals(403, get("/sec").statusCode());
+    }
+
+    @Test
+    void declaredServletSecurityIsEnforced() throws Exception {
+        var deny = new ServletSecurityElement(
+                new HttpConstraintElement(jakarta.servlet.annotation.ServletSecurity.EmptyRoleSemantic.DENY));
+        deploy(WebAppModel.builder("/")
+                .servlet(new ServletDecl("d", Recording.class, () -> new Recording("d"), List.of("/denied"),
+                        Map.of(), Integer.MIN_VALUE, true, deny))
+                .servlet(decl("open", Integer.MIN_VALUE, "/open"))
+                .build());
+        assertEquals(403, get("/denied").statusCode());
+        assertEquals(200, get("/open").statusCode());
+    }
 }

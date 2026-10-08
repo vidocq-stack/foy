@@ -19,13 +19,17 @@
  */
 package io.vidocq.foy.tck.arquillian;
 
+import io.vidocq.foy.internal.boot.HandlesTypesResolver;
+import io.vidocq.foy.internal.gen.ClassFileDescriptorReader;
+import io.vidocq.foy.internal.gen.WebComponentRegistry;
+import io.vidocq.foy.spi.gen.WebComponent;
+import io.vidocq.foy.spi.gen.WebComponentDescriptor;
 import io.vidocq.foy.tck.ServletTestHarness;
 import io.vidocq.foy.internal.webxml.WebAppDescriptor;
 import io.vidocq.foy.internal.webxml.WebXmlParser;
+import jakarta.servlet.DispatcherType;
 import jakarta.servlet.Filter;
-import jakarta.servlet.annotation.WebFilter;
-import jakarta.servlet.annotation.WebListener;
-import jakarta.servlet.annotation.WebServlet;
+import jakarta.servlet.Servlet;
 import org.jboss.arquillian.container.spi.client.container.DeployableContainer;
 import org.jboss.arquillian.container.spi.client.container.DeploymentException;
 import org.jboss.arquillian.container.spi.client.container.LifecycleException;
@@ -38,18 +42,33 @@ import org.jboss.shrinkwrap.api.Node;
 import org.jboss.shrinkwrap.api.spec.WebArchive;
 import org.jboss.shrinkwrap.descriptor.api.Descriptor;
 
+import java.io.IOException;
+import java.io.InputStream;
+import java.lang.classfile.Annotation;
+import java.lang.classfile.Attributes;
+import java.lang.classfile.ClassFile;
+import java.lang.classfile.ClassModel;
+import java.lang.classfile.FieldModel;
+import java.lang.classfile.MethodModel;
 import java.util.ArrayList;
+import java.util.EnumSet;
 import java.util.EventListener;
+import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Optional;
+import java.util.Set;
 
 /**
  * {@link DeployableContainer} Arquillian who deploys a {@link WebArchive} on the
  * {@link ServletTestHarness} internal.
  *
- * <p>MVP strategy: extract the classes of {@code WEB-INF/classes/} from the archive,
- * instantiate them by reflection (the current classloader knows them since the TCK jar
- * is on the test classpath), sort them by annotation {@code @WebServlet/@WebFilter/@WebListener}
- * and save them in the harness. Returns to {@link ProtocolMetaData} {@code Servlet 3.0}
+ * <p>Strategy: extract the classes of {@code WEB-INF/classes/} from the archive (the current
+ * class loader knows them since the TCK jar is on the test classpath), classify them from their
+ * class bytes ({@code @WebServlet/@WebFilter/@WebListener}), and resolve their metadata and
+ * instances through one {@link WebComponentRegistry} per deployment, whose tier statistics are
+ * logged on undeploy. {@code @HandlesTypes} is resolved against the WAR's own classes, since TCK
+ * WARs carry no build-time class index. Returns to {@link ProtocolMetaData} {@code Servlet 3.0}
  * with the harness URL for Arquillian to inject {@code @ArquillianResource URL url}.</p>
  */
 public class VidocqDeployableContainer implements DeployableContainer<VidocqContainerConfiguration> {
@@ -58,6 +77,8 @@ public class VidocqDeployableContainer implements DeployableContainer<VidocqCont
     private ServletTestHarness harness;
     /** Multi-deployment support (Arquillian can deploy several WARs for a test). */
     private final java.util.LinkedHashMap<String, ServletTestHarness> harnessesByArchive = new java.util.LinkedHashMap<>();
+    /** The component registry of each deployed archive, for the undeploy tier statistics. */
+    private final java.util.Map<String, WebComponentRegistry> registriesByArchive = new java.util.HashMap<>();
 
     @Override
     public Class<VidocqContainerConfiguration> getConfigurationClass() {
@@ -85,6 +106,9 @@ public class VidocqDeployableContainer implements DeployableContainer<VidocqCont
             try { h.close(); } catch (RuntimeException ignored) {}
         }
         harnessesByArchive.clear();
+        registriesByArchive.forEach((name, registry) ->
+                System.err.println("[VidocqTCK] undeploy archive=" + name + " tiers=" + registry.stats()));
+        registriesByArchive.clear();
         if (harness != null) { harness.close(); harness = null; }
     }
 
@@ -108,7 +132,10 @@ public class VidocqDeployableContainer implements DeployableContainer<VidocqCont
             if (!ctxName.isEmpty()) builder.contextPath("/" + ctxName);
         }
         var cl = Thread.currentThread().getContextClassLoader();
+        var registry = WebComponentRegistry.forClassLoader(cl);
+        builder.registry(registry);
         List<String> registered = new ArrayList<>();
+        var warClasses = new ArrayList<Class<?>>();
 
         // 1) Classes @WebServlet/@WebFilter/@WebListener dans /WEB-INF/classes/
         //    + collecte des class-names du WAR pour simuler l'isolation classloader
@@ -123,18 +150,20 @@ public class VidocqDeployableContainer implements DeployableContainer<VidocqCont
                     .replace('/', '.');
             warClassNames.add(className);
             Class<?> cls;
-            try { cls = Class.forName(className, true, cl); }
+            try { cls = WebComponentRegistry.loadClass(className, cl); }
             catch (Throwable t) { continue; }
-            registerIfAnnotated(builder, cls, registered);
+            warClasses.add(cls);
+            registerIfAnnotated(builder, cls, registry, registered);
         }
         builder.restrictToWarClasses(warClassNames);
+        builder.handlesTypes(warHandlesTypes(registry, warClasses, cl));
 
         // 2) web.xml : enregistre les servlets/filters/listeners déclarés
         Node webXml = war.get("/WEB-INF/web.xml");
         if (webXml != null && webXml.getAsset() != null) {
             try (var in = webXml.getAsset().openStream()) {
                 WebAppDescriptor desc = WebXmlParser.parse(in);
-                registerFromWebXml(builder, desc, cl, registered);
+                registerFromWebXml(builder, desc, cl, registry, registered);
             } catch (Exception e) {
                 System.err.println("[VidocqTCK] failed to parse web.xml: " + e);
             }
@@ -143,13 +172,14 @@ public class VidocqDeployableContainer implements DeployableContainer<VidocqCont
         // 3) Découverte des ServletContainerInitializer (Servlet 6.1 §4.4) :
         //    - fichier META-INF/services/jakarta.servlet.ServletContainerInitializer dans le WAR
         //    - et (par extension) tout fichier du même nom déployé ailleurs sous /WEB-INF/classes/
-        discoverAndRegisterSCIs(war, cl, builder);
+        discoverAndRegisterSCIs(war, cl, registry, builder);
 
         // 4) ResourceProvider exposant les fichiers du WAR au ServletContext (§4.6).
         builder.resourceProvider(new WarResourceProvider(war));
 
         harness = builder.start();
         harnessesByArchive.put(archive.getName(), harness);
+        registriesByArchive.put(archive.getName(), registry);
 
         System.err.println("[VidocqTCK] deploy archive=" + war.getName()
                 + " host=" + config.getHost() + " port=" + harness.port()
@@ -172,7 +202,7 @@ public class VidocqDeployableContainer implements DeployableContainer<VidocqCont
 
     private static void registerFromWebXml(ServletTestHarness.Builder builder,
                                            WebAppDescriptor desc, ClassLoader cl,
-                                           List<String> registered) {
+                                           WebComponentRegistry registry, List<String> registered) {
         builder.localeEncodingMappings(desc.localeEncodingMappings());
         builder.contextInitParams(desc.contextParams());
         if (desc.displayName() != null) builder.servletContextName(desc.displayName());
@@ -201,14 +231,14 @@ public class VidocqDeployableContainer implements DeployableContainer<VidocqCont
         for (WebAppDescriptor.ServletDef sd : desc.servlets()) {
             if (sd.className() == null) continue;
             try {
-                Class<?> c = Class.forName(sd.className(), true, cl);
+                Class<?> c = WebComponentRegistry.loadClass(sd.className(), cl);
                 if (!jakarta.servlet.Servlet.class.isAssignableFrom(c)) continue;
-                jakarta.servlet.Servlet s = (jakarta.servlet.Servlet) c.getDeclaredConstructor().newInstance();
+                jakarta.servlet.Servlet s = (jakarta.servlet.Servlet) registry.lookup(c).newInstance();
                 instances.put(sd.name(), s);
                 servletParams.put(sd.name(),
                         sd.initParams() == null ? java.util.Map.of() : sd.initParams());
                 asyncSupportedByName.put(sd.name(), sd.asyncSupported());
-            } catch (ReflectiveOperationException ignored) {}
+            } catch (ClassNotFoundException | RuntimeException ignored) {}
         }
         for (WebAppDescriptor.ServletMappingDef m : desc.servletMappings()) {
             jakarta.servlet.Servlet s = instances.get(m.servletName());
@@ -223,13 +253,13 @@ public class VidocqDeployableContainer implements DeployableContainer<VidocqCont
         var filterParams = new java.util.HashMap<String, java.util.Map<String, String>>();
         for (WebAppDescriptor.FilterDef fd : desc.filters()) {
             try {
-                Class<?> c = Class.forName(fd.className(), true, cl);
+                Class<?> c = WebComponentRegistry.loadClass(fd.className(), cl);
                 if (!jakarta.servlet.Filter.class.isAssignableFrom(c)) continue;
-                jakarta.servlet.Filter f = (jakarta.servlet.Filter) c.getDeclaredConstructor().newInstance();
+                jakarta.servlet.Filter f = (jakarta.servlet.Filter) registry.lookup(c).newInstance();
                 filterInstances.put(fd.name(), f);
                 filterParams.put(fd.name(),
                         fd.initParams() == null ? java.util.Map.of() : fd.initParams());
-            } catch (ReflectiveOperationException ignored) {}
+            } catch (ClassNotFoundException | RuntimeException ignored) {}
         }
         for (WebAppDescriptor.FilterMappingDef m : desc.filterMappings()) {
             jakarta.servlet.Filter f = filterInstances.get(m.filterName());
@@ -247,10 +277,10 @@ public class VidocqDeployableContainer implements DeployableContainer<VidocqCont
         }
         for (String lc : desc.listenerClasses()) {
             try {
-                Class<?> c = Class.forName(lc, true, cl);
+                Class<?> c = WebComponentRegistry.loadClass(lc, cl);
                 if (!java.util.EventListener.class.isAssignableFrom(c)) continue;
-                builder.listener((java.util.EventListener) c.getDeclaredConstructor().newInstance());
-            } catch (ReflectiveOperationException ignored) {}
+                builder.listener((java.util.EventListener) registry.lookup(c).newInstance());
+            } catch (ClassNotFoundException | RuntimeException ignored) {}
         }
         // Error pages du web.xml — indispensable pour les TCK qui attendent
         // un dispatch sur <location> en cas d'exception ou de status code.
@@ -260,7 +290,7 @@ public class VidocqDeployableContainer implements DeployableContainer<VidocqCont
                 builder.errorPage(ep.statusCode(), ep.location());
             } else if (ep.exceptionType() != null) {
                 try {
-                    Class<?> c = Class.forName(ep.exceptionType(), true, cl);
+                    Class<?> c = WebComponentRegistry.loadClass(ep.exceptionType(), cl);
                     if (Throwable.class.isAssignableFrom(c)) {
                         @SuppressWarnings("unchecked")
                         Class<? extends Throwable> exc = (Class<? extends Throwable>) c;
@@ -273,7 +303,7 @@ public class VidocqDeployableContainer implements DeployableContainer<VidocqCont
 
     /** Scans the WAR for {@code META-INF/services/jakarta.servlet.ServletContainerInitializer}
      *  files and registers referenced SCIs on the builder. */
-    private static void discoverAndRegisterSCIs(WebArchive war, ClassLoader cl,
+    private static void discoverAndRegisterSCIs(WebArchive war, ClassLoader cl, WebComponentRegistry registry,
                                                 ServletTestHarness.Builder builder) {
         for (Node node : flatten(war).values()) {
             String path = node.getPath().get();
@@ -286,10 +316,9 @@ public class VidocqDeployableContainer implements DeployableContainer<VidocqCont
                         String fqn = line.trim();
                         if (fqn.isEmpty() || fqn.startsWith("#")) continue;
                         try {
-                            Class<?> c = Class.forName(fqn, true, cl);
+                            Class<?> c = WebComponentRegistry.loadClass(fqn, cl);
                             builder.servletContainerInitializer(
-                                    (jakarta.servlet.ServletContainerInitializer)
-                                            c.getDeclaredConstructor().newInstance());
+                                    (jakarta.servlet.ServletContainerInitializer) registry.lookup(c).newInstance());
                         } catch (Throwable t) {
                             System.err.println("[VidocqTCK] failed to load SCI " + fqn + ": " + t);
                         }
@@ -299,36 +328,111 @@ public class VidocqDeployableContainer implements DeployableContainer<VidocqCont
         }
     }
 
-    @SuppressWarnings("unchecked")
+    /**
+     * Registers {@code cls} when it is an annotated servlet, filter or listener. The class is
+     * classified from its bytes first, so that plain WAR classes never enter the registry;
+     * metadata and instances then come from {@link WebComponentRegistry#lookup(Class)}.
+     */
     private static void registerIfAnnotated(ServletTestHarness.Builder builder, Class<?> cls,
-                                            List<String> registered) {
-        WebServlet ws = cls.getAnnotation(WebServlet.class);
-        if (ws != null && jakarta.servlet.Servlet.class.isAssignableFrom(cls)) {
-            try {
-                jakarta.servlet.Servlet s = (jakarta.servlet.Servlet) cls.getDeclaredConstructor().newInstance();
-                String[] patterns = ws.urlPatterns().length > 0 ? ws.urlPatterns() : ws.value();
-                String name = ws.name().isEmpty() ? cls.getName() : ws.name();
-                for (String p : patterns) {
-                    builder.servlet(p, s, name, java.util.Map.of(), ws.asyncSupported());
+                                            WebComponentRegistry registry, List<String> registered) {
+        Optional<WebComponentDescriptor> read;
+        try {
+            read = ClassFileDescriptorReader.read(cls);
+        } catch (IllegalArgumentException e) {
+            System.err.println("[VidocqTCK] skipping " + cls.getName() + ": " + e.getMessage());
+            return;
+        }
+        if (read.isEmpty()) return;
+        WebComponentDescriptor.Kind kind = read.get().kind();
+        boolean servlet = kind == WebComponentDescriptor.Kind.SERVLET && Servlet.class.isAssignableFrom(cls);
+        boolean filter = kind == WebComponentDescriptor.Kind.FILTER && Filter.class.isAssignableFrom(cls);
+        boolean listener = kind == WebComponentDescriptor.Kind.LISTENER && EventListener.class.isAssignableFrom(cls);
+        if (!servlet && !filter && !listener) return;
+        WebComponent component = registry.lookup(cls);
+        WebComponentDescriptor d = component.descriptor();
+        Object instance;
+        try {
+            instance = component.newInstance();
+        } catch (RuntimeException e) {
+            return;
+        }
+        if (servlet) {
+            for (String p : d.urlPatterns()) {
+                builder.servlet(p, (Servlet) instance, d.name(), d.initParams(), d.asyncSupported());
+            }
+            registered.add(cls.getSimpleName());
+        } else if (filter) {
+            Set<DispatcherType> types = d.dispatcherTypes().isEmpty()
+                    ? EnumSet.of(DispatcherType.REQUEST) : EnumSet.copyOf(d.dispatcherTypes());
+            for (String p : d.urlPatterns()) {
+                builder.filter(p, (Filter) instance, d.name(), d.initParams(), types);
+            }
+        } else {
+            builder.listener((EventListener) instance);
+        }
+    }
+
+    /**
+     * {@code @HandlesTypes} resolution over the WAR's own classes (§8.2.4): a class matches when it
+     * extends or implements a handled type, or carries a handled annotation on the class, a field
+     * or a method (read from its class bytes). The handled types themselves are excluded;
+     * {@code null} when the initializer handles nothing or nothing matches.
+     */
+    private static HandlesTypesResolver warHandlesTypes(WebComponentRegistry registry, List<Class<?>> warClasses,
+                                                        ClassLoader cl) {
+        return sci -> {
+            List<String> handled = registry.lookup(sci.getClass()).descriptor().handlesTypes();
+            if (handled.isEmpty()) return null;
+            var handledClasses = new LinkedHashSet<Class<?>>();
+            for (String name : handled) {
+                try {
+                    handledClasses.add(WebComponentRegistry.loadClass(name, cl));
+                } catch (ClassNotFoundException | LinkageError ignored) {}
+            }
+            Set<String> handledAnnotations = new HashSet<>();
+            for (Class<?> h : handledClasses) if (h.isAnnotation()) handledAnnotations.add(h.getName());
+            Set<Class<?>> result = new LinkedHashSet<>();
+            for (Class<?> c : warClasses) {
+                if (handledClasses.contains(c)) continue;
+                boolean match = false;
+                for (Class<?> h : handledClasses) {
+                    if (!h.isAnnotation() && h.isAssignableFrom(c)) { match = true; break; }
                 }
-                registered.add(cls.getSimpleName());
-            } catch (ReflectiveOperationException ignored) {}
-            return;
+                if (!match && !handledAnnotations.isEmpty()) {
+                    match = annotationsOf(c).stream().anyMatch(handledAnnotations::contains);
+                }
+                if (match) result.add(c);
+            }
+            return result.isEmpty() ? null : result;
+        };
+    }
+
+    /** Binary names of the annotations on {@code c}, its fields and its methods, from its class bytes. */
+    private static Set<String> annotationsOf(Class<?> c) {
+        ClassLoader loader = c.getClassLoader();
+        if (loader == null) return Set.of();
+        try (InputStream in = loader.getResourceAsStream(c.getName().replace('.', '/') + ".class")) {
+            if (in == null) return Set.of();
+            ClassModel model = ClassFile.of().parse(in.readAllBytes());
+            Set<String> names = new HashSet<>();
+            model.findAttribute(Attributes.runtimeVisibleAnnotations()).ifPresent(a -> addAll(names, a.annotations()));
+            model.findAttribute(Attributes.runtimeInvisibleAnnotations()).ifPresent(a -> addAll(names, a.annotations()));
+            for (FieldModel f : model.fields()) {
+                f.findAttribute(Attributes.runtimeVisibleAnnotations()).ifPresent(a -> addAll(names, a.annotations()));
+            }
+            for (MethodModel m : model.methods()) {
+                m.findAttribute(Attributes.runtimeVisibleAnnotations()).ifPresent(a -> addAll(names, a.annotations()));
+            }
+            return names;
+        } catch (IOException | RuntimeException e) {
+            return Set.of();
         }
-        WebFilter wf = cls.getAnnotation(WebFilter.class);
-        if (wf != null && Filter.class.isAssignableFrom(cls)) {
-            try {
-                Filter f = (Filter) cls.getDeclaredConstructor().newInstance();
-                String[] patterns = wf.urlPatterns().length > 0 ? wf.urlPatterns() : wf.value();
-                for (String p : patterns) builder.filter(p, f);
-            } catch (ReflectiveOperationException ignored) {}
-            return;
-        }
-        if (cls.isAnnotationPresent(WebListener.class) && EventListener.class.isAssignableFrom(cls)) {
-            try {
-                EventListener l = (EventListener) cls.getDeclaredConstructor().newInstance();
-                builder.listener(l);
-            } catch (ReflectiveOperationException ignored) {}
+    }
+
+    private static void addAll(Set<String> names, List<Annotation> annotations) {
+        for (Annotation a : annotations) {
+            String d = a.className().stringValue(); // "Lpkg/Outer$Inner;"
+            names.add(d.substring(1, d.length() - 1).replace('/', '.'));
         }
     }
 
@@ -341,6 +445,10 @@ public class VidocqDeployableContainer implements DeployableContainer<VidocqCont
         ServletTestHarness h = harnessesByArchive.remove(archive.getName());
         if (h != null) h.close();
         if (harness == h) harness = null;
+        WebComponentRegistry registry = registriesByArchive.remove(archive.getName());
+        if (registry != null) {
+            System.err.println("[VidocqTCK] undeploy archive=" + archive.getName() + " tiers=" + registry.stats());
+        }
     }
 
     @Override public void deploy(Descriptor descriptor) {}

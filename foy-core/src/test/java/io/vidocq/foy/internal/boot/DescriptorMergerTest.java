@@ -24,11 +24,15 @@ import io.vidocq.foy.internal.boot.WebAppModel.FilterDecl;
 import io.vidocq.foy.internal.boot.WebAppModel.FilterMappingDecl;
 import io.vidocq.foy.internal.boot.WebAppModel.ListenerDecl;
 import io.vidocq.foy.internal.boot.WebAppModel.ServletDecl;
+import io.vidocq.foy.internal.gen.WebComponentRegistry;
 import io.vidocq.foy.internal.webxml.WebXmlParser;
 import jakarta.servlet.DispatcherType;
 import jakarta.servlet.Filter;
 import jakarta.servlet.ServletContextEvent;
 import jakarta.servlet.ServletContextListener;
+import jakarta.servlet.annotation.HttpConstraint;
+import jakarta.servlet.annotation.ServletSecurity;
+import jakarta.servlet.annotation.WebServlet;
 import jakarta.servlet.http.HttpServlet;
 import org.junit.jupiter.api.Test;
 
@@ -179,5 +183,50 @@ class DescriptorMergerTest {
                 </web-app>""".formatted(L1.class.getName()), ann);
         assertEquals(List.of(L1.class, L2.class), m.listeners().stream().map(ListenerDecl::type).toList());
         assertInstanceOf(L1.class, m.listeners().getFirst().factory().get());
+    }
+
+    @WebServlet("/ann")
+    @ServletSecurity(@HttpConstraint(rolesAllowed = "admin"))
+    public static class Unnamed extends HttpServlet {}
+
+    /** The annotation-derived declaration of {@code type}, as discovery builds it from the registry. */
+    private static AnnotatedComponents discovered(Class<? extends HttpServlet> type) {
+        var d = WebComponentRegistry.forClassLoader(DescriptorMergerTest.class.getClassLoader())
+                .lookup(type).descriptor();
+        return new AnnotatedComponents(List.of(new ServletDecl(d.name(), type, () -> new Unnamed(),
+                d.urlPatterns(), d.initParams(), d.loadOnStartup(), d.asyncSupported(), d.servletSecurity())),
+                List.of(), List.of(), List.of());
+    }
+
+    @Test
+    void webXmlServletNamedByTheBinaryNameMergesWithTheUnnamedAnnotation() throws Exception {
+        var m = merge(HEAD + """
+                >
+                  <servlet><servlet-name>%1$s</servlet-name><servlet-class>%1$s</servlet-class></servlet>
+                </web-app>""".formatted(Unnamed.class.getName()), discovered(Unnamed.class));
+        assertEquals(List.of(Unnamed.class.getName()), m.servlets().stream().map(ServletDecl::name).toList(),
+                "default @WebServlet name is the binary class name (§8.1.1), so §8.2.3 merges by name");
+        var s = m.servlets().getFirst();
+        assertEquals(List.of("/ann"), s.urlPatterns());
+        assertEquals(Set.of("admin"), Set.of(s.servletSecurity().getRolesAllowed()));
+    }
+
+    @Test
+    void webXmlDeclaredServletTakesServletSecurityFromItsClass() throws Exception {
+        var m = merge(HEAD + """
+                >
+                  <servlet><servlet-name>x</servlet-name><servlet-class>%s</servlet-class></servlet>
+                  <servlet-mapping><servlet-name>x</servlet-name><url-pattern>/x</url-pattern></servlet-mapping>
+                </web-app>""".formatted(Unnamed.class.getName()), AnnotatedComponents.none());
+        assertEquals(Set.of("admin"), Set.of(m.servlets().getFirst().servletSecurity().getRolesAllowed()));
+    }
+
+    @Test
+    void metadataCompleteIgnoresServletSecurityToo() throws Exception {
+        var m = merge(HEAD + """
+                 metadata-complete="true">
+                  <servlet><servlet-name>x</servlet-name><servlet-class>%s</servlet-class></servlet>
+                </web-app>""".formatted(Unnamed.class.getName()), AnnotatedComponents.none());
+        assertNull(m.servlets().getFirst().servletSecurity());
     }
 }

@@ -27,6 +27,8 @@ import io.vidocq.foy.internal.dispatcher.ServletDispatcher;
 import io.vidocq.foy.internal.dispatcher.UrlPatternMatcher;
 import io.vidocq.foy.spi.security.AuthenticatedUser;
 import io.vidocq.foy.spi.security.SecurityProvider;
+import io.vidocq.foy.internal.gen.ClassFileDescriptorReader;
+import io.vidocq.foy.spi.gen.WebComponentDescriptor;
 import jakarta.servlet.annotation.HttpConstraint;
 import jakarta.servlet.annotation.ServletSecurity;
 import jakarta.servlet.http.HttpServlet;
@@ -158,7 +160,9 @@ class ServletSecurityEndToEndTest {
         ctx.setSecurityProvider(USERS);
         var bridge = new ChappeServletBridge(
                 new ServletDispatcher(List.of(new ServletDispatcher.Mapping(
-                        UrlPatternMatcher.of(pattern), servlet, "S"))),
+                        UrlPatternMatcher.of(pattern), servlet, "S", true,
+                        ClassFileDescriptorReader.read(servlet.getClass())
+                                .map(WebComponentDescriptor::servletSecurity).orElse(null)))),
                 new FilterRegistry(List.of()), ctx, null, "/");
         var r = TestServerLauncher.start(bridge);
         server = r.server;

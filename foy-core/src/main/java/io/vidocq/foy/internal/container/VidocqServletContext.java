@@ -237,6 +237,31 @@ public final class VidocqServletContext implements ServletContext {
         this.securityProvider = java.util.Objects.requireNonNull(provider);
     }
 
+    private volatile io.vidocq.foy.internal.boot.ComponentFactory componentFactory;
+
+    /** Sets the factory behind {@code createServlet/createFilter/createListener/addListener}. */
+    public void setComponentFactory(io.vidocq.foy.internal.boot.ComponentFactory factory) {
+        this.componentFactory = java.util.Objects.requireNonNull(factory, "factory");
+    }
+
+    /**
+     * The factory creating dynamically requested components; when none was set, a
+     * registry-backed factory over this context's class loader.
+     */
+    public io.vidocq.foy.internal.boot.ComponentFactory componentFactory() {
+        var f = componentFactory;
+        if (f == null) {
+            synchronized (this) {
+                f = componentFactory;
+                if (f == null) {
+                    f = io.vidocq.foy.internal.gen.RegistryComponentFactory.forClassLoader(getClassLoader());
+                    componentFactory = f;
+                }
+            }
+        }
+        return f;
+    }
+
     @Override public String getContextPath() { return contextPath; }
     @Override public ServletContext getContext(String uripath) {
         // Servlet 6.1 §4.8 : le conteneur peut retourner null si cross-context non supporté.
@@ -437,10 +462,7 @@ public final class VidocqServletContext implements ServletContext {
     }
     @Override public <T extends Servlet> T createServlet(Class<T> c) throws jakarta.servlet.ServletException {
         if (programmaticListenerActive) throw programmaticForbidden();
-        try { return c.getDeclaredConstructor().newInstance(); }
-        catch (ReflectiveOperationException e) {
-            throw new jakarta.servlet.ServletException("cannot instantiate servlet " + c.getName(), e);
-        }
+        return componentFactory().newInstance(c);
     }
     @Override public ServletRegistration getServletRegistration(String name) {
         if (programmaticListenerActive) throw programmaticForbidden();
@@ -484,10 +506,7 @@ public final class VidocqServletContext implements ServletContext {
     }
     @Override public <T extends Filter> T createFilter(Class<T> c) throws jakarta.servlet.ServletException {
         if (programmaticListenerActive) throw programmaticForbidden();
-        try { return c.getDeclaredConstructor().newInstance(); }
-        catch (ReflectiveOperationException e) {
-            throw new jakarta.servlet.ServletException("cannot instantiate filter " + c.getName(), e);
-        }
+        return componentFactory().newInstance(c);
     }
     @Override public FilterRegistration getFilterRegistration(String name) {
         if (programmaticListenerActive) throw programmaticForbidden();
@@ -509,10 +528,11 @@ public final class VidocqServletContext implements ServletContext {
     @Override public void addListener(String className) {
         if (programmaticListenerActive) throw programmaticForbidden();
         if (initialized) throw alreadyInitialized();
+        var factory = componentFactory();
         try {
-            Class<?> c = Class.forName(className, true, getClassLoader());
-            addProgrammaticListener((java.util.EventListener) c.getDeclaredConstructor().newInstance());
-        } catch (ReflectiveOperationException e) {
+            Class<?> c = factory.load(className);
+            addProgrammaticListener((java.util.EventListener) factory.newInstance(c));
+        } catch (ClassNotFoundException | jakarta.servlet.ServletException | ClassCastException e) {
             throw new IllegalArgumentException("cannot load listener " + className, e);
         }
     }
@@ -525,8 +545,8 @@ public final class VidocqServletContext implements ServletContext {
         if (programmaticListenerActive) throw programmaticForbidden();
         if (initialized) throw alreadyInitialized();
         try {
-            addProgrammaticListener(listenerClass.getDeclaredConstructor().newInstance());
-        } catch (ReflectiveOperationException e) {
+            addProgrammaticListener(componentFactory().newInstance(listenerClass));
+        } catch (jakarta.servlet.ServletException e) {
             throw new IllegalArgumentException("cannot instantiate " + listenerClass, e);
         }
     }
@@ -545,10 +565,7 @@ public final class VidocqServletContext implements ServletContext {
             throw new IllegalArgumentException(
                     "class " + c.getName() + " does not implement any supported listener interface");
         }
-        try { return c.getDeclaredConstructor().newInstance(); }
-        catch (ReflectiveOperationException e) {
-            throw new jakarta.servlet.ServletException("cannot instantiate listener " + c.getName(), e);
-        }
+        return componentFactory().newInstance(c);
     }
 
     private boolean contextInitializedPhase;
