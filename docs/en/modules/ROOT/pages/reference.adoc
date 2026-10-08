@@ -173,28 +173,73 @@ The `io.vidocq.foy.internal.*` packages are exported to allow advanced integrati
 | Immutable authenticated-user representation (login, roles, attributes).
 |===
 
-== `web.xml` configuration
+== `web.xml` and `web-fragment.xml` coverage
 
-`WebXmlParser` reads exactly this subset of the Servlet 6.1 `WEB-INF/web.xml` (merged with the annotated components per Servlet 6.1 §8.2.3: on a same-name conflict the descriptor wins, and `metadata-complete="true"` ignores annotations):
+`WebXmlParser` reads the Servlet 6.1 `web-app_6_1` schema and the `web-fragment` variant. The root element is checked, DOCTYPE is disallowed, and a parse error names the offending element. Descriptors are merged with the annotated components per Servlet 6.1 §8.2.3: `web.xml` wins on a same-name conflict, a conflict between two fragments fails the deployment, a `url-pattern` claimed by two components fails (§12.2), and `metadata-complete="true"` ignores annotations and fragments. `<init-param>` duplicates keep the first value; `<async-supported>` is tri-state (unset, true, false); `<session-config>/<cookie-config>` merges per sub-element.
 
-* `<display-name>`
-* `<context-param>` (`param-name`/`param-value`) exposed via `ServletContext.getInitParameter`
-* `<servlet>` (`servlet-name`, `servlet-class`, `init-param`, `async-supported`, `load-on-startup`) / `<servlet-mapping>` (`servlet-name`, `url-pattern`)
-* `<filter>` (`filter-name`, `filter-class`, `init-param`) / `<filter-mapping>` (`filter-name`, `url-pattern`, `servlet-name`, `dispatcher` — defaults to `REQUEST`)
-* `<listener>` (`listener-class`)
-* `<error-page>` (`error-code`, `exception-type`, `location`)
-* `<session-config>` / `<session-timeout>` (timeout only — no cookie config)
-* `<locale-encoding-mapping-list>` / `<locale-encoding-mapping>` (`locale`, `encoding`)
-* the `version` and `metadata-complete` attributes of `<web-app>`
+[cols="2,1,3",options="header"]
+|===
+| Element | Status | Notes
 
-Everything else is **not parsed** — notably `<security-constraint>`, `<login-config>`, `<security-role>`, `<welcome-file-list>`, `<multipart-config>`, `<mime-mapping>` and `<jsp-config>`.
+| `<display-name>`, `<context-param>`, `<listener>`, `<error-page>`, `<locale-encoding-mapping-list>`
+| applied
+|
 
-[IMPORTANT]
-====
-`META-INF/web-fragment.xml` scanning is **not implemented yet** (`metadata-complete` is) — the top known TCK gap (81 % of failures, the whole `pluggability.*` family). See xref:tck.adoc[TCK status].
-====
+| `<servlet>`, `<servlet-mapping>` (`init-param`, `load-on-startup`, `async-supported`, `enabled`, `multipart-config`)
+| applied
+| `<enabled>false</enabled>` leaves the servlet unserved; `web.xml` multipart-config wins over `@MultipartConfig`
 
-== Servlet 6.1 API comparison
+| `<servlet>` with `<jsp-file>`
+| skipped
+| no JSP engine: logged at `WARNING`, the rest of the deployment proceeds
+
+| `<run-as>`
+| parsed
+| not applied
+
+| `<filter>`, `<filter-mapping>` (`dispatcher`, `servlet-name`, `url-pattern`)
+| applied
+| `async-supported` is tri-state
+
+| `<session-config>` (`session-timeout`, `cookie-config`, `tracking-mode`)
+| applied
+| the session cookie follows `SessionCookieConfig`; tracking modes reach `getEffectiveSessionTrackingModes()`
+
+| `<mime-mapping>`
+| applied
+| feeds `ServletContext.getMimeType`
+
+| `<request-character-encoding>`, `<response-character-encoding>`
+| applied
+| `ServletContext` getters return `null` when unset
+
+| `<default-context-path>`
+| applied
+| used when the builder sets no context path
+
+| `<welcome-file-list>`
+| parsed
+| exposed on the model; consumed by the default servlet (not implemented yet)
+
+| `<deny-uncovered-http-methods>`
+| parsed
+| enforced with the security phase
+
+| `<security-constraint>`, `<login-config>`, `<security-role>`
+| parsed
+| enforced with the security phase
+
+| `<name>`, `<ordering>`, `<absolute-ordering>`
+| applied
+| fragment name and §8.2.2 ordering
+
+| `<jsp-config>`, `<resource-ref>`, `<env-entry>` and the other Jakarta EE environment elements
+| ignored
+|===
+
+The `version` and `metadata-complete` attributes of `<web-app>` and `<web-fragment>` are honoured.
+
+== Servlet 6.1 API comparison== Servlet 6.1 API comparison
 
 [cols="1,1,3",options="header"]
 |===
@@ -209,8 +254,8 @@ Everything else is **not parsed** — notably `<security-constraint>`, `<login-c
 | Cross-context (`getContext`) **implemented** via `CrossContextRegistry` (strict contextPath match on contexts deployed in the same JVM).
 
 | Web fragments (`web-fragment.xml`)
-| ❌
-| **Not implemented yet** — the top TCK gap (81 % of failures). See xref:tck.adoc[TCK].
+| ✅
+| **Implemented** — discovery, §8.2.2 ordering and §8.2.3 merge; see <<web-xml-and-web-fragment-xml-coverage>>.
 
 | Async (`AsyncContext`)
 | ⚠️

@@ -122,7 +122,7 @@ The deployment lifecycle lives in `foy-core` (`io.vidocq.foy.internal.boot`), no
 ....
 stateDiagram-v2
     [*] --> Discovery
-    Discovery: WebAppDiscovery scans the Vauban BeanManager\nWebXmlParser reads WEB-INF/web.xml (subset)
+    Discovery: WebAppDiscovery scans the Vauban BeanManager\nWebXmlParser reads web.xml, ApplicationSources the fragments and initializers
     Discovery --> Modeled: WebAppModel + DescriptorMerger
     Modeled --> Deployed: WebAppDeployer.deploy(model, options) — contextInitialized, load-on-startup
     Deployed --> Mounted: Router.Builder.mount(mountPrefix, handler)
@@ -133,6 +133,18 @@ stateDiagram-v2
 ....
 
 `FoyChappeBoot.builder()...build()` performs discovery, modelling and deployment in one call and returns an `Optional<FoyChappeBoot.Mounted>`. `Mounted` is `AutoCloseable`; the caller closes it when the application stops (typically after the server). The TCK harness uses the same `WebAppDeployer` and only adapts Arquillian archives to a `WebAppModel`.
+
+== Discovery and deployment pipeline
+
+`FoyChappeBoot.Builder.build()` runs these stages in order:
+
+. *Discovery*: `ApplicationSources` walks `ClassLoader.getResources("META-INF/web-fragment.xml")` and the `ServletContainerInitializer` `ServiceLoader`. Each fragment, initializer and annotated class is attributed to its root through `Fragment.sourceKey` (the jar file or the directory), so a jar found twice counts once. The `META-INF` resources are not encapsulated by Java Modules, which makes the class-loader lookup valid on the module path.
+. *Ordering*: `FragmentOrderer` applies §8.2.2, absolute or relative, with `<others/>` meaning the fragments not named by the declaring fragment; cycles and duplicate fragment names fail the deployment. `ApplicationSources.ordering` derives from it the roots whose initializers are retained (§8.2.4).
+. *Fragment merge*: `FragmentMerger` folds the ordered fragments into the `web.xml` data (`web.xml` wins, conflicts between fragments fail, `url-pattern` clashes fail).
+. *Annotation merge*: `DescriptorMerger` merges the annotated components (the ones of excluded or `metadata-complete` roots are dropped) into the result.
+. *Deploy*: `WebAppDeployer` runs listeners, then the retained initializers (each with its `@HandlesTypes` classes, resolved from the generated class index with a Class-File scan fallback that reads runtime-retained annotations on types and members), dynamic registrations and `load-on-startup`.
+
+The `async-supported` flag of the chain is recomputed on forward, include, async and error dispatch. The TCK harness takes the same route: it builds fragments from `WEB-INF/lib` and deploys through the product merge.
 
 == CDI integration through Vauban
 
@@ -206,7 +218,7 @@ The guard covers `foy-core` only: `foy-cdi-vauban`'s `CdiWebComponentsCreator` a
 
 == Known limits
 
-* Web fragments (`META-INF/web-fragment.xml`): scanning **not implemented** — the top TCK gap (81 % of failures), see xref:tck.adoc[].
+* No default servlet yet (welcome files, static content over HTTP); security constraints are parsed, not enforced; `WEB-INF/lib` nested jars of a WAR are not opened; see xref:tck.adoc[].
 * Cross-context dispatch (`ServletContext.getContext`): **implemented** via `CrossContextRegistry` (strict contextPath match on the contexts deployed in the same JVM).
 * Multipart: fully buffered in memory, no streaming parse.
 * WebSocket Servlet 6.1: not implemented (planned, no date).

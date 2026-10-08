@@ -128,6 +128,47 @@ public class Router extends HttpServlet {
 
 `ForwardedRequest` and `IncludedRequest` inject the standard attributes (`jakarta.servlet.forward.*`, `jakarta.servlet.include.*`) and reuse the Chappe routing.
 
+== Native layout: descriptors, fragments and resources
+
+A native Foy application has no WAR: it is a set of jars (or directories) on the class path or module path. Each WAR concept has a native counterpart:
+
+[cols="2,3",options="header"]
+|===
+| WAR concept | Native Foy
+
+| `WEB-INF/classes`
+| the application classes (processed by `foy-processor`)
+
+| `WEB-INF/lib/*.jar`
+| the Maven dependencies on the class path or module path
+
+| `WEB-INF/web.xml`
+| `WEB-INF/web.xml`, else `META-INF/web.xml`, looked up through the class loader (or `Builder.webXml(InputStream)`, which wins)
+
+| `WEB-INF/lib/x.jar!/META-INF/web-fragment.xml`
+| `META-INF/web-fragment.xml` in any jar or directory root visible to the class loader
+
+| static content at the WAR root
+| `META-INF/resources/` in any jar or directory root
+
+| `ServletContainerInitializer`
+| `META-INF/services/jakarta.servlet.ServletContainerInitializer`, or `provides ... with` in a `module-info.java`; found through `ServiceLoader`
+|===
+
+Discovery is on by default and is driven by `FoyChappeBoot.builder()`:
+
+* `discoverPluggability(false)` turns off the discovery of both the fragments and the initializers, for embedders that assemble the application themselves.
+* `applicationRoot(URL...)` declares jars or directories as the application itself: their initializers always run, whatever the absolute ordering. A root holding a `web.xml` without a fragment, and the roots of the CDI-discovered annotated components, are application roots without being declared.
+* `contextPath(...)` wins; otherwise the merged `<default-context-path>` applies, else `/`.
+* `resourceProvider(...)` replaces the default `ClassPathResourceProvider`, which serves `META-INF/resources/` of the application roots, then of the ordered fragments' jars, then of any other root. It rejects empty and dot segments, never follows a symbolic link out of the root, and never serves `WEB-INF` or `META-INF`.
+
+Fragments are ordered per Servlet 6.1 §8.2.2: an `<absolute-ordering>` in `web.xml` replaces any `<ordering>` in the fragments; without it, `<before>`/`<after>` constraints and `<others/>` apply. Initializers run in `ServiceLoader` order, restricted to the roots the ordering retains (§8.2.4). A jar excluded by an absolute ordering contributes neither its fragment, nor its annotations, nor its initializers.
+
+[NOTE]
+====
+Static content is exposed through `ServletContext.getResource*` only. There is no default servlet yet, so welcome files and plain static serving over HTTP arrive with the request/response phase of the roadmap. Security constraints are parsed but not enforced yet.
+====
+
 == Virtual hosts and WAR deployment
 
 Foy can be started:
@@ -135,7 +176,7 @@ Foy can be started:
 * programmatically through `FoyChappeBoot.builder()` — one container per contextPath;
 * by mounting multiple `Mounted` handlers on the same Chappe `Router` (one `Router.Builder.mount(prefix, handler)` per contextPath) to serve several applications on the same connector.
 
-WAR deployment is **not supported**: Foy boots embedded, programmatically. (The Arquillian container in `foy-tck` deploys the TCK wars, but it is test harness machinery, not a product feature.)
+Runtime WAR deployment is **not supported**: Foy boots embedded, programmatically, from the native layout above. (The Arquillian container in `foy-tck` deploys the TCK wars, but it is test harness machinery, not a product feature.)
 
 == Build-time code generation
 

@@ -48,12 +48,9 @@ Foy **interprets those bytes**: it turns an HTTP connection into an `HttpServlet
 . reading of **annotations** (`@WebServlet`, `@WebFilter`, `@WebListener`, `@MultipartConfig`) — resolved at compile time by an APT, exposed through the Vauban `BeanManager`; `WebAppDiscovery` performs that aggregation at `FoyChappeBoot` startup;
 . reading of the **descriptor** (`WEB-INF/web.xml`, supported subset — see xref:reference.adoc[Reference]) via `WebXmlParser`, producing a `WebAppDescriptor`; `DescriptorMerger` merges it with the annotation-discovered components following Servlet 6.1 §8.2.3 (the descriptor wins on a same-name conflict; `metadata-complete="true"` ignores annotations).
 
-[IMPORTANT]
-====
-`metadata-complete` and the §8.2.3 merge are implemented; `META-INF/web-fragment.xml` scanning is **not implemented yet**. This is the top known gap (81 % of the current TCK failures) — see xref:tck.adoc[TCK status].
-====
+Web fragments (`META-INF/web-fragment.xml`) and `ServletContainerInitializer`s of every jar on the class path or module path are discovered and ordered per §8.2.2 before the merge; see xref:usage.adoc#native-layout-descriptors-fragments-and-resources[the native layout] and xref:internals.adoc#discovery-and-deployment-pipeline[the pipeline].
 
-No runtime classpath scan. All Servlet beans are already known to Vauban at compile time.
+Annotated components are never found by a class scan: they are already known to Vauban at compile time. Only the descriptors and initializers are discovered at start-up.
 
 == Chappe ↔ Servlet bridge
 

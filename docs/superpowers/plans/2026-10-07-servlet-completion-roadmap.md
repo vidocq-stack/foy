@@ -216,5 +216,24 @@ Phase 2 shipped `foy-processor` (build-time, `java.compiler` only), the four-tie
 - Stereotype-only classes are not indexed by vauban (https://codefloe.com/Vidocq/vauban/issues/132, BUG-20261008-04).
 
 **Residual Phase 2 minors:**
-- The async flag is not recomputed on forward / include / dispatch.
-- Dynamic `addServlet(name, "java.lang.Object")` fails with a raw `ClassCastException` instead of a descriptive error.
+- (Fixed in Phase 3) The async flag is now recomputed on forward, include, async and error dispatch.
+- (Fixed in Phase 3, Task 3.0) Dynamic `addServlet(name, "java.lang.Object")` now fails with a descriptive error.
+
+## Phase 3 exit / follow-ups (2026-10-09)
+
+Phase 3 shipped `web-fragment.xml` parsing, the §8.2.2 `FragmentOrderer`, the §8.2.3 `FragmentMerger`, native discovery of fragments and `ServletContainerInitializer`s (`ApplicationSources`, `Builder.discoverPluggability`, `Builder.applicationRoot`), `META-INF/resources` through `ClassPathResourceProvider`, `@HandlesTypes` with a class-file scan fallback, and the remaining `web-app_6_1` elements. Tracked here, no external issue or PR opened.
+
+**Full TCK:** 1587/1714 (Phase 2: 928), zero per-class regression, 63 classes improved, every `tiers=Stats` line `reflection=0`. Per family: `api.*` 821/859, `pluggability.*` 639/646 (was 5), `spec.*` 127/207 (was 102), `compat.*` 0/2.
+
+**Residual `pluggability.*` failures (7):** `filterrequestdispatcher` (2, filter invoked twice), `httpservletresponse`, `httpservletresponse30`, `httpservletresponsewrapper30`, `sessioncookieconfig` (1 each) and `fragment.FragmentTests` (1). Except the last, they are twins of `api.*` failures and fall to Phase 4 (request/response, default servlet) or Phase 6 (security).
+
+**Needed by Phase 4:**
+- A default servlet: welcome files, static content from `META-INF/resources` over HTTP (the resources are only reachable through `ServletContext.getResource*` today).
+- Fix the filter double invocation when a filter is mapped by URL pattern and by servlet name (BUG-20261008-02).
+
+**Phase 6:** enforcement of `security-constraint`, `login-config`, `security-role`, `deny-uncovered-http-methods` and `run-as` (all parsed in Phase 3).
+
+**Deferred minors:**
+- The async flag is computed twice on some dispatch paths (duplicate computation to factor out).
+- The `Secure` cookie flag is not set for secure requests by the session cookie.
+- `WEB-INF/lib` nested-jar URLs (fragments inside jars of a WAR) belong to Phase 3b.

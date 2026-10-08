@@ -105,10 +105,7 @@ Foy supports annotations and a `web.xml` subset:
 * `@WebServlet`, `@WebFilter`, `@WebListener`, `@MultipartConfig`: discovered at compile time by APT, exposed through the Vauban `BeanManager`.
 * `WEB-INF/web.xml`: parsed by `WebXmlParser` (supported element subset — see xref:reference.adoc[Reference]) and merged with the annotated components by `DescriptorMerger` (Servlet 6.1 §8.2.3): on a same-name conflict the descriptor wins, and `metadata-complete="true"` ignores annotations.
 
-[IMPORTANT]
-====
-`metadata-complete` and the §8.2.3 merge of `web.xml` with annotations are implemented, but `META-INF/web-fragment.xml` scanning is **not implemented yet**. This is the top known gap: it alone accounts for 81 % of the current TCK failures (the whole `pluggability.*` family) — see xref:tck.adoc[TCK status].
-====
+Web fragments (`META-INF/web-fragment.xml`) and `ServletContainerInitializer`s are discovered on the class path or module path and ordered per §8.2.2 — see xref:usage.adoc#native-layout-descriptors-fragments-and-resources[the native layout].
 
 == Wiring with Chappe
 

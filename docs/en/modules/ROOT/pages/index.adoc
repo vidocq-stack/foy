@@ -23,7 +23,7 @@ The metaphor is direct: **Foy inherits the Chappe transport**. Just as Alphonse 
 | Java | 25 (LTS), virtual threads
 | Java modules | `io.vidocq.foy.api`, `io.vidocq.foy.core`, `io.vidocq.foy.chappe`, `io.vidocq.foy.cdi.vauban`
 | Runtime dependencies | `jakarta.servlet-api`, `jakarta.cdi-api` (static), {repo-chappe} (transport), {repo-vauban} (CDI)
-| TCK | ⚠️ baseline — **95.6 %** of the official Jakarta Servlet 6.1 TCK on the `api.*` family (core engine), **53.7 %** raw over the full suite. 81 % of the remaining errors come from a single missing feature: web-fragment scanning. Details xref:tck.adoc[here].
+| TCK | ⚠️ baseline — **92.6 %** (1587/1714) of the official Jakarta Servlet 6.1 TCK over the full suite: `api.*` 821/859, `pluggability.*` 639/646, `spec.*` 127/207. The remaining errors are mostly security, request dispatching and server push. Details xref:tck.adoc[here].
 |===
 
 == Position in the ecosystem

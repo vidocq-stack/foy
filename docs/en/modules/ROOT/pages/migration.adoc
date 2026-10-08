@@ -6,7 +6,7 @@ Foy honours the Jakarta Servlet 6.1 spec to the letter — your `web.xml`, your 
 
 [CAUTION]
 ====
-Foy is at **{project-version}** and the official TCK passes **95.6 %** on the `api.*` family but only **53.7 %** raw over the full suite — 81 % of the errors come from the missing web-fragment scanning (see xref:tck.adoc[TCK status] for the full-suite picture). Migration is not recommended in production until the listed gaps are closed.
+Foy is at **{project-version}** and the official TCK passes **92.6 %** (1587/1714) over the full suite (see xref:tck.adoc[TCK status]). Migration is not recommended in production until the listed gaps are closed.
 ====
 
 == From Tomcat
@@ -28,8 +28,8 @@ Foy is at **{project-version}** and the official TCK passes **95.6 %** on the `a
 | Detected at compile time by APT — no runtime scan.
 
 | `META-INF/web-fragment.xml`
-| ❌ **Not implemented yet**
-| Web-fragment scanning is the top known gap (81 % of TCK failures) — see xref:tck.adoc[TCK].
+| ✅ Implemented
+| Discovered on the class path or module path, ordered per §8.2.2 and merged per §8.2.3 — see xref:usage.adoc#native-layout-descriptors-fragments-and-resources[the native layout]. `WEB-INF/lib` jars of a WAR are not opened (no runtime WAR deployment).
 
 | Coyote (HTTP/1.1, HTTP/2)
 | xref:chappe::index.adoc[Chappe]
@@ -100,7 +100,8 @@ No real-world migration has been documented yet — the Tomcat and Jetty tables 
 
 == Known gaps
 
-* **Web fragments (`META-INF/web-fragment.xml`)** — scanning not implemented yet; the top known gap, 81 % of TCK failures. See xref:tck.adoc[TCK].
+* **Default servlet** — welcome files and static content over HTTP are not served yet (static resources are reachable through `ServletContext.getResource*`).
+* **Security enforcement** — `<security-constraint>` and `<login-config>` are parsed but not enforced yet.
 * **WebSocket Servlet 6.1 / Jakarta WebSocket 2.2** — not implemented (planned, no date).
 * **JSP** — not supported, not planned. For dynamic pages use xref:cassini::index.adoc[Cassini] (REST) or HTML-emitting Servlets.
 * **Form-based / Digest authentication** — not implemented.
