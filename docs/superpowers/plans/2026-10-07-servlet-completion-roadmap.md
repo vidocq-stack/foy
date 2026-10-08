@@ -210,10 +210,10 @@ Phase 2 shipped `foy-processor` (build-time, `java.compiler` only), the four-tie
 - `foy-maven-plugin:generate` for external jars (classes that were never run through `foy-processor`; today they fall to the Class-File tier).
 - A `vidocq` PR adding `foy-processor` and `foy-cdi-vauban` to `vidocq-runtime-core-codegen`.
 
-**Known vauban gaps (documented, issues not opened):**
-- `Class[]` parameters of a synthetic bean are dropped, so `CdiWebComponents` carries one comma-joined `String`.
-- `@Registration` runs before `@Enhancement` takes effect, so the scope added by `FoyWebExtension` is not seen by registration.
-- Stereotype-only classes are not indexed by vauban.
+**Known vauban gaps (filed as Vidocq/vauban#130, #131, #132; recorded in vauban `BUG.md` as BUG-20261008-02..04):**
+- `Class[]` parameters of a synthetic bean are dropped, so `CdiWebComponents` carries one comma-joined `String` (https://codefloe.com/Vidocq/vauban/issues/130, BUG-20261008-02).
+- `@Registration` runs before `@Enhancement` takes effect, so the scope added by `FoyWebExtension` is not seen by registration (https://codefloe.com/Vidocq/vauban/issues/131, BUG-20261008-03).
+- Stereotype-only classes are not indexed by vauban (https://codefloe.com/Vidocq/vauban/issues/132, BUG-20261008-04).
 
 **Residual Phase 2 minors:**
 - The async flag is not recomputed on forward / include / dispatch.

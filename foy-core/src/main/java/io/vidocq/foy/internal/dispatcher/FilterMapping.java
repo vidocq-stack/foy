@@ -37,10 +37,10 @@ public record FilterMapping(UrlPatternMatcher matcher,
                             Set<DispatcherType> dispatcherTypes,
                             boolean asyncSupported) {
 
-    /** A mapping of an async-capable filter. */
+    /** A mapping of a filter that does not declare async support (the servlet default). */
     public FilterMapping(UrlPatternMatcher matcher, Filter filter, String filterName,
                          Set<DispatcherType> dispatcherTypes) {
-        this(matcher, filter, filterName, dispatcherTypes, true);
+        this(matcher, filter, filterName, dispatcherTypes, false);
     }
 
     public FilterMapping {

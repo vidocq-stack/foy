@@ -497,4 +497,20 @@ class WebAppDeployerEndToEndTest {
         assertEquals(404, get("/by-class").statusCode());
         assertEquals("ok:null", get("/ok").body());
     }
+
+    @Test
+    void dynamicRegistrationOfWrongTypeIsSkippedWithOneWarning() throws Exception {
+        ServletContainerInitializer sci = (classes, ctx) -> {
+            ctx.addServlet("bad", "java.lang.Object").addMapping("/bad");
+            ctx.addServlet("good", Recording.class.getName()).addMapping("/good");
+        };
+        try (var log = io.vidocq.foy.internal.LogCapture.of(WebAppDeployer.class.getName())) {
+            deploy(WebAppModel.builder("/").initializer(sci).build());
+            assertEquals(1, log.warnings().size(), log.warnings().toString());
+            var w = log.warnings().get(0);
+            assertTrue(w.contains("bad") && w.contains("java.lang.Object"), w);
+        }
+        assertEquals(200, get("/good").statusCode());
+        assertEquals(404, get("/bad").statusCode());
+    }
 }

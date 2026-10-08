@@ -293,6 +293,10 @@ public final class WebAppDeployer {
             // Class loader isolation: ignore classes absent from the WAR.
             if (!factory.isVisible(c)) return null;
             return factory.newInstance(c);
+        } catch (ClassCastException ex) {
+            LOG.log(System.Logger.Level.WARNING, "dynamic " + kind + " '" + name + "' skipped: class "
+                    + className + " is not a " + base.getName());
+            return null;
         } catch (ClassNotFoundException | ServletException ex) {
             LOG.log(System.Logger.Level.WARNING, "cannot instantiate dynamic " + kind + " " + name, ex);
             return null;
