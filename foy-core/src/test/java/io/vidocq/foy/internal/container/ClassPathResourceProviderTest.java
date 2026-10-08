@@ -166,4 +166,24 @@ class ClassPathResourceProviderTest {
         var p = new ClassPathResourceProvider(loader(j), List.of(j.toUri().toURL()));
         assertEquals("w", read(p.toUrl("/WEB-INF/x.txt")));
     }
+
+    @Test
+    void emptySegmentsCannotEscapeAnExplodedRoot(@TempDir Path dir) throws Exception {
+        Path exploded = dir.resolve("exploded");
+        Files.createDirectories(exploded.resolve("META-INF/resources/a"));
+        Files.writeString(exploded.resolve("META-INF/resources/a/x.txt"), "X");
+        Path secret = dir.resolve("secret.txt");
+        Files.writeString(secret, "SECRET");
+        var p = new ClassPathResourceProvider(loader(), List.of(exploded.toUri().toURL()));
+        String abs = secret.toString();
+        for (String bad : new String[] {"/" + abs, "//", "///", "/a//x.txt", "/a//", "//a/x.txt"}) {
+            assertNull(p.toUrl(bad), bad);
+            assertNull(p.openStream(bad), bad);
+            assertNull(p.listPaths(bad), bad);
+        }
+        assertEquals("X", read(p.openStream("/a/x.txt")));
+        assertEquals(Set.of("/a/x.txt"), p.listPaths("/a/"));
+        assertFalse(ClassPathResourceProvider.isServable("//x"));
+        assertFalse(ClassPathResourceProvider.isServable("//"));
+    }
 }

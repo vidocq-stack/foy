@@ -32,6 +32,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Enumeration;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -39,6 +40,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.TreeSet;
 import java.util.jar.JarEntry;
 import java.util.jar.JarFile;
@@ -54,23 +56,35 @@ import java.util.stream.Stream;
  * the class loader that holds the resource, in class-loader order. The first root that holds a
  * path wins for {@link #toUrl} and {@link #openStream}; {@link #listPaths} merges all of them.</p>
  *
- * <p>Ordered roots are read directly (a jar entry list or a directory listing), so a jar without
- * directory entries is fine. Other roots are found with
- * {@link ClassLoader#getResources(String) getResources("META-INF/resources/" + path)}: a jar that
- * lacks the directory entry is then only reachable for plain files. Roots nested in another
- * archive ({@code jar:file:/a.war!/lib/b.jar!/...}) are not supported here.</p>
+ * <p>Jars are read through an entry-name index built once per jar (lazily, thread-safe), so a
+ * jar without directory entries is fine and a lookup never rescans it; the jar is reopened only
+ * to stream a file. Other roots are found with
+ * {@link ClassLoader#getResources(String) getResources("META-INF/resources")} and
+ * {@code getResources("META-INF/resources/" + path)}. Roots nested in another archive
+ * ({@code jar:file:/a.war!/lib/b.jar!/...}) are not supported here. The index is not refreshed
+ * if a jar changes on disk.</p>
  *
- * <p>Paths holding a {@code ..} segment, a backslash or a NUL character resolve to nothing.
+ * <p><b>Path safety.</b> Paths holding a {@code ..} segment, an empty segment ({@code //}), a
+ * backslash or a NUL character resolve to nothing, and a resolved directory path must stay
+ * under its root. Callers must <em>not</em> percent-decode a path before passing it here, or
+ * an encoded {@code %2e%2e} or {@code %5c} would turn into a path this class then rejects or,
+ * worse, a different resource than the one the client named.
  * {@code getResource} may reach the {@code WEB-INF/} and {@code META-INF/} subtrees of the
  * resource root; the default servlet must additionally check {@link #isServable}.</p>
+ *
+ * <p>The {@code jar:} URLs returned by {@link #toUrl} use the JDK's default URL connection
+ * caching when opened with {@code URL.openStream()} (the jar stays open in the JDK cache);
+ * {@link #openStream} does not use that cache and releases the jar when the stream is closed.</p>
  */
 public final class ClassPathResourceProvider implements ResourceProvider {
 
     private static final String ROOT = "META-INF/resources/";
+    private static final String ROOT_NAME = "META-INF/resources";
 
     private final ClassLoader loader;
     private final List<Loc.Root> ordered = new ArrayList<>();
     private final Set<String> orderedKeys = new HashSet<>();
+    private final Map<Path, JarIndex> indexes = new ConcurrentHashMap<>();
 
     /**
      * @param loader      class loader whose other {@code META-INF/resources/} roots come last
@@ -82,8 +96,14 @@ public final class ClassPathResourceProvider implements ResourceProvider {
             String key = Fragment.sourceKey(u);
             if (!orderedKeys.add(key)) continue;
             Path p = pathOf(key);
-            if (p != null) ordered.add(Files.isDirectory(p) ? new Loc.Dir(p.resolve(ROOT)) : new Loc.Jar(p));
+            if (p != null) {
+                ordered.add(Files.isDirectory(p) ? new Loc.Dir(p.resolve(ROOT)) : new Loc.Jar(index(p)));
+            }
         }
+    }
+
+    private JarIndex index(Path jar) {
+        return indexes.computeIfAbsent(jar.toAbsolutePath().normalize(), JarIndex::new);
     }
 
     /**
@@ -119,53 +139,56 @@ public final class ClassPathResourceProvider implements ResourceProvider {
 
     @Override public URL toUrl(String path) {
         if (!safe(path)) return null;
-        List<Loc> found = locate(path.substring(1));
-        return found.isEmpty() ? null : found.get(0).url();
+        for (Loc loc : locate(path.substring(1))) {
+            URL url = loc.url();
+            if (url != null) return url;
+        }
+        return null;
     }
 
     private static boolean safe(String path) {
         if (path == null || !path.startsWith("/")) return false;
         if (path.indexOf('\\') >= 0 || path.indexOf('\0') >= 0) return false;
-        for (String segment : path.split("/", -1)) if (segment.equals("..")) return false;
+        String[] segments = path.split("/", -1);
+        for (int i = 1; i < segments.length; i++) {
+            String segment = segments[i];
+            if (segment.equals("..")) return false;
+            if (segment.isEmpty() && i != segments.length - 1) return false;
+        }
         return true;
     }
 
     /** Every location holding {@code rel} (no leading slash), in priority order. */
     private List<Loc> locate(String rel) {
         Map<String, Loc> out = new LinkedHashMap<>();
-        for (Loc.Root root : ordered) {
-            Loc loc = root.at(rel);
-            if (loc.exists()) out.putIfAbsent(loc.url().toString(), loc);
-        }
-        try {
-            // Roots that declare META-INF/resources/ itself are read like the ordered ones: no
-            // directory entry is needed below it.
-            Enumeration<URL> roots = loader.getResources(ROOT.substring(0, ROOT.length() - 1));
-            while (roots.hasMoreElements()) {
-                URL rootUrl = roots.nextElement();
-                if (orderedKeys.contains(Fragment.sourceKey(rootOf(rootUrl, ROOT.substring(0, ROOT.length() - 1))))) {
-                    continue;
-                }
-                Loc base = Loc.of(rootUrl);
-                Loc loc = base == null ? null : base.resolve(rel);
-                if (loc != null && loc.exists()) out.putIfAbsent(loc.url().toString(), loc);
-            }
-        } catch (IOException e) {
-            // unreadable roots are skipped
-        }
+        for (Loc.Root root : ordered) add(out, root.at(rel));
+        // Roots that declare META-INF/resources/ itself are read like the ordered ones: no
+        // directory entry is needed below it.
+        collect(ROOT_NAME, out, base -> base.resolve(rel));
         String name = ROOT + (rel.endsWith("/") ? rel.substring(0, rel.length() - 1) : rel);
+        collect(name, out, loc -> loc);
+        return new ArrayList<>(out.values());
+    }
+
+    private static void add(Map<String, Loc> out, Loc loc) {
+        if (loc == null || !loc.exists()) return;
+        URL url = loc.url();
+        if (url != null) out.putIfAbsent(url.toString(), loc);
+    }
+
+    /** Adds the class-loader resources {@code name} outside the ordered roots, mapped by {@code f}. */
+    private void collect(String name, Map<String, Loc> out, java.util.function.UnaryOperator<Loc> f) {
         try {
             Enumeration<URL> urls = loader.getResources(name);
             while (urls.hasMoreElements()) {
                 URL url = urls.nextElement();
                 if (orderedKeys.contains(Fragment.sourceKey(rootOf(url, name)))) continue;
-                Loc loc = Loc.of(url);
-                if (loc != null && loc.exists()) out.putIfAbsent(loc.url().toString(), loc);
+                Loc loc = Loc.of(url, this::index);
+                if (loc != null) add(out, f.apply(loc));
             }
         } catch (IOException e) {
             // unreadable roots are skipped
         }
-        return new ArrayList<>(out.values());
     }
 
     /** The root URL (jar or directory) a resource URL {@code name} was found under. */
@@ -188,6 +211,64 @@ public final class ClassPathResourceProvider implements ResourceProvider {
         }
     }
 
+    /** Immutable entry-name index of a jar, built on first use. */
+    private static final class JarIndex {
+        private final Path jar;
+        private volatile Data data;
+
+        private record Data(Set<String> files, Map<String, TreeSet<String>> children) {}
+
+        JarIndex(Path jar) { this.jar = jar; }
+
+        private Data data() {
+            Data d = data;
+            if (d == null) {
+                synchronized (this) {
+                    d = data;
+                    if (d == null) data = d = build();
+                }
+            }
+            return d;
+        }
+
+        private Data build() {
+            Set<String> files = new HashSet<>();
+            Map<String, TreeSet<String>> children = new HashMap<>();
+            try (JarFile f = new JarFile(jar.toFile())) {
+                f.stream().forEach(e -> {
+                    String name = e.getName();
+                    boolean dir = name.endsWith("/");
+                    String trimmed = dir ? name.substring(0, name.length() - 1) : name;
+                    if (trimmed.isEmpty()) return;
+                    if (!dir) files.add(trimmed);
+                    String child = trimmed;
+                    boolean childIsDir = dir;
+                    while (true) {
+                        int slash = child.lastIndexOf('/');
+                        String parent = slash < 0 ? "" : child.substring(0, slash);
+                        children.computeIfAbsent(parent, k -> new TreeSet<>())
+                                .add(child.substring(slash + 1) + (childIsDir ? "/" : ""));
+                        if (slash < 0) break;
+                        child = parent;
+                        childIsDir = true;
+                    }
+                });
+            } catch (IOException e) {
+                // unreadable jar: empty
+            }
+            // a name that is both a file and a directory prefix is listed as a directory
+            Map<String, TreeSet<String>> frozen = new HashMap<>(children);
+            return new Data(Set.copyOf(files), frozen);
+        }
+
+        boolean isFile(String entry) { return data().files().contains(entry); }
+        boolean isDirectory(String entry) { return data().children().containsKey(entry); }
+        List<String> children(String entry) {
+            TreeSet<String> c = data().children().get(entry);
+            return c == null ? List.of() : List.copyOf(c);
+        }
+    }
+
     /** A file or directory of a {@code META-INF/resources/} tree, on disk or inside a jar. */
     private sealed interface Loc {
         boolean exists();
@@ -195,6 +276,7 @@ public final class ClassPathResourceProvider implements ResourceProvider {
         boolean isFile();
         List<String> children();
         InputStream open() throws IOException;
+        /** The URL of this location, {@code null} if it cannot be expressed. */
         URL url();
         /** The location {@code rel} (relative, no leading slash) below this directory. */
         Loc resolve(String rel);
@@ -204,7 +286,7 @@ public final class ClassPathResourceProvider implements ResourceProvider {
             Loc at(String rel);
         }
 
-        static Loc of(URL url) {
+        static Loc of(URL url, java.util.function.Function<Path, JarIndex> indexes) {
             String s = url.toString();
             try {
                 if (s.startsWith("jar:")) {
@@ -213,9 +295,13 @@ public final class ClassPathResourceProvider implements ResourceProvider {
                     Path jar = pathOf(Fragment.sourceKey(new URI(s.substring(4, bang)).toURL()));
                     if (jar == null) return null;
                     String entry = new URI(s.substring(bang + 2)).getPath();
-                    return new JarLoc(jar, entry.endsWith("/") ? entry.substring(0, entry.length() - 1) : entry);
+                    return new JarLoc(indexes.apply(jar),
+                            entry.endsWith("/") ? entry.substring(0, entry.length() - 1) : entry);
                 }
-                if (s.startsWith("file:")) return new DirLoc(Path.of(url.toURI()));
+                if (s.startsWith("file:")) {
+                    Path p = Path.of(url.toURI()).normalize();
+                    return new DirLoc(p, p);
+                }
             } catch (URISyntaxException | java.net.MalformedURLException | IllegalArgumentException e) {
                 // not a location we can read
             }
@@ -223,24 +309,37 @@ public final class ClassPathResourceProvider implements ResourceProvider {
         }
 
         record Dir(Path base) implements Root {
-            @Override public Loc at(String rel) { return new DirLoc(base).resolve(rel); }
+            @Override public Loc at(String rel) { return new DirLoc(base.normalize(), base.normalize()).resolve(rel); }
         }
 
-        record Jar(Path jar) implements Root {
-            @Override public Loc at(String rel) {
-                return new JarLoc(jar, ROOT.substring(0, ROOT.length() - 1)).resolve(rel);
-            }
+        record Jar(JarIndex index) implements Root {
+            @Override public Loc at(String rel) { return new JarLoc(index, ROOT_NAME).resolve(rel); }
         }
     }
 
-    private record DirLoc(Path path) implements Loc {
-        @Override public Loc resolve(String rel) { return rel.isEmpty() ? this : new DirLoc(path.resolve(rel)); }
+    private record Missing() implements Loc {
+        @Override public boolean exists() { return false; }
+        @Override public boolean isDirectory() { return false; }
+        @Override public boolean isFile() { return false; }
+        @Override public List<String> children() { return List.of(); }
+        @Override public InputStream open() throws IOException { throw new IOException("missing"); }
+        @Override public URL url() { return null; }
+        @Override public Loc resolve(String rel) { return this; }
+    }
+
+    /** {@code base} is the directory the location must stay under. */
+    private record DirLoc(Path base, Path path) implements Loc {
+        @Override public Loc resolve(String rel) {
+            if (rel.isEmpty()) return this;
+            Path p = path.resolve(rel).normalize();
+            return p.startsWith(base) ? new DirLoc(base, p) : new Missing();
+        }
         @Override public boolean exists() { return Files.exists(path); }
         @Override public boolean isDirectory() { return Files.isDirectory(path); }
         @Override public boolean isFile() { return Files.isRegularFile(path); }
         @Override public List<String> children() {
             try (Stream<Path> s = Files.list(path)) {
-                return s.map(p -> p.getFileName() + (Files.isDirectory(p) ? "/" : "")).toList();
+                return s.map(p -> p.getFileName() + (Files.isDirectory(p) ? "/" : "")).sorted().toList();
             } catch (IOException e) {
                 return List.of();
             }
@@ -250,57 +349,24 @@ public final class ClassPathResourceProvider implements ResourceProvider {
             try {
                 return path.toUri().toURL();
             } catch (java.net.MalformedURLException e) {
-                throw new IllegalStateException(e);
+                return null;
             }
         }
     }
 
     /** {@code entry} is the jar entry name without trailing slash. */
-    private record JarLoc(Path jar, String entry) implements Loc {
+    private record JarLoc(JarIndex index, String entry) implements Loc {
         @Override public Loc resolve(String rel) {
             String r = rel.endsWith("/") ? rel.substring(0, rel.length() - 1) : rel;
-            return r.isEmpty() ? this : new JarLoc(jar, entry + "/" + r);
+            return r.isEmpty() ? this : new JarLoc(index, entry + "/" + r);
         }
-
         @Override public boolean exists() { return isFile() || isDirectory(); }
-
-        @Override public boolean isFile() {
-            try (JarFile f = new JarFile(jar.toFile())) {
-                JarEntry e = f.getJarEntry(entry);
-                return e != null && !e.isDirectory();
-            } catch (IOException e) {
-                return false;
-            }
-        }
-
-        @Override public boolean isDirectory() {
-            try (JarFile f = new JarFile(jar.toFile())) {
-                if (f.getJarEntry(entry + "/") != null) return true;
-                String prefix = entry + "/";
-                return f.stream().anyMatch(e -> e.getName().startsWith(prefix));
-            } catch (IOException e) {
-                return false;
-            }
-        }
-
-        @Override public List<String> children() {
-            Set<String> out = new TreeSet<>();
-            String prefix = entry + "/";
-            try (JarFile f = new JarFile(jar.toFile())) {
-                f.stream().map(JarEntry::getName).filter(n -> n.startsWith(prefix) && n.length() > prefix.length())
-                        .forEach(n -> {
-                            String rest = n.substring(prefix.length());
-                            int slash = rest.indexOf('/');
-                            out.add(slash < 0 ? rest : rest.substring(0, slash + 1));
-                        });
-            } catch (IOException e) {
-                return List.of();
-            }
-            return new ArrayList<>(out);
-        }
+        @Override public boolean isFile() { return index.isFile(entry); }
+        @Override public boolean isDirectory() { return index.isDirectory(entry); }
+        @Override public List<String> children() { return index.children(entry); }
 
         @Override public InputStream open() throws IOException {
-            JarFile f = new JarFile(jar.toFile());
+            JarFile f = new JarFile(index.jar.toFile());
             JarEntry e = f.getJarEntry(entry);
             if (e == null || e.isDirectory()) {
                 f.close();
@@ -316,9 +382,9 @@ public final class ClassPathResourceProvider implements ResourceProvider {
         @Override public URL url() {
             try {
                 String raw = new URI(null, null, entry, null).getRawPath();
-                return new URI("jar:" + jar.toUri() + "!/" + raw + (isDirectory() && !isFile() ? "/" : "")).toURL();
+                return new URI("jar:" + index.jar.toUri() + "!/" + raw + (isFile() ? "" : "/")).toURL();
             } catch (URISyntaxException | java.net.MalformedURLException e) {
-                throw new IllegalStateException(e);
+                return null;
             }
         }
     }
