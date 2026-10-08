@@ -39,6 +39,7 @@ import io.vidocq.foy.internal.session.SessionManager;
 import jakarta.servlet.DispatcherType;
 import jakarta.servlet.Filter;
 import jakarta.servlet.ServletException;
+import jakarta.servlet.SessionCookieConfig;
 import jakarta.servlet.http.Cookie;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
@@ -353,9 +354,15 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
         if (session == null || session.isInvalidated()) return;
         String requested = req.getRequestedSessionId();
         if (!session.getId().equals(requested)) {
-            Cookie c = new Cookie(SessionManager.COOKIE_NAME, session.getId());
-            c.setPath("/".equals(contextPath) ? "/" : contextPath);
-            c.setHttpOnly(true);
+            SessionCookieConfig cfg = servletContext.sessionCookieConfigInternal();
+            Cookie c = new Cookie(cfg.getName(), session.getId());
+            String path = cfg.getPath();
+            c.setPath(path != null && !path.isEmpty() ? path : "/".equals(contextPath) ? "/" : contextPath);
+            if (cfg.getDomain() != null) c.setDomain(cfg.getDomain());
+            if (cfg.getMaxAge() >= 0) c.setMaxAge(cfg.getMaxAge());
+            c.setSecure(cfg.isSecure());
+            c.setHttpOnly(cfg.isHttpOnly());
+            cfg.getAttributes().forEach(c::setAttribute);
             res.addHeader("Set-Cookie", CookieCodec.serializeSetCookie(c));
         }
     }

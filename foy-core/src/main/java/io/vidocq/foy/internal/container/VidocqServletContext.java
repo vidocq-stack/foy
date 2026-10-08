@@ -32,6 +32,7 @@ import jakarta.servlet.SessionCookieConfig;
 import jakarta.servlet.SessionTrackingMode;
 import jakarta.servlet.descriptor.JspConfigDescriptor;
 
+import java.nio.charset.Charset;
 import java.util.Collections;
 import java.util.EnumSet;
 import java.util.Enumeration;
@@ -314,6 +315,9 @@ public final class VidocqServletContext implements ServletContext {
 
     /** The configured default response encoding, {@code null} when none. */
     public String configuredResponseCharacterEncoding() { return responseCharacterEncoding; }
+
+    /** The session cookie configuration, without the programmatic-listener guard (container use). */
+    public SessionCookieConfig sessionCookieConfigInternal() { return sessionCookieConfig; }
 
     @Override public String getMimeType(String file) {
         if (file == null) return null;
@@ -684,19 +688,22 @@ public final class VidocqServletContext implements ServletContext {
     @Override public void declareRoles(String... roleNames) {}
     @Override public String getVirtualServerName() { return "vidocq"; }
 
-    @Override public String getRequestCharacterEncoding() {
-        return requestCharacterEncoding != null ? requestCharacterEncoding : "UTF-8";
+    /** {@code null} when nothing is configured (Servlet 6.1). */
+    @Override public String getRequestCharacterEncoding() { return requestCharacterEncoding; }
+    @Override public void setRequestCharacterEncoding(String encoding) {
+        if (initialized) throw alreadyInitialized();
+        this.requestCharacterEncoding = encoding;
     }
-    @Override public void setRequestCharacterEncoding(String encoding) { this.requestCharacterEncoding = encoding; }
-    @Override public void setRequestCharacterEncoding(java.nio.charset.Charset encoding) {
-        this.requestCharacterEncoding = encoding == null ? null : encoding.name();
+    @Override public void setRequestCharacterEncoding(Charset encoding) {
+        setRequestCharacterEncoding(encoding == null ? null : encoding.name());
     }
-    @Override public String getResponseCharacterEncoding() {
-        return responseCharacterEncoding != null ? responseCharacterEncoding : "UTF-8";
+    @Override public String getResponseCharacterEncoding() { return responseCharacterEncoding; }
+    @Override public void setResponseCharacterEncoding(String encoding) {
+        if (initialized) throw alreadyInitialized();
+        this.responseCharacterEncoding = encoding;
     }
-    @Override public void setResponseCharacterEncoding(String encoding) { this.responseCharacterEncoding = encoding; }
-    @Override public void setResponseCharacterEncoding(java.nio.charset.Charset encoding) {
-        this.responseCharacterEncoding = encoding == null ? null : encoding.name();
+    @Override public void setResponseCharacterEncoding(Charset encoding) {
+        setResponseCharacterEncoding(encoding == null ? null : encoding.name());
     }
 
     private RuntimeException dynamicUnavailable() {

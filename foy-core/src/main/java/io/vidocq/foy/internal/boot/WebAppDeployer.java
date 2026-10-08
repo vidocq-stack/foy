@@ -101,7 +101,7 @@ public final class WebAppDeployer {
             // (RegistrationTests.servletRegistrationsTest).
             registerStatic(ctx, servlets, filters);
             for (ServletDecl d : model.servlets()) {
-                if (!d.enabled()) ctx.registerStaticServlet(d.name(), d.type(), List.of(), d.initParams(),
+                if (!d.enabled()) ctx.registerStaticServlet(d.name(), d.type(), d.urlPatterns(), d.initParams(),
                         d.asyncSupported());
             }
             // <context-param> init params (web.xml) — must be set before markInitialized.

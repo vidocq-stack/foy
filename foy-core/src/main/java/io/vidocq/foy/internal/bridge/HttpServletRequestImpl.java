@@ -20,6 +20,7 @@
 package io.vidocq.foy.internal.bridge;
 
 import io.vidocq.chappe.api.Request;
+import io.vidocq.foy.internal.container.VidocqServletContext;
 import io.vidocq.foy.internal.http.CookieCodec;
 import io.vidocq.foy.internal.session.HttpSessionImpl;
 import io.vidocq.foy.internal.session.SessionManager;
@@ -345,7 +346,7 @@ public final class HttpServletRequestImpl implements HttpServletRequest {
             }
         }
         // No client charset: the context's default request encoding (descriptor or setter), if any.
-        return servletContext instanceof io.vidocq.foy.internal.container.VidocqServletContext v
+        return servletContext instanceof VidocqServletContext v
                 ? v.configuredRequestCharacterEncoding() : null;
     }
     @Override public void setCharacterEncoding(String env) throws java.io.UnsupportedEncodingException {
@@ -426,7 +427,7 @@ public final class HttpServletRequestImpl implements HttpServletRequest {
     }
 
     private io.vidocq.foy.internal.listener.ListenerRegistry servletContextRegistry() {
-        if (servletContext instanceof io.vidocq.foy.internal.container.VidocqServletContext v) {
+        if (servletContext instanceof VidocqServletContext v) {
             return v.listenerRegistry();
         }
         return null;
@@ -569,8 +570,10 @@ public final class HttpServletRequestImpl implements HttpServletRequest {
     private String extractSessionIdFromCookies() {
         Cookie[] cookies = getCookies();
         if (cookies == null) return null;
+        String name = servletContext instanceof VidocqServletContext v
+                ? v.sessionCookieConfigInternal().getName() : SessionManager.COOKIE_NAME;
         for (Cookie c : cookies) {
-            if (SessionManager.COOKIE_NAME.equals(c.getName())) return c.getValue();
+            if (name.equals(c.getName())) return c.getValue();
         }
         return null;
     }
@@ -602,7 +605,7 @@ public final class HttpServletRequestImpl implements HttpServletRequest {
     }
 
     private io.vidocq.foy.spi.security.SecurityProvider resolveSecurityProvider() {
-        if (servletContext instanceof io.vidocq.foy.internal.container.VidocqServletContext v) {
+        if (servletContext instanceof VidocqServletContext v) {
             return v.securityProvider();
         }
         return new io.vidocq.foy.internal.security.AnonymousSecurityProvider();

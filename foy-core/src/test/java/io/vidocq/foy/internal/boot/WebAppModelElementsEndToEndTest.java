@@ -22,7 +22,11 @@ package io.vidocq.foy.internal.boot;
 import io.vidocq.chappe.api.Server;
 import io.vidocq.foy.internal.boot.WebAppModel.ServletDecl;
 import io.vidocq.foy.internal.webxml.WebXmlParser;
+import io.vidocq.foy.internal.container.VidocqServletContext;
 import jakarta.servlet.MultipartConfigElement;
+import jakarta.servlet.ServletContextEvent;
+import jakarta.servlet.ServletContextListener;
+import jakarta.servlet.annotation.MultipartConfig;
 import jakarta.servlet.SessionTrackingMode;
 import jakarta.servlet.http.HttpServlet;
 import jakarta.servlet.http.HttpServletRequest;
@@ -36,6 +40,8 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.nio.charset.Charset;
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Set;
 
@@ -163,5 +169,149 @@ class WebAppModelElementsEndToEndTest {
         deploy(model());
         assertEquals(404, get("/off").statusCode());
         assertNotNull(deployment.servletContext().getServletRegistration("off"));
+    }
+
+    // ---- fix round 1 ----
+
+    public static class SessionServlet extends HttpServlet {
+        @Override protected void doGet(HttpServletRequest req, HttpServletResponse resp) throws IOException {
+            var session = req.getSession(true);
+            resp.getWriter().write(session.getId() + "|" + session.isNew());
+        }
+    }
+
+    public static class EncodingServlet extends HttpServlet {
+        @Override protected void doGet(HttpServletRequest req, HttpServletResponse resp) throws IOException {
+            var ctx = req.getServletContext();
+            String late;
+            try {
+                ctx.setRequestCharacterEncoding("UTF-8");
+                late = "mutable";
+            } catch (IllegalStateException e) {
+                late = "readonly";
+            }
+            resp.getWriter().write(ctx.getRequestCharacterEncoding() + "|" + ctx.getResponseCharacterEncoding()
+                    + "|" + late + "|" + req.getCharacterEncoding() + "|" + ctx.getMimeType("noext")
+                    + "|" + ctx.getMimeType("trailing.") + "|" + ctx.getMimeType("a.PNG"));
+        }
+    }
+
+    @MultipartConfig(location = "/ann", maxFileSize = 1)
+    public static class AnnotatedMultipart extends HttpServlet {}
+
+    public static class DynClaimer implements ServletContextListener {
+        static volatile Set<String> conflicts;
+        @Override public void contextInitialized(ServletContextEvent e) {
+            var reg = e.getServletContext().addServlet("dyn", Probe.class);
+            conflicts = reg == null ? Set.of("null-registration") : Set.copyOf(reg.addMapping("/off"));
+        }
+    }
+
+    private static final String HEAD = "<web-app xmlns=\"https://jakarta.ee/xml/ns/jakartaee\" version=\"6.1\">";
+
+    private WebAppModel modelOf(String xml) throws Exception {
+        var d = WebXmlParser.parse(new ByteArrayInputStream(xml.getBytes()));
+        var b = WebAppModel.builder("/");
+        DescriptorMerger.merge(d, DescriptorMerger.AnnotatedComponents.none(),
+                ComponentFactory.reflective(getClass().getClassLoader()), b);
+        return b.build();
+    }
+
+    private String servletXml(String name, Class<?> type, String pattern) {
+        return "<servlet><servlet-name>" + name + "</servlet-name><servlet-class>" + type.getName()
+                + "</servlet-class></servlet><servlet-mapping><servlet-name>" + name
+                + "</servlet-name><url-pattern>" + pattern + "</url-pattern></servlet-mapping>";
+    }
+
+    @Test
+    void sessionCookieHonoursTheDescriptorConfigAndIsReadBack() throws Exception {
+        deploy(modelOf(HEAD + servletXml("s", SessionServlet.class, "/s")
+                + "<session-config><cookie-config><name>MYSESSION</name><path>/custom</path>"
+                + "<http-only>false</http-only></cookie-config></session-config></web-app>"));
+        var first = get("/s");
+        String setCookie = first.headers().firstValue("Set-Cookie").orElseThrow();
+        assertTrue(setCookie.startsWith("MYSESSION="), setCookie);
+        assertTrue(setCookie.contains("Path=/custom"), setCookie);
+        assertFalse(setCookie.contains("HttpOnly"), setCookie);
+        String id = first.body().split("\\|")[0];
+        var second = HttpClient.newHttpClient().send(
+                HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port + "/s"))
+                        .header("Cookie", "MYSESSION=" + id).GET().build(),
+                HttpResponse.BodyHandlers.ofString());
+        assertEquals(id + "|false", second.body());
+    }
+
+    @Test
+    void defaultSessionCookieIsStillJsessionidHttpOnlyAtRoot() throws Exception {
+        deploy(modelOf(HEAD + servletXml("s", SessionServlet.class, "/s") + "</web-app>"));
+        String setCookie = get("/s").headers().firstValue("Set-Cookie").orElseThrow();
+        assertTrue(setCookie.startsWith("JSESSIONID="), setCookie);
+        assertTrue(setCookie.contains("Path=/"), setCookie);
+        assertTrue(setCookie.contains("HttpOnly"), setCookie);
+    }
+
+    @Test
+    void unconfiguredEncodingsAreNullSettersAreReadOnlyAfterInitAndMimeEdgesAreNull() throws Exception {
+        deploy(modelOf(HEAD + servletXml("e", EncodingServlet.class, "/e") + "</web-app>"));
+        assertEquals("null|null|readonly|null|null|null|image/png", get("/e").body());
+    }
+
+    @Test
+    void contextEncodingSettersAcceptAndClearBeforeInitialisation() {
+        var ctx = new VidocqServletContext("/");
+        ctx.setRequestCharacterEncoding("UTF-16");
+        assertEquals("UTF-16", ctx.getRequestCharacterEncoding());
+        ctx.setRequestCharacterEncoding((String) null);
+        assertNull(ctx.getRequestCharacterEncoding());
+        ctx.setResponseCharacterEncoding(StandardCharsets.UTF_8);
+        assertEquals("UTF-8", ctx.getResponseCharacterEncoding());
+        ctx.setResponseCharacterEncoding((Charset) null);
+        assertNull(ctx.getResponseCharacterEncoding());
+        ctx.markInitialized();
+        assertThrows(IllegalStateException.class, () -> ctx.setResponseCharacterEncoding("UTF-8"));
+        assertThrows(IllegalStateException.class, () -> ctx.setRequestCharacterEncoding("UTF-8"));
+    }
+
+    public static class EchoCharset extends HttpServlet {
+        @Override protected void doPost(HttpServletRequest req, HttpServletResponse resp) throws IOException {
+            resp.getWriter().write(String.valueOf(req.getCharacterEncoding()));
+        }
+    }
+
+    private HttpResponse<String> post(String path, String contentType) throws Exception {
+        return HttpClient.newHttpClient().send(
+                HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port + path))
+                        .header("Content-Type", contentType)
+                        .POST(HttpRequest.BodyPublishers.ofString("x")).build(),
+                HttpResponse.BodyHandlers.ofString());
+    }
+
+    @Test
+    void clientCharsetBeatsTheRequestDefaultAndDefaultFillsTheGap() throws Exception {
+        deploy(modelOf(HEAD + "<request-character-encoding>UTF-16</request-character-encoding>"
+                + servletXml("c", EchoCharset.class, "/c") + "</web-app>"));
+        assertEquals("ISO-8859-1", post("/c", "text/plain; charset=ISO-8859-1").body());
+        assertEquals("UTF-16", post("/c", "text/plain").body());
+    }
+
+    @Test
+    void descriptorMultipartConfigBeatsTheClassAnnotation() throws Exception {
+        var plain = modelOf(HEAD + servletXml("a", AnnotatedMultipart.class, "/a") + "</web-app>");
+        assertEquals("/ann", plain.servlets().get(0).multipartConfig().getLocation());
+        var overridden = modelOf(HEAD + "<servlet><servlet-name>a</servlet-name><servlet-class>"
+                + AnnotatedMultipart.class.getName() + "</servlet-class><multipart-config><location>/xml</location>"
+                + "<max-file-size>5</max-file-size></multipart-config></servlet></web-app>");
+        var e = overridden.servlets().get(0).multipartConfig();
+        assertEquals("/xml", e.getLocation());
+        assertEquals(5, e.getMaxFileSize());
+    }
+
+    @Test
+    void disabledServletKeepsItsUrlPatternsReserved() throws Exception {
+        var m = WebAppModel.builder("/");
+        modelOf(WEB_XML).servlets().forEach(m::servlet);
+        m.listener(new WebAppModel.ListenerDecl(DynClaimer.class, DynClaimer::new));
+        deploy(m.build());
+        assertEquals(Set.of("/off"), DynClaimer.conflicts);
     }
 }

@@ -48,6 +48,8 @@ public final class HttpServletResponseImpl implements HttpServletResponse {
     private final List<Cookie> cookies = new ArrayList<>();
     private String contentType;
     private String characterEncoding;
+    /** Context default response encoding, used only while the application has set none. */
+    private String defaultCharacterEncoding;
     private Locale locale = Locale.getDefault();
     private final ServletOutputStreamImpl outputStream = new ServletOutputStreamImpl();
     { outputStream.setFlushListener(() -> committed = true); }
@@ -218,8 +220,6 @@ public final class HttpServletResponseImpl implements HttpServletResponse {
         }
         refreshContentTypeHeader();
     }
-    /** Context default response encoding, used only while the application has set none. */
-    private String defaultCharacterEncoding;
     public void setDefaultCharacterEncoding(String encoding) { this.defaultCharacterEncoding = encoding; }
 
     @Override public String getCharacterEncoding() {
