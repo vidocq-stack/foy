@@ -20,6 +20,7 @@
 package io.vidocq.foy.internal.webxml;
 
 import jakarta.servlet.DispatcherType;
+import jakarta.servlet.SessionTrackingMode;
 
 import java.util.Collections;
 import java.util.EnumSet;
@@ -72,13 +73,30 @@ public final class WebAppDescriptor {
     }
 
     public record ServletDef(String name, String className, Map<String, String> initParams,
-                             Boolean asyncSupported, int loadOnStartup) {
+                             Boolean asyncSupported, int loadOnStartup,
+                             MultipartConfigDef multipartConfig, boolean enabled,
+                             String runAs, String jspFile) {
+        public ServletDef(String name, String className, Map<String, String> initParams,
+                          Boolean asyncSupported, int loadOnStartup) {
+            this(name, className, initParams, asyncSupported, loadOnStartup, null, true, null, null);
+        }
         public ServletDef(String name, String className, Map<String, String> initParams,
                           Boolean asyncSupported) {
             this(name, className, initParams, asyncSupported, Integer.MIN_VALUE);
         }
         public ServletDef(String name, String className, Map<String, String> initParams) {
             this(name, className, initParams, null, Integer.MIN_VALUE);
+        }
+    }
+    /** Defaults per web-common_6_1.xsd: sizes {@code -1}, threshold {@code 0}. */
+    public record MultipartConfigDef(String location, long maxFileSize, long maxRequestSize,
+                                     int fileSizeThreshold) {}
+    public record CookieConfigDef(String name, String domain, String path, String comment,
+                                  Boolean httpOnly, Boolean secure, Integer maxAge,
+                                  Map<String, String> attributes) {
+        public CookieConfigDef {
+            attributes = attributes == null ? Map.of()
+                    : Collections.unmodifiableMap(new LinkedHashMap<>(attributes));
         }
     }
     public record ServletMappingDef(String servletName, String urlPattern) {}
@@ -127,6 +145,92 @@ public final class WebAppDescriptor {
     public String displayName() { return displayName; }
     public WebAppDescriptor withDisplayName(String v) {
         if (v != null && !v.isBlank()) this.displayName = v;
+        return this;
+    }
+
+    private List<String> welcomeFiles = List.of();
+    private Map<String, String> mimeMappings = Map.of();
+    private String requestCharacterEncoding;
+    private String responseCharacterEncoding;
+    private String defaultContextPath;
+    private boolean denyUncoveredHttpMethods;
+    private CookieConfigDef cookieConfig;
+    private Set<SessionTrackingMode> trackingModes = Set.of();
+    private List<SecurityDefs.SecurityConstraintDef> securityConstraints = List.of();
+    private SecurityDefs.LoginConfigDef loginConfig;
+    private List<String> securityRoles = List.of();
+
+    /** Welcome files in declaration order. */
+    public List<String> welcomeFiles() { return welcomeFiles; }
+    public WebAppDescriptor withWelcomeFiles(List<String> v) {
+        this.welcomeFiles = List.copyOf(v);
+        return this;
+    }
+
+    /** Extension (no dot, lower-case) to MIME type. */
+    public Map<String, String> mimeMappings() { return mimeMappings; }
+    public WebAppDescriptor withMimeMappings(Map<String, String> v) {
+        this.mimeMappings = Collections.unmodifiableMap(new LinkedHashMap<>(v));
+        return this;
+    }
+
+    /** {@code null} when absent. */
+    public String requestCharacterEncoding() { return requestCharacterEncoding; }
+    public WebAppDescriptor withRequestCharacterEncoding(String v) {
+        this.requestCharacterEncoding = v;
+        return this;
+    }
+
+    /** {@code null} when absent. */
+    public String responseCharacterEncoding() { return responseCharacterEncoding; }
+    public WebAppDescriptor withResponseCharacterEncoding(String v) {
+        this.responseCharacterEncoding = v;
+        return this;
+    }
+
+    /** {@code null} when absent. */
+    public String defaultContextPath() { return defaultContextPath; }
+    public WebAppDescriptor withDefaultContextPath(String v) {
+        this.defaultContextPath = v;
+        return this;
+    }
+
+    public boolean denyUncoveredHttpMethods() { return denyUncoveredHttpMethods; }
+    public WebAppDescriptor withDenyUncoveredHttpMethods(boolean v) {
+        this.denyUncoveredHttpMethods = v;
+        return this;
+    }
+
+    /** {@code null} when absent. */
+    public CookieConfigDef cookieConfig() { return cookieConfig; }
+    public WebAppDescriptor withCookieConfig(CookieConfigDef v) {
+        this.cookieConfig = v;
+        return this;
+    }
+
+    /** Empty when absent. */
+    public Set<SessionTrackingMode> trackingModes() { return trackingModes; }
+    public WebAppDescriptor withTrackingModes(Set<SessionTrackingMode> v) {
+        this.trackingModes = v.isEmpty() ? Set.of() : Collections.unmodifiableSet(EnumSet.copyOf(v));
+        return this;
+    }
+
+    public List<SecurityDefs.SecurityConstraintDef> securityConstraints() { return securityConstraints; }
+    public WebAppDescriptor withSecurityConstraints(List<SecurityDefs.SecurityConstraintDef> v) {
+        this.securityConstraints = List.copyOf(v);
+        return this;
+    }
+
+    /** {@code null} when absent. */
+    public SecurityDefs.LoginConfigDef loginConfig() { return loginConfig; }
+    public WebAppDescriptor withLoginConfig(SecurityDefs.LoginConfigDef v) {
+        this.loginConfig = v;
+        return this;
+    }
+
+    public List<String> securityRoles() { return securityRoles; }
+    public WebAppDescriptor withSecurityRoles(List<String> v) {
+        this.securityRoles = List.copyOf(v);
         return this;
     }
 

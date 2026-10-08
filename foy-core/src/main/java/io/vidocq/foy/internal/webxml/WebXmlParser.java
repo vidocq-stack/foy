@@ -20,6 +20,7 @@
 package io.vidocq.foy.internal.webxml;
 
 import jakarta.servlet.DispatcherType;
+import jakarta.servlet.SessionTrackingMode;
 import org.w3c.dom.Document;
 import org.w3c.dom.Element;
 import org.w3c.dom.Node;
@@ -34,6 +35,7 @@ import java.util.ArrayList;
 import java.util.EnumSet;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 
@@ -42,7 +44,9 @@ import java.util.Set;
  *
  * <p>Supported elements: {@code context-param}, {@code servlet},
  * {@code servlet-mapping}, {@code filter}, {@code filter-mapping}, {@code listener},
- * {@code error-page}, {@code session-config/session-timeout}.</p>
+ * {@code error-page}, {@code session-config} (timeout, cookie-config, tracking-mode),
+ * {@code welcome-file-list}, {@code mime-mapping}, encodings, {@code multipart-config} and the
+ * security elements (see {@link WebXmlSecurityParser}).</p>
  */
 public final class WebXmlParser {
 
@@ -87,7 +91,7 @@ public final class WebXmlParser {
         }
     }
 
-    private static String localName(Element e) {
+    static String localName(Element e) {
         String n = e.getTagName();
         int i = n.indexOf(':');
         return i < 0 ? n : n.substring(i + 1);
@@ -102,6 +106,17 @@ public final class WebXmlParser {
         var listenerClasses = new ArrayList<String>();
         var errorPages = new ArrayList<WebAppDescriptor.ErrorPageDef>();
         int sessionTimeoutMinutes = -1;
+        var welcomeFiles = new ArrayList<String>();
+        var mimeMappings = new LinkedHashMap<String, String>();
+        String requestEncoding = null;
+        String responseEncoding = null;
+        String defaultContextPath = null;
+        boolean denyUncovered = false;
+        WebAppDescriptor.CookieConfigDef cookieConfig = null;
+        Set<SessionTrackingMode> trackingModes = EnumSet.noneOf(SessionTrackingMode.class);
+        var securityConstraints = new ArrayList<SecurityDefs.SecurityConstraintDef>();
+        SecurityDefs.LoginConfigDef loginConfig = null;
+        var securityRoles = new ArrayList<String>();
         var localeEncodingMappings = new LinkedHashMap<String, String>();
         String displayName = null;
         String fragmentName = null;
@@ -144,6 +159,33 @@ public final class WebXmlParser {
                 case "session-config" -> {
                     String t = firstText(e, "session-timeout");
                     if (t != null) sessionTimeoutMinutes = parseInt(t, "<session-timeout> in <session-config>");
+                    var cc = WebXmlSecurityParser.parseCookieConfig(e);
+                    if (cc != null) cookieConfig = cc;
+                    trackingModes.addAll(WebXmlSecurityParser.parseTrackingModes(e));
+                }
+                case "welcome-file-list" -> {
+                    for (Element w : childrenByTag(e, "welcome-file")) {
+                        if (!text(w).isEmpty()) welcomeFiles.add(text(w));
+                    }
+                }
+                case "mime-mapping" -> {
+                    String ext = firstText(e, "extension");
+                    String type = firstText(e, "mime-type");
+                    if (ext != null && type != null) {
+                        if (ext.startsWith(".")) ext = ext.substring(1);
+                        mimeMappings.put(ext.toLowerCase(Locale.ROOT), type);
+                    }
+                }
+                case "request-character-encoding" -> requestEncoding = text(e);
+                case "response-character-encoding" -> responseEncoding = text(e);
+                case "default-context-path" -> defaultContextPath = text(e);
+                case "deny-uncovered-http-methods" -> denyUncovered = true;
+                case "security-constraint" ->
+                        securityConstraints.add(WebXmlSecurityParser.parseSecurityConstraint(e));
+                case "login-config" -> loginConfig = WebXmlSecurityParser.parseLoginConfig(e);
+                case "security-role" -> {
+                    String r = firstText(e, "role-name");
+                    if (r != null) securityRoles.add(r);
                 }
                 case "locale-encoding-mapping-list" -> {
                     for (Element m : childrenByTag(e, "locale-encoding-mapping")) {
@@ -162,6 +204,17 @@ public final class WebXmlParser {
                 .withKind(fragment ? WebAppDescriptor.Kind.WEB_FRAGMENT : WebAppDescriptor.Kind.WEB_APP)
                 .withFragmentName(fragmentName)
                 .withOrdering(ordering)
+                .withWelcomeFiles(welcomeFiles)
+                .withMimeMappings(mimeMappings)
+                .withRequestCharacterEncoding(requestEncoding)
+                .withResponseCharacterEncoding(responseEncoding)
+                .withDefaultContextPath(defaultContextPath)
+                .withDenyUncoveredHttpMethods(denyUncovered)
+                .withCookieConfig(cookieConfig)
+                .withTrackingModes(trackingModes)
+                .withSecurityConstraints(securityConstraints)
+                .withLoginConfig(loginConfig)
+                .withSecurityRoles(securityRoles)
                 .withAbsoluteOrdering(absoluteOrdering)
                 .withMetadataComplete(Boolean.parseBoolean(root.getAttribute("metadata-complete").trim()));
     }
@@ -173,7 +226,38 @@ public final class WebXmlParser {
                 firstText(e, "servlet-class"),
                 parseInitParams(e),
                 parseAsync(e),
-                parseLoadOnStartup(e, name));
+                parseLoadOnStartup(e, name),
+                parseMultipart(e),
+                !"false".equalsIgnoreCase(firstText(e, "enabled")),
+                runAs(e),
+                firstText(e, "jsp-file"));
+    }
+
+    private static String runAs(Element e) {
+        for (Element r : childrenByTag(e, "run-as")) return firstText(r, "role-name");
+        return null;
+    }
+
+    private static WebAppDescriptor.MultipartConfigDef parseMultipart(Element e) {
+        for (Element m : childrenByTag(e, "multipart-config")) {
+            return new WebAppDescriptor.MultipartConfigDef(
+                    firstText(m, "location"),
+                    parseLong(firstText(m, "max-file-size"), -1L, "<max-file-size> in <multipart-config>"),
+                    parseLong(firstText(m, "max-request-size"), -1L,
+                            "<max-request-size> in <multipart-config>"),
+                    (int) parseLong(firstText(m, "file-size-threshold"), 0L,
+                            "<file-size-threshold> in <multipart-config>"));
+        }
+        return null;
+    }
+
+    private static long parseLong(String t, long dflt, String where) {
+        if (t == null || t.isBlank()) return dflt;
+        try {
+            return Long.parseLong(t.trim());
+        } catch (NumberFormatException ex) {
+            throw new IllegalArgumentException("invalid " + where + " value '" + t + "'", ex);
+        }
     }
 
     /** {@code null} when the element is absent (tri-state, §8.2.3). */
@@ -199,7 +283,7 @@ public final class WebXmlParser {
         }
     }
 
-    private static int parseInt(String text, String where) {
+    static int parseInt(String text, String where) {
         try {
             return Integer.parseInt(text.trim());
         } catch (NumberFormatException e) {
@@ -298,7 +382,7 @@ public final class WebXmlParser {
 
     // ---- helpers DOM ----
 
-    private static List<Element> children(Element parent) {
+    static List<Element> children(Element parent) {
         NodeList kids = parent.getChildNodes();
         var out = new ArrayList<Element>();
         for (int i = 0; i < kids.getLength(); i++) {
@@ -308,7 +392,7 @@ public final class WebXmlParser {
         return out;
     }
 
-    private static List<Element> childrenByTag(Element parent, String tag) {
+    static List<Element> childrenByTag(Element parent, String tag) {
         var out = new ArrayList<Element>();
         for (Element e : children(parent)) {
             if (e.getTagName().equals(tag)) out.add(e);
@@ -316,12 +400,12 @@ public final class WebXmlParser {
         return out;
     }
 
-    private static String firstText(Element parent, String tag) {
+    static String firstText(Element parent, String tag) {
         for (Element e : childrenByTag(parent, tag)) return text(e);
         return null;
     }
 
-    private static String text(Element e) {
+    static String text(Element e) {
         String t = e.getTextContent();
         return t == null ? null : t.trim();
     }
