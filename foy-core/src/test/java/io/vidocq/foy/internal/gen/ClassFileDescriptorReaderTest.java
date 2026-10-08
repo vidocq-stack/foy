@@ -32,6 +32,14 @@ import jakarta.servlet.annotation.ServletSecurity.TransportGuarantee;
 import jakarta.servlet.http.HttpServlet;
 import org.junit.jupiter.api.Test;
 
+import java.io.ByteArrayInputStream;
+import java.io.InputStream;
+import java.lang.classfile.Annotation;
+import java.lang.classfile.AnnotationElement;
+import java.lang.classfile.AnnotationValue;
+import java.lang.classfile.ClassFile;
+import java.lang.classfile.attribute.RuntimeVisibleAnnotationsAttribute;
+import java.lang.constant.ClassDesc;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -214,5 +222,51 @@ class ClassFileDescriptorReaderTest {
     @Test
     void bothValueAndUrlPatternsIsRejected() {
         assertThrows(IllegalArgumentException.class, () -> ClassFileDescriptorReader.read(BothPatterns.class));
+    }
+
+    @ServletSecurity(@HttpConstraint(value = EmptyRoleSemantic.DENY, rolesAllowed = "admin"))
+    public static class DenyWithRoles extends HttpServlet {}
+
+    @WebServlet("/x")
+    public static class NotAServlet {}
+
+    @Test
+    void denyWithRolesIsRejectedNamingTheClass() {
+        var e = assertThrows(IllegalArgumentException.class, () -> ClassFileDescriptorReader.read(DenyWithRoles.class));
+        assertTrue(e.getMessage().contains(DenyWithRoles.class.getName()), e.getMessage());
+        assertTrue(e.getMessage().contains("DENY"), e.getMessage());
+    }
+
+    @Test
+    void webServletOnNonServletIsRejectedNamingTheClass() {
+        var e = assertThrows(IllegalArgumentException.class, () -> ClassFileDescriptorReader.read(NotAServlet.class));
+        assertTrue(e.getMessage().contains(NotAServlet.class.getName()), e.getMessage());
+    }
+
+    @Test
+    void unknownEnumConstantInStaleBytesYieldsEmpty() {
+        String name = "stale.StaleFilter";
+        byte[] bytes = ClassFile.of().build(ClassDesc.of(name), cb -> cb
+                .withFlags(ClassFile.ACC_PUBLIC)
+                .withInterfaceSymbols(ClassDesc.of("jakarta.servlet.Filter"))
+                .with(RuntimeVisibleAnnotationsAttribute.of(Annotation.of(
+                        ClassDesc.of("jakarta.servlet.annotation.WebFilter"),
+                        AnnotationElement.of("value", AnnotationValue.ofArray(AnnotationValue.ofString("/s"))),
+                        AnnotationElement.of("dispatcherTypes", AnnotationValue.ofArray(
+                                AnnotationValue.ofEnum(ClassDesc.of("jakarta.servlet.DispatcherType"), "TELEPORT")))))));
+        var loader = new ClassLoader(getClass().getClassLoader()) {
+            Class<?> define() {
+                return defineClass(name, bytes, 0, bytes.length);
+            }
+
+            @Override
+            public InputStream getResourceAsStream(String resource) {
+                return resource.equals("stale/StaleFilter.class")
+                        ? new ByteArrayInputStream(bytes) : super.getResourceAsStream(resource);
+            }
+        };
+        Class<?> stale = loader.define();
+        assertTrue(ClassFileDescriptorReader.read(stale).isEmpty());
+        assertThrows(IllegalArgumentException.class, () -> ClassFileDescriptorReader.read(bytes, stale));
     }
 }

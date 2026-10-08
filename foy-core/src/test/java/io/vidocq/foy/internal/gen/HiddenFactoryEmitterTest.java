@@ -22,6 +22,10 @@ package io.vidocq.foy.internal.gen;
 import jakarta.servlet.http.HttpServlet;
 import org.junit.jupiter.api.Test;
 
+import java.net.URI;
+import java.net.URL;
+import java.net.URLClassLoader;
+
 import static org.junit.jupiter.api.Assertions.*;
 
 class HiddenFactoryEmitterTest {
@@ -55,5 +59,31 @@ class HiddenFactoryEmitterTest {
         assertThrows(IllegalAccessException.class, () -> HiddenFactoryEmitter.factoryFor(ArgsOnly.class));
         assertThrows(IllegalAccessException.class, () -> HiddenFactoryEmitter.factoryFor(Abstract.class));
         assertThrows(IllegalAccessException.class, () -> HiddenFactoryEmitter.factoryFor(Inner.class));
+    }
+
+    // ---- targets outside foy-core's module ----
+
+    @Test
+    void targetInAnotherModuleIsSupported() throws Exception {
+        // Parent = bootstrap only: the platform loader would delegate packages of boot-layer
+        // modules (foy-core, jakarta.servlet) back to the application loader.
+        try (var api = new URLClassLoader(new URL[]{root(HttpServlet.class)}, null);
+             var app = new URLClassLoader(new URL[]{root(HiddenFactoryEmitterTest.class)}, api)) {
+            Class<?> other = app.loadClass(Target.class.getName());
+            assertNotSame(Target.class, other);
+            assertNotSame(HiddenFactoryEmitter.class.getModule(), other.getModule());
+            assertSame(other, HiddenFactoryEmitter.factoryFor(other).get().getClass());
+        }
+    }
+
+    /** The class path root (directory or jar) a class was loaded from. */
+    private static URL root(Class<?> type) throws Exception {
+        String resource = type.getName().replace('.', '/') + ".class";
+        String url = type.getResource("/" + resource).toString();
+        String base = url.substring(0, url.length() - resource.length());
+        if (base.startsWith("jar:")) {
+            base = base.substring("jar:".length(), base.length() - "!/".length());
+        }
+        return URI.create(base).toURL();
     }
 }

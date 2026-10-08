@@ -65,9 +65,17 @@ import java.util.Set;
  * elements that were written explicitly, so the defaults declared by the Servlet 6.1 and
  * Jakarta Annotations definitions are applied here.
  *
- * <p>Decoding happens in two phases: the class bytes are first turned into plain Java values
- * (any failure there means malformed bytes), then the descriptor is built from those values
- * (any failure there means an invalid use of the annotations).
+ * <p>Failures fall into two categories:
+ * <ul>
+ *   <li><b>unreadable bytes</b> — unreachable, malformed or stale class bytes (including enum
+ *       constant names unknown to the running Servlet API): {@link #read(Class)} returns empty
+ *       and logs at {@code DEBUG};</li>
+ *   <li><b>annotation misuse</b> forbidden by the specification — both {@code value} and
+ *       {@code urlPatterns}, {@code @WebServlet}/{@code @WebFilter}/{@code @WebListener} on a class
+ *       of the wrong type, {@code DENY} with {@code rolesAllowed}, invalid or duplicate HTTP method
+ *       constraints: an {@link IllegalArgumentException} naming the class and the rule is thrown,
+ *       which fails the deployment.</li>
+ * </ul>
  */
 public final class ClassFileDescriptorReader {
 
@@ -97,23 +105,21 @@ public final class ClassFileDescriptorReader {
      *
      * @param type the component class
      * @return the descriptor; empty if the class bytes are not reachable (e.g. generated/hidden
-     *         class), are malformed, or the class is not a web component
-     * @throws IllegalArgumentException if the class misuses the Servlet annotations
-     *         (e.g. both {@code value} and {@code urlPatterns}, or {@code @WebServlet} on a non-servlet)
+     *         class), are malformed or stale, or the class is not a web component
+     * @throws IllegalArgumentException if the class misuses the Servlet annotations (see the class
+     *         documentation)
      */
     public static Optional<WebComponentDescriptor> read(Class<?> type) {
         byte[] bytes = bytesOf(type);
         if (bytes == null) {
             return Optional.empty();
         }
-        Parsed parsed;
         try {
-            parsed = parse(bytes, type);
-        } catch (RuntimeException e) {
-            LOG.log(System.Logger.Level.DEBUG, "cannot decode class bytes of " + type.getName(), e);
+            return Optional.ofNullable(decode(parse(bytes, type), type));
+        } catch (MalformedBytesException e) {
+            LOG.log(System.Logger.Level.DEBUG, e.getMessage(), e.getCause());
             return Optional.empty();
         }
-        return Optional.ofNullable(decode(parsed, type));
     }
 
     /**
@@ -123,19 +129,22 @@ public final class ClassFileDescriptorReader {
      * @param classBytes the bytes of {@code type}'s class file
      * @param type       the class the bytes describe
      * @return the descriptor, or {@code null} when the class is not a web component
-     * @throws IllegalArgumentException if the bytes are malformed or do not describe {@code type},
-     *         or if the class misuses the Servlet annotations
+     * @throws IllegalArgumentException if the bytes are malformed, stale or do not describe
+     *         {@code type}, or if the class misuses the Servlet annotations
      */
     static WebComponentDescriptor read(byte[] classBytes, Class<?> type) {
-        Parsed parsed;
         try {
-            parsed = parse(classBytes, type);
-        } catch (IllegalArgumentException e) {
-            throw e;
-        } catch (RuntimeException e) {
-            throw new IllegalArgumentException("malformed class bytes for " + type.getName(), e);
+            return decode(parse(classBytes, type), type);
+        } catch (MalformedBytesException e) {
+            throw new IllegalArgumentException(e.getMessage(), e.getCause());
         }
-        return decode(parsed, type);
+    }
+
+    /** Unreachable, malformed or stale class bytes — as opposed to annotation misuse. */
+    private static final class MalformedBytesException extends RuntimeException {
+        MalformedBytesException(String message, Throwable cause) {
+            super(message, cause, false, false);
+        }
     }
 
     /**
@@ -177,20 +186,36 @@ public final class ClassFileDescriptorReader {
     }
 
     private static Parsed parse(byte[] bytes, Class<?> type) {
-        ClassModel model = ClassFile.of().parse(bytes);
         String expected = type.getName().replace('.', '/');
-        if (!model.thisClass().asInternalName().equals(expected)) {
-            throw new IllegalArgumentException("class bytes describe " + model.thisClass().asInternalName()
-                    + ", not " + expected);
-        }
-        var annotations = new HashMap<String, Map<String, Object>>();
-        model.findAttribute(Attributes.runtimeVisibleAnnotations()).ifPresent(attr -> {
-            for (Annotation a : attr.annotations()) {
-                annotations.put(a.classSymbol().descriptorString(), elements(a));
+        try {
+            ClassModel model = ClassFile.of().parse(bytes);
+            if (!model.thisClass().asInternalName().equals(expected)) {
+                throw new MalformedBytesException("class bytes describe " + model.thisClass().asInternalName()
+                        + ", not " + expected, null);
             }
-        });
-        String superclass = model.superclass().map(c -> c.asInternalName()).orElse(null);
-        return new Parsed(model.flags().flagsMask(), superclass, annotations);
+            var annotations = new HashMap<String, Map<String, Object>>();
+            model.findAttribute(Attributes.runtimeVisibleAnnotations()).ifPresent(attr -> {
+                for (Annotation a : attr.annotations()) {
+                    annotations.put(a.classSymbol().descriptorString(), elements(a));
+                }
+            });
+            String superclass = model.superclass().map(c -> c.asInternalName()).orElse(null);
+            return new Parsed(model.flags().flagsMask(), superclass, annotations);
+        } catch (MalformedBytesException e) {
+            throw e;
+        } catch (RuntimeException e) {
+            throw new MalformedBytesException("malformed class bytes for " + type.getName(), e);
+        }
+    }
+
+    /** Resolves an enum constant name; an unknown name means stale or foreign class bytes. */
+    private static <E extends Enum<E>> E constant(Class<E> enumType, String name, Class<?> type) {
+        try {
+            return Enum.valueOf(enumType, name);
+        } catch (IllegalArgumentException e) {
+            throw new MalformedBytesException("unknown " + enumType.getSimpleName() + " constant '" + name
+                    + "' in the class bytes of " + type.getName(), e);
+        }
     }
 
     private static Map<String, Object> elements(Annotation a) {
@@ -277,8 +302,8 @@ public final class ClassFileDescriptorReader {
             List<String> value = strings(main, "value");
             List<String> urlPatterns = strings(main, "urlPatterns");
             if (!value.isEmpty() && !urlPatterns.isEmpty()) {
-                throw new IllegalArgumentException("set either 'value' or 'urlPatterns' on "
-                        + type.getName() + ", not both");
+                throw new IllegalArgumentException(type.getName()
+                        + ": 'value' and 'urlPatterns' must not be used together on the same annotation");
             }
             patterns = value.isEmpty() ? urlPatterns : value;
             String declared = string(main, kind == Kind.SERVLET ? "name" : "filterName", "");
@@ -296,7 +321,7 @@ public final class ClassFileDescriptorReader {
                 servletNames = strings(main, "servletNames");
                 var types = EnumSet.noneOf(DispatcherType.class);
                 for (String t : strings(main, "dispatcherTypes")) {
-                    types.add(DispatcherType.valueOf(t));
+                    types.add(constant(DispatcherType.class, t, type));
                 }
                 dispatchers = types.isEmpty() ? Set.of(DispatcherType.REQUEST) : types;
             }
@@ -309,7 +334,7 @@ public final class ClassFileDescriptorReader {
         Map<String, Object> handles = p.annotations().get(HANDLES_TYPES);
         return new WebComponentDescriptor(kind, name, patterns, params, load, async, dispatchers, servletNames,
                 multipart == null ? null : multipart(multipart),
-                security == null ? null : security(security),
+                security == null ? null : security(security, type),
                 roles == null ? List.of() : strings(roles, "value"),
                 runAs == null ? null : string(runAs, "value", null),
                 handles == null || kind != Kind.INITIALIZER ? List.of() : strings(handles, "value"));
@@ -329,26 +354,40 @@ public final class ClassFileDescriptorReader {
                 m.get("fileSizeThreshold") instanceof Integer i ? i : 0);
     }
 
-    private static ServletSecurityElement security(Map<String, Object> m) {
+    private static ServletSecurityElement security(Map<String, Object> m, Class<?> type) {
         HttpConstraintElement classConstraint = m.get("value") instanceof Map<?, ?> c
-                ? constraint(c, "value")
+                ? constraint(c, "value", "@HttpConstraint", type)
                 : new HttpConstraintElement(EmptyRoleSemantic.PERMIT, TransportGuarantee.NONE);
         var methods = new ArrayList<HttpMethodConstraintElement>();
-        for (Object o : list(m, "httpMethodConstraints")) {
-            if (o instanceof Map<?, ?> mc) {
-                methods.add(new HttpMethodConstraintElement(string(mc, "value", ""),
-                        constraint(mc, "emptyRoleSemantic")));
+        try {
+            for (Object o : list(m, "httpMethodConstraints")) {
+                if (o instanceof Map<?, ?> mc) {
+                    methods.add(new HttpMethodConstraintElement(string(mc, "value", ""),
+                            constraint(mc, "emptyRoleSemantic", "@HttpMethodConstraint", type)));
+                }
             }
+            return new ServletSecurityElement(classConstraint, methods);
+        } catch (MalformedBytesException e) {
+            throw e;
+        } catch (IllegalArgumentException e) {
+            // empty or duplicate HTTP method names
+            throw new IllegalArgumentException(type.getName() + ": invalid @ServletSecurity: " + e.getMessage(), e);
         }
-        return new ServletSecurityElement(classConstraint, methods);
     }
 
     /** Rebuilds an {@code HttpConstraintElement}; {@code @HttpConstraint} names its semantic {@code value}. */
-    private static HttpConstraintElement constraint(Map<?, ?> m, String semanticKey) {
-        return new HttpConstraintElement(
-                EmptyRoleSemantic.valueOf(string(m, semanticKey, EmptyRoleSemantic.PERMIT.name())),
-                TransportGuarantee.valueOf(string(m, "transportGuarantee", TransportGuarantee.NONE.name())),
-                strings(m, "rolesAllowed").toArray(String[]::new));
+    private static HttpConstraintElement constraint(Map<?, ?> m, String semanticKey, String annotation,
+                                                    Class<?> type) {
+        EmptyRoleSemantic semantic = constant(EmptyRoleSemantic.class,
+                string(m, semanticKey, EmptyRoleSemantic.PERMIT.name()), type);
+        String[] roles = strings(m, "rolesAllowed").toArray(String[]::new);
+        if (semantic == EmptyRoleSemantic.DENY && roles.length > 0) {
+            throw new IllegalArgumentException(type.getName() + ": " + annotation
+                    + " must not combine the DENY empty-role semantic with rolesAllowed");
+        }
+        return new HttpConstraintElement(semantic,
+                constant(TransportGuarantee.class, string(m, "transportGuarantee", TransportGuarantee.NONE.name()), type),
+                roles);
     }
 
     private static String string(Map<?, ?> m, String key, String fallback) {

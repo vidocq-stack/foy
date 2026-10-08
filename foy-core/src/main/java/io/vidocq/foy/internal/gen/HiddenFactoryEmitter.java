@@ -23,7 +23,9 @@ import java.lang.classfile.ClassFile;
 import java.lang.classfile.ClassModel;
 import java.lang.constant.ClassDesc;
 import java.lang.constant.ConstantDescs;
+import java.lang.constant.DynamicConstantDesc;
 import java.lang.constant.MethodTypeDesc;
+import java.lang.invoke.MethodHandle;
 import java.lang.invoke.MethodHandles;
 import java.lang.invoke.MethodType;
 import java.util.function.Supplier;
@@ -31,11 +33,31 @@ import java.util.function.Supplier;
 /**
  * Emits a hidden {@link Supplier} class calling the no-arg constructor ({@code java.lang.classfile}).
  *
- * <p>The hidden class is defined in the component's own package through a private lookup, so
- * package-private constructors are reachable without reflection. The emitted class file uses
- * the running JDK's class file version ({@code ClassFile.of()} default).
+ * <p>The hidden class is defined in foy-core's own package, through foy-core's full-privilege
+ * lookup, so it works whatever the component's module (another named module, or the unnamed
+ * module of a web application class loader). Its class data is the component's no-arg
+ * constructor handle, obtained through a private lookup in the component class: package-private
+ * constructors are reachable, and a package that is not open to foy-core is reported as an
+ * {@link IllegalAccessException}. The emitted {@code get()} loads the handle with a dynamic
+ * constant bootstrapped by {@link MethodHandles#classData} and calls it with
+ * {@code invokeExact}. The class file uses the running JDK's version ({@code ClassFile.of()} default).
  */
 public final class HiddenFactoryEmitter {
+
+    private static final ClassDesc SELF = ClassDesc.of(HiddenFactoryEmitter.class.getPackageName() + ".FoyFactory");
+    private static final DynamicConstantDesc<MethodHandle> CONSTRUCTOR = DynamicConstantDesc.ofNamed(
+            ConstantDescs.BSM_CLASS_DATA, ConstantDescs.DEFAULT_NAME, ConstantDescs.CD_MethodHandle);
+    private static final byte[] FACTORY_BYTES = ClassFile.of().build(SELF, cb -> cb
+            .withFlags(ClassFile.ACC_PUBLIC | ClassFile.ACC_FINAL | ClassFile.ACC_SYNTHETIC)
+            .withInterfaceSymbols(ClassDesc.of("java.util.function.Supplier"))
+            .withMethodBody(ConstantDescs.INIT_NAME, ConstantDescs.MTD_void, ClassFile.ACC_PUBLIC, c -> c
+                    .aload(0).invokespecial(ConstantDescs.CD_Object, ConstantDescs.INIT_NAME, ConstantDescs.MTD_void)
+                    .return_())
+            .withMethodBody("get", MethodTypeDesc.of(ConstantDescs.CD_Object), ClassFile.ACC_PUBLIC, c -> c
+                    .ldc(CONSTRUCTOR)
+                    .invokevirtual(ConstantDescs.CD_MethodHandle, "invokeExact",
+                            MethodTypeDesc.of(ConstantDescs.CD_Object))
+                    .areturn()));
 
     private HiddenFactoryEmitter() {
     }
@@ -46,25 +68,23 @@ public final class HiddenFactoryEmitter {
      * @param type the class to instantiate
      * @return a supplier invoking the no-arg constructor of {@code type}
      * @throws IllegalAccessException when the type's package is not open to foy-core, or when
-     *         the class bytes show the type has no non-private no-arg constructor or is abstract
+     *         the type has no non-private no-arg constructor or is abstract
      */
     public static Supplier<Object> factoryFor(Class<?> type) throws IllegalAccessException {
         checkInstantiable(type);
-        MethodHandles.Lookup lookup = MethodHandles.privateLookupIn(type, MethodHandles.lookup());
-        ClassDesc target = ClassDesc.of(type.getName());
-        ClassDesc self = ClassDesc.of(type.getPackageName().isEmpty()
-                ? "FoyFactory" : type.getPackageName() + ".FoyFactory");
-        byte[] bytes = ClassFile.of().build(self, cb -> cb
-                .withFlags(ClassFile.ACC_PUBLIC | ClassFile.ACC_FINAL | ClassFile.ACC_SYNTHETIC)
-                .withInterfaceSymbols(ClassDesc.of("java.util.function.Supplier"))
-                .withMethodBody(ConstantDescs.INIT_NAME, ConstantDescs.MTD_void, ClassFile.ACC_PUBLIC, c -> c
-                        .aload(0).invokespecial(ConstantDescs.CD_Object, ConstantDescs.INIT_NAME, ConstantDescs.MTD_void)
-                        .return_())
-                .withMethodBody("get", MethodTypeDesc.of(ConstantDescs.CD_Object), ClassFile.ACC_PUBLIC, c -> c
-                        .new_(target).dup()
-                        .invokespecial(target, ConstantDescs.INIT_NAME, ConstantDescs.MTD_void)
-                        .areturn()));
-        MethodHandles.Lookup hidden = lookup.defineHiddenClass(bytes, true);
+        HiddenFactoryEmitter.class.getModule().addReads(type.getModule());
+        MethodHandle constructor;
+        try {
+            constructor = MethodHandles.privateLookupIn(type, MethodHandles.lookup())
+                    .findConstructor(type, MethodType.methodType(void.class))
+                    .asType(MethodType.methodType(Object.class));
+        } catch (NoSuchMethodException e) {
+            var failure = new IllegalAccessException(type.getName() + " has no no-arg constructor");
+            failure.initCause(e);
+            throw failure;
+        }
+        MethodHandles.Lookup hidden = MethodHandles.lookup()
+                .defineHiddenClassWithClassData(FACTORY_BYTES, constructor, true);
         try {
             @SuppressWarnings("unchecked")
             Supplier<Object> s = (Supplier<Object>) hidden.findConstructor(hidden.lookupClass(),
@@ -92,8 +112,8 @@ public final class HiddenFactoryEmitter {
             hasNoArg = model.methods().stream().anyMatch(m -> m.methodName().equalsString(ConstantDescs.INIT_NAME)
                     && m.methodType().equalsString("()V")
                     && (m.flags().flagsMask() & ClassFile.ACC_PRIVATE) == 0);
-        } catch (IllegalArgumentException e) {
-            return;
+        } catch (RuntimeException e) {
+            return; // unreadable bytes: let the constructor lookup decide
         }
         if (abstractType) {
             throw new IllegalAccessException(type.getName() + " is abstract or an interface and cannot be instantiated");
