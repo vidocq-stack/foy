@@ -106,16 +106,16 @@ module io.vidocq.foy.processor {          // build time only
 
 `foy-core` additionally declares `uses io.vidocq.foy.spi.gen.WebComponent`.
 
+[NOTE]
+====
+The `io.vidocq.foy.internal.*` packages are exported to allow advanced integrations (custom dispatcher, observability). They are **not** semver-stable — see xref:migration.adoc[Migration] for variations between milestones.
+====
+
 == Build-time code generation
 
 * **`foy-processor`** is a build-time annotation processor with a single requirement, `java.compiler`. It generates `X$$FoyComponent` for `@WebServlet`, `@WebFilter`, `@WebListener`, for unannotated `Servlet` / `Filter` / listener classes and for `ServletContainerInitializer` (with its `@HandlesTypes`), carries `@MultipartConfig`, `@ServletSecurity`, `@DeclareRoles` and `@RunAs` metadata, and writes `META-INF/services/io.vidocq.foy.spi.gen.WebComponent` plus `META-INF/foy/class-index.list`. Spec misuse is a compile error; a class that cannot be generated is reported as a note.
 * **`FoyWebExtension`** (in `foy-cdi-vauban`) is a CDI Build Compatible Extension. It runs inside `vauban-processor`, which is itself **build-time only**: unscoped web components become `@Dependent`, duplicate servlet or filter names fail the build, and a synthetic `@Singleton` `io.vidocq.foy.spi.cdi.CdiWebComponents` bean lists the components for `WebAppDiscovery`, which merges the beans of the application and of every library archive.
 * See xref:internals.adoc#_component_resolution_tiers[Component resolution tiers] for the runtime side and xref:usage.adoc#_build_time_code_generation[Usage] for the setup.
-
-[NOTE]
-====
-The `io.vidocq.foy.internal.*` packages are exported to allow advanced integrations (custom dispatcher, observability). They are **not** semver-stable — see xref:migration.adoc[Migration] for variations between milestones.
-====
 
 == Public API: `FoyChappeBoot`
 

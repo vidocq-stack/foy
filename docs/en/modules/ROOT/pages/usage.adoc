@@ -167,7 +167,8 @@ Add `foy-processor` to the compiler's annotation processor path. It generates, a
 * Only the first `path` is needed without CDI. The `vauban-processor` path is for applications using `foy-cdi-vauban`; it is build-time only.
 * In a named Java Module, the processor suggests (as a compiler note) the `provides io.vidocq.foy.spi.gen.WebComponent with ...` clause to add to your `module-info.java`.
 * Spec misuse (for example a `@WebServlet` class that is not a `Servlet`) fails the compilation.
-* Classes that were not processed (third-party jars) still work: Foy decodes their annotations from the class bytes. See xref:internals.adoc#_component_resolution_tiers[Component resolution tiers].
+* In a named module, the name-based companion lookup uses `publicLookup`: either declare `provides io.vidocq.foy.spi.gen.WebComponent with ...` (as the processor note suggests; no export needed) or export the package. Otherwise resolution falls to the Class-File tier, which then needs `opens`.
+* Classes that were not processed (third-party jars) still work: Foy decodes their annotations from the class bytes. In a named module this needs `opens <package> to io.vidocq.foy.core`; class-path code needs nothing. See xref:internals.adoc#_component_resolution_tiers[Component resolution tiers].
 
 == CDI integration through Vauban
 
