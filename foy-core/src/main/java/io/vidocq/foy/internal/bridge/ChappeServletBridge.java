@@ -64,6 +64,7 @@ import java.util.Optional;
 public final class ChappeServletBridge implements Handler, RequestDispatcherImpl.Invoker {
 
     private final ServletDispatcher dispatcher;
+    private static final System.Logger LOG = System.getLogger(ChappeServletBridge.class.getName());
     private final FilterRegistry filterRegistry;
     private final io.vidocq.foy.internal.container.VidocqServletContext servletContext;
     private final SessionManager sessionManager;
@@ -354,6 +355,11 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
         // previous value once a forward/include returns to its caller.
         HttpServletRequestImpl impl = unwrapImpl(req);
         if (impl == null) {
+            // Not provably unreachable: a caller may hand a RequestDispatcher a request that does not
+            // wrap the container's own request (a spec violation, section 9.1). Run the chain, but never silently.
+            LOG.log(System.Logger.Level.WARNING,
+                    "async-supported not recomputed for {0} dispatch to ''{1}'': request type {2} does not wrap the container request",
+                    type, target.servletName(), req.getClass().getName());
             new VidocqFilterChain(filters, target.servlet()).doFilter(req, res);
             return;
         }

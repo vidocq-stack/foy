@@ -153,8 +153,55 @@ class AsyncSupportedDispatchTest {
         assertEquals("true/false", get("/s1"));
     }
 
+    @Test
+    void namedDispatcherForwardAndIncludeToNonAsyncServlet() throws Exception {
+        HttpServlet s1 = new HttpServlet() {
+            @Override protected void doGet(HttpServletRequest req, HttpServletResponse resp)
+                    throws IOException, ServletException {
+                var d = req.getServletContext().getNamedDispatcher("S2");
+                if (req.getParameter("fwd") != null) {
+                    d.forward(req, resp);
+                    return;
+                }
+                resp.getWriter().write("i:");
+                d.include(req, resp);
+                resp.getWriter().write(";after=" + req.isAsyncSupported());
+            }
+        };
+        start(List.of(map("/s1", s1, "S1", true), map("/s2", reporter(), "S2", false)), List.of());
+        assertEquals("i:false/true;after=true", get("/s1"));
+        assertEquals("false/true", get("/s1?fwd=1"));
+    }
+
+    @Test
+    void errorDispatchToAsyncPageKeepsAsync() throws Exception {
+        HttpServlet s1 = new HttpServlet() {
+            @Override protected void doGet(HttpServletRequest req, HttpServletResponse resp) throws IOException {
+                resp.sendError(500);
+            }
+        };
+        errorPages = new io.vidocq.foy.internal.error.ErrorPageRegistry().register(500, "/err");
+        start(List.of(map("/s1", s1, "S1", true), map("/err", reporter(), "ERR", true)), List.of());
+        assertEquals("true/false", get("/s1"));
+    }
+
+    @Test
+    void errorDispatchToNonAsyncPageDisablesAsync() throws Exception {
+        HttpServlet s1 = new HttpServlet() {
+            @Override protected void doGet(HttpServletRequest req, HttpServletResponse resp) throws IOException {
+                resp.sendError(500);
+            }
+        };
+        errorPages = new io.vidocq.foy.internal.error.ErrorPageRegistry().register(500, "/err");
+        start(List.of(map("/s1", s1, "S1", true), map("/err", reporter(), "ERR", false)), List.of());
+        assertEquals("false/true", get("/s1"));
+    }
+
+    private io.vidocq.foy.internal.error.ErrorPageRegistry errorPages;
+
     private void start(List<ServletDispatcher.Mapping> mappings, List<FilterMapping> filters) {
         var ctx = new VidocqServletContext("/");
+        if (errorPages != null) ctx.setErrorPages(errorPages);
         var bridge = new ChappeServletBridge(new ServletDispatcher(mappings),
                 new FilterRegistry(filters), ctx, null, "/");
         var r = TestServerLauncherAccess.start(bridge);
