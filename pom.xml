@@ -78,6 +78,7 @@
     -->
     <modules>
         <module>foy-api</module>
+        <module>foy-processor</module>
         <module>foy-core</module>
         <module>foy-cdi-vauban</module>
         <module>foy-chappe</module>
@@ -130,6 +131,11 @@
             <dependency>
                 <groupId>io.vidocq.foy</groupId>
                 <artifactId>foy-api</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.vidocq.foy</groupId>
+                <artifactId>foy-processor</artifactId>
                 <version>${project.version}</version>
             </dependency>
             <dependency>
