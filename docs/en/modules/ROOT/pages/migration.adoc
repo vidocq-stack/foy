@@ -25,7 +25,7 @@ Foy is at **{project-version}** and the official TCK passes **92.6 %** (1587/171
 
 | `@WebServlet`, `@WebFilter`, `@WebListener`
 | Identical
-| Detected at compile time by APT — no runtime scan.
+| Detected at compile time by APT — no runtime annotation scan (descriptors and initializers are discovered at boot).
 
 | `META-INF/web-fragment.xml`
 | ✅ Implemented
@@ -111,7 +111,7 @@ Cross-context dispatch (`ServletContext.getContext`) **is implemented** via `Cro
 
 == Common pitfalls
 
-* **No runtime `META-INF/services` autoload.** Foy does not use `ServiceLoader` at startup. If a Servlet library relies on a `ServletContainerInitializer` loaded by scan, declare it as a CDI bean in Vauban.
+* **`ServletContainerInitializer`s and fragments are discovered at boot.** `ApplicationSources` loads the initializers through `ServiceLoader` (`META-INF/services` or `provides`) and the `META-INF/web-fragment.xml` of every root, then orders them per §8.2.2 and §8.2.4. Component classes themselves are still never scanned.
 * **`metadata-complete` is honoured.** With `metadata-complete="true"` annotations are ignored; otherwise `web.xml` and annotations are merged per Servlet 6.1 §8.2.3 (the descriptor wins on a same-name conflict).
 * **No runtime dynamic proxy.** Frameworks that rely on it (Spring AOP, some profiling libs) won't work as-is. Prefer APT alternatives (Vauban, Class-File API).
 * **Strict Java modules.** If a legacy uses reflective `setAccessible(true)`, it needs an explicit `--add-opens` — better to port the legacy to `@Inject`.

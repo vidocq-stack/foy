@@ -14,6 +14,9 @@ implemented yet. This report quantifies exactly which ones.
 against the previous `foy-tck/tck-baseline.txt`: zero class regression, 63 classes
 improved, no new class. `foy-tck/tck-baseline.txt` is refreshed to this tally.
 
+`--all` runs `**/*Tests.class` only, so a `*Test` class seen in family runs
+(for example `GetServletRegistrationsTest`) is not counted.
+
 All 205 `tiers=Stats` lines show `reflection=0`. The harness now deploys through
 the product descriptor and fragment merge, with the `WEB-INF/lib` fragments.
 
@@ -126,9 +129,11 @@ missing feature** — web-fragment scanning.
 
 ### 3.1 Web fragments not scanned — 641 errors (81 % of all errors)
 
+**Resolved in Phase 3** (`pluggability.*` 5 → 639/646, overall 1587/1714); the analysis below is the 2026-06 diagnosis, kept for history. The 7 residual errors are tracked in §0.
+
 Every `pluggability.*` war packages its servlets in `WEB-INF/lib/*.jar` with a
 `META-INF/web-fragment.xml` (spec §8.2). Foy deploys those wars with **zero
-servlets registered** (`[VidocqTCK] deploy archive=servlet_plu_servlet_web.war
+servlets registered** at the time (`[VidocqTCK] deploy archive=servlet_plu_servlet_web.war
 … servlets=[]`), so every request 404s. Implementing fragment scanning +
 ordering (`<absolute-ordering>`, `<ordering>`) would mechanically bring the
 overall score to ~91 %. The 10 `pluggability.aordering*` and `fragment` classes

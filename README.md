@@ -43,11 +43,12 @@ module to become an independent project usable outside the Vidocq Runtime ecosys
 The reactor (`foy-api`, `foy-core`, `foy-cdi-vauban`, `foy-chappe`) compiles without
 blocking warnings.
 
-**TCK baseline measured (2026-06-11)** — full official Jakarta Servlet 6.1 suite:
-**920/1714 (53.7 %)** raw, but the core `api.*` family is at **95.5 %** and 81 %
-of all errors trace back to a single missing feature (web-fragment scanning,
-spec §8.2 — the whole `pluggability.*` family). Detailed per-family breakdown,
-root causes and roadmap in [`TCK.md`](TCK.md).
+**TCK at the Phase 3 exit (2026-10-09)** — full official Jakarta Servlet 6.1 suite:
+**1587/1714 (92.6 %)**: `api.*` 821/859, `pluggability.*` 639/646, `spec.*` 127/207,
+`compat.*` 0/2. The main remaining gaps are security enforcement, the default
+servlet (welcome files), request dispatching, server push and a filter that runs
+twice when mapped by pattern and by servlet name. Per-family breakdown, root
+causes and roadmap in [`TCK.md`](TCK.md).
 
 **TODO M2 — transport decoupling**:
 

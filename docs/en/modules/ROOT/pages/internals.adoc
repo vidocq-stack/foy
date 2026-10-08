@@ -213,7 +213,7 @@ The guard covers `foy-core` only: `foy-cdi-vauban`'s `CdiWebComponentsCreator` a
 | Temporary M1 coupling — to be replaced in M2 by a `FoyHttpExchange` SPI inside `foy-api`, opening the door to other transports.
 
 | `META-INF/services` only for generated components
-| `WebComponent` providers written by `foy-processor` are loaded with `ServiceLoader`; other Servlet SPIs (e.g. `ServletContainerInitializer`) are not loaded by scan, they go through the generated index or the Vauban `BeanManager`.
+| `WebComponent` providers written by `foy-processor` are loaded with `ServiceLoader`; `ServletContainerInitializer`s are also loaded with `ServiceLoader` at boot (`ApplicationSources`), restricted to the roots the fragment ordering retains. Components themselves go through the generated index or the Vauban `BeanManager`.
 |===
 
 == Known limits

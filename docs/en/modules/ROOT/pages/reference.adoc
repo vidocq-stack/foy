@@ -239,7 +239,7 @@ The `io.vidocq.foy.internal.*` packages are exported to allow advanced integrati
 
 The `version` and `metadata-complete` attributes of `<web-app>` and `<web-fragment>` are honoured.
 
-== Servlet 6.1 API comparison== Servlet 6.1 API comparison
+== Servlet 6.1 API comparison
 
 [cols="1,1,3",options="header"]
 |===
