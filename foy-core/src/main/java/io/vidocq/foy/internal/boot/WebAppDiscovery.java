@@ -50,8 +50,10 @@ import java.util.function.Supplier;
  * {@code @WebListener}) of a {@link BeanManager} and returns them as {@link AnnotatedComponents},
  * to be merged with {@code web.xml} by {@link DescriptorMerger}.
  *
- * <p>The component classes come from the {@link CdiWebComponents} bean registered at build time
- * by foy-cdi-vauban; without it (another CDI container), the {@code Servlet}, {@code Filter} and
+ * <p>The component classes come from the {@link CdiWebComponents} beans registered at build time
+ * by foy-cdi-vauban (one per archive, merged; each class is matched to the bean of that exact
+ * class, and a listed class without one is skipped with a warning); without them (another CDI
+ * container), the {@code Servlet}, {@code Filter} and
  * {@code EventListener} beans are walked instead. Metadata (names, URL patterns, init params,
  * load-on-startup, async support, filter dispatcher types and servlet names, security) always
  * comes from {@link WebComponentRegistry#lookup(Class)}, never from runtime annotation reflection.
@@ -119,12 +121,24 @@ public final class WebAppDiscovery {
         var result = new ArrayList<Candidate>();
         Set<Bean<?>> index = bm.getBeans(CdiWebComponents.class, ANY);
         if (!index.isEmpty()) {
-            Bean<?> indexBean = bm.resolve(index);
-            CdiWebComponents components = reference(bm, indexBean, CdiWebComponents.class).get();
-            for (Class<?> cls : components.componentClasses()) {
-                Set<Bean<?>> beans = bm.getBeans(cls, ANY);
-                if (beans.isEmpty() || !seen.add(cls)) continue;
-                result.add(new Candidate(cls, bm.resolve(beans)));
+            // One index bean per archive built with foy-cdi-vauban: merge them all, in bean then list order.
+            for (Bean<?> indexBean : index) {
+                CdiWebComponents components = reference(bm, indexBean, CdiWebComponents.class).get();
+                for (Class<?> cls : components.componentClasses()) {
+                    if (!seen.add(cls)) continue;
+                    // A lookup by type also matches the beans of subclasses: keep the class's own bean.
+                    Set<Bean<?>> own = new LinkedHashSet<>();
+                    for (Bean<?> bean : bm.getBeans(cls, ANY)) {
+                        if (bean.getBeanClass() == cls) own.add(bean);
+                    }
+                    if (own.isEmpty()) {
+                        LOG.log(System.Logger.Level.WARNING, "foy: " + cls.getName() + " is listed by "
+                                + CdiWebComponents.class.getSimpleName() + " but has no bean of that class"
+                                + " (vetoed, or loaded by another class loader); skipped");
+                        continue;
+                    }
+                    result.add(new Candidate(cls, own.size() == 1 ? own.iterator().next() : bm.resolve(own)));
+                }
             }
             return result;
         }

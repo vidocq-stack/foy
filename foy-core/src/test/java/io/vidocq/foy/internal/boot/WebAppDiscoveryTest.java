@@ -24,6 +24,7 @@ import io.vidocq.foy.internal.boot.WebAppModel.FilterMappingDecl;
 import io.vidocq.foy.internal.boot.WebAppModel.ServletDecl;
 import io.vidocq.foy.internal.gen.WebComponentRegistry;
 import io.vidocq.foy.spi.cdi.CdiWebComponents;
+import jakarta.enterprise.inject.AmbiguousResolutionException;
 import jakarta.enterprise.inject.spi.Bean;
 import jakarta.enterprise.inject.spi.BeanManager;
 import jakarta.servlet.DispatcherType;
@@ -75,6 +76,14 @@ class WebAppDiscoveryTest {
     public static class DiscoveredListener implements ServletContextListener {
         @Override public void contextInitialized(ServletContextEvent e) {}
     }
+
+    /** Annotated subclass of an annotated servlet: a lookup by type DiscoveredServlet matches both beans. */
+    @WebServlet("/sub")
+    public static class SubServlet extends DiscoveredServlet {}
+
+    /** Listed by an index but never given a bean. */
+    @WebServlet("/orphan")
+    public static class OrphanServlet extends HttpServlet {}
 
     /** A CDI bean implementing Servlet without {@code @WebServlet}: not a web component. */
     public static class PlainServlet extends HttpServlet {}
@@ -147,6 +156,63 @@ class WebAppDiscoveryTest {
         assertEquals(1, infoLines());
     }
 
+    @Test
+    void everyCdiWebComponentsBeanIsMergedInBeanThenListOrderWithoutDuplicates() {
+        // One index per archive built with foy-cdi-vauban: resolving a single one would be ambiguous.
+        CdiWebComponents app = () -> List.of(DiscoveredServlet.class, DiscoveredFilter.class);
+        CdiWebComponents library = () -> List.of(DiscoveredFilter.class, DiscoveredListener.class);
+        var bm = new FakeBeanManager()
+                .bean(AppIndex.class, app, CdiWebComponents.class)
+                .bean(LibraryIndex.class, library, CdiWebComponents.class)
+                .bean(DiscoveredServlet.class, new DiscoveredServlet())
+                .bean(DiscoveredFilter.class, new DiscoveredFilter())
+                .bean(DiscoveredListener.class, new DiscoveredListener());
+
+        AnnotatedComponents found = WebAppDiscovery.discover(bm.proxy(), registry);
+
+        assertEquals(List.of(DiscoveredServlet.class), found.servlets().stream().map(ServletDecl::type).toList());
+        assertEquals(1, found.filters().size(), "a class listed by two indexes is discovered once");
+        assertEquals(1, found.listeners().size());
+        assertEquals(List.of(), bm.walked);
+    }
+
+    @Test
+    void aClassIsMatchedToItsOwnBeanNotToTheBeansOfItsSubclasses() {
+        var parent = new DiscoveredServlet();
+        var sub = new SubServlet();
+        CdiWebComponents index = () -> List.of(DiscoveredServlet.class, SubServlet.class);
+        var bm = new FakeBeanManager()
+                .bean(CdiWebComponents.class, index)
+                .bean(DiscoveredServlet.class, parent)
+                .bean(SubServlet.class, sub, DiscoveredServlet.class);
+
+        AnnotatedComponents found = WebAppDiscovery.discover(bm.proxy(), registry);
+
+        assertEquals(List.of(DiscoveredServlet.class, SubServlet.class),
+                found.servlets().stream().map(ServletDecl::type).toList());
+        assertSame(parent, found.servlets().get(0).factory().get());
+        assertSame(sub, found.servlets().get(1).factory().get());
+    }
+
+    @Test
+    void anIndexedClassWithoutABeanIsSkippedWithOneWarning() {
+        CdiWebComponents index = () -> List.of(OrphanServlet.class, DiscoveredServlet.class);
+        var bm = new FakeBeanManager()
+                .bean(CdiWebComponents.class, index)
+                .bean(DiscoveredServlet.class, new DiscoveredServlet());
+
+        AnnotatedComponents found = WebAppDiscovery.discover(bm.proxy(), registry);
+
+        assertEquals(List.of(DiscoveredServlet.class), found.servlets().stream().map(ServletDecl::type).toList());
+        var warnings = log.messages(Level.WARNING);
+        assertEquals(1, warnings.size(), warnings::toString);
+        assertTrue(warnings.getFirst().contains(OrphanServlet.class.getName()), warnings::toString);
+    }
+
+    /** Bean classes of the two index beans of the merge test. */
+    private interface AppIndex {}
+    private interface LibraryIndex {}
+
     private long infoLines() {
         return log.infoLines();
     }
@@ -168,6 +234,10 @@ class WebAppDiscoveryTest {
 
         long infoLines() {
             return records.stream().filter(r -> r.getLevel() == Level.INFO).count();
+        }
+
+        List<String> messages(Level level) {
+            return records.stream().filter(r -> r.getLevel() == level).map(LogRecord::getMessage).toList();
         }
 
         void close() {
@@ -206,7 +276,8 @@ class WebAppDiscoveryTest {
                         }
                         case "resolve" -> {
                             @SuppressWarnings("unchecked") Set<Bean<?>> set = (Set<Bean<?>>) a[0];
-                            yield set.size() == 1 ? set.iterator().next() : null;
+                            if (set.size() > 1) throw new AmbiguousResolutionException(set.toString());
+                            yield set.isEmpty() ? null : set.iterator().next();
                         }
                         case "getReference" -> instances.get(a[0]);
                         case "createCreationalContext" -> null;
