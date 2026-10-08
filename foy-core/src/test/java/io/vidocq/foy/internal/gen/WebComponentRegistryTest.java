@@ -66,7 +66,7 @@ class WebComponentRegistryTest {
     }
 
     /** Not a web component at all. */
-    static class Helper {}
+    static class Helper { private Helper() {} }
 
     /** {@code @WebServlet} on a class that is not a servlet: spec-forbidden. */
     @WebServlet("/bad") public static class Misused {}
@@ -112,6 +112,29 @@ class WebComponentRegistryTest {
         assertEquals(1, registry.stats().reflection());
     }
 
+    public static class Async implements jakarta.servlet.AsyncListener {
+        public void onComplete(jakarta.servlet.AsyncEvent e) {}
+        public void onTimeout(jakarta.servlet.AsyncEvent e) {}
+        public void onError(jakarta.servlet.AsyncEvent e) {}
+        public void onStartAsync(jakarta.servlet.AsyncEvent e) {}
+    }
+
+    public static class Bare extends HttpServlet {}
+
+    @Test
+    void readableNonWebClassResolvesInClassFileTierAsPlain() {
+        var c = registry.lookup(Async.class);
+        assertEquals(WebComponentDescriptor.Kind.PLAIN, c.descriptor().kind());
+        assertInstanceOf(Async.class, c.newInstance());
+        assertEquals(Tier.CLASS_FILE, registry.tierOf(Async.class));
+        assertEquals(0, registry.stats().reflection());
+    }
+
+    @Test
+    void unannotatedServletIsPlain() {
+        assertEquals(WebComponentDescriptor.Kind.PLAIN, registry.lookup(Bare.class).descriptor().kind());
+    }
+
     @Test
     void annotationMisusePropagatesFromLookup() {
         assertThrows(IllegalArgumentException.class, () -> registry.lookup(Misused.class));
@@ -126,7 +149,9 @@ class WebComponentRegistryTest {
     @Test
     void unreachableConstructorFailsWithServletException() {
         var f = new RegistryComponentFactory(registry, getClass().getClassLoader());
-        assertThrows(ServletException.class, () -> f.newInstance(PrivateCtor.class));
+        var e = assertThrows(ServletException.class, () -> f.newInstance(PrivateCtor.class));
+        assertTrue(e.getMessage().contains("PrivateCtor"), e.getMessage());
+        assertFalse(e.getMessage().contains("opens"), e.getMessage());
     }
 
     @Test

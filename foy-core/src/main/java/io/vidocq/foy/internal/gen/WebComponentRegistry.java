@@ -146,21 +146,20 @@ public final class WebComponentRegistry {
         }
         // IllegalArgumentException (annotation misuse) propagates: a deployment failure.
         Optional<WebComponentDescriptor> read = ClassFileDescriptorReader.read(type);
-        String reason = "class bytes unreadable or not a web component";
-        if (read.isPresent()) {
-            try {
-                Supplier<Object> factory = HiddenFactoryEmitter.factoryFor(type);
-                LOG.log(Level.INFO, MessageFormat.format(
-                        "foy: {0} resolved through the Class-File tier (not processed at build time)", type.getName()));
-                return new Entry(new FactoryComponent(type, read.get(), factory), Tier.CLASS_FILE);
-            } catch (IllegalAccessException e) {
-                reason = String.valueOf(e.getMessage());
-            }
+        // Readable non-web classes (AsyncListener, HttpUpgradeHandler, helpers) still get a hidden factory.
+        WebComponentDescriptor descriptor = read.orElseGet(() -> WebComponentDescriptor.plain().withKind(kindOf(type)));
+        String reason;
+        try {
+            Supplier<Object> factory = HiddenFactoryEmitter.factoryFor(type);
+            LOG.log(Level.INFO, MessageFormat.format(
+                    "foy: {0} resolved through the Class-File tier (not processed at build time)", type.getName()));
+            return new Entry(new FactoryComponent(type, descriptor, factory), Tier.CLASS_FILE);
+        } catch (IllegalAccessException e) {
+            reason = String.valueOf(e.getMessage());
         }
         LOG.log(Level.WARNING, MessageFormat.format(
                 "foy: {0} resolved by reflection ({1}); add foy-processor to the annotation processor path "
                         + "or open the package to io.vidocq.foy.core", type.getName(), reason));
-        WebComponentDescriptor descriptor = read.orElseGet(() -> WebComponentDescriptor.plain().withKind(kindOf(type)));
         return new Entry(new ReflectiveComponent(type, descriptor), Tier.REFLECTION);
     }
 
@@ -180,26 +179,17 @@ public final class WebComponentRegistry {
             return component;
         } catch (ClassNotFoundException e) {
             return null;
-        } catch (Throwable e) {
+        } catch (Exception | LinkageError e) {
             LOG.log(Level.WARNING, "foy: cannot use the generated companion " + name + ": " + e, e);
             return null;
+        } catch (Throwable t) {
+            throw new AssertionError(t);
         }
     }
 
+    /** Unannotated classes are PLAIN, except container initializers. */
     private static Kind kindOf(Class<?> type) {
-        if (Servlet.class.isAssignableFrom(type)) {
-            return Kind.SERVLET;
-        }
-        if (Filter.class.isAssignableFrom(type)) {
-            return Kind.FILTER;
-        }
-        if (EventListener.class.isAssignableFrom(type)) {
-            return Kind.LISTENER;
-        }
-        if (ServletContainerInitializer.class.isAssignableFrom(type)) {
-            return Kind.INITIALIZER;
-        }
-        return Kind.PLAIN;
+        return ServletContainerInitializer.class.isAssignableFrom(type) ? Kind.INITIALIZER : Kind.PLAIN;
     }
 
     /** Tier 3: descriptor read from the class bytes, hidden-class factory. */
@@ -217,11 +207,20 @@ public final class WebComponentRegistry {
         public Object newInstance() {
             try {
                 return type.getDeclaredConstructor().newInstance();
-            } catch (ReflectiveOperationException | RuntimeException e) {
+            } catch (NoSuchMethodException e) {
+                throw new IllegalStateException(type.getName() + " has no no-arg constructor", e);
+            } catch (IllegalAccessException | RuntimeException e) {
+                Module self = WebComponentRegistry.class.getModule();
                 String pkg = type.getPackageName();
-                throw new IllegalStateException("cannot instantiate " + type.getName() + ": " + e
-                        + "; the package is probably not open to the container, add 'opens " + pkg
-                        + " to io.vidocq.foy.core' to its module descriptor", e);
+                if (type.getModule().isNamed() && !type.getModule().isOpen(pkg, self)) {
+                    throw new IllegalStateException("cannot instantiate " + type.getName() + ": package " + pkg
+                            + " is not open to the container; add 'opens " + pkg
+                            + " to io.vidocq.foy.core' to its module descriptor", e);
+                }
+                throw new IllegalStateException("cannot instantiate " + type.getName()
+                        + ": it has no accessible no-arg constructor (" + e + ")", e);
+            } catch (InstantiationException | java.lang.reflect.InvocationTargetException e) {
+                throw new IllegalStateException("cannot instantiate " + type.getName() + ": " + e, e);
             }
         }
     }
