@@ -24,11 +24,15 @@ import io.vidocq.foy.internal.boot.WebAppModel.FilterMappingDecl;
 import io.vidocq.foy.internal.boot.WebAppModel.ListenerDecl;
 import io.vidocq.foy.internal.boot.WebAppModel.ServletDecl;
 import io.vidocq.foy.internal.error.ErrorPageRegistry;
+import io.vidocq.foy.internal.webxml.Fragment;
+import io.vidocq.foy.internal.webxml.FragmentMerger;
 import io.vidocq.foy.internal.webxml.WebAppDescriptor;
 import jakarta.servlet.Filter;
 import jakarta.servlet.Servlet;
 import jakarta.servlet.ServletException;
 
+import java.net.URL;
+import java.security.CodeSource;
 import java.util.EventListener;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
@@ -69,16 +73,75 @@ public final class DescriptorMerger {
         public static AnnotatedComponents none() {
             return new AnnotatedComponents(List.of(), List.of(), List.of(), List.of());
         }
+
+        /**
+         * Drops the components whose class comes from one of {@code jars}: its
+         * {@code ProtectionDomain} code source location, normalised by {@link Fragment#sourceKey},
+         * equals a normalised jar. A class without code source is never dropped. Filter mappings
+         * of a dropped filter are dropped with it.
+         */
+        public AnnotatedComponents excludingSources(Set<URL> jars) {
+            if (jars.isEmpty()) return this;
+            Set<String> keys = new HashSet<>();
+            for (URL u : jars) keys.add(Fragment.sourceKey(u));
+            var keptFilters = new java.util.ArrayList<FilterDecl>();
+            Set<String> droppedFilters = new HashSet<>();
+            for (FilterDecl f : filters) {
+                if (from(f.type(), keys)) droppedFilters.add(f.name());
+                else keptFilters.add(f);
+            }
+            return new AnnotatedComponents(
+                    servlets.stream().filter(s -> !from(s.type(), keys)).toList(),
+                    keptFilters,
+                    filterMappings.stream().filter(m -> !droppedFilters.contains(m.filterName())).toList(),
+                    listeners.stream().filter(l -> !from(l.type(), keys)).toList());
+        }
+
+        private static boolean from(Class<?> type, Set<String> keys) {
+            CodeSource cs = type.getProtectionDomain().getCodeSource();
+            URL location = cs == null ? null : cs.getLocation();
+            return location != null && keys.contains(Fragment.sourceKey(location));
+        }
     }
 
     /**
-     * Fills {@code target} from web.xml + annotations following Servlet 6.1 §8.2.3.
+     * Fills {@code target} from web.xml + annotations following Servlet 6.1 §8.2.3, without web
+     * fragments.
      *
      * @throws ServletException when a descriptor class cannot be loaded, or misuses the Servlet
      *         annotations, or when an error-page exception type is not a {@link Throwable}
      */
     public static void merge(WebAppDescriptor webXml, AnnotatedComponents annotated,
                              ComponentFactory factory, WebAppModel.Builder target)
+            throws ServletException {
+        merge(webXml, List.of(), annotated, factory, target);
+    }
+
+    /**
+     * Fills {@code target} from web.xml, the web fragments and the annotations (Servlet 6.1
+     * §8.2.3): {@link FragmentMerger#merge} first, then the annotations of the classes of
+     * {@code metadata-complete} fragments' jars are dropped, then the effective descriptor is
+     * merged with the remaining annotations.
+     *
+     * <p>{@code fragments} are the ordered fragments ({@code FragmentOrderer.order}); the
+     * annotations of jars excluded by an absolute ordering must already be removed from
+     * {@code annotated} by the caller ({@link AnnotatedComponents#excludingSources}), since those
+     * jars are not in {@code fragments}.</p>
+     *
+     * @throws ServletException on a fragment conflict, or as {@link #merge(WebAppDescriptor,
+     *         AnnotatedComponents, ComponentFactory, WebAppModel.Builder)}
+     */
+    public static void merge(WebAppDescriptor webXml, List<Fragment> fragments,
+                             AnnotatedComponents annotated, ComponentFactory factory,
+                             WebAppModel.Builder target) throws ServletException {
+        WebAppDescriptor effective = FragmentMerger.merge(webXml, fragments);
+        Set<URL> complete = new HashSet<>();
+        for (Fragment f : fragments) if (f.descriptor().metadataComplete()) complete.add(f.jar());
+        mergeEffective(effective, annotated.excludingSources(complete), factory, target);
+    }
+
+    private static void mergeEffective(WebAppDescriptor webXml, AnnotatedComponents annotated,
+                                       ComponentFactory factory, WebAppModel.Builder target)
             throws ServletException {
         AnnotatedComponents ann = webXml.metadataComplete() ? AnnotatedComponents.none() : annotated;
 

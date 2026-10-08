@@ -260,7 +260,6 @@ public final class WebAppDeployer {
             Filter instance = instantiate("filter", name, reg.instance(), reg.klass(), reg.getClassName(),
                     Filter.class, factory);
             if (instance == null) continue;
-            int before = dynamicMappings.size();
             boolean async = reg.isAsyncSupported();
             for (var mapping : reg.allMappings()) {
                 for (String pattern : mapping.urlPatterns()) {
@@ -273,11 +272,10 @@ public final class WebAppDeployer {
                     }
                 }
             }
-            // An unmapped dynamic filter is never invoked, hence never initialised.
-            if (dynamicMappings.size() > before) {
-                filters.add(new FilterUnit(name, instance.getClass(), instance, Map.copyOf(reg.getInitParameters()),
-                        async));
-            }
+            // Like a declared filter, an unmapped dynamic filter is initialised but never invoked
+            // (§6.2.1: every declared filter is instantiated and initialised at deployment).
+            filters.add(new FilterUnit(name, instance.getClass(), instance, Map.copyOf(reg.getInitParameters()),
+                    async));
         }
     }
 

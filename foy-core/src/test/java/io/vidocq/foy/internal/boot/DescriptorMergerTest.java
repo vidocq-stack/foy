@@ -25,9 +25,11 @@ import io.vidocq.foy.internal.boot.WebAppModel.FilterMappingDecl;
 import io.vidocq.foy.internal.boot.WebAppModel.ListenerDecl;
 import io.vidocq.foy.internal.boot.WebAppModel.ServletDecl;
 import io.vidocq.foy.internal.gen.WebComponentRegistry;
+import io.vidocq.foy.internal.webxml.Fragment;
 import io.vidocq.foy.internal.webxml.WebXmlParser;
 import jakarta.servlet.DispatcherType;
 import jakarta.servlet.Filter;
+import jakarta.servlet.Servlet;
 import jakarta.servlet.ServletContextEvent;
 import jakarta.servlet.ServletContextListener;
 import jakarta.servlet.annotation.HttpConstraint;
@@ -35,11 +37,25 @@ import jakarta.servlet.annotation.ServletSecurity;
 import jakarta.servlet.annotation.WebServlet;
 import jakarta.servlet.http.HttpServlet;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 import java.io.ByteArrayInputStream;
+import java.net.URI;
+import java.net.URL;
+import java.net.URLClassLoader;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.EventListener;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.function.Supplier;
+import java.util.jar.JarEntry;
+import java.util.jar.JarOutputStream;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -319,5 +335,213 @@ class DescriptorMergerTest {
         String name = PrivateCtor.class.getName();
         assertEquals("cannot instantiate " + name + ": " + name + " has no non-private no-arg constructor",
                 e.getMessage());
+    }
+
+    // ---- web fragments (Servlet 6.1 §8.2.3) ----------------------------------------------------
+
+    /** Compiles a servlet, a filter and a listener into {@code dir/jar.jar}; returns the jar. */
+    private static Path compileComponentJar(Path dir) throws Exception {
+        Path src = dir.resolve("src/jarpkg");
+        Files.createDirectories(src);
+        Files.writeString(src.resolve("JarServlet.java"),
+                "package jarpkg; public class JarServlet extends jakarta.servlet.http.HttpServlet {}");
+        Files.writeString(src.resolve("JarFilter.java"), """
+                package jarpkg;
+                public class JarFilter implements jakarta.servlet.Filter {
+                    public void doFilter(jakarta.servlet.ServletRequest q, jakarta.servlet.ServletResponse r,
+                                         jakarta.servlet.FilterChain c) {}
+                }""");
+        Files.writeString(src.resolve("JarListener.java"),
+                "package jarpkg; public class JarListener implements jakarta.servlet.ServletContextListener {}");
+        Path classes = dir.resolve("classes");
+        String servletApi = Path.of(HttpServlet.class.getProtectionDomain().getCodeSource().getLocation().toURI())
+                .toString();
+        int rc = java.util.spi.ToolProvider.findFirst("javac").orElseThrow().run(System.out, System.err,
+                "-cp", servletApi, "-d", classes.toString(),
+                src.resolve("JarServlet.java").toString(), src.resolve("JarFilter.java").toString(),
+                src.resolve("JarListener.java").toString());
+        assertEquals(0, rc, "test classes must compile");
+        Path jar = dir.resolve("jar.jar");
+        try (var out = new JarOutputStream(Files.newOutputStream(jar)); var files = Files.walk(classes)) {
+            for (Path p : files.filter(Files::isRegularFile).toList()) {
+                out.putNextEntry(new JarEntry(classes.relativize(p).toString().replace('\\', '/')));
+                out.write(Files.readAllBytes(p));
+                out.closeEntry();
+            }
+        }
+        return jar;
+    }
+
+    private static <T> Supplier<T> never() {
+        return () -> { throw new AssertionError("not instantiated by the merge"); };
+    }
+
+    @Test
+    void fragmentMetadataCompleteExcludesOnlyItsJarAnnotations(@TempDir Path dir) throws Exception {
+        Path jar = compileComponentJar(dir);
+        try (var loader = new URLClassLoader(new URL[] {jar.toUri().toURL()}, getClass().getClassLoader())) {
+            Class<? extends Servlet> jarServlet = loader.loadClass("jarpkg.JarServlet").asSubclass(Servlet.class);
+            Class<? extends Filter> jarFilter = loader.loadClass("jarpkg.JarFilter").asSubclass(Filter.class);
+            Class<? extends EventListener> jarListener =
+                    loader.loadClass("jarpkg.JarListener").asSubclass(EventListener.class);
+            var ann = new AnnotatedComponents(
+                    List.of(new ServletDecl("jar", jarServlet, never(), List.of("/jar"), Map.of(),
+                                    Integer.MIN_VALUE, false),
+                            new ServletDecl("ann", Annotated.class, Annotated::new, List.of("/ann"), Map.of(),
+                                    Integer.MIN_VALUE, false)),
+                    List.of(new FilterDecl("jarFilter", jarFilter, never(), Map.of(), false),
+                            new FilterDecl("f1", F1.class, F1::new, Map.of(), false)),
+                    List.of(new FilterMappingDecl("jarFilter", "/*", null, null),
+                            new FilterMappingDecl("f1", "/*", null, null)),
+                    List.of(new ListenerDecl(jarListener, never()), new ListenerDecl(L1.class, L1::new)));
+            var fragment = WebXmlParser.parseFragment(new ByteArrayInputStream(("""
+                    <web-fragment xmlns="https://jakarta.ee/xml/ns/jakartaee" version="6.1" metadata-complete="true">
+                      <servlet><servlet-name>fx</servlet-name><servlet-class>%s</servlet-class></servlet>
+                      <servlet-mapping><servlet-name>fx</servlet-name><url-pattern>/fx</url-pattern></servlet-mapping>
+                    </web-fragment>""".formatted(FromXml.class.getName())).getBytes()));
+            // The fragment jar is spelled as the discovery sees it, the classes' code source as file:.
+            var fragments = List.of(new Fragment("F1", URI.create("jar:" + jar.toUri() + "!/").toURL(), fragment));
+            var b = WebAppModel.builder("/");
+            DescriptorMerger.merge(WebXmlParser.parse(new ByteArrayInputStream((HEAD + "></web-app>").getBytes())),
+                    fragments, ann, F, b);
+            var m = b.build();
+            assertEquals(List.of("fx", "ann"), m.servlets().stream().map(ServletDecl::name).toList());
+            assertEquals(List.of("/fx"), m.servlets().getFirst().urlPatterns());
+            assertEquals(List.of("f1"), m.filters().stream().map(FilterDecl::name).toList());
+            assertEquals(List.of("f1"), m.filterMappings().stream().map(FilterMappingDecl::filterName).toList());
+            assertEquals(List.of(L1.class), m.listeners().stream().map(ListenerDecl::type).toList());
+        }
+    }
+
+    @Test
+    void excludingSourcesKeepsComponentsWithoutAMatchingCodeSource() throws Exception {
+        var ann = annotatedServlet("a", "/a", Map.of());
+        var none = ann.excludingSources(Set.of(URI.create("file:/elsewhere/x.jar").toURL()));
+        assertEquals(ann, none);
+        URL testClasses = Annotated.class.getProtectionDomain().getCodeSource().getLocation();
+        assertTrue(ann.excludingSources(Set.of(testClasses)).servlets().isEmpty());
+    }
+
+    @Test
+    void fourArgumentMergeIsTheMergeWithoutFragments() throws Exception {
+        var d = WebXmlParser.parse(new ByteArrayInputStream((HEAD + """
+                >
+                  <servlet><servlet-name>x</servlet-name><servlet-class>%s</servlet-class></servlet>
+                </web-app>""".formatted(FromXml.class.getName())).getBytes()));
+        var b = WebAppModel.builder("/");
+        DescriptorMerger.merge(d, List.of(), annotatedServlet("a", "/a", Map.of()), F, b);
+        assertEquals(List.of("x", "a"), b.build().servlets().stream().map(ServletDecl::name).toList());
+    }
+
+    @Test
+    void fragmentDescriptorsAreMergedWithWebXml() throws Exception {
+        var fragment = WebXmlParser.parseFragment(new ByteArrayInputStream(("""
+                <web-fragment xmlns="https://jakarta.ee/xml/ns/jakartaee" version="6.1">
+                  <context-param><param-name>k</param-name><param-value>frag</param-value></context-param>
+                  <context-param><param-name>only</param-name><param-value>frag</param-value></context-param>
+                  <listener><listener-class>%s</listener-class></listener>
+                </web-fragment>""".formatted(L2.class.getName())).getBytes()));
+        var d = WebXmlParser.parse(new ByteArrayInputStream((HEAD + """
+                >
+                  <context-param><param-name>k</param-name><param-value>xml</param-value></context-param>
+                </web-app>""").getBytes()));
+        var b = WebAppModel.builder("/");
+        DescriptorMerger.merge(d, List.of(new Fragment("F", URI.create("file:/f.jar").toURL(), fragment)),
+                AnnotatedComponents.none(), F, b);
+        var m = b.build();
+        assertEquals(Map.of("k", "xml", "only", "frag"), m.contextParams());
+        assertEquals(List.of(L2.class), m.listeners().stream().map(ListenerDecl::type).toList());
+    }
+
+    // ---- Phase 1 follow-ups -------------------------------------------------------------------
+
+    @Test
+    void errorPagesAndContextParamsAreCopiedFromWebXml() throws Exception {
+        var m = merge(HEAD + """
+                >
+                  <context-param><param-name>a</param-name><param-value>1</param-value></context-param>
+                  <context-param><param-name>b</param-name><param-value></param-value></context-param>
+                  <error-page><error-code>404</error-code><location>/nf</location></error-page>
+                  <error-page><exception-type>java.lang.IllegalStateException</exception-type>
+                    <location>/ise</location></error-page>
+                </web-app>""", AnnotatedComponents.none());
+        assertEquals(Map.of("a", "1", "b", ""), m.contextParams());
+        assertEquals(2, m.errorPages().size());
+        assertEquals(java.util.Optional.of("/nf"), m.errorPages().findByStatus(404));
+        assertEquals(java.util.Optional.of("/ise"), m.errorPages().findByException(new IllegalStateException()));
+        assertEquals(java.util.Optional.empty(), m.errorPages().findByStatus(500));
+    }
+
+    @Test
+    void errorPageExceptionTypeThatIsNotAThrowableFails() {
+        var e = assertThrows(jakarta.servlet.ServletException.class, () -> merge(HEAD + """
+                >
+                  <error-page><exception-type>java.lang.String</exception-type><location>/x</location></error-page>
+                </web-app>""", AnnotatedComponents.none()));
+        assertTrue(e.getMessage().contains("java.lang.String"), e.getMessage());
+    }
+
+    @Test
+    void filterMappingDeclNeedsExactlyOneTarget() {
+        assertThrows(IllegalArgumentException.class, () -> new FilterMappingDecl("f", null, null, null));
+        assertThrows(IllegalArgumentException.class, () -> new FilterMappingDecl("f", "/x", "s", null));
+        assertThrows(NullPointerException.class, () -> new FilterMappingDecl(null, "/x", null, null));
+        assertEquals(Set.of(DispatcherType.REQUEST), new FilterMappingDecl("f", "/x", null, null).dispatcherTypes());
+        assertEquals(Set.of(DispatcherType.REQUEST), new FilterMappingDecl("f", null, "s", Set.of()).dispatcherTypes());
+        var types = java.util.EnumSet.of(DispatcherType.FORWARD);
+        var decl = new FilterMappingDecl("f", "/x", null, types);
+        types.add(DispatcherType.ERROR);
+        assertEquals(Set.of(DispatcherType.FORWARD), decl.dispatcherTypes(), "defensive copy");
+        assertThrows(UnsupportedOperationException.class, () -> decl.dispatcherTypes().add(DispatcherType.ERROR));
+    }
+
+    static final List<String> FILTER_EVENTS = new CopyOnWriteArrayList<>();
+
+    public static class Recording implements Filter {
+        final String id;
+        Recording(String id) { this.id = id; }
+        @Override public void init(jakarta.servlet.FilterConfig c) { FILTER_EVENTS.add("init:" + id); }
+        @Override public void doFilter(jakarta.servlet.ServletRequest req, jakarta.servlet.ServletResponse res,
+                                       jakarta.servlet.FilterChain chain)
+                throws java.io.IOException, jakarta.servlet.ServletException {
+            FILTER_EVENTS.add("filter:" + id);
+            chain.doFilter(req, res);
+        }
+    }
+
+    public static class Ok extends HttpServlet {
+        @Override protected void doGet(jakarta.servlet.http.HttpServletRequest q,
+                                       jakarta.servlet.http.HttpServletResponse r) throws java.io.IOException {
+            r.getWriter().write("ok");
+        }
+    }
+
+    @Test
+    void unmappedAnnotatedAndDynamicFiltersBehaveTheSame() throws Exception {
+        FILTER_EVENTS.clear();
+        var ann = new AnnotatedComponents(
+                List.of(new ServletDecl("ok", Ok.class, Ok::new, List.of("/x"), Map.of(), Integer.MIN_VALUE, false)),
+                List.of(new FilterDecl("ann", Recording.class, () -> new Recording("ann"), Map.of(), false)),
+                List.of(), List.of());
+        var b = WebAppModel.builder("/");
+        DescriptorMerger.merge(WebXmlParser.parse(new ByteArrayInputStream((HEAD + "></web-app>").getBytes())),
+                ann, F, b);
+        b.initializer((classes, ctx) -> ctx.addFilter("dyn", new Recording("dyn")));
+        try (var deployment = WebAppDeployer.deploy(b.build(), DeployOptions.defaults(getClass().getClassLoader()))) {
+            var started = io.vidocq.foy.internal.TestServerLauncherAccess.start(deployment.handler());
+            try {
+                var res = HttpClient.newHttpClient().send(HttpRequest.newBuilder(
+                        URI.create("http://127.0.0.1:" + started.port() + "/x")).GET().build(),
+                        HttpResponse.BodyHandlers.ofString());
+                assertEquals("ok", res.body());
+            } finally {
+                started.server().stop();
+            }
+            var ctx = deployment.servletContext();
+            assertNotNull(ctx.getFilterRegistration("ann"), "static unmapped filter is registered");
+            assertNotNull(ctx.getFilterRegistration("dyn"), "dynamic unmapped filter is registered");
+        }
+        assertEquals(Set.of("init:ann", "init:dyn"), Set.copyOf(FILTER_EVENTS),
+                "both are initialised, neither is applied: " + FILTER_EVENTS);
     }
 }
