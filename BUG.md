@@ -63,3 +63,39 @@ Statuts : `OPEN` → `INVESTIGATING` → `FIXED` (commit hash) → `CLOSED`.
   `application/x-www-form-urlencoded` POST body never became parameters (§3.1.1).
 - **Reproduction minimale** : `ServletFormParametersEndToEndTest`.
 - **Hypothèse de cause** : M1 shortcut ("query-string only for this milestone").
+
+## BUG-20261008-01 — declared filter registrations expose no mappings
+
+- **Date** : 2026-10-08
+- **Statut** : FIXED (this commit)
+- **Module touché** : `foy-core` (`WebAppDeployer.registerStatic`)
+- **Symptôme** : for a filter declared in web.xml, a web fragment or by `@WebFilter`,
+  `ServletContext.getFilterRegistration(name).getUrlPatternMappings()` and
+  `getServletNameMappings()` are empty, although the filter is mapped and invoked.
+  TCK: `spec.annotationservlet.webfilter.WebFilterTests.test2` (forward1).
+- **Reproduction minimale** : deploy a model with filter `f` mapped to `/x` and to servlet `a`,
+  then `ctx.getFilterRegistration("f").getUrlPatternMappings()` → `[]`
+  (`WebAppDeployerEndToEndTest.declaredRegistrationsExposeTheirMappings`).
+- **Hypothèse de cause** : `registerStatic` called `ctx.registerStaticFilter(name, type, params,
+  async)` without the model's filter mappings; routing used the model directly, so only the
+  introspection API was wrong. Servlet registrations already received their patterns.
+- **Investigations** :
+  - 2026-10-08 : found while routing the TCK harness through the product merge (Task 3.10 review).
+    Fixed: the model mappings of each declared filter are added to its static registration
+    (URL patterns and servlet names, with their dispatcher types); routing unchanged.
+
+## BUG-20261008-02 — a filter mapped by URL pattern and by servlet name runs twice for one request
+
+- **Date** : 2026-10-08
+- **Statut** : OPEN (Phase 4)
+- **Module touché** : `foy-core` (`WebAppDeployer.buildFilterMappings`, `FilterRegistry` chain building)
+- **Symptôme** : a filter with a `<url-pattern>` mapping and a `<servlet-name>` mapping that both
+  match the same request is invoked twice in the chain. Tomcat invokes it once (§6.2.4: the chain
+  is built from the matching mappings, a filter appears once).
+- **Reproduction minimale** : filter `f` mapped to `/x` and to servlet `a`, servlet `a` mapped to
+  `/x`; `GET /x` → `f.doFilter` runs twice.
+- **Hypothèse de cause** : servlet-name mappings are expanded into the target servlet's URL
+  patterns (one `FilterMapping` per pattern) and the chain is assembled from every matching
+  mapping with no deduplication by filter name.
+- **Investigations** :
+  - 2026-10-08 : noted during the Task 3.10 review; left unfixed (Phase 4 dispatch work).

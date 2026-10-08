@@ -27,6 +27,8 @@ import io.vidocq.foy.internal.error.ErrorPageRegistry;
 import io.vidocq.foy.internal.webxml.Fragment;
 import io.vidocq.foy.internal.webxml.FragmentMerger;
 import io.vidocq.foy.internal.webxml.WebAppDescriptor;
+import io.vidocq.foy.spi.gen.WebComponentDescriptor;
+import jakarta.servlet.DispatcherType;
 import jakarta.servlet.Filter;
 import jakarta.servlet.MultipartConfigElement;
 import jakarta.servlet.Servlet;
@@ -35,12 +37,14 @@ import jakarta.servlet.ServletException;
 import java.net.URL;
 import java.security.CodeSource;
 import java.util.ArrayList;
+import java.util.EnumSet;
 import java.util.EventListener;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.BiFunction;
 import java.util.function.Function;
 import java.util.function.Predicate;
 import java.util.function.Supplier;
@@ -76,6 +80,66 @@ public final class DescriptorMerger {
 
         public static AnnotatedComponents none() {
             return new AnnotatedComponents(List.of(), List.of(), List.of(), List.of());
+        }
+
+        /**
+         * The annotated servlets, filters and listeners among {@code classes}, in order, from their
+         * static descriptors: names, URL patterns, init params, load-on-startup, async support,
+         * security, multipart, filter dispatcher types and servlet names. A class whose descriptor
+         * is of another kind, or that does not implement the interface of its kind, is left out. A
+         * filter without dispatcher types maps {@code REQUEST}.
+         *
+         * @param descriptorOf the static metadata of a class (never runtime annotation reflection)
+         * @param instances    the instance supplier of a component class, given the class and its
+         *                     component interface ({@code Servlet}, {@code Filter} or
+         *                     {@code EventListener}): factory, CDI reference, ...; its instances are
+         *                     cast to that interface
+         * @throws IllegalArgumentException when {@code descriptorOf} reports a class misusing the
+         *         Servlet annotations; callers fail the deployment
+         */
+        public static AnnotatedComponents fromDescriptors(Iterable<? extends Class<?>> classes,
+                                                          Function<Class<?>, WebComponentDescriptor> descriptorOf,
+                                                          BiFunction<Class<?>, Class<?>, ? extends Supplier<?>> instances) {
+            List<ServletDecl> servlets = new ArrayList<>();
+            List<FilterDecl> filters = new ArrayList<>();
+            List<FilterMappingDecl> filterMappings = new ArrayList<>();
+            List<ListenerDecl> listeners = new ArrayList<>();
+            for (Class<?> cls : classes) {
+                WebComponentDescriptor d = descriptorOf.apply(cls);
+                switch (d.kind()) {
+                    case SERVLET -> {
+                        if (!Servlet.class.isAssignableFrom(cls)) continue;
+                        servlets.add(new ServletDecl(d.name(), cls.asSubclass(Servlet.class),
+                                cast(instances.apply(cls, Servlet.class), Servlet.class), d.urlPatterns(), d.initParams(),
+                                d.loadOnStartup(), d.asyncSupported(), d.servletSecurity(), d.multipartConfig(),
+                                true));
+                    }
+                    case FILTER -> {
+                        if (!Filter.class.isAssignableFrom(cls)) continue;
+                        filters.add(new FilterDecl(d.name(), cls.asSubclass(Filter.class),
+                                cast(instances.apply(cls, Filter.class), Filter.class), d.initParams(), d.asyncSupported()));
+                        Set<DispatcherType> types = d.dispatcherTypes().isEmpty()
+                                ? EnumSet.of(DispatcherType.REQUEST) : EnumSet.copyOf(d.dispatcherTypes());
+                        for (String pattern : d.urlPatterns()) {
+                            filterMappings.add(new FilterMappingDecl(d.name(), pattern, null, types));
+                        }
+                        for (String servletName : d.servletNames()) {
+                            filterMappings.add(new FilterMappingDecl(d.name(), null, servletName, types));
+                        }
+                    }
+                    case LISTENER -> {
+                        if (!EventListener.class.isAssignableFrom(cls)) continue;
+                        listeners.add(new ListenerDecl(cls.asSubclass(EventListener.class),
+                                cast(instances.apply(cls, EventListener.class), EventListener.class)));
+                    }
+                    default -> { /* not a web component */ }
+                }
+            }
+            return new AnnotatedComponents(servlets, filters, filterMappings, listeners);
+        }
+
+        private static <T> Supplier<T> cast(Supplier<?> supplier, Class<T> type) {
+            return () -> type.cast(supplier.get());
         }
 
         /**
@@ -226,7 +290,7 @@ public final class DescriptorMerger {
             done.add(def.name());
             if (def.className() == null && def.jspFile() != null) {
                 // Foy ships no JSP engine: a <jsp-file> servlet is left out, the rest deploys.
-                LOG.log(System.Logger.Level.WARNING, "web.xml servlet '" + def.name() + "' skipped: <jsp-file> "
+                LOG.log(System.Logger.Level.WARNING, "servlet '" + def.name() + "' skipped: <jsp-file> "
                         + def.jspFile() + " needs a JSP engine, which Foy does not provide");
                 continue;
             }

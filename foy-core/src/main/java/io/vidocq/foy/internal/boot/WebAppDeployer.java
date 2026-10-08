@@ -45,6 +45,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.EnumSet;
 import java.util.Comparator;
 import java.util.EventListener;
 import java.util.HashSet;
@@ -99,7 +100,7 @@ public final class WebAppDeployer {
             // Expose the servlets/filters declared in web.xml/@WebServlet through
             // ServletContext.getServletRegistrations() — visibility required by the TCK
             // (RegistrationTests.servletRegistrationsTest).
-            registerStatic(ctx, servlets, filters);
+            registerStatic(ctx, model, servlets, filters);
             for (ServletDecl d : model.servlets()) {
                 if (!d.enabled()) ctx.registerStaticServlet(d.name(), d.type(), d.urlPatterns(), d.initParams(),
                         d.asyncSupported());
@@ -200,15 +201,25 @@ public final class WebAppDeployer {
         }
     }
 
-    /** Static registrations also reserve their URL patterns, so a dynamic addMapping cannot override them. */
-    private static void registerStatic(VidocqServletContext ctx, List<ServletUnit> servlets,
+    /**
+     * Static registrations also reserve their URL patterns, so a dynamic addMapping cannot override them.
+     * A filter registration exposes its model mappings ({@code getUrlPatternMappings},
+     * {@code getServletNameMappings}); routing still comes from the model ({@link #buildFilterMappings}).
+     */
+    private static void registerStatic(VidocqServletContext ctx, WebAppModel model, List<ServletUnit> servlets,
                                        List<FilterUnit> filters) {
         for (ServletUnit s : servlets) {
             ctx.registerStaticServlet(s.name(), s.type(), s.patterns(), s.initParams(),
                     s.asyncSupported());
         }
         for (FilterUnit f : filters) {
-            ctx.registerStaticFilter(f.name(), f.type(), f.initParams(), f.asyncSupported());
+            var registration = ctx.registerStaticFilter(f.name(), f.type(), f.initParams(), f.asyncSupported());
+            for (FilterMappingDecl m : model.filterMappings()) {
+                if (!m.filterName().equals(f.name())) continue;
+                EnumSet<DispatcherType> types = EnumSet.copyOf(m.dispatcherTypes());
+                if (m.urlPattern() != null) registration.addMappingForUrlPatterns(types, true, m.urlPattern());
+                else registration.addMappingForServletNames(types, true, m.servletName());
+            }
         }
     }
 

@@ -20,25 +20,19 @@
 package io.vidocq.foy.internal.boot;
 
 import io.vidocq.foy.internal.boot.DescriptorMerger.AnnotatedComponents;
-import io.vidocq.foy.internal.boot.WebAppModel.FilterDecl;
-import io.vidocq.foy.internal.boot.WebAppModel.FilterMappingDecl;
-import io.vidocq.foy.internal.boot.WebAppModel.ListenerDecl;
-import io.vidocq.foy.internal.boot.WebAppModel.ServletDecl;
 import io.vidocq.foy.internal.gen.WebComponentRegistry;
 import io.vidocq.foy.spi.cdi.CdiWebComponents;
-import io.vidocq.foy.spi.gen.WebComponentDescriptor;
 import jakarta.enterprise.inject.Any;
 import jakarta.enterprise.inject.spi.Bean;
 import jakarta.enterprise.inject.spi.BeanManager;
 import jakarta.enterprise.inject.spi.CDI;
 import jakarta.enterprise.util.AnnotationLiteral;
-import jakarta.servlet.DispatcherType;
 import jakarta.servlet.Filter;
 import jakarta.servlet.Servlet;
 
 import java.util.ArrayList;
-import java.util.EnumSet;
 import java.util.EventListener;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Objects;
@@ -75,43 +69,10 @@ public final class WebAppDiscovery {
     public static AnnotatedComponents discover(BeanManager bm, WebComponentRegistry registry) {
         Objects.requireNonNull(bm, "bm");
         Objects.requireNonNull(registry, "registry");
-        List<ServletDecl> servlets = new ArrayList<>();
-        List<FilterDecl> filters = new ArrayList<>();
-        List<FilterMappingDecl> filterMappings = new ArrayList<>();
-        List<ListenerDecl> listeners = new ArrayList<>();
-
-        for (Candidate c : candidates(bm, registry)) {
-            Class<?> cls = c.type();
-            WebComponentDescriptor d = registry.lookup(cls).descriptor();
-            switch (d.kind()) {
-                case SERVLET -> {
-                    if (!Servlet.class.isAssignableFrom(cls)) continue;
-                    servlets.add(new ServletDecl(d.name(), cls.asSubclass(Servlet.class),
-                            reference(bm, c.bean(), Servlet.class), d.urlPatterns(), d.initParams(),
-                            d.loadOnStartup(), d.asyncSupported(), d.servletSecurity(), d.multipartConfig(), true));
-                }
-                case FILTER -> {
-                    if (!Filter.class.isAssignableFrom(cls)) continue;
-                    filters.add(new FilterDecl(d.name(), cls.asSubclass(Filter.class),
-                            reference(bm, c.bean(), Filter.class), d.initParams(), d.asyncSupported()));
-                    Set<DispatcherType> types = d.dispatcherTypes().isEmpty()
-                            ? EnumSet.of(DispatcherType.REQUEST) : EnumSet.copyOf(d.dispatcherTypes());
-                    for (String pattern : d.urlPatterns()) {
-                        filterMappings.add(new FilterMappingDecl(d.name(), pattern, null, types));
-                    }
-                    for (String servletName : d.servletNames()) {
-                        filterMappings.add(new FilterMappingDecl(d.name(), null, servletName, types));
-                    }
-                }
-                case LISTENER -> {
-                    if (!EventListener.class.isAssignableFrom(cls)) continue;
-                    listeners.add(new ListenerDecl(cls.asSubclass(EventListener.class),
-                            reference(bm, c.bean(), EventListener.class)));
-                }
-                default -> { /* not a web component */ }
-            }
-        }
-        return new AnnotatedComponents(servlets, filters, filterMappings, listeners);
+        var beans = new LinkedHashMap<Class<?>, Bean<?>>();
+        for (Candidate c : candidates(bm, registry)) beans.put(c.type(), c.bean());
+        return AnnotatedComponents.fromDescriptors(beans.keySet(), cls -> registry.lookup(cls).descriptor(),
+                (cls, base) -> reference(bm, beans.get(cls), base));
     }
 
     private record Candidate(Class<?> type, Bean<?> bean) {}

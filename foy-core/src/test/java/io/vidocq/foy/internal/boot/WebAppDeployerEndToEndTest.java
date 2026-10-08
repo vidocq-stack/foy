@@ -95,6 +95,27 @@ class WebAppDeployerEndToEndTest {
         assertEquals(List.of("init:a"), EVENTS);
     }
 
+    public static class Pass implements Filter {
+        @Override public void doFilter(ServletRequest q, ServletResponse r, FilterChain c)
+                throws IOException, ServletException {
+            c.doFilter(q, r);
+        }
+    }
+
+    @Test
+    void declaredRegistrationsExposeTheirMappings() {
+        deploy(WebAppModel.builder("/")
+                .servlet(decl("a", Integer.MIN_VALUE, "/x", "/y"))
+                .filter(new FilterDecl("f", Pass.class, Pass::new, Map.of(), false))
+                .filterMapping(new FilterMappingDecl("f", "/x", null, Set.of(DispatcherType.REQUEST)))
+                .filterMapping(new FilterMappingDecl("f", null, "a", Set.of(DispatcherType.FORWARD)))
+                .build());
+        var ctx = deployment.servletContext();
+        assertEquals(List.of("/x"), List.copyOf(ctx.getFilterRegistration("f").getUrlPatternMappings()));
+        assertEquals(List.of("a"), List.copyOf(ctx.getFilterRegistration("f").getServletNameMappings()));
+        assertEquals(Set.of("/x", "/y"), Set.copyOf(ctx.getServletRegistration("a").getMappings()));
+    }
+
     @Test
     void loadOnStartupOrdersInitThenDeclarationOrder() {
         deploy(WebAppModel.builder("/")

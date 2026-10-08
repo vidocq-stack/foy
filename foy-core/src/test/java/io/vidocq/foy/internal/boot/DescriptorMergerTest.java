@@ -468,8 +468,57 @@ class DescriptorMergerTest {
                   <servlet><servlet-name>x</servlet-name><servlet-class>%s</servlet-class></servlet>
                 </web-app>""".formatted(FromXml.class.getName())).getBytes()));
         var b = WebAppModel.builder("/");
-        DescriptorMerger.merge(d, AnnotatedComponents.none(), F, b);
+        try (var log = io.vidocq.foy.internal.LogCapture.of(DescriptorMerger.class.getName())) {
+            DescriptorMerger.merge(d, AnnotatedComponents.none(), F, b);
+            assertEquals(List.of("servlet 'jsp' skipped: <jsp-file> /dummy.jsp needs a JSP engine, which Foy"
+                    + " does not provide"), log.warnings());
+        }
         assertEquals(List.of("x"), b.build().servlets().stream().map(ServletDecl::name).toList());
+    }
+
+    @WebServlet(name = "ws", urlPatterns = "/ws", asyncSupported = true)
+    public static class WebAnnotatedServlet extends HttpServlet {}
+    @jakarta.servlet.annotation.WebFilter(filterName = "wf", urlPatterns = "/wf", servletNames = "ws",
+            dispatcherTypes = DispatcherType.FORWARD)
+    public static class WebAnnotatedFilter extends F1 {}
+    @jakarta.servlet.annotation.WebListener
+    public static class WebAnnotatedListener extends L1 {}
+    @WebServlet("/misused")
+    public static class NotAServlet {}
+
+    @Test
+    void fromDescriptorsBuildsTheDeclarationsOfTheAnnotatedClasses() {
+        var factory = ComponentFactory.reflective(getClass().getClassLoader());
+        var asked = new CopyOnWriteArrayList<String>();
+        var ann = AnnotatedComponents.fromDescriptors(
+                List.of(FromXml.class, WebAnnotatedServlet.class, WebAnnotatedFilter.class, WebAnnotatedListener.class),
+                factory::descriptor, (cls, base) -> {
+                    asked.add(cls.getSimpleName() + ":" + base.getSimpleName());
+                    return () -> {
+                        try {
+                            return factory.newInstance(cls);
+                        } catch (jakarta.servlet.ServletException e) {
+                            throw new IllegalStateException(e);
+                        }
+                    };
+                });
+        assertEquals(List.of("ws"), ann.servlets().stream().map(ServletDecl::name).toList());
+        assertEquals(List.of("/ws"), ann.servlets().getFirst().urlPatterns());
+        assertTrue(ann.servlets().getFirst().asyncSupported());
+        assertInstanceOf(WebAnnotatedServlet.class, ann.servlets().getFirst().factory().get());
+        assertEquals(List.of("wf"), ann.filters().stream().map(FilterDecl::name).toList());
+        assertEquals(List.of(new FilterMappingDecl("wf", "/wf", null, Set.of(DispatcherType.FORWARD)),
+                new FilterMappingDecl("wf", null, "ws", Set.of(DispatcherType.FORWARD))), ann.filterMappings());
+        assertEquals(List.of(WebAnnotatedListener.class), ann.listeners().stream().map(ListenerDecl::type).toList());
+        assertEquals(List.of("WebAnnotatedServlet:Servlet", "WebAnnotatedFilter:Filter",
+                "WebAnnotatedListener:EventListener"), asked);
+    }
+
+    @Test
+    void fromDescriptorsPropagatesAnAnnotationMisuse() {
+        var factory = ComponentFactory.reflective(getClass().getClassLoader());
+        assertThrows(IllegalArgumentException.class, () -> AnnotatedComponents.fromDescriptors(
+                List.of(NotAServlet.class), factory::descriptor, (cls, base) -> () -> null));
     }
 
     @Test
