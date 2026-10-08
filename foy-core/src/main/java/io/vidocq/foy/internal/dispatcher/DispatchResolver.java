@@ -49,7 +49,7 @@ public final class DispatchResolver {
         String servletPath = servletPathFor(m, justPath);
         String pathInfo = pathInfoFor(m, justPath, servletPath);
         return Optional.of(new DispatchTarget(m.servlet(), m.servletName(),
-                justPath, servletPath, pathInfo, queryString));
+                justPath, servletPath, pathInfo, queryString, m.asyncSupported()));
     }
 
     public static String servletPathFor(ServletDispatcher.Mapping m, String path) {
@@ -72,7 +72,7 @@ public final class DispatchResolver {
                 // Pas de path associé — servletPath/pathInfo/query laissés vides pour un
                 // dispatcher nommé (§9.3 : ne reflète pas l'URL d'origine).
                 return Optional.of(new DispatchTarget(m.servlet(), m.servletName(),
-                        "/", "", null, null));
+                        "/", "", null, null, m.asyncSupported()));
             }
         }
         return Optional.empty();

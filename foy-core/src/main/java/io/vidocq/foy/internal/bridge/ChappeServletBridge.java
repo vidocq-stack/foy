@@ -165,7 +165,7 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
         String servletPath = DispatchResolver.servletPathFor(m, path);
         String pathInfo = DispatchResolver.pathInfoFor(m, path, servletPath);
         DispatchTarget target = new DispatchTarget(m.servlet(), m.servletName(), path, servletPath,
-                pathInfo, request.query());
+                pathInfo, request.query(), m.asyncSupported());
         req = new HttpServletRequestImpl(request, servletContext, contextPath, servletPath, pathInfo,
                 sessionManager);
         req.bindResponse(res);
@@ -242,6 +242,7 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
                     if (qs != null) target = target.withQueryString(qs);
                     var wrapped = new AsyncDispatchRequest(req, target, vctx, tgtCtxPath);
                     req.clearAsyncContext();
+                    req.setAsyncSupported(true); // §2.3.3.3: an async dispatch starts a new cycle
                     invoker.invoke(target, wrapped, res, DispatcherType.ASYNC);
                 } else {
                     String relative = dispatchPath.startsWith(contextPath) && !contextPath.equals("/")
@@ -254,6 +255,7 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
                     if (qs != null) target = target.withQueryString(qs);
                     var wrapped = new AsyncDispatchRequest(req, target);
                     req.clearAsyncContext();
+                    req.setAsyncSupported(true); // §2.3.3.3: an async dispatch starts a new cycle
                     invoke(target, wrapped, res, DispatcherType.ASYNC);
                 }
             } catch (ServletException | IOException | RuntimeException e) {
@@ -346,7 +348,32 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
     public void invoke(DispatchTarget target, HttpServletRequest req, HttpServletResponse res,
                        DispatcherType type) throws IOException, ServletException {
         List<Filter> filters = filterRegistry.chainFor(target.path(), type);
-        new VidocqFilterChain(filters, target.servlet()).doFilter(req, res);
+        // §2.3.3.3 / ServletRequest#isAsyncSupported: async stays enabled only while the request is
+        // within the scope of servlets and filters that support it. Recompute for this dispatch
+        // (incoming && target servlet && every filter of this dispatch's chain) and restore the
+        // previous value once a forward/include returns to its caller.
+        HttpServletRequestImpl impl = unwrapImpl(req);
+        if (impl == null) {
+            new VidocqFilterChain(filters, target.servlet()).doFilter(req, res);
+            return;
+        }
+        boolean previous = impl.isAsyncSupported();
+        impl.setAsyncSupported(previous && target.asyncSupported()
+                && filterRegistry.asyncSupported(target.path(), type));
+        try {
+            new VidocqFilterChain(filters, target.servlet()).doFilter(req, res);
+        } finally {
+            impl.setAsyncSupported(previous);
+        }
+    }
+
+    private static HttpServletRequestImpl unwrapImpl(jakarta.servlet.ServletRequest r) {
+        while (r != null) {
+            if (r instanceof HttpServletRequestImpl i) return i;
+            if (r instanceof jakarta.servlet.ServletRequestWrapper w) r = w.getRequest();
+            else return null;
+        }
+        return null;
     }
 
     private void maybeAttachSessionCookie(HttpServletRequestImpl req, HttpServletResponseImpl res) {

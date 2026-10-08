@@ -30,9 +30,16 @@ public record DispatchTarget(Servlet servlet,
                              String path,
                              String servletPath,
                              String pathInfo,
-                             String queryString) {
+                             String queryString,
+                             boolean asyncSupported) {
+    /** Target whose servlet is async-capable by default (used when the registration is unknown). */
+    public DispatchTarget(Servlet servlet, String servletName, String path, String servletPath,
+                          String pathInfo, String queryString) {
+        this(servlet, servletName, path, servletPath, pathInfo, queryString, true);
+    }
+
     /** Clone with a new queryString (used for async dispatches). */
     public DispatchTarget withQueryString(String qs) {
-        return new DispatchTarget(servlet, servletName, path, servletPath, pathInfo, qs);
+        return new DispatchTarget(servlet, servletName, path, servletPath, pathInfo, qs, asyncSupported);
     }
 }
