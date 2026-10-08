@@ -5,6 +5,23 @@ First full-suite measurement run. Unlike cassini/champollion/vauban, this is a
 Vidocq runtime to serve Cassini-style stacks, and several spec chapters are not
 implemented yet. This report quantifies exactly which ones.
 
+## 0. Phase 2 exit: build-time code generation (2026-10-08)
+
+`pr/ybl/servlet-completion-phase2`, `./run-official-tck-servlet6.1.sh --all`:
+1714 run, **928 pass**, 786 errors, 11 min 19 s (Phase 1: 921). Per family:
+`api.*` 821/859, `pluggability.*` 5/646, `spec.*` 102/207 (was 95), `compat.*` 0/2.
+The per-class tally (`foy-tck/tck-tally.sh`) was diffed against the previous
+`foy-tck/tck-baseline.txt`: zero class regression; three classes improved
+(`spec.annotationservlet.webservlet.WebServletTests`, `webservletapi.WebServletApiTests`,
+`webservletdd.WebServletddTests`: 7 errors fixed). `foy-tck/tck-baseline.txt` is
+refreshed to this tally.
+
+`WebComponentRegistry` tier statistics, one line per deployed archive (207 of
+them): `serviceLoader=0, generatedClass=0, classFile=1..3, reflection=0`. The TCK
+archives are assembled at test time and never go through `foy-processor`, so
+everything resolves through the Class-File tier (decoded from the class bytes),
+and **no component fell back to reflection**.
+
 ## 0a. Product bootstrap (Phase 1) (2026-10-07)
 
 `pr/ybl/servlet-completion-phase1`, `./run-official-tck-servlet6.1.sh --all`:

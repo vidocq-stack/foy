@@ -173,9 +173,9 @@ servlet.tck.pluggability.api.jakarta_servlet_http.sessioncookieconfig.SessionCoo
 servlet.tck.pluggability.fragment.FragmentTests 5 4
 servlet.tck.spec.annotationservlet.webfilter.WebFilterTests 3 1
 servlet.tck.spec.annotationservlet.weblistener.WebListenerTests 7 0
-servlet.tck.spec.annotationservlet.webservlet.WebServletTests 5 2
-servlet.tck.spec.annotationservlet.webservletapi.WebServletApiTests 3 3
-servlet.tck.spec.annotationservlet.webservletdd.WebServletddTests 5 2
+servlet.tck.spec.annotationservlet.webservlet.WebServletTests 5 0
+servlet.tck.spec.annotationservlet.webservletapi.WebServletApiTests 3 0
+servlet.tck.spec.annotationservlet.webservletdd.WebServletddTests 5 0
 servlet.tck.spec.async.AsyncTests 39 22
 servlet.tck.spec.defaultcontextpath.DefaultContextPathTests 1 0
 servlet.tck.spec.defaultmapping.DefaultMappingTests 2 0
