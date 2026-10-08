@@ -143,6 +143,39 @@ stateDiagram-v2
 There are **no CDI producers** for `ServletContext`, `HttpServletRequest` or `HttpSession` yet — `@Inject HttpServletRequest` does **not** work. Scoped Servlet-object beans are a later milestone.
 ====
 
+== Component resolution tiers
+
+At deployment, `WebComponentRegistry` (`io.vidocq.foy.internal.gen`) resolves every Servlet, Filter and listener class to a `WebComponent` (descriptor plus factory) through four tiers, tried in order:
+
+[cols="1,1,3",options="header"]
+|===
+| Tier | Source | Behaviour
+
+| `SERVICE_LOADER`
+| `META-INF/services/io.vidocq.foy.spi.gen.WebComponent` (or `provides` in `module-info.java`)
+| Providers written by `foy-processor`.
+
+| `GENERATED_CLASS`
+| `X$$FoyComponent` next to `X`
+| The generated companion, found by name when the service entry is missing.
+
+| `CLASS_FILE`
+| Class bytes of `X`
+| Annotations decoded with `java.lang.classfile`; the factory is a hidden class defined in `foy-core`'s lookup that carries the constructor `MethodHandle` as class data.
+
+| `REFLECTION`
+| `java.lang.reflect`
+| Last resort, only when the hidden class cannot be defined.
+|===
+
+Product code is free of `getAnnotation`, `getDeclaredConstructor` and `Class.forName` outside the registry; the guard test `NoProductReflectionTest` enforces it.
+
+*Logging policy.* One `INFO` line per class resolved through the Class-File tier, one `WARNING` per class on the reflective tier (naming the reason), and nothing per request.
+
+*Class index.* `foy-processor` writes `META-INF/foy/class-index.list` (binary class names). `IndexedHandlesTypesResolver` uses it to answer `@HandlesTypes` of a `ServletContainerInitializer` without scanning; it yields nothing when no indexed class matches.
+
+*Why `opens` only for the fallback.* The Class-File tier reads class bytes and defines its hidden class in `foy-core`'s own lookup, so a package needs no `opens` to `io.vidocq.foy.core` for it to work (the generated companions live in the package of the component). Only the reflective fallback needs the package opened, which is why its warning says so.
+
 == Implementation choices
 
 [cols="1,3"]
@@ -152,8 +185,8 @@ There are **no CDI producers** for `ServletContext`, `HttpServletRequest` or `Ht
 | No runtime classpath scan
 | All `@WebServlet` / `@WebFilter` / `@WebListener` are known at compile time through Vauban. Startup is O(1) in the number of beans, not O(N) in the classpath.
 
-| No runtime reflection
-| Aligns with the Vidocq ecosystem's principles. AOT-friendly (GraalVM, Leyden CDS).
+| No runtime reflection on the nominal path
+| Aligns with the Vidocq ecosystem's principles. AOT-friendly (GraalVM, Leyden CDS). Reflection remains only as the last, logged tier of the registry.
 
 | No body copy
 | `ServletOutputStreamImpl` and `ServletInputStreamImpl` wire directly onto the Chappe `Body`.
@@ -161,8 +194,8 @@ There are **no CDI producers** for `ServletContext`, `HttpServletRequest` or `Ht
 | `requires io.vidocq.chappe.api` in `foy-core`
 | Temporary M1 coupling — to be replaced in M2 by a `FoyHttpExchange` SPI inside `foy-api`, opening the door to other transports.
 
-| No runtime `META-INF/services`
-| Servlet SPIs (e.g. `ServletContainerInitializer`) are not loaded by scan; they go through the Vauban `BeanManager`.
+| `META-INF/services` only for generated components
+| `WebComponent` providers written by `foy-processor` are loaded with `ServiceLoader`; other Servlet SPIs (e.g. `ServletContainerInitializer`) are not loaded by scan, they go through the generated index or the Vauban `BeanManager`.
 |===
 
 == Known limits

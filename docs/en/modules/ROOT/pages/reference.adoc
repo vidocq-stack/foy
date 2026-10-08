@@ -22,6 +22,9 @@ Consolidated technical reference. Use this page as an anchor for external links 
 | `io.vidocq.foy:foy-cdi-vauban:{project-version}`
 | CDI bridge to xref:vauban::index.adoc[Vauban] (`FoyVaubanBootstrap`).
 
+| `io.vidocq.foy:foy-processor:{project-version}`
+| **Build-time** annotation processor (no runtime role, never shipped in the application). Generates the `X$$FoyComponent` companions and the `META-INF` indexes. Zero dependency: it requires only the JDK `java.compiler` Java Module. Put it on `annotationProcessorPaths`, not on the class path.
+
 | `io.vidocq.foy:foy-tck`
 | Arquillian harness for the official TCK — **in-reactor, gated behind the `tck` Maven profile** (a plain `mvn install` neither downloads nor runs anything TCK-related; see xref:tck.adoc[TCK status]).
 |===
@@ -36,6 +39,8 @@ module io.vidocq.foy.api {
 
     exports io.vidocq.foy.spi.session;    // SessionStore
     exports io.vidocq.foy.spi.security;   // SecurityProvider, AuthenticatedUser
+    exports io.vidocq.foy.spi.gen;        // WebComponent, WebComponentDescriptor
+    exports io.vidocq.foy.spi.cdi;        // CdiWebComponents
 }
 ----
 
@@ -87,6 +92,25 @@ module io.vidocq.foy.cdi.vauban {
     exports io.vidocq.foy.cdi.vauban;     // FoyVaubanBootstrap
 }
 ----
+
+[source,java]
+----
+module io.vidocq.foy.processor {          // build time only
+    requires java.compiler;
+
+    exports io.vidocq.foy.processor;
+    provides javax.annotation.processing.Processor
+            with io.vidocq.foy.processor.FoyWebComponentProcessor;
+}
+----
+
+`foy-core` additionally declares `uses io.vidocq.foy.spi.gen.WebComponent`.
+
+== Build-time code generation
+
+* **`foy-processor`** is a build-time annotation processor with a single requirement, `java.compiler`. It generates `X$$FoyComponent` for `@WebServlet`, `@WebFilter`, `@WebListener`, for unannotated `Servlet` / `Filter` / listener classes and for `ServletContainerInitializer` (with its `@HandlesTypes`), carries `@MultipartConfig`, `@ServletSecurity`, `@DeclareRoles` and `@RunAs` metadata, and writes `META-INF/services/io.vidocq.foy.spi.gen.WebComponent` plus `META-INF/foy/class-index.list`. Spec misuse is a compile error; a class that cannot be generated is reported as a note.
+* **`FoyWebExtension`** (in `foy-cdi-vauban`) is a CDI Build Compatible Extension. It runs inside `vauban-processor`, which is itself **build-time only**: unscoped web components become `@Dependent`, duplicate servlet or filter names fail the build, and a synthetic `@Singleton` `io.vidocq.foy.spi.cdi.CdiWebComponents` bean lists the components for `WebAppDiscovery`, which merges the beans of the application and of every library archive.
+* See xref:internals.adoc#_component_resolution_tiers[Component resolution tiers] for the runtime side and xref:usage.adoc#_build_time_code_generation[Usage] for the setup.
 
 [NOTE]
 ====

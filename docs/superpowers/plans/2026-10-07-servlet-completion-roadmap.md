@@ -201,3 +201,20 @@ updated to the final status; `TCK.md` final report; certification decision.
 - **Phase 4:** `ServletContext.setSessionTimeout()` from an SCI/listener must reach the session manager; `fireContextDestroyed` must isolate throwing listeners; make the temp-dir leak test independent of the shared `java.io.tmpdir`.
 - **Phase 7:** form body size cap; parameter parsing locks the request encoding (§3.12); retry after a failed body read.
 - **Cosmetic:** `tck-tally.sh` argument check; harness `start()` closes the deployment if the server fails to start.
+
+## Phase 2 exit / follow-ups (2026-10-08)
+
+Phase 2 shipped `foy-processor` (build-time, `java.compiler` only), the four-tier `WebComponentRegistry` and the `FoyWebExtension` build compatible extension. Tracked here, no external issue or PR opened.
+
+**Phase 2b (separate plan):**
+- `foy-maven-plugin:generate` for external jars (classes that were never run through `foy-processor`; today they fall to the Class-File tier).
+- A `vidocq` PR adding `foy-processor` and `foy-cdi-vauban` to `vidocq-runtime-core-codegen`.
+
+**Known vauban gaps (documented, issues not opened):**
+- `Class[]` parameters of a synthetic bean are dropped, so `CdiWebComponents` carries one comma-joined `String`.
+- `@Registration` runs before `@Enhancement` takes effect, so the scope added by `FoyWebExtension` is not seen by registration.
+- Stereotype-only classes are not indexed by vauban.
+
+**Residual Phase 2 minors:**
+- The async flag is not recomputed on forward / include / dispatch.
+- Dynamic `addServlet(name, "java.lang.Object")` fails with a raw `ClassCastException` instead of a descriptive error.

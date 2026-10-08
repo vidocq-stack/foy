@@ -137,6 +137,38 @@ Foy can be started:
 
 WAR deployment is **not supported**: Foy boots embedded, programmatically. (The Arquillian container in `foy-tck` deploys the TCK wars, but it is test harness machinery, not a product feature.)
 
+== Build-time code generation
+
+Add `foy-processor` to the compiler's annotation processor path. It generates, at compile time, a companion class for every web component, so Foy needs neither classpath scanning nor reflection to instantiate them. `foy-processor` is a build-time tool with zero dependency (it requires only `java.compiler`); it never reaches the application.
+
+[source,xml]
+----
+<plugin>
+    <groupId>org.apache.maven.plugins</groupId>
+    <artifactId>maven-compiler-plugin</artifactId>
+    <configuration>
+        <annotationProcessorPaths combine.children="append">
+            <path>
+                <groupId>io.vidocq.foy</groupId>
+                <artifactId>foy-processor</artifactId>
+                <version>${foy.version}</version>
+            </path>
+            <!-- CDI users: also let vauban-processor run the Foy build compatible extension -->
+            <path>
+                <groupId>io.vidocq.vauban</groupId>
+                <artifactId>vauban-processor</artifactId>
+                <version>${vauban.version}</version>
+            </path>
+        </annotationProcessorPaths>
+    </configuration>
+</plugin>
+----
+
+* Only the first `path` is needed without CDI. The `vauban-processor` path is for applications using `foy-cdi-vauban`; it is build-time only.
+* In a named Java Module, the processor suggests (as a compiler note) the `provides io.vidocq.foy.spi.gen.WebComponent with ...` clause to add to your `module-info.java`.
+* Spec misuse (for example a `@WebServlet` class that is not a `Servlet`) fails the compilation.
+* Classes that were not processed (third-party jars) still work: Foy decodes their annotations from the class bytes. See xref:internals.adoc#_component_resolution_tiers[Component resolution tiers].
+
 == CDI integration through Vauban
 
 `foy-cdi-vauban` is a thin bridge: its single class, `FoyVaubanBootstrap`, hands the current Vauban `BeanManager` to `FoyChappeBoot`.
@@ -169,7 +201,7 @@ Resolution is fully build-time through xref:vauban::index.adoc[Vauban] — no ru
 
 == Application security
 
-* Constraints are **annotation-driven**: `SecurityConstraintEnforcer` applies `@ServletSecurity` (`@HttpConstraint`, `@HttpMethodConstraint`, `EmptyRoleSemantic.DENY`) read from the servlet class. `<security-constraint>` in `web.xml` is **not** parsed.
+* Constraints are **annotation-driven**: `SecurityConstraintEnforcer` applies `@ServletSecurity` (`@HttpConstraint`, `@HttpMethodConstraint`, `EmptyRoleSemantic.DENY`) taken from the component descriptor (generated at build time, or decoded from the class bytes). `<security-constraint>` in `web.xml` is **not** parsed.
 * `BasicAuthenticator` covers HTTP Basic (8 of the 14 `secbasic` TCK tests still fail — see xref:tck.adoc[TCK status]).
 * `AnonymousSecurityProvider` is the open fallback (development only).
 * Form-based and Digest authentication are **not implemented**.

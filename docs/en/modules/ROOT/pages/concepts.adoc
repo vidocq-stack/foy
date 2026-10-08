@@ -69,7 +69,7 @@ The Servlet `OutputStream` is wired directly to Chappe streaming — no body cop
 == Application security
 
 * `BasicAuthenticator` — standard HTTP Basic (RFC 7617).
-* `SecurityConstraintEnforcer` — applies `@ServletSecurity` constraints (`@HttpConstraint`, `@HttpMethodConstraint`) read from the servlet class. `<security-constraint>` in `web.xml` is **not** parsed.
+* `SecurityConstraintEnforcer` — applies `@ServletSecurity` constraints (`@HttpConstraint`, `@HttpMethodConstraint`) taken from the component descriptor (generated at build time, or decoded from the class bytes). `<security-constraint>` in `web.xml` is **not** parsed.
 * `AnonymousSecurityProvider` — open fallback for development.
 * Public SPI: `io.vidocq.foy.spi.security.SecurityProvider` for plugging custom providers (LDAP, JWT, OIDC).
 
