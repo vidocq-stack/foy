@@ -32,6 +32,7 @@ import jakarta.servlet.annotation.WebServlet;
 import jakarta.servlet.http.HttpServlet;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
+import org.jboss.arquillian.container.spi.client.container.DeploymentException;
 import org.jboss.arquillian.container.spi.client.protocol.metadata.HTTPContext;
 import org.jboss.shrinkwrap.api.ShrinkWrap;
 import org.jboss.shrinkwrap.api.asset.StringAsset;
@@ -51,6 +52,7 @@ import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class ServletTestHarnessTest {
 
@@ -160,7 +162,7 @@ class ServletTestHarnessTest {
     }
 
     @Test
-    void absoluteOrderingWithoutOthersExcludesTheUnnamedFragmentAndItsInitializers() throws Exception {
+    void absoluteOrderingWithoutOthersExcludesTheUnlistedFragmentJarAndItsInitializers() throws Exception {
         JavaArchive lib = ShrinkWrap.create(JavaArchive.class, "lib-2.jar")
                 .addClasses(MarkingInitializer.class, AnnotatedServlet.class)
                 .addAsResource(new StringAsset(MarkingInitializer.class.getName()),
@@ -179,6 +181,43 @@ class ServletTestHarnessTest {
         try (var d = new Deployed(war)) {
             // The excluded jar's annotated servlet is not deployed, its initializer does not run.
             assertEquals(404, d.get("/annotated").statusCode());
+            assertEquals("null|null|null", d.get("/res").body());
+        }
+    }
+
+    @Test
+    void malformedWebXmlFailsTheDeployment() {
+        WebArchive war = ShrinkWrap.create(WebArchive.class, "bad_xml_web.war")
+                .setWebXML(new StringAsset(WEB_APP + "><servlet>"));
+        assertThrows(DeploymentException.class, () -> new Deployed(war).close());
+    }
+
+    @Test
+    void initializerThatCannotBeCreatedFailsTheDeployment() {
+        WebArchive war = ShrinkWrap.create(WebArchive.class, "bad_sci_web.war")
+                .addAsResource(new StringAsset("no.such.Initializer"),
+                        "META-INF/services/" + ServletContainerInitializer.class.getName());
+        assertThrows(DeploymentException.class, () -> new Deployed(war).close());
+    }
+
+    @Test
+    void annotationMisuseFailsTheDeployment() {
+        WebArchive war = ShrinkWrap.create(WebArchive.class, "misuse_web.war").addClass(NotAServlet.class);
+        assertThrows(DeploymentException.class, () -> new Deployed(war).close());
+    }
+
+    @Test
+    void servicesFileOutsideTheClassesRootIsIgnored() throws Exception {
+        WebArchive war = ShrinkWrap.create(WebArchive.class, "root_sci_web.war")
+                .addClass(ResourceServlet.class)
+                .addAsWebResource(new StringAsset(MarkingInitializer.class.getName()),
+                        "META-INF/services/" + ServletContainerInitializer.class.getName())
+                .setWebXML(new StringAsset(WEB_APP + """
+                        >
+                          <servlet><servlet-name>res</servlet-name><servlet-class>%s</servlet-class></servlet>
+                          <servlet-mapping><servlet-name>res</servlet-name><url-pattern>/res</url-pattern></servlet-mapping>
+                        </web-app>""".formatted(ResourceServlet.class.getName())));
+        try (var d = new Deployed(war)) {
             assertEquals("null|null|null", d.get("/res").body());
         }
     }
@@ -229,6 +268,9 @@ class ServletTestHarnessTest {
             r.getWriter().write("annotated");
         }
     }
+
+    @WebServlet("/misused")
+    public static class NotAServlet {}
 
     public static class PassFilter implements Filter {
         @Override public void doFilter(ServletRequest req, ServletResponse res, FilterChain chain)

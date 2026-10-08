@@ -88,8 +88,10 @@ final class WarContent {
     }
 
     /**
-     * Reads {@code war}. A malformed {@code web.xml} is reported and the war deploys as if it
-     * had none; a malformed web fragment fails the deployment.
+     * Reads {@code war}.
+     *
+     * @throws DeploymentException when web.xml or a web fragment is malformed, or an archive part
+     *         cannot be read
      */
     static WarContent read(WebArchive war) throws DeploymentException {
         String archive = war.getName() == null || war.getName().isEmpty() ? "war" : war.getName();
@@ -106,12 +108,12 @@ final class WarContent {
                 if (jar.endsWith(".jar") && jar.indexOf('/') < 0) libs.put(jar, node);
             } else if (path.startsWith(CLASSES) && path.endsWith(".class")) {
                 sources.putIfAbsent(className(path.substring(CLASSES.length())), classesRoot);
-            } else if (path.endsWith("/" + SCI_FILE)) {
-                // In practice WEB-INF/classes/META-INF/services (WebArchive.addAsResource).
+            } else if (path.equals(CLASSES + SCI_FILE)) {
+                // Only the war's class-path roots carry services: WEB-INF/classes here, the lib jars below.
                 try (InputStream in = node.getAsset().openStream()) {
                     initializers.computeIfAbsent(classesRoot, k -> new ArrayList<>()).addAll(serviceNames(in));
                 } catch (IOException e) {
-                    System.err.println("[VidocqTCK] cannot read " + path + ": " + e);
+                    throw new DeploymentException("[VidocqTCK] cannot read " + path + ": " + e, e);
                 }
             }
         }
@@ -124,7 +126,7 @@ final class WarContent {
                 webXml = WebXmlParser.parse(in);
                 hasWebXml = true;
             } catch (IOException | RuntimeException e) {
-                System.err.println("[VidocqTCK] failed to parse web.xml: " + e);
+                throw new DeploymentException("[VidocqTCK] malformed WEB-INF/web.xml: " + e.getMessage(), e);
             }
         }
 

@@ -24,9 +24,6 @@ import io.vidocq.foy.internal.boot.ComponentFactory;
 import io.vidocq.foy.internal.boot.DescriptorMerger;
 import io.vidocq.foy.internal.boot.DescriptorMerger.AnnotatedComponents;
 import io.vidocq.foy.internal.boot.WebAppModel;
-import io.vidocq.foy.internal.boot.WebAppModel.FilterDecl;
-import io.vidocq.foy.internal.boot.WebAppModel.FilterMappingDecl;
-import io.vidocq.foy.internal.boot.WebAppModel.ListenerDecl;
 import io.vidocq.foy.internal.boot.WebAppModel.ServletDecl;
 import io.vidocq.foy.internal.gen.ClassFileDescriptorReader;
 import io.vidocq.foy.internal.gen.ClassFileHandlesTypesScanner;
@@ -37,11 +34,7 @@ import io.vidocq.foy.internal.webxml.Fragment;
 import io.vidocq.foy.internal.webxml.FragmentMerger;
 import io.vidocq.foy.internal.webxml.FragmentOrderer;
 import io.vidocq.foy.internal.webxml.WebAppDescriptor;
-import io.vidocq.foy.spi.gen.WebComponentDescriptor;
 import io.vidocq.foy.tck.ServletTestHarness;
-import jakarta.servlet.DispatcherType;
-import jakarta.servlet.Filter;
-import jakarta.servlet.Servlet;
 import jakarta.servlet.ServletContainerInitializer;
 import jakarta.servlet.ServletException;
 import org.jboss.arquillian.container.spi.client.container.DeployableContainer;
@@ -58,8 +51,6 @@ import org.jboss.shrinkwrap.descriptor.api.Descriptor;
 
 import java.net.URL;
 import java.util.ArrayList;
-import java.util.EnumSet;
-import java.util.EventListener;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -180,7 +171,8 @@ public class VidocqDeployableContainer implements DeployableContainer<VidocqCont
         // dynamic addMapping of it is refused and reported in the conflict set.
         for (var m : effective.servletMappings()) if (m.urlPattern() != null) reservedPatterns.add(m.urlPattern());
 
-        harness = ServletTestHarness.builder()
+        try {
+            harness = ServletTestHarness.builder()
                 .model(model)
                 .registry(registry)
                 .componentFactory(factory)
@@ -191,6 +183,9 @@ public class VidocqDeployableContainer implements DeployableContainer<VidocqCont
                 // The war root, then the META-INF/resources of its lib jars (§4.6).
                 .resourceProvider(new WarResourceProvider(war, content.jarResources()))
                 .start();
+        } catch (RuntimeException e) {
+            throw new DeploymentException("[VidocqTCK] cannot deploy " + archiveName + ": " + e.getMessage(), e);
+        }
         harnessesByArchive.put(archive.getName(), harness);
         registriesByArchive.put(archive.getName(), registry);
 
@@ -227,55 +222,23 @@ public class VidocqDeployableContainer implements DeployableContainer<VidocqCont
     }
 
     /**
-     * The annotated servlets, filters and listeners among the war's classes, from their static
-     * descriptors ({@link ComponentFactory#descriptor}); instances come from the factory. A class
-     * misusing the Servlet annotations is skipped with a message.
+     * The annotated servlets, filters and listeners among the war's classes, through the product's
+     * {@link AnnotatedComponents#fromDescriptors}; instances come from the factory. Classes are
+     * classified from their bytes first, so plain war classes never enter the registry.
+     *
+     * @throws IllegalArgumentException when a class misuses the Servlet annotations (the
+     *         deployment fails, as in the product)
      */
     private static AnnotatedComponents annotatedComponents(List<Class<?>> classes, ComponentFactory factory) {
-        List<ServletDecl> servlets = new ArrayList<>();
-        List<FilterDecl> filters = new ArrayList<>();
-        List<FilterMappingDecl> filterMappings = new ArrayList<>();
-        List<ListenerDecl> listeners = new ArrayList<>();
+        List<Class<?>> annotated = new ArrayList<>();
         for (Class<?> cls : classes) {
-            WebComponentDescriptor d;
-            try {
-                // Classified from the class bytes first, so plain war classes never enter the registry.
-                if (ClassFileDescriptorReader.read(cls).isEmpty()) continue;
-                d = factory.descriptor(cls);
-            } catch (IllegalArgumentException e) {
-                System.err.println("[VidocqTCK] skipping " + cls.getName() + ": " + e.getMessage());
-                continue;
-            }
-            switch (d.kind()) {
-                case SERVLET -> {
-                    if (!Servlet.class.isAssignableFrom(cls)) continue;
-                    var type = cls.asSubclass(Servlet.class);
-                    servlets.add(new ServletDecl(d.name(), type, supplier(factory, type), d.urlPatterns(),
-                            d.initParams(), d.loadOnStartup(), d.asyncSupported(), d.servletSecurity(),
-                            d.multipartConfig(), true));
-                }
-                case FILTER -> {
-                    if (!Filter.class.isAssignableFrom(cls)) continue;
-                    var type = cls.asSubclass(Filter.class);
-                    filters.add(new FilterDecl(d.name(), type, supplier(factory, type), d.initParams(),
-                            d.asyncSupported()));
-                    Set<DispatcherType> types = d.dispatcherTypes().isEmpty()
-                            ? EnumSet.of(DispatcherType.REQUEST) : EnumSet.copyOf(d.dispatcherTypes());
-                    for (String p : d.urlPatterns()) filterMappings.add(new FilterMappingDecl(d.name(), p, null, types));
-                    for (String n : d.servletNames()) filterMappings.add(new FilterMappingDecl(d.name(), null, n, types));
-                }
-                case LISTENER -> {
-                    if (!EventListener.class.isAssignableFrom(cls)) continue;
-                    var type = cls.asSubclass(EventListener.class);
-                    listeners.add(new ListenerDecl(type, supplier(factory, type)));
-                }
-                default -> { /* not a web component */ }
-            }
+            if (ClassFileDescriptorReader.read(cls).isPresent()) annotated.add(cls);
         }
-        return new AnnotatedComponents(servlets, filters, filterMappings, listeners);
+        return AnnotatedComponents.fromDescriptors(annotated, factory::descriptor,
+                (cls, base) -> supplier(factory, cls));
     }
 
-    private static <T> Supplier<T> supplier(ComponentFactory factory, Class<? extends T> type) {
+    private static <T> Supplier<T> supplier(ComponentFactory factory, Class<T> type) {
         return () -> {
             try {
                 return factory.newInstance(type);
@@ -289,10 +252,13 @@ public class VidocqDeployableContainer implements DeployableContainer<VidocqCont
      * The {@link ServletContainerInitializer}s of {@code WEB-INF/classes}, then of each lib jar
      * in discovery order, whose root {@code retained} accepts (§8.2.4: a jar excluded by the
      * absolute ordering contributes none); only those are loaded and instantiated, through the
-     * factory. An initializer that cannot be created is reported and skipped.
+     * factory.
+     *
+     * @throws ServletException when a retained initializer cannot be loaded or created (the
+     *         deployment fails, like a descriptor class that cannot be loaded)
      */
     private static List<ServletContainerInitializer> initializers(WarContent content, Predicate<URL> retained,
-                                                                  ComponentFactory factory) {
+                                                                  ComponentFactory factory) throws ServletException {
         var out = new ArrayList<ServletContainerInitializer>();
         for (var e : content.initializerNames().entrySet()) {
             if (!retained.test(e.getKey())) continue;
@@ -300,8 +266,8 @@ public class VidocqDeployableContainer implements DeployableContainer<VidocqCont
                 try {
                     Class<?> c = factory.load(fqn);
                     out.add(factory.newInstance(c.asSubclass(ServletContainerInitializer.class)));
-                } catch (Exception | LinkageError t) {
-                    System.err.println("[VidocqTCK] failed to load SCI " + fqn + ": " + t);
+                } catch (ClassNotFoundException | ClassCastException | LinkageError t) {
+                    throw new ServletException("cannot load ServletContainerInitializer " + fqn + ": " + t, t);
                 }
             }
         }
