@@ -133,6 +133,25 @@ class DescriptorMergerTest {
     }
 
     @Test
+    void webXmlAsyncFalseOverridesAnnotationTrue() throws Exception {
+        var m = merge(HEAD + """
+                >
+                  <servlet><servlet-name>a</servlet-name><servlet-class>%s</servlet-class>
+                    <async-supported>false</async-supported></servlet>
+                </web-app>""".formatted(Annotated.class.getName()), annotatedServlet("a", "/a", Map.of()));
+        assertFalse(m.servlets().getFirst().asyncSupported());
+    }
+
+    @Test
+    void absentAsyncInWebXmlKeepsAnnotationValue() throws Exception {
+        var m = merge(HEAD + """
+                >
+                  <servlet><servlet-name>a</servlet-name><servlet-class>%s</servlet-class></servlet>
+                </web-app>""".formatted(Annotated.class.getName()), annotatedServlet("a", "/a", Map.of()));
+        assertTrue(m.servlets().getFirst().asyncSupported());
+    }
+
+    @Test
     void absentLoadOnStartupInWebXmlKeepsAnnotationValue() throws Exception {
         var ann = new AnnotatedComponents(List.of(new ServletDecl("s", Annotated.class, Annotated::new,
                 List.of("/a"), Map.of(), 5, false)), List.of(), List.of(), List.of());

@@ -237,7 +237,7 @@ public class VidocqDeployableContainer implements DeployableContainer<VidocqCont
                 instances.put(sd.name(), s);
                 servletParams.put(sd.name(),
                         sd.initParams() == null ? java.util.Map.of() : sd.initParams());
-                asyncSupportedByName.put(sd.name(), sd.asyncSupported());
+                asyncSupportedByName.put(sd.name(), Boolean.TRUE.equals(sd.asyncSupported()));
             } catch (ClassNotFoundException | RuntimeException ignored) {}
         }
         for (WebAppDescriptor.ServletMappingDef m : desc.servletMappings()) {

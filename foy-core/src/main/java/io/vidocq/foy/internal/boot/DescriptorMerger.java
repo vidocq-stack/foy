@@ -114,7 +114,9 @@ public final class DescriptorMerger {
             params.putAll(def.initParams());
             int load = def.loadOnStartup() != Integer.MIN_VALUE || a == null
                     ? def.loadOnStartup() : a.loadOnStartup();
-            boolean async = def.asyncSupported() || (a != null && a.asyncSupported());
+            // §8.2.3: a web.xml value overrides the annotation; absent means "take the annotation".
+            boolean async = def.asyncSupported() != null ? def.asyncSupported()
+                    : (a != null && a.asyncSupported());
             // §13.4.1: @ServletSecurity applies to the class, whatever declared the servlet
             // (unless metadata-complete turns annotation processing off, §8.1).
             var security = webXml.metadataComplete() ? null
@@ -150,7 +152,9 @@ public final class DescriptorMerger {
             Map<String, String> params = new LinkedHashMap<>();
             if (a != null) params.putAll(a.initParams());
             params.putAll(def.initParams());
-            boolean async = def.asyncSupported() || (a != null && a.asyncSupported());
+            // §8.2.3: a web.xml value overrides the annotation; absent means "take the annotation".
+            boolean async = def.asyncSupported() != null ? def.asyncSupported()
+                    : (a != null && a.asyncSupported());
             target.filter(new FilterDecl(def.name(), type, supplier(factory, type), params, async));
         }
         for (FilterDecl a : ann.filters()) {

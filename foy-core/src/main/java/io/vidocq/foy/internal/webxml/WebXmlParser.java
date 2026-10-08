@@ -48,7 +48,20 @@ public final class WebXmlParser {
 
     private WebXmlParser() {}
 
+    private static final System.Logger LOG = System.getLogger(WebXmlParser.class.getName());
+
+    /** Parses a web.xml; a {@code <web-fragment>} root is rejected. */
     public static WebAppDescriptor parse(InputStream in) throws IOException {
+        return parse(in, "web-app");
+    }
+
+    /** Parses a web-fragment.xml; a {@code <web-app>} root is rejected. */
+    public static WebAppDescriptor parseFragment(InputStream in) throws IOException {
+        return parse(in, "web-fragment");
+    }
+
+    private static WebAppDescriptor parse(InputStream in, String expectedRoot) throws IOException {
+        Document doc;
         try {
             var factory = DocumentBuilderFactory.newInstance();
             factory.setNamespaceAware(false);
@@ -56,15 +69,31 @@ public final class WebXmlParser {
             factory.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true);
             factory.setExpandEntityReferences(false);
             DocumentBuilder builder = factory.newDocumentBuilder();
-            Document doc = builder.parse(in);
-            doc.getDocumentElement().normalize();
-            return parse(doc.getDocumentElement());
+            doc = builder.parse(in);
         } catch (Exception e) {
-            throw new IOException("invalid web.xml", e);
+            throw new IOException("invalid " + (expectedRoot.equals("web-app") ? "web.xml" : "web-fragment.xml"), e);
+        }
+        Element root = doc.getDocumentElement();
+        root.normalize();
+        String found = localName(root);
+        if (!found.equals(expectedRoot)) {
+            throw new IOException("expected <" + expectedRoot + "> root, found <" + found + ">");
+        }
+        try {
+            return parse(root, expectedRoot.equals("web-fragment"));
+        } catch (RuntimeException e) {
+            throw new IOException("invalid " + (expectedRoot.equals("web-app") ? "web.xml" : "web-fragment.xml")
+                    + ": " + e.getMessage(), e);
         }
     }
 
-    private static WebAppDescriptor parse(Element root) {
+    private static String localName(Element e) {
+        String n = e.getTagName();
+        int i = n.indexOf(':');
+        return i < 0 ? n : n.substring(i + 1);
+    }
+
+    private static WebAppDescriptor parse(Element root, boolean fragment) {
         Map<String, String> contextParams = new LinkedHashMap<>();
         var servlets = new ArrayList<WebAppDescriptor.ServletDef>();
         var servletMappings = new ArrayList<WebAppDescriptor.ServletMappingDef>();
@@ -75,9 +104,23 @@ public final class WebXmlParser {
         int sessionTimeoutMinutes = -1;
         var localeEncodingMappings = new LinkedHashMap<String, String>();
         String displayName = null;
+        String fragmentName = null;
+        Ordering ordering = Ordering.NONE;
+        List<String> absoluteOrdering = null;
 
         for (Element e : children(root)) {
-            switch (e.getTagName()) {
+            switch (localName(e)) {
+                case "name" -> { if (fragment) fragmentName = text(e); }
+                case "ordering" -> {
+                    if (fragment) ordering = parseOrdering(e);
+                    else LOG.log(System.Logger.Level.WARNING,
+                            "<ordering> in web.xml is ignored (use <absolute-ordering>), §8.2.2");
+                }
+                case "absolute-ordering" -> {
+                    if (!fragment) absoluteOrdering = parseAbsoluteOrdering(e);
+                    else LOG.log(System.Logger.Level.WARNING,
+                            "<absolute-ordering> in a web-fragment.xml is ignored, §8.2.2");
+                }
                 case "display-name" -> displayName = text(e);
                 case "context-param" -> {
                     String name = firstText(e, "param-name");
@@ -116,41 +159,103 @@ public final class WebXmlParser {
                 filterMappings, listenerClasses, errorPages, sessionTimeoutMinutes,
                 localeEncodingMappings).withVersion(root.getAttribute("version"))
                 .withDisplayName(displayName)
+                .withKind(fragment ? WebAppDescriptor.Kind.WEB_FRAGMENT : WebAppDescriptor.Kind.WEB_APP)
+                .withFragmentName(fragmentName)
+                .withOrdering(ordering)
+                .withAbsoluteOrdering(absoluteOrdering)
                 .withMetadataComplete(Boolean.parseBoolean(root.getAttribute("metadata-complete").trim()));
     }
 
     private static WebAppDescriptor.ServletDef parseServlet(Element e) {
-        String async = firstText(e, "async-supported");
-        boolean asyncSupported = async != null && Boolean.parseBoolean(async.trim());
+        String name = firstText(e, "servlet-name");
         return new WebAppDescriptor.ServletDef(
-                firstText(e, "servlet-name"),
+                name,
                 firstText(e, "servlet-class"),
                 parseInitParams(e),
-                asyncSupported,
-                parseLoadOnStartup(e));
+                parseAsync(e),
+                parseLoadOnStartup(e, name));
     }
 
-    /** Absent element: {@code Integer.MIN_VALUE}; empty element: {@code 0}. */
-    private static int parseLoadOnStartup(Element e) {
+    /** {@code null} when the element is absent (tri-state, §8.2.3). */
+    private static Boolean parseAsync(Element e) {
+        String async = firstText(e, "async-supported");
+        return async == null ? null : Boolean.parseBoolean(async.trim());
+    }
+
+    /**
+     * Absent, empty or malformed element: {@code Integer.MIN_VALUE} (lazy; the schema allows an
+     * empty element, meaning the container loads the servlet whenever it chooses).
+     */
+    private static int parseLoadOnStartup(Element e, String servletName) {
         String t = firstText(e, "load-on-startup");
-        if (t == null) return Integer.MIN_VALUE;
-        return t.isEmpty() ? 0 : Integer.parseInt(t);
+        if (t == null || t.isEmpty()) return Integer.MIN_VALUE;
+        try {
+            return Integer.parseInt(t.trim());
+        } catch (NumberFormatException nfe) {
+            LOG.log(System.Logger.Level.WARNING, "servlet '" + servletName
+                    + "': invalid <load-on-startup> value '" + t + "', treated as lazy");
+            return Integer.MIN_VALUE;
+        }
+    }
+
+    private static Ordering parseOrdering(Element e) {
+        var before = new ArrayList<String>();
+        var after = new ArrayList<String>();
+        boolean beforeOthers = false;
+        boolean afterOthers = false;
+        for (Element c : children(e)) {
+            String n = localName(c);
+            if (n.equals("before") || n.equals("after")) {
+                boolean isBefore = n.equals("before");
+                boolean others = false;
+                for (Element k : children(c)) {
+                    switch (localName(k)) {
+                        case "name" -> (isBefore ? before : after).add(text(k));
+                        case "others" -> others = true;
+                        default -> { }
+                    }
+                }
+                if (isBefore) beforeOthers |= others; else afterOthers |= others;
+            }
+        }
+        return new Ordering(before, beforeOthers, after, afterOthers);
+    }
+
+    private static List<String> parseAbsoluteOrdering(Element e) {
+        var out = new ArrayList<String>();
+        boolean seenOthers = false;
+        for (Element c : children(e)) {
+            switch (localName(c)) {
+                case "name" -> out.add(text(c));
+                case "others" -> {
+                    if (seenOthers) LOG.log(System.Logger.Level.WARNING,
+                            "duplicate <others/> in <absolute-ordering> ignored");
+                    else { seenOthers = true; out.add(WebAppDescriptor.OTHERS); }
+                }
+                default -> { }
+            }
+        }
+        return out;
     }
 
     private static WebAppDescriptor.FilterDef parseFilter(Element e) {
-        String async = firstText(e, "async-supported");
         return new WebAppDescriptor.FilterDef(
                 firstText(e, "filter-name"),
                 firstText(e, "filter-class"),
                 parseInitParams(e),
-                async != null && Boolean.parseBoolean(async.trim()));
+                parseAsync(e));
     }
 
     private static List<WebAppDescriptor.FilterMappingDef> parseFilterMapping(Element e) {
         String filterName = firstText(e, "filter-name");
         Set<DispatcherType> types = EnumSet.noneOf(DispatcherType.class);
         for (Element d : childrenByTag(e, "dispatcher")) {
-            types.add(DispatcherType.valueOf(text(d).trim()));
+            String v = text(d).trim();
+            try {
+                types.add(DispatcherType.valueOf(v));
+            } catch (IllegalArgumentException ex) {
+                throw new IllegalArgumentException("unknown <dispatcher> value '" + v + "'", ex);
+            }
         }
         if (types.isEmpty()) types = EnumSet.of(DispatcherType.REQUEST);
         var out = new ArrayList<WebAppDescriptor.FilterMappingDef>();
@@ -176,7 +281,7 @@ public final class WebXmlParser {
         for (Element ip : childrenByTag(e, "init-param")) {
             String name = firstText(ip, "param-name");
             String value = firstText(ip, "param-value");
-            if (name != null) params.put(name, value == null ? "" : value);
+            if (name != null) params.putIfAbsent(name, value == null ? "" : value);
         }
         return params;
     }

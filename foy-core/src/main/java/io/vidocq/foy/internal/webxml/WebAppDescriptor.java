@@ -33,21 +33,59 @@ import java.util.Set;
  */
 public final class WebAppDescriptor {
 
+    /** Kind of descriptor, from the root element. */
+    public enum Kind { WEB_APP, WEB_FRAGMENT }
+
+    /** Marker inside {@link #absoluteOrdering()} for {@code <others/>}. */
+    public static final String OTHERS = "\u0000others";
+
+    private Kind kind = Kind.WEB_APP;
+    private String fragmentName;
+    private Ordering ordering = Ordering.NONE;
+    private List<String> absoluteOrdering;
+
+    public Kind kind() { return kind; }
+    public WebAppDescriptor withKind(Kind k) {
+        this.kind = k;
+        return this;
+    }
+
+    /** {@code <name>} of a fragment; {@code null} when absent. */
+    public String fragmentName() { return fragmentName; }
+    public WebAppDescriptor withFragmentName(String n) {
+        this.fragmentName = n;
+        return this;
+    }
+
+    /** Relative ordering of a fragment (§8.2.2); {@link Ordering#NONE} when absent. */
+    public Ordering ordering() { return ordering; }
+    public WebAppDescriptor withOrdering(Ordering o) {
+        this.ordering = o == null ? Ordering.NONE : o;
+        return this;
+    }
+
+    /** web.xml only: names in order, {@link #OTHERS} for {@code <others/>}; {@code null} when absent. */
+    public List<String> absoluteOrdering() { return absoluteOrdering; }
+    public WebAppDescriptor withAbsoluteOrdering(List<String> a) {
+        this.absoluteOrdering = a == null ? null : List.copyOf(a);
+        return this;
+    }
+
     public record ServletDef(String name, String className, Map<String, String> initParams,
-                             boolean asyncSupported, int loadOnStartup) {
+                             Boolean asyncSupported, int loadOnStartup) {
         public ServletDef(String name, String className, Map<String, String> initParams,
-                          boolean asyncSupported) {
+                          Boolean asyncSupported) {
             this(name, className, initParams, asyncSupported, Integer.MIN_VALUE);
         }
         public ServletDef(String name, String className, Map<String, String> initParams) {
-            this(name, className, initParams, false, Integer.MIN_VALUE);
+            this(name, className, initParams, null, Integer.MIN_VALUE);
         }
     }
     public record ServletMappingDef(String servletName, String urlPattern) {}
     public record FilterDef(String name, String className, Map<String, String> initParams,
-                            boolean asyncSupported) {
+                            Boolean asyncSupported) {
         public FilterDef(String name, String className, Map<String, String> initParams) {
-            this(name, className, initParams, false);
+            this(name, className, initParams, null);
         }
     }
     public record FilterMappingDef(String filterName, String urlPattern, String servletName,
