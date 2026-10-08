@@ -460,6 +460,19 @@ class DescriptorMergerTest {
     }
 
     @Test
+    void jspFileServletIsSkippedWithoutFailingTheDeployment() throws Exception {
+        var d = WebXmlParser.parse(new ByteArrayInputStream((HEAD + """
+                >
+                  <servlet><servlet-name>jsp</servlet-name><jsp-file>/dummy.jsp</jsp-file></servlet>
+                  <servlet-mapping><servlet-name>jsp</servlet-name><url-pattern>/dummy</url-pattern></servlet-mapping>
+                  <servlet><servlet-name>x</servlet-name><servlet-class>%s</servlet-class></servlet>
+                </web-app>""".formatted(FromXml.class.getName())).getBytes()));
+        var b = WebAppModel.builder("/");
+        DescriptorMerger.merge(d, AnnotatedComponents.none(), F, b);
+        assertEquals(List.of("x"), b.build().servlets().stream().map(ServletDecl::name).toList());
+    }
+
+    @Test
     void fourArgumentMergeIsTheMergeWithoutFragments() throws Exception {
         var d = WebXmlParser.parse(new ByteArrayInputStream((HEAD + """
                 >

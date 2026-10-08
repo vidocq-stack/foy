@@ -224,6 +224,12 @@ public final class DescriptorMerger {
             ServletDecl a = annotatedByName.get(def.name());
             // The web.xml declaration overrides the annotated one of the same name, even when skipped.
             done.add(def.name());
+            if (def.className() == null && def.jspFile() != null) {
+                // Foy ships no JSP engine: a <jsp-file> servlet is left out, the rest deploys.
+                LOG.log(System.Logger.Level.WARNING, "web.xml servlet '" + def.name() + "' skipped: <jsp-file> "
+                        + def.jspFile() + " needs a JSP engine, which Foy does not provide");
+                continue;
+            }
             Class<? extends Servlet> type = loadComponent(factory, def.className(), Servlet.class, "servlet",
                     def.name());
             if (type == null) continue;
