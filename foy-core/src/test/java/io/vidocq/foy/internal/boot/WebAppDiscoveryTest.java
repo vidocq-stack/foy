@@ -88,6 +88,10 @@ class WebAppDiscoveryTest {
     /** A CDI bean implementing Servlet without {@code @WebServlet}: not a web component. */
     public static class PlainServlet extends HttpServlet {}
 
+    /** A web-annotated bean from an archive built without foy-cdi-vauban: in no index. */
+    @WebServlet("/lib")
+    public static class UnindexedServlet extends HttpServlet {}
+
     private final WebComponentRegistry registry =
             WebComponentRegistry.forClassLoader(WebAppDiscoveryTest.class.getClassLoader());
     private LogCapture log;
@@ -132,8 +136,10 @@ class WebAppDiscoveryTest {
                         new FilterMappingDecl(f.name(), null, "named", Set.of(DispatcherType.FORWARD))),
                 found.filterMappings());
         assertSame(listener, found.listeners().getFirst().factory().get());
-        assertEquals(List.of(), bm.walked, "the Servlet/Filter/EventListener walk is not used");
+        assertEquals(List.<Type>of(Servlet.class, Filter.class, EventListener.class), bm.walked,
+                "the beans are still walked, for archives built without foy-cdi-vauban");
         assertEquals(0, infoLines());
+        assertEquals(List.of(), log.messages(Level.WARNING));
     }
 
     @Test
@@ -173,7 +179,6 @@ class WebAppDiscoveryTest {
         assertEquals(List.of(DiscoveredServlet.class), found.servlets().stream().map(ServletDecl::type).toList());
         assertEquals(1, found.filters().size(), "a class listed by two indexes is discovered once");
         assertEquals(1, found.listeners().size());
-        assertEquals(List.of(), bm.walked);
     }
 
     @Test
@@ -207,6 +212,50 @@ class WebAppDiscoveryTest {
         var warnings = log.messages(Level.WARNING);
         assertEquals(1, warnings.size(), warnings::toString);
         assertTrue(warnings.getFirst().contains(OrphanServlet.class.getName()), warnings::toString);
+    }
+
+    @Test
+    void aWebAnnotatedBeanMissingFromTheIndexIsAddedAfterTheIndexWithOneWarning() {
+        var indexed = new DiscoveredServlet();
+        var unindexed = new UnindexedServlet();
+        CdiWebComponents index = () -> List.of(DiscoveredServlet.class);
+        var bm = new FakeBeanManager()
+                .bean(CdiWebComponents.class, index)
+                // Walked first, but index entries come first.
+                .bean(UnindexedServlet.class, unindexed, Servlet.class)
+                .bean(DiscoveredServlet.class, indexed, Servlet.class)
+                .bean(PlainServlet.class, new PlainServlet(), Servlet.class);
+
+        AnnotatedComponents found = WebAppDiscovery.discover(bm.proxy(), registry);
+
+        assertEquals(List.of(DiscoveredServlet.class, UnindexedServlet.class),
+                found.servlets().stream().map(ServletDecl::type).toList(), "index entries first, then walked extras");
+        assertSame(indexed, found.servlets().get(0).factory().get());
+        assertSame(unindexed, found.servlets().get(1).factory().get());
+        var warnings = log.messages(Level.WARNING);
+        assertEquals(1, warnings.size(), warnings::toString);
+        assertTrue(warnings.getFirst().contains(UnindexedServlet.class.getName()), warnings::toString);
+        assertTrue(warnings.getFirst().contains("foy-cdi-vauban"), warnings::toString);
+    }
+
+    @Test
+    void noWarningWhenEveryWebAnnotatedBeanIsIndexed() {
+        CdiWebComponents index = () -> List.of(DiscoveredServlet.class, DiscoveredFilter.class,
+                DiscoveredListener.class);
+        var bm = new FakeBeanManager()
+                .bean(CdiWebComponents.class, index)
+                .bean(DiscoveredServlet.class, new DiscoveredServlet(), Servlet.class)
+                .bean(PlainServlet.class, new PlainServlet(), Servlet.class)
+                .bean(DiscoveredFilter.class, new DiscoveredFilter(), Filter.class)
+                .bean(DiscoveredListener.class, new DiscoveredListener(), EventListener.class);
+
+        AnnotatedComponents found = WebAppDiscovery.discover(bm.proxy(), registry);
+
+        assertEquals(List.of(DiscoveredServlet.class), found.servlets().stream().map(ServletDecl::type).toList());
+        assertEquals(1, found.filters().size());
+        assertEquals(1, found.listeners().size());
+        assertEquals(List.of(), log.messages(Level.WARNING));
+        assertEquals(0, infoLines());
     }
 
     /** Bean classes of the two index beans of the merge test. */
