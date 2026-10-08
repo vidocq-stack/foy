@@ -55,10 +55,12 @@ public record DeployOptions(SecurityProvider securityProvider,
         Objects.requireNonNull(handlesTypes, "handlesTypes");
     }
 
-    /** Reflective component factory on {@code loader}, no {@code @HandlesTypes} resolution, nothing reserved. */
+    /** Registry-backed component factory (generated, Class-File, then reflective tiers) on {@code loader}, no {@code @HandlesTypes} resolution, nothing reserved. */
     public static DeployOptions defaults(ClassLoader loader) {
         return new DeployOptions(null, null, null, Set.of(), Set.of(), Set.of(),
-                ComponentFactory.reflective(loader), HandlesTypesResolver.NONE);
+                new io.vidocq.foy.internal.gen.RegistryComponentFactory(
+                        io.vidocq.foy.internal.gen.WebComponentRegistry.forClassLoader(loader), loader),
+                HandlesTypesResolver.NONE);
     }
 
     public DeployOptions withComponentFactory(ComponentFactory f) {

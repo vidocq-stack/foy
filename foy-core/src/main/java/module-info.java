@@ -31,6 +31,8 @@ module io.vidocq.foy.core {
     // l'introduction d'une SPI FoyHttpExchange dans foy-api.
     requires io.vidocq.chappe.api;
 
+    uses io.vidocq.foy.spi.gen.WebComponent;
+
     exports io.vidocq.foy.internal.async;
     exports io.vidocq.foy.internal.boot;
     exports io.vidocq.foy.internal.bridge;
