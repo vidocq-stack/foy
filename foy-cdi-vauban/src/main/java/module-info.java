@@ -23,4 +23,7 @@ module io.vidocq.foy.cdi.vauban {
     requires io.vidocq.vauban.core;
 
     exports io.vidocq.foy.cdi.vauban;
+
+    provides jakarta.enterprise.inject.build.compatible.spi.BuildCompatibleExtension
+            with io.vidocq.foy.cdi.vauban.FoyWebExtension;
 }

@@ -33,12 +33,23 @@
             <artifactId>vauban-core</artifactId>
         </dependency>
 
-        <!-- Test only: BceCapabilitySpikeTest compiles tiny apps in-process with vauban's
-             annotation processor to observe what build-time BCEs support. -->
+        <!-- Test only: FoyWebExtensionTest compiles tiny apps in-process with vauban's annotation
+             processor on the processor path (with this module's classes), then serves them
+             through FoyChappeBoot. -->
         <dependency>
             <groupId>io.vidocq.vauban</groupId>
             <artifactId>vauban-processor</artifactId>
             <version>${vauban.version}</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>io.vidocq.foy</groupId>
+            <artifactId>foy-chappe</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>io.vidocq.chappe</groupId>
+            <artifactId>chappe-core</artifactId>
             <scope>test</scope>
         </dependency>
         <dependency>
@@ -53,17 +64,31 @@
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-compiler-plugin</artifactId>
+                <configuration>
+                    <!-- Same set-up as cassini-cdi-vauban: vauban's annotation processor runs over
+                         this module's own beans (none today; the build compatible extension and
+                         the synthetic bean creator are not beans). -->
+                    <annotationProcessorPaths>
+                        <path>
+                            <groupId>io.vidocq.vauban</groupId>
+                            <artifactId>vauban-processor</artifactId>
+                            <version>${vauban.version}</version>
+                        </path>
+                    </annotationProcessorPaths>
+                </configuration>
                 <executions>
-                    <!-- BceCapabilitySpikeTest drives javac in-process (javax.tools), which the
-                         main module does not read. -->
+                    <!-- Test fixtures are not application beans; FoyWebExtensionTest drives javac
+                         in-process (javax.tools) and an HTTP client, which the main module does
+                         not read. -->
                     <execution>
                         <id>default-testCompile</id>
                         <configuration>
+                            <proc>none</proc>
                             <compilerArgs>
                                 <arg>--add-modules</arg>
-                                <arg>java.compiler</arg>
+                                <arg>java.compiler,java.net.http</arg>
                                 <arg>--add-reads</arg>
-                                <arg>io.vidocq.foy.cdi.vauban=java.compiler</arg>
+                                <arg>io.vidocq.foy.cdi.vauban=java.compiler,java.net.http</arg>
                             </compilerArgs>
                         </configuration>
                     </execution>
@@ -73,8 +98,8 @@
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-surefire-plugin</artifactId>
                 <configuration>
-                    <!-- Same reason: the in-process compilation needs java.compiler. -->
-                    <useModulePath>false</useModulePath>
+                    <!-- Keep the module path; only add the JDK modules the test reads. -->
+                    <argLine>--add-modules java.compiler,java.net.http --add-reads io.vidocq.foy.cdi.vauban=java.compiler,java.net.http</argLine>
                 </configuration>
             </plugin>
         </plugins>
