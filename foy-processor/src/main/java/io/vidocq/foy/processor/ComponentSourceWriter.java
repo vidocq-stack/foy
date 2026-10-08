@@ -91,6 +91,21 @@ final class ComponentSourceWriter {
         if (!m.servletNames().isEmpty()) {
             sb.append("\n                    .withServletNames(").append(literals(m.servletNames())).append(")");
         }
+        if (m.multipart() != null) {
+            sb.append("\n                    .withMultipartConfig(").append(m.multipart()).append(")");
+        }
+        if (m.security() != null) {
+            sb.append("\n                    .withServletSecurity(").append(m.security()).append(")");
+        }
+        if (!m.declaredRoles().isEmpty()) {
+            sb.append("\n                    .withDeclaredRoles(").append(literals(m.declaredRoles())).append(")");
+        }
+        if (m.runAs() != null) {
+            sb.append("\n                    .withRunAs(").append(literal(m.runAs())).append(")");
+        }
+        if (!m.handlesTypes().isEmpty()) {
+            sb.append("\n                    .withHandlesTypes(").append(literals(m.handlesTypes())).append(")");
+        }
         sb.append(";\n");
         sb.append("    public ").append(simple).append("() {}\n");
         sb.append("    @Override public Class<?> type() { return ").append(m.typeFqcn()).append(".class; }\n");

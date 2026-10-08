@@ -77,11 +77,9 @@ public final class FoyWebComponentProcessor extends AbstractProcessor {
                     processingEnv.getMessager().printMessage(Diagnostic.Kind.ERROR,
                             "foy: cannot generate component for " + model.get().typeFqcn() + ": " + e, type);
                 }
-            } else {
+            } else if (model.get().annotated()) {
                 note(type, reason);
             }
-        } else if (ComponentModel.hasWebAnnotation(type)) {
-            note(type, "not a supported web component");
         }
         for (Element member : type.getEnclosedElements()) {
             visit(member);

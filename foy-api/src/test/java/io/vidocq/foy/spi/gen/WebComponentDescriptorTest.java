@@ -64,4 +64,11 @@ class WebComponentDescriptorTest {
         assertEquals(List.of("/a", "/b"), d.urlPatterns());
         assertEquals(Set.of(DispatcherType.FORWARD), d.dispatcherTypes());
     }
+
+    @Test
+    void duplicateDispatcherTypesAreTolerated() {
+        var d = WebComponentDescriptor.plain()
+                .withDispatcherTypes(DispatcherType.REQUEST, DispatcherType.REQUEST);
+        assertEquals(Set.of(DispatcherType.REQUEST), d.dispatcherTypes());
+    }
 }

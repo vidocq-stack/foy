@@ -23,6 +23,7 @@ import jakarta.servlet.DispatcherType;
 import jakarta.servlet.MultipartConfigElement;
 import jakarta.servlet.ServletSecurityElement;
 
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -148,7 +149,7 @@ public record WebComponentDescriptor(Kind kind,
     /** Returns a copy with the given dispatcher types. */
     public WebComponentDescriptor withDispatcherTypes(DispatcherType... t) {
         return new WebComponentDescriptor(kind, name, urlPatterns, initParams, loadOnStartup,
-                asyncSupported, Set.of(t), servletNames, multipartConfig, servletSecurity,
+                asyncSupported, Set.copyOf(Arrays.asList(t)), servletNames, multipartConfig, servletSecurity,
                 declaredRoles, runAs, handlesTypes);
     }
 
