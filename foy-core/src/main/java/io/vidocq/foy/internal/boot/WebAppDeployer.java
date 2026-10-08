@@ -272,8 +272,9 @@ public final class WebAppDeployer {
                     }
                 }
             }
-            // Like a declared filter, an unmapped dynamic filter is initialised but never invoked
-            // (§6.2.1: every declared filter is instantiated and initialised at deployment).
+            // Like a declared filter, an unmapped dynamic filter is initialised (and destroyed) but
+            // never invoked. The spec leaves this open; initialising every registered filter is
+            // container practice (Tomcat filterStart, Jetty FilterHolder start).
             filters.add(new FilterUnit(name, instance.getClass(), instance, Map.copyOf(reg.getInitParameters()),
                     async));
         }

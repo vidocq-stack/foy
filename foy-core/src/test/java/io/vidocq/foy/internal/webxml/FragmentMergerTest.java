@@ -201,11 +201,34 @@ class FragmentMergerTest {
     }
 
     @Test
-    void webXmlPatternWinsOverAFragmentMappingOfAnotherServlet() throws Exception {
+    void patternMappedByWebXmlAndByAFragmentToAnotherServletFails() throws Exception {
+        var e = assertThrows(ServletException.class, () -> FragmentMerger.merge(
+                web(servlet("a", "a.A", "") + mapping("a", "/x")),
+                List.of(frag("F1", servlet("b", "a.B", "") + mapping("b", "/x")))));
+        assertTrue(e.getMessage().startsWith("conflicting <servlet-mapping>"), e.getMessage());
+        for (String p : List.of("'/x'", "'a'", "'b'", "web.xml", "F1")) {
+            assertTrue(e.getMessage().contains(p), e.getMessage() + " lacks " + p);
+        }
+    }
+
+    @Test
+    void patternOfTheSameServletInWebXmlAndAFragmentIsFine() throws Exception {
         var m = FragmentMerger.merge(web(servlet("a", "a.A", "") + mapping("a", "/x")),
-                List.of(frag("F1", servlet("b", "a.B", "") + mapping("b", "/x") + mapping("b", "/y"))));
-        assertEquals(List.of(new ServletMappingDef("a", "/x"), new ServletMappingDef("b", "/y")),
-                m.servletMappings());
+                List.of(frag("F1", mapping("a", "/x") + mapping("a", "/z"))));
+        assertEquals(List.of(new ServletMappingDef("a", "/x")), m.servletMappings());
+    }
+
+    @Test
+    void webXmlServletWithoutClassInheritsTheFragmentClass() throws Exception {
+        var m = FragmentMerger.merge(web("<servlet><servlet-name>s</servlet-name>" + param("k", "xml") + "</servlet>"),
+                List.of(frag("F1", servlet("s", "a.Frag", param("k", "frag")))));
+        var s = servletNamed(m, "s");
+        assertEquals("a.Frag", s.className());
+        assertEquals(Map.of("k", "xml"), s.initParams());
+        var e = assertThrows(ServletException.class, () -> FragmentMerger.merge(
+                web("<servlet><servlet-name>s</servlet-name></servlet>"),
+                List.of(frag("F1", servlet("s", "a.A", "")), frag("F2", servlet("s", "a.B", "")))));
+        assertConflict(e, "<servlet-class>", "'s'", "F1", "F2");
     }
 
     // ---- filters ------------------------------------------------------------------------------
@@ -432,6 +455,30 @@ class FragmentMergerTest {
         assertEquals(5, m.sessionTimeoutMinutes());
     }
 
+    @Test
+    void cookieConfigIsMergedPerSubElement() throws Exception {
+        var m = FragmentMerger.merge(web(session("<cookie-config><name>XML</name></cookie-config>")), List.of(
+                frag("F1", session("<cookie-config><name>FRAG</name><http-only>true</http-only>"
+                        + "<attribute><attribute-name>SameSite</attribute-name>"
+                        + "<attribute-value>Lax</attribute-value></attribute></cookie-config>")),
+                frag("F2", session("<cookie-config><domain>example.com</domain><http-only>true</http-only>"
+                        + "</cookie-config>"))));
+        var c = m.cookieConfig();
+        assertEquals("XML", c.name());
+        assertEquals(Boolean.TRUE, c.httpOnly());
+        assertEquals("example.com", c.domain());
+        assertEquals(Map.of("SameSite", "Lax"), c.attributes());
+        assertNull(c.path());
+        var e = assertThrows(ServletException.class, () -> FragmentMerger.merge(web(""), List.of(
+                frag("F1", session("<cookie-config><path>/a</path></cookie-config>")),
+                frag("F2", session("<cookie-config><name>N</name><path>/b</path></cookie-config>")))));
+        assertConflict(e, "<path> in <cookie-config>", "F1", "F2");
+        var xml = FragmentMerger.merge(web(session("<cookie-config><path>/x</path></cookie-config>")), List.of(
+                frag("F1", session("<cookie-config><path>/a</path></cookie-config>")),
+                frag("F2", session("<cookie-config><path>/b</path></cookie-config>"))));
+        assertEquals("/x", xml.cookieConfig().path());
+    }
+
     // ---- security -----------------------------------------------------------------------------
 
     private static String constraint(String pattern) {
@@ -519,6 +566,55 @@ class FragmentMergerTest {
         var f1 = frag("F1", "<ordering><after><name>F2</name></after></ordering>" + l1);
         var m = FragmentMerger.merge(web(""), List.of(f1, frag("F2", l2)));
         assertEquals(List.of("a.L1", "a.L2"), m.listenerClasses());
+    }
+
+    @Test
+    void theResultIsACopyThatNeverChangesTheInput() throws Exception {
+        for (var xml : List.of(web(servlet("s", "a.S", param("k", "v")) + welcome("index.html")),
+                web(" metadata-complete=\"true\"", servlet("s", "a.S", param("k", "v")) + welcome("index.html")))) {
+            for (var fragments : List.of(List.<Fragment>of(), List.of(frag("F1", servlet("s", "a.S", param("x", "1")))))) {
+                var m = FragmentMerger.merge(xml, fragments);
+                assertNotSame(xml, m);
+                m.withDisplayName("changed").withWelcomeFiles(List.of("other.html")).withDefaultContextPath("/c")
+                        .withMetadataComplete(!xml.metadataComplete());
+                assertNull(xml.displayName());
+                assertEquals(List.of("index.html"), xml.welcomeFiles());
+                assertNull(xml.defaultContextPath());
+                assertThrows(UnsupportedOperationException.class,
+                        () -> servletNamed(m, "s").initParams().put("y", "2"));
+                assertEquals(Map.of("k", "v"), servletNamed(xml, "s").initParams());
+            }
+        }
+    }
+
+    @Test
+    void emptyWebXmlAndOneRichFragment() throws Exception {
+        // The TCK pluggability shape: no web.xml, everything declared by one web-fragment.xml.
+        var m = FragmentMerger.merge(WebAppDescriptor.empty(), List.of(frag("F1",
+                servlet("s1", "a.S1", param("k", "v") + "<load-on-startup>1</load-on-startup>")
+                        + servlet("s2", "a.S2", "") + mapping("s1", "/s1") + mapping("s2", "/s2")
+                        + mapping("s2", "*.do")
+                        + filter("f", "a.F", "") + "<filter-mapping><filter-name>f</filter-name>"
+                        + "<servlet-name>s1</servlet-name></filter-mapping>"
+                        + "<listener><listener-class>a.L</listener-class></listener>"
+                        + session("<session-timeout>7</session-timeout><tracking-mode>COOKIE</tracking-mode>")
+                        + errorCode(404, "/nf") + mime("foo", "x/foo") + welcome("home.html")
+                        + contextParam("c", "1"))));
+        assertEquals(WebAppDescriptor.Kind.WEB_APP, m.kind());
+        assertEquals(List.of("s1", "s2"), m.servlets().stream().map(ServletDef::name).toList());
+        assertEquals(1, servletNamed(m, "s1").loadOnStartup());
+        assertEquals(Map.of("k", "v"), servletNamed(m, "s1").initParams());
+        assertEquals(List.of("/s1"), m.patternsFor("s1"));
+        assertEquals(List.of("/s2", "*.do"), m.patternsFor("s2"));
+        assertEquals(List.of(new FilterMappingDef("f", null, "s1", Set.of(jakarta.servlet.DispatcherType.REQUEST))),
+                m.filterMappings());
+        assertEquals(List.of("a.L"), m.listenerClasses());
+        assertEquals(7, m.sessionTimeoutMinutes());
+        assertEquals(Set.of(SessionTrackingMode.COOKIE), m.trackingModes());
+        assertEquals(List.of(new ErrorPageDef(404, null, "/nf")), m.errorPages());
+        assertEquals(Map.of("foo", "x/foo"), m.mimeMappings());
+        assertEquals(List.of("home.html"), m.welcomeFiles());
+        assertEquals(Map.of("c", "1"), m.contextParams());
     }
 
     @Test

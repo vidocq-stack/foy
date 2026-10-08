@@ -28,6 +28,7 @@ import io.vidocq.foy.internal.webxml.WebAppDescriptor.ServletMappingDef;
 import jakarta.servlet.ServletException;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
@@ -42,8 +43,6 @@ import java.util.Set;
  */
 final class ComponentMerger {
 
-    private static final System.Logger LOG = System.getLogger(FragmentMerger.class.getName());
-
     private ComponentMerger() {}
 
     /** A servlet or filter being merged; servlet-only fields stay unset for filters. */
@@ -52,6 +51,8 @@ final class ComponentMerger {
         final String name;
         final boolean inWebXml;
         String className;
+        /** web.xml named the class: fragments cannot change it (§8.2.3 rule 1.c otherwise fills it). */
+        boolean classFromWebXml;
         String classFragment;
         final Keyed<String> params;
         Boolean async;
@@ -70,13 +71,14 @@ final class ComponentMerger {
 
         void fromWebXml(String cls, Map<String, String> initParams, Boolean asyncSupported) {
             className = cls;
+            classFromWebXml = cls != null;
             params.webXml(initParams);
             async = asyncSupported;
         }
 
         void fromFragment(String fragmentId, String cls, Map<String, String> initParams, Boolean asyncSupported)
                 throws ServletException {
-            if (!inWebXml && cls != null) {
+            if (!classFromWebXml && cls != null) {
                 if (className == null) {
                     className = cls;
                     classFragment = fragmentId;
@@ -87,6 +89,10 @@ final class ComponentMerger {
             }
             params.fragment(fragmentId, initParams);
             if (async == null) async = asyncSupported;
+        }
+
+        Map<String, String> params() {
+            return Collections.unmodifiableMap(new LinkedHashMap<>(params.values()));
         }
     }
 
@@ -110,12 +116,14 @@ final class ComponentMerger {
                 if (c.runAs == null) c.runAs = d.runAs();
                 if (c.jspFile == null) c.jspFile = d.jspFile();
                 // web.xml decides <enabled>; between fragments, one "false" disables the servlet.
+                // Approximation: the parser keeps <enabled> as a plain boolean (absent = true), so an
+                // explicit <enabled>true</enabled> in a fragment cannot override another's false.
                 if (!c.inWebXml) c.enabled &= d.enabled();
             }
         }
         var out = new ArrayList<ServletDef>();
         for (Component c : byName.values()) {
-            out.add(new ServletDef(c.name, c.className, c.params.values(), c.async, c.loadOnStartup,
+            out.add(new ServletDef(c.name, c.className, c.params(), c.async, c.loadOnStartup,
                     c.multipart, c.enabled, c.runAs, c.jspFile));
         }
         return out;
@@ -134,13 +142,14 @@ final class ComponentMerger {
             }
         }
         var out = new ArrayList<FilterDef>();
-        for (Component c : byName.values()) out.add(new FilterDef(c.name, c.className, c.params.values(), c.async));
+        for (Component c : byName.values()) out.add(new FilterDef(c.name, c.className, c.params(), c.async));
         return out;
     }
 
     /**
      * §8.2.3 rule 1.d: web.xml's mappings of a servlet replace the fragments' ones; otherwise the
-     * union. One pattern on two servlets in two fragments is a conflict; against web.xml, web.xml wins.
+     * union. One pattern on two servlets fails the deployment (§12.2), whether the first is in web.xml
+     * or in another fragment; the same pattern on the same servlet is kept once.
      */
     static List<ServletMappingDef> servletMappings(WebAppDescriptor webXml, List<Fragment> ordered)
             throws ServletException {
@@ -163,9 +172,10 @@ final class ComponentMerger {
                 } else if (owner.equals(m.servletName())) {
                     continue; // same mapping declared twice
                 } else if (!fragmentOf.containsKey(m.urlPattern())) {
-                    LOG.log(System.Logger.Level.WARNING, () -> "url-pattern '" + m.urlPattern() + "' of servlet '"
-                            + m.servletName() + "' in web fragment " + f.id()
-                            + " is ignored: web.xml maps it to servlet '" + owner + "'");
+                    // §12.2: one pattern on two servlets of the effective descriptor fails the deployment.
+                    throw new ServletException("conflicting <servlet-mapping> for url-pattern '" + m.urlPattern()
+                            + "': servlet '" + owner + "' in web.xml and servlet '" + m.servletName()
+                            + "' in web fragment " + f.id());
                 } else {
                     throw MergeSlots.conflict("<servlet-mapping> for url-pattern '" + m.urlPattern()
                                     + "' (servlets '" + owner + "' and '" + m.servletName() + "')",

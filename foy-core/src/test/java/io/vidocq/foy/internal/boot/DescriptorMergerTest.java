@@ -501,6 +501,7 @@ class DescriptorMergerTest {
         final String id;
         Recording(String id) { this.id = id; }
         @Override public void init(jakarta.servlet.FilterConfig c) { FILTER_EVENTS.add("init:" + id); }
+        @Override public void destroy() { FILTER_EVENTS.add("destroy:" + id); }
         @Override public void doFilter(jakarta.servlet.ServletRequest req, jakarta.servlet.ServletResponse res,
                                        jakarta.servlet.FilterChain chain)
                 throws java.io.IOException, jakarta.servlet.ServletException {
@@ -541,7 +542,7 @@ class DescriptorMergerTest {
             assertNotNull(ctx.getFilterRegistration("ann"), "static unmapped filter is registered");
             assertNotNull(ctx.getFilterRegistration("dyn"), "dynamic unmapped filter is registered");
         }
-        assertEquals(Set.of("init:ann", "init:dyn"), Set.copyOf(FILTER_EVENTS),
-                "both are initialised, neither is applied: " + FILTER_EVENTS);
+        assertEquals(Set.of("init:ann", "init:dyn", "destroy:ann", "destroy:dyn"), Set.copyOf(FILTER_EVENTS),
+                "both are initialised and destroyed, neither is applied: " + FILTER_EVENTS);
     }
 }

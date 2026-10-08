@@ -41,7 +41,7 @@ import java.util.Set;
  * order.</p>
  *
  * <p><b>metadata-complete.</b> When web.xml is {@code metadata-complete="true"}, the fragments are
- * not merged: web.xml is returned as is, and the caller ignores every annotation; the ordering
+ * not merged: a copy of web.xml is returned, and the caller ignores every annotation; the ordering
  * still decides which jars' container initializers run (§8.2.4). Source: the
  * {@code metadata-complete} documentation of {@code web-common_6_1.xsd} shipped in
  * {@code jakarta.servlet-api} 6.1.0 ("this deployment descriptor and other related deployment
@@ -71,7 +71,8 @@ public final class FragmentMerger {
      */
     public static WebAppDescriptor merge(WebAppDescriptor webXml, List<Fragment> ordered)
             throws ServletException {
-        if (webXml.metadataComplete() || ordered.isEmpty()) return webXml;
+        // Always a fresh descriptor: the with* methods mutate, so the caller's web.xml is never shared.
+        if (webXml.metadataComplete()) ordered = List.of();
 
         var contextParams = new Keyed<String>("<context-param>", "");
         contextParams.webXml(webXml.contextParams());
@@ -83,7 +84,8 @@ public final class FragmentMerger {
         for (ErrorPageDef p : webXml.errorPages()) errorPages.webXml(errorPageKey(p), p);
 
         var timeout = new Single<Integer>("<session-timeout>").webXml(timeout(webXml));
-        var cookieConfig = new Single<CookieConfigDef>("<cookie-config>").webXml(webXml.cookieConfig());
+        var cookieConfig = new CookieConfigSlots();
+        cookieConfig.webXml(webXml.cookieConfig());
         var trackingModes = new Single<Set<SessionTrackingMode>>("<tracking-mode>")
                 .webXml(modes(webXml));
         var requestEncoding = new Single<String>("<request-character-encoding>")
@@ -146,6 +148,50 @@ public final class FragmentMerger {
                 .withSecurityConstraints(securityConstraints)
                 .withLoginConfig(loginConfig.value())
                 .withSecurityRoles(List.copyOf(securityRoles));
+    }
+
+    /** {@code <cookie-config>} merged per sub-element: web.xml wins per sub-element, fragments fill the rest. */
+    private static final class CookieConfigSlots {
+        private final Single<String> name = new Single<>("<name> in <cookie-config>");
+        private final Single<String> domain = new Single<>("<domain> in <cookie-config>");
+        private final Single<String> path = new Single<>("<path> in <cookie-config>");
+        private final Single<String> comment = new Single<>("<comment> in <cookie-config>");
+        private final Single<Boolean> httpOnly = new Single<>("<http-only> in <cookie-config>");
+        private final Single<Boolean> secure = new Single<>("<secure> in <cookie-config>");
+        private final Single<Integer> maxAge = new Single<>("<max-age> in <cookie-config>");
+        private final Keyed<String> attributes = new Keyed<>("<attribute>", " in <cookie-config>");
+        private boolean declared;
+
+        void webXml(CookieConfigDef c) {
+            if (c == null) return;
+            declared = true;
+            name.webXml(c.name());
+            domain.webXml(c.domain());
+            path.webXml(c.path());
+            comment.webXml(c.comment());
+            httpOnly.webXml(c.httpOnly());
+            secure.webXml(c.secure());
+            maxAge.webXml(c.maxAge());
+            attributes.webXml(c.attributes());
+        }
+
+        void fragment(String id, CookieConfigDef c) throws ServletException {
+            if (c == null) return;
+            declared = true;
+            name.fragment(id, c.name());
+            domain.fragment(id, c.domain());
+            path.fragment(id, c.path());
+            comment.fragment(id, c.comment());
+            httpOnly.fragment(id, c.httpOnly());
+            secure.fragment(id, c.secure());
+            maxAge.fragment(id, c.maxAge());
+            attributes.fragment(id, c.attributes());
+        }
+
+        CookieConfigDef value() {
+            return declared ? new CookieConfigDef(name.value(), domain.value(), path.value(), comment.value(),
+                    httpOnly.value(), secure.value(), maxAge.value(), attributes.values()) : null;
+        }
     }
 
     /** Error pages are keyed by status code, by exception type, or are the default page. */

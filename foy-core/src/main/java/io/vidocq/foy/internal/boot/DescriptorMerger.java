@@ -33,6 +33,7 @@ import jakarta.servlet.ServletException;
 
 import java.net.URL;
 import java.security.CodeSource;
+import java.util.ArrayList;
 import java.util.EventListener;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
@@ -84,7 +85,7 @@ public final class DescriptorMerger {
             if (jars.isEmpty()) return this;
             Set<String> keys = new HashSet<>();
             for (URL u : jars) keys.add(Fragment.sourceKey(u));
-            var keptFilters = new java.util.ArrayList<FilterDecl>();
+            var keptFilters = new ArrayList<FilterDecl>();
             Set<String> droppedFilters = new HashSet<>();
             for (FilterDecl f : filters) {
                 if (from(f.type(), keys)) droppedFilters.add(f.name());

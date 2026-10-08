@@ -39,6 +39,11 @@ public record Fragment(String id, URL jar, WebAppDescriptor descriptor) {
      * the {@code jar:} wrapper and its {@code !/} entry part are dropped, the URI is normalised
      * ({@code file:} URIs through {@link Path}, so {@code file:/x} and {@code file:///x} agree)
      * and trailing {@code /} are stripped.
+     *
+     * <p>Only the outermost {@code jar:} level is unwrapped: a nested URL such as
+     * {@code jar:file:/app.war!/WEB-INF/lib/a.jar!/} becomes {@code file:/app.war}, which no class
+     * code source equals. Callers that discover fragments inside a war map such URLs to the
+     * location the class loader reports for {@code a.jar} (Task 3.10) before comparing.</p>
      */
     public static String sourceKey(URL url) {
         String s = url.toString();
