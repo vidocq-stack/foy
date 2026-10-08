@@ -20,7 +20,11 @@
 package io.vidocq.foy.chappe;
 
 import io.vidocq.chappe.api.Server;
+import jakarta.enterprise.inject.spi.Bean;
+import jakarta.enterprise.inject.spi.BeanManager;
+import jakarta.servlet.Servlet;
 import jakarta.servlet.ServletException;
+import jakarta.servlet.annotation.WebFilter;
 import jakarta.servlet.http.HttpServlet;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
@@ -33,6 +37,8 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.lang.reflect.Proxy;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -105,6 +111,39 @@ class FoyChappeBootTest {
                 .webXml(new ByteArrayInputStream(xml.getBytes()));
         var ex = assertThrows(ServletException.class, builder::build);
         assertNotNull(ex.getCause(), "the underlying failure is kept as the cause");
+    }
+
+    /** Misuses {@code @WebFilter} on a servlet: the annotation requires a {@code Filter}. */
+    @WebFilter("/misused")
+    public static class MisusedFilter extends HttpServlet {}
+
+    @Test
+    void annotationMisuseFoundDuringCdiDiscoverySurfacesAsServletException() {
+        // A minimal BeanManager without any CdiWebComponents index: discovery walks the Servlet beans.
+        Bean<?> bean = (Bean<?>) Proxy.newProxyInstance(Bean.class.getClassLoader(), new Class<?>[]{Bean.class},
+                (p, m, a) -> switch (m.getName()) {
+                    case "getBeanClass" -> MisusedFilter.class;
+                    case "hashCode" -> System.identityHashCode(p);
+                    case "equals" -> p == a[0];
+                    case "toString" -> "Bean[" + MisusedFilter.class.getName() + "]";
+                    default -> throw new UnsupportedOperationException(m.getName());
+                });
+        BeanManager bm = (BeanManager) Proxy.newProxyInstance(BeanManager.class.getClassLoader(),
+                new Class<?>[]{BeanManager.class}, (p, m, a) -> switch (m.getName()) {
+                    case "getBeans" -> a[0] == Servlet.class ? Set.of(bean) : Set.of();
+                    case "hashCode" -> System.identityHashCode(p);
+                    case "equals" -> p == a[0];
+                    case "toString" -> "FakeBeanManager";
+                    default -> throw new UnsupportedOperationException(m.getName());
+                });
+
+        var builder = FoyChappeBoot.builder().contextPath("/")
+                .classLoader(getClass().getClassLoader())
+                .beanManager(bm);
+        var ex = assertThrows(ServletException.class, builder::build);
+        assertInstanceOf(IllegalArgumentException.class, ex.getCause(), "the misuse is kept as the cause");
+        assertTrue(ex.getMessage().contains(MisusedFilter.class.getName()), ex::getMessage);
+        assertTrue(ex.getMessage().contains("@WebFilter"), ex::getMessage);
     }
 
     public static class Still extends HttpServlet {
