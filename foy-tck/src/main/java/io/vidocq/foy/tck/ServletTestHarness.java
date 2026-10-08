@@ -21,6 +21,7 @@ package io.vidocq.foy.tck;
 
 import io.vidocq.chappe.api.Handler;
 import io.vidocq.chappe.api.Server;
+import io.vidocq.foy.internal.boot.ComponentFactory;
 import io.vidocq.foy.internal.boot.DeployOptions;
 import io.vidocq.foy.internal.boot.HandlesTypesResolver;
 import io.vidocq.foy.internal.boot.Deployment;
@@ -31,14 +32,12 @@ import io.vidocq.foy.internal.boot.WebAppModel.FilterMappingDecl;
 import io.vidocq.foy.internal.boot.WebAppModel.ListenerDecl;
 import io.vidocq.foy.internal.boot.WebAppModel.ServletDecl;
 import io.vidocq.foy.internal.container.VidocqServletContext;
-import io.vidocq.foy.internal.error.ErrorPageRegistry;
 import io.vidocq.foy.internal.gen.RegistryComponentFactory;
 import io.vidocq.foy.internal.gen.WebComponentRegistry;
 import io.vidocq.foy.spi.security.SecurityProvider;
 import jakarta.servlet.DispatcherType;
 import jakarta.servlet.Filter;
 import jakarta.servlet.Servlet;
-import jakarta.servlet.ServletContainerInitializer;
 
 import java.net.ServerSocket;
 import java.net.URI;
@@ -49,7 +48,6 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.EnumSet;
 import java.util.EventListener;
-import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -86,9 +84,12 @@ public final class ServletTestHarness implements AutoCloseable {
     private final HttpClient client;
     private final String contextPath;
     private final Deployment deployment;
+    private final WebAppModel model;
 
-    private ServletTestHarness(Server server, int port, String contextPath, Deployment deployment) {
+    private ServletTestHarness(Server server, int port, String contextPath, Deployment deployment,
+                               WebAppModel model) {
         this.server = server;
+        this.model = model;
         this.port = port;
         this.contextPath = contextPath;
         this.client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(2)).build();
@@ -98,6 +99,8 @@ public final class ServletTestHarness implements AutoCloseable {
     public int port() { return port; }
     public String baseUrl() { return "http://127.0.0.1:" + port + (contextPath.equals("/") ? "" : contextPath); }
     public HttpClient client() { return client; }
+    /** The deployed model. */
+    public WebAppModel model() { return model; }
 
     public HttpResponse<String> get(String path) throws Exception {
         return send(HttpRequest.newBuilder(URI.create(baseUrl() + path))
@@ -134,50 +137,43 @@ public final class ServletTestHarness implements AutoCloseable {
         private final Map<String, PendingFilter> filters = new LinkedHashMap<>();
         private final List<FilterMappingDecl> filterMappings = new ArrayList<>();
         private final List<EventListener> listeners = new ArrayList<>();
-        private final ErrorPageRegistry errorPages = new ErrorPageRegistry();
         private String contextPath = "/";
         private SecurityProvider securityProvider;
-        private Map<String, String> localeEncodingMappings = Map.of();
-        private final Map<String, String> contextInitParams = new LinkedHashMap<>();
+        private WebAppModel.Builder model;
+        private ComponentFactory componentFactory;
+        private Set<String> reservedServletNames = Set.of();
+        private Set<String> reservedFilterNames = Set.of();
+        private Set<String> reservedUrlPatterns = Set.of();
 
-        public Builder localeEncodingMappings(Map<String, String> m) {
-            this.localeEncodingMappings = m == null ? Map.of() : Map.copyOf(m);
+        /**
+         * Deploys {@code merged}, a model already filled by the product descriptor merge
+         * ({@code DescriptorMerger}: web.xml, web fragments, annotations, initializers); its
+         * context path replaces {@link #contextPath}. Components registered programmatically on
+         * this builder are appended to it.
+         */
+        public Builder model(WebAppModel.Builder merged) {
+            this.model = merged;
             return this;
         }
 
-        public Builder contextInitParam(String name, String value) {
-            contextInitParams.put(name, value);
+        /**
+         * The factory that loaded the merged model's classes, also used for dynamic registrations
+         * (its visibility decides which classes a by-name registration may use); by default a
+         * {@link RegistryComponentFactory} over the registry, every class visible.
+         */
+        public Builder componentFactory(ComponentFactory factory) {
+            this.componentFactory = factory;
             return this;
         }
 
-        public Builder contextInitParams(Map<String, String> params) {
-            if (params != null) contextInitParams.putAll(params);
-            return this;
-        }
-
-        private int effectiveMajor = 6, effectiveMinor = 1;
-        public Builder effectiveVersion(int major, int minor) {
-            this.effectiveMajor = major; this.effectiveMinor = minor; return this;
-        }
-
-        private int sessionTimeoutMinutes = -1;
-        public Builder sessionTimeoutMinutes(int minutes) {
-            this.sessionTimeoutMinutes = minutes; return this;
-        }
-
-        private final Set<String> reservedServletNames = new HashSet<>();
-        private final Set<String> reservedFilterNames = new HashSet<>();
-        private final Set<String> reservedUrlPatterns = new HashSet<>();
-        public Builder reservedServletName(String n) { reservedServletNames.add(n); return this; }
-        public Builder reservedFilterName(String n) { reservedFilterNames.add(n); return this; }
-        public Builder reservedUrlPattern(String p) { reservedUrlPatterns.add(p); return this; }
-
-        private Set<String> warClassNames = null; // null = no isolation
-        /** Restricts dynamic registrations instantiated by name/class to
-         *  classes actually present in the WAR, simulating an isolated
-         *  WebAppClassLoader without creating a separate ClassLoader. */
-        public Builder restrictToWarClasses(Set<String> classNames) {
-            this.warClassNames = classNames == null ? null : Set.copyOf(classNames);
+        /**
+         * Names and URL patterns a dynamic registration must not take (Servlet 6.1 §4.4: those of
+         * the deployment descriptor).
+         */
+        public Builder reserved(Set<String> servletNames, Set<String> filterNames, Set<String> urlPatterns) {
+            this.reservedServletNames = Set.copyOf(servletNames);
+            this.reservedFilterNames = Set.copyOf(filterNames);
+            this.reservedUrlPatterns = Set.copyOf(urlPatterns);
             return this;
         }
 
@@ -268,29 +264,12 @@ public final class ServletTestHarness implements AutoCloseable {
 
         public Builder listener(EventListener listener) { listeners.add(listener); return this; }
 
-        public Builder errorPage(int status, String location) {
-            errorPages.register(status, location); return this;
-        }
-
-        public Builder errorPage(Class<? extends Throwable> type, String location) {
-            errorPages.register(type, location); return this;
-        }
-
         public Builder contextPath(String path) { this.contextPath = path; return this; }
         public Builder securityProvider(SecurityProvider p) { this.securityProvider = p; return this; }
 
         private VidocqServletContext.ResourceProvider resourceProvider;
         public Builder resourceProvider(VidocqServletContext.ResourceProvider provider) {
             this.resourceProvider = provider; return this;
-        }
-
-        private String servletContextName;
-        public Builder servletContextName(String n) { this.servletContextName = n; return this; }
-
-        private final List<ServletContainerInitializer> sciList = new ArrayList<>();
-        public Builder servletContainerInitializer(ServletContainerInitializer sci) {
-            if (sci != null) sciList.add(sci);
-            return this;
         }
 
         private WebComponentRegistry registry;
@@ -304,28 +283,23 @@ public final class ServletTestHarness implements AutoCloseable {
         public ServletTestHarness start() {
             var cl = Thread.currentThread().getContextClassLoader();
             var reg = registry != null ? registry : WebComponentRegistry.forClassLoader(cl);
-            var model = toModel(reg);
-            var factory = new RegistryComponentFactory(reg, cl, warClassNames);
+            var factory = componentFactory != null ? componentFactory : new RegistryComponentFactory(reg, cl);
+            var target = model != null ? model : WebAppModel.builder(contextPath);
+            addProgrammatic(target, reg);
+            WebAppModel built = target.build();
             var options = DeployOptions.defaults(cl, reg)
                     .withComponentFactory(factory)
                     .withSecurityProvider(securityProvider)
                     .withResourceProvider(resourceProvider)
-                    .withServletContextName(servletContextName)
                     .withReserved(reservedServletNames, reservedFilterNames, reservedUrlPatterns);
             if (handlesTypes != null) options = options.withHandlesTypes(handlesTypes);
-            Deployment d = WebAppDeployer.deploy(model, options);
+            Deployment d = WebAppDeployer.deploy(built, options);
             int port = startServerWithRetry(d.handler());
-            return new ServletTestHarness(currentServer, port, contextPath, d);
+            return new ServletTestHarness(currentServer, port, built.contextPath(), d, built);
         }
 
-        /** The accumulated configuration as a deployment description; components are pre-built instances. */
-        private WebAppModel toModel(WebComponentRegistry reg) {
-            var b = WebAppModel.builder(contextPath)
-                    .errorPages(errorPages)
-                    .localeEncodingMappings(localeEncodingMappings)
-                    .effectiveVersion(effectiveMajor, effectiveMinor)
-                    .sessionTimeoutMinutes(sessionTimeoutMinutes);
-            contextInitParams.forEach(b::contextParam);
+        /** Appends the pre-built instances registered on this builder (conformance tests). */
+        private void addProgrammatic(WebAppModel.Builder b, WebComponentRegistry reg) {
             // @ServletSecurity comes from the class's descriptor (§13.4.1), never from reflection.
             servlets.forEach((name, s) -> b.servlet(new ServletDecl(name,
                     s.instance().getClass(), s::instance, s.patterns(), s.initParams(),
@@ -337,8 +311,6 @@ public final class ServletTestHarness implements AutoCloseable {
             for (EventListener l : listeners) {
                 b.listener(new ListenerDecl(l.getClass(), () -> l));
             }
-            sciList.forEach(b::initializer);
-            return b.build();
         }
 
         private Server currentServer;

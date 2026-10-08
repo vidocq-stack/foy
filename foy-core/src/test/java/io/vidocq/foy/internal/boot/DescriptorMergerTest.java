@@ -26,6 +26,7 @@ import io.vidocq.foy.internal.boot.WebAppModel.ListenerDecl;
 import io.vidocq.foy.internal.boot.WebAppModel.ServletDecl;
 import io.vidocq.foy.internal.gen.WebComponentRegistry;
 import io.vidocq.foy.internal.webxml.Fragment;
+import io.vidocq.foy.internal.webxml.WebAppDescriptor;
 import io.vidocq.foy.internal.webxml.WebXmlParser;
 import jakarta.servlet.DispatcherType;
 import jakarta.servlet.Filter;
@@ -420,6 +421,42 @@ class DescriptorMergerTest {
         assertEquals(ann, none);
         URL testClasses = Annotated.class.getProtectionDomain().getCodeSource().getLocation();
         assertTrue(ann.excludingSources(Set.of(testClasses)).servlets().isEmpty());
+    }
+
+    @Test
+    void excludingSourcesWithAMapperComparesTheMappedSource() throws Exception {
+        URL libJar = new URI("file", null, "/app.war/WEB-INF/lib/a.jar", null).toURL();
+        URL classes = new URI("file", null, "/app.war/WEB-INF/classes/", null).toURL();
+        var ann = new AnnotatedComponents(
+                List.of(new ServletDecl("a", Annotated.class, Annotated::new, List.of("/a"), Map.of(),
+                        Integer.MIN_VALUE, true),
+                        new ServletDecl("x", FromXml.class, FromXml::new, List.of("/x"), Map.of(),
+                        Integer.MIN_VALUE, true)),
+                List.of(new FilterDecl("f1", F1.class, F1::new, Map.of(), false)),
+                List.of(new FilterMappingDecl("f1", "/*", null, Set.of())),
+                List.of(new ListenerDecl(L1.class, L1::new)));
+        Map<Class<?>, URL> sources = Map.of(Annotated.class, libJar, F1.class, libJar, FromXml.class, classes);
+        // The jar is spelled as discovery would (jar: wrapper, trailing slash): keys are normalised.
+        var kept = ann.excludingSources(Set.of(URI.create("jar:" + libJar + "!/").toURL()), sources::get);
+        assertEquals(List.of("x"), kept.servlets().stream().map(ServletDecl::name).toList());
+        assertTrue(kept.filters().isEmpty());
+        assertTrue(kept.filterMappings().isEmpty());
+        // L1 maps to no source: never dropped, even though its code source is the test classes.
+        assertEquals(List.of(L1.class), kept.listeners().stream().map(ListenerDecl::type).toList());
+        URL testClasses = Annotated.class.getProtectionDomain().getCodeSource().getLocation();
+        assertEquals(ann, ann.excludingSources(Set.of(testClasses), sources::get));
+    }
+
+    @Test
+    void metadataCompleteFragmentDropsTheAnnotationsOfTheClassesMappedToItsJar() throws Exception {
+        URL libJar = new URI("file", null, "/app.war/WEB-INF/lib/a.jar", null).toURL();
+        var fragment = WebXmlParser.parseFragment(new ByteArrayInputStream(("""
+                <web-fragment xmlns="https://jakarta.ee/xml/ns/jakartaee" version="6.1"
+                              metadata-complete="true"/>""").getBytes()));
+        var b = WebAppModel.builder("/");
+        DescriptorMerger.mergeMerged(WebAppDescriptor.empty(), List.of(new Fragment("a.jar", libJar, fragment)),
+                annotatedServlet("a", "/a", Map.of()), type -> libJar, F, b);
+        assertTrue(b.build().servlets().isEmpty());
     }
 
     @Test

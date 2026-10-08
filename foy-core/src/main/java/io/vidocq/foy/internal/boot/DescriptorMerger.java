@@ -41,6 +41,8 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.Function;
+import java.util.function.Predicate;
 import java.util.function.Supplier;
 
 /**
@@ -83,26 +85,44 @@ public final class DescriptorMerger {
          * of a dropped filter are dropped with it.
          */
         public AnnotatedComponents excludingSources(Set<URL> jars) {
+            return excludingSources(jars, AnnotatedComponents::codeSource);
+        }
+
+        /**
+         * Drops the components whose class comes from one of {@code jars}, the source of a class
+         * being {@code sourceOf.apply(type)}: both sides are normalised by {@link Fragment#sourceKey}
+         * before comparing. A class whose source is {@code null} is never dropped. Filter mappings
+         * of a dropped filter are dropped with it.
+         *
+         * <p>For callers whose classes are not loaded from the jar they belong to, such as a
+         * harness loading a war's classes from a shared class loader and attributing each one to
+         * a synthetic {@code WEB-INF/lib/<jar>} URL.</p>
+         */
+        public AnnotatedComponents excludingSources(Set<URL> jars, Function<Class<?>, URL> sourceOf) {
             if (jars.isEmpty()) return this;
             Set<String> keys = new HashSet<>();
             for (URL u : jars) keys.add(Fragment.sourceKey(u));
+            Predicate<Class<?>> dropped = type -> {
+                URL source = sourceOf.apply(type);
+                return source != null && keys.contains(Fragment.sourceKey(source));
+            };
             var keptFilters = new ArrayList<FilterDecl>();
             Set<String> droppedFilters = new HashSet<>();
             for (FilterDecl f : filters) {
-                if (from(f.type(), keys)) droppedFilters.add(f.name());
+                if (dropped.test(f.type())) droppedFilters.add(f.name());
                 else keptFilters.add(f);
             }
             return new AnnotatedComponents(
-                    servlets.stream().filter(s -> !from(s.type(), keys)).toList(),
+                    servlets.stream().filter(s -> !dropped.test(s.type())).toList(),
                     keptFilters,
                     filterMappings.stream().filter(m -> !droppedFilters.contains(m.filterName())).toList(),
-                    listeners.stream().filter(l -> !from(l.type(), keys)).toList());
+                    listeners.stream().filter(l -> !dropped.test(l.type())).toList());
         }
 
-        private static boolean from(Class<?> type, Set<String> keys) {
+        /** The {@code ProtectionDomain} code source location of {@code type}, {@code null} without one. */
+        private static URL codeSource(Class<?> type) {
             CodeSource cs = type.getProtectionDomain().getCodeSource();
-            URL location = cs == null ? null : cs.getLocation();
-            return location != null && keys.contains(Fragment.sourceKey(location));
+            return cs == null ? null : cs.getLocation();
         }
     }
 
@@ -147,9 +167,23 @@ public final class DescriptorMerger {
     public static void mergeMerged(WebAppDescriptor effective, List<Fragment> fragments,
                                    AnnotatedComponents annotated, ComponentFactory factory,
                                    WebAppModel.Builder target) throws ServletException {
+        mergeMerged(effective, fragments, annotated, AnnotatedComponents::codeSource, factory, target);
+    }
+
+    /**
+     * As {@link #mergeMerged(WebAppDescriptor, List, AnnotatedComponents, ComponentFactory,
+     * WebAppModel.Builder)}, the jar of an annotated class being {@code sourceOf.apply(type)}
+     * instead of its code source (see {@link AnnotatedComponents#excludingSources(Set, Function)}):
+     * the annotations of the classes of {@code metadata-complete} fragments' jars are dropped by
+     * that mapping.
+     */
+    public static void mergeMerged(WebAppDescriptor effective, List<Fragment> fragments,
+                                   AnnotatedComponents annotated, Function<Class<?>, URL> sourceOf,
+                                   ComponentFactory factory, WebAppModel.Builder target)
+            throws ServletException {
         Set<URL> complete = new HashSet<>();
         for (Fragment f : fragments) if (f.descriptor().metadataComplete()) complete.add(f.jar());
-        mergeEffective(effective, annotated.excludingSources(complete), factory, target);
+        mergeEffective(effective, annotated.excludingSources(complete, sourceOf), factory, target);
     }
 
     private static void mergeEffective(WebAppDescriptor webXml, AnnotatedComponents annotated,

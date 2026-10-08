@@ -19,19 +19,31 @@
  */
 package io.vidocq.foy.tck.arquillian;
 
-import io.vidocq.foy.internal.boot.HandlesTypesResolver;
+import io.vidocq.foy.internal.boot.ApplicationSources;
+import io.vidocq.foy.internal.boot.ComponentFactory;
+import io.vidocq.foy.internal.boot.DescriptorMerger;
+import io.vidocq.foy.internal.boot.DescriptorMerger.AnnotatedComponents;
+import io.vidocq.foy.internal.boot.WebAppModel;
+import io.vidocq.foy.internal.boot.WebAppModel.FilterDecl;
+import io.vidocq.foy.internal.boot.WebAppModel.FilterMappingDecl;
+import io.vidocq.foy.internal.boot.WebAppModel.ListenerDecl;
+import io.vidocq.foy.internal.boot.WebAppModel.ServletDecl;
 import io.vidocq.foy.internal.gen.ClassFileDescriptorReader;
 import io.vidocq.foy.internal.gen.ClassFileHandlesTypesScanner;
 import io.vidocq.foy.internal.gen.IndexedHandlesTypesResolver;
+import io.vidocq.foy.internal.gen.RegistryComponentFactory;
 import io.vidocq.foy.internal.gen.WebComponentRegistry;
+import io.vidocq.foy.internal.webxml.Fragment;
+import io.vidocq.foy.internal.webxml.FragmentMerger;
+import io.vidocq.foy.internal.webxml.FragmentOrderer;
 import io.vidocq.foy.internal.webxml.WebAppDescriptor;
-import io.vidocq.foy.internal.webxml.WebXmlParser;
-import io.vidocq.foy.spi.gen.WebComponent;
 import io.vidocq.foy.spi.gen.WebComponentDescriptor;
 import io.vidocq.foy.tck.ServletTestHarness;
 import jakarta.servlet.DispatcherType;
 import jakarta.servlet.Filter;
 import jakarta.servlet.Servlet;
+import jakarta.servlet.ServletContainerInitializer;
+import jakarta.servlet.ServletException;
 import org.jboss.arquillian.container.spi.client.container.DeployableContainer;
 import org.jboss.arquillian.container.spi.client.container.DeploymentException;
 import org.jboss.arquillian.container.spi.client.container.LifecycleException;
@@ -44,34 +56,33 @@ import org.jboss.shrinkwrap.api.Node;
 import org.jboss.shrinkwrap.api.spec.WebArchive;
 import org.jboss.shrinkwrap.descriptor.api.Descriptor;
 
-import java.io.IOException;
-import java.io.InputStream;
-import java.lang.classfile.Annotation;
-import java.lang.classfile.Attributes;
-import java.lang.classfile.ClassFile;
-import java.lang.classfile.ClassModel;
-import java.lang.classfile.FieldModel;
-import java.lang.classfile.MethodModel;
+import java.net.URL;
 import java.util.ArrayList;
 import java.util.EnumSet;
 import java.util.EventListener;
-import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
-import java.util.Optional;
+import java.util.Map;
 import java.util.Set;
+import java.util.function.Function;
+import java.util.function.Predicate;
+import java.util.function.Supplier;
 
 /**
  * {@link DeployableContainer} Arquillian who deploys a {@link WebArchive} on the
  * {@link ServletTestHarness} internal.
  *
- * <p>Strategy: extract the classes of {@code WEB-INF/classes/} from the archive (the current
- * class loader knows them since the TCK jar is on the test classpath), classify them from their
- * class bytes ({@code @WebServlet/@WebFilter/@WebListener}), and resolve their metadata and
- * instances through one {@link WebComponentRegistry} per deployment, whose tier statistics are
- * logged on undeploy. {@code @HandlesTypes} is resolved against the WAR's own classes, since TCK
- * WARs carry no build-time class index. Returns to {@link ProtocolMetaData} {@code Servlet 3.0}
- * with the harness URL for Arquillian to inject {@code @ArquillianResource URL url}.</p>
+ * <p>Strategy: list the archive ({@link WarContent}: {@code WEB-INF/classes}, every
+ * {@code WEB-INF/lib} jar, web.xml, the jars' web fragments, initializers and
+ * {@code META-INF/resources}), then deploy it through the product pipeline: fragments ordered by
+ * {@link FragmentOrderer} (§8.2.2), merged with web.xml and the annotated classes by
+ * {@link DescriptorMerger} (§8.2.3, {@code metadata-complete} included), the initializers the
+ * ordering retains (§8.2.4), and {@code WebAppDeployer}. The classes are loaded from the test class
+ * loader (the TCK jar is on the test classpath) and attributed to their war part through synthetic
+ * root URLs. Metadata and instances go through one {@link WebComponentRegistry} per deployment,
+ * whose tier statistics are logged on undeploy. {@code @HandlesTypes} is resolved against the war's
+ * own classes, since TCK wars carry no build-time class index. Returns to {@link ProtocolMetaData}
+ * {@code Servlet 3.0} with the harness URL for Arquillian to inject {@code @ArquillianResource URL url}.</p>
  */
 public class VidocqDeployableContainer implements DeployableContainer<VidocqContainerConfiguration> {
 
@@ -121,78 +132,78 @@ public class VidocqDeployableContainer implements DeployableContainer<VidocqCont
             throw new DeploymentException("only WebArchive supported, got " + archive.getClass());
         }
 
-        // Nouveau deployment : garde les harnesses existants vivants en parallèle
-        // (certains tests TCK comme DispatchTests déploient plusieurs WAR).
-        var builder = ServletTestHarness.builder();
-        // Fixe le contextPath au nom du WAR (sans extension) — le TCK client
-        // envoie typiquement des URLs en /<war-name>/... et getContextPath()
-        // doit remonter ce chemin.
+        // The TCK client sends /<war-name>/... and getContextPath() must report that path.
         String archiveName = archive.getName();
+        String contextPath = "/";
         if (archiveName != null) {
-            String ctxName = archiveName;
-            if (ctxName.endsWith(".war")) ctxName = ctxName.substring(0, ctxName.length() - 4);
-            if (!ctxName.isEmpty()) builder.contextPath("/" + ctxName);
+            String ctxName = archiveName.endsWith(".war")
+                    ? archiveName.substring(0, archiveName.length() - 4) : archiveName;
+            if (!ctxName.isEmpty()) contextPath = "/" + ctxName;
         }
         var cl = Thread.currentThread().getContextClassLoader();
         var registry = WebComponentRegistry.forClassLoader(cl);
-        builder.registry(registry);
-        List<String> registered = new ArrayList<>();
-        var warClassList = new ArrayList<String>();
+        WarContent content = WarContent.read(war);
+        // Visible names simulate an isolated web application class loader: the war's classes,
+        // those of WEB-INF/classes and of every WEB-INF/lib jar, are loaded from the test class
+        // loader (the TCK jar is on the test classpath), but a by-name registration of a class
+        // outside the war is refused.
+        var factory = new RegistryComponentFactory(registry, cl, Set.copyOf(content.sources().keySet()));
 
-        // 1) Classes @WebServlet/@WebFilter/@WebListener dans /WEB-INF/classes/
-        //    + collecte des class-names du WAR pour simuler l'isolation classloader
-        //    (certaines TCK classes NotFound sont dans le jar runtime mais pas dans le WAR).
-        var warClassNames = new java.util.HashSet<String>();
-        for (Node node : flatten(war).values()) {
-            String path = node.getPath().get();
-            if (!path.endsWith(".class")) continue;
-            if (!path.startsWith("/WEB-INF/classes/")) continue;
-            String className = path
-                    .substring("/WEB-INF/classes/".length(), path.length() - ".class".length())
-                    .replace('/', '.');
-            warClassNames.add(className);
-            Class<?> cls;
-            try { cls = WebComponentRegistry.loadClass(className, cl); }
-            catch (Throwable t) { continue; }
-            warClassList.add(className);
-            registerIfAnnotated(builder, cls, registry, registered);
+        WebAppModel.Builder model = WebAppModel.builder(contextPath);
+        WebAppDescriptor effective;
+        List<ServletContainerInitializer> initializers;
+        try {
+            WebAppDescriptor webXml = content.webXml();
+            List<Fragment> fragments = content.fragments();
+            List<Fragment> ordered = FragmentOrderer.order(webXml.absoluteOrdering(), fragments);
+            Function<Class<?>, URL> sourceOf = type -> content.sources().get(type.getName());
+            AnnotatedComponents annotated = annotatedComponents(content.loadable(cl), factory)
+                    .excludingSources(ApplicationSources.excludedJars(fragments, ordered), sourceOf);
+            effective = FragmentMerger.merge(webXml, ordered);
+            DescriptorMerger.mergeMerged(effective, ordered, annotated, sourceOf, factory, model);
+            if (content.hasWebXml()) effectiveVersion(model, webXml.version());
+            Set<URL> fragmentJars = new LinkedHashSet<>();
+            for (Fragment f : fragments) fragmentJars.add(f.jar());
+            initializers = initializers(content, ApplicationSources.ordering(webXml.absoluteOrdering(), ordered,
+                    fragmentJars, Set.of(content.classesRoot())), factory);
+        } catch (ServletException | RuntimeException e) {
+            throw new DeploymentException("[VidocqTCK] cannot deploy " + archiveName + ": " + e.getMessage(), e);
         }
-        builder.restrictToWarClasses(warClassNames);
-        builder.handlesTypes(warHandlesTypes(registry, warClassList, cl));
+        initializers.forEach(model::initializer);
 
-        // 2) web.xml : enregistre les servlets/filters/listeners déclarés
-        Node webXml = war.get("/WEB-INF/web.xml");
-        if (webXml != null && webXml.getAsset() != null) {
-            try (var in = webXml.getAsset().openStream()) {
-                WebAppDescriptor desc = WebXmlParser.parse(in);
-                registerFromWebXml(builder, desc, cl, registry, registered);
-            } catch (Exception e) {
-                System.err.println("[VidocqTCK] failed to parse web.xml: " + e);
-            }
-        }
+        Set<String> reservedServlets = new LinkedHashSet<>();
+        Set<String> reservedFilters = new LinkedHashSet<>();
+        Set<String> reservedPatterns = new LinkedHashSet<>();
+        for (var sd : effective.servlets()) if (sd.name() != null) reservedServlets.add(sd.name());
+        for (var fd : effective.filters()) if (fd.name() != null) reservedFilters.add(fd.name());
+        // §4.4 ServletRegistration.addMapping: a pattern the descriptors map is reserved; a
+        // dynamic addMapping of it is refused and reported in the conflict set.
+        for (var m : effective.servletMappings()) if (m.urlPattern() != null) reservedPatterns.add(m.urlPattern());
 
-        // 3) Découverte des ServletContainerInitializer (Servlet 6.1 §4.4) :
-        //    - fichier META-INF/services/jakarta.servlet.ServletContainerInitializer dans le WAR
-        //    - et (par extension) tout fichier du même nom déployé ailleurs sous /WEB-INF/classes/
-        discoverAndRegisterSCIs(war, cl, registry, builder);
-
-        // 4) ResourceProvider exposant les fichiers du WAR au ServletContext (§4.6).
-        builder.resourceProvider(new WarResourceProvider(war));
-
-        harness = builder.start();
+        harness = ServletTestHarness.builder()
+                .model(model)
+                .registry(registry)
+                .componentFactory(factory)
+                .reserved(reservedServlets, reservedFilters, reservedPatterns)
+                // @HandlesTypes over the war's own classes (TCK wars carry no class index).
+                .handlesTypes(IndexedHandlesTypesResolver.scanOnly(registry, cl,
+                        () -> ClassFileHandlesTypesScanner.scanNamed(content.loadableNames(cl), cl)))
+                // The war root, then the META-INF/resources of its lib jars (§4.6).
+                .resourceProvider(new WarResourceProvider(war, content.jarResources()))
+                .start();
         harnessesByArchive.put(archive.getName(), harness);
         registriesByArchive.put(archive.getName(), registry);
 
+        List<String> registered = harness.model().servlets().stream().map(ServletDecl::name).toList();
         System.err.println("[VidocqTCK] deploy archive=" + war.getName()
                 + " host=" + config.getHost() + " port=" + harness.port()
+                + " fragments=" + content.fragmentIds()
                 + " servlets=" + registered + " baseUrl=" + harness.baseUrl());
 
         ProtocolMetaData pmd = new ProtocolMetaData();
         var ctx = new HTTPContext(config.getHost(), harness.port());
-        // Le "contextRoot" du servlet Arquillian est le path sous lequel les tests TCK font
-        // leurs requêtes ; il doit être égal à notre contextPath pour que HttpRequestClient
-        // cible la bonne URL. Pour un WAR root (/), on passe "/" car Arquillian derive
-        // getPath() depuis l'URL injectée ; sinon on passe le contextPath du WAR.
+        // The Arquillian servlet's "contextRoot" is the path the TCK requests go under: our
+        // context path, or "/" for a root war (Arquillian derives getPath() from the URL).
         String tckContextRoot = harness.baseUrl().substring(
                 ("http://" + config.getHost() + ":" + harness.port()).length());
         if (tckContextRoot.isEmpty()) tckContextRoot = "/";
@@ -202,191 +213,99 @@ public class VidocqDeployableContainer implements DeployableContainer<VidocqCont
         return pmd;
     }
 
-    private static void registerFromWebXml(ServletTestHarness.Builder builder,
-                                           WebAppDescriptor desc, ClassLoader cl,
-                                           WebComponentRegistry registry, List<String> registered) {
-        builder.localeEncodingMappings(desc.localeEncodingMappings());
-        builder.contextInitParams(desc.contextParams());
-        if (desc.displayName() != null) builder.servletContextName(desc.displayName());
-        for (var sd : desc.servlets()) if (sd.name() != null) builder.reservedServletName(sd.name());
-        for (var fd : desc.filters()) if (fd.name() != null) builder.reservedFilterName(fd.name());
-        // §4.4 ServletRegistration.addMapping : un url-pattern déjà mappé par le web.xml
-        // est "réservé" — un addMapping dynamique qui tente de le re-mapper doit être
-        // refusé et la méthode doit retourner ce pattern dans le set des conflits.
-        for (var m : desc.servletMappings()) {
-            if (m.urlPattern() != null) builder.reservedUrlPattern(m.urlPattern());
-        }
-        if (desc.sessionTimeoutMinutes() > 0) {
-            builder.sessionTimeoutMinutes(desc.sessionTimeoutMinutes());
-        }
-        // Version déclarée dans web-app/version → exposée via getEffectiveMajorVersion.
-        String v = desc.version();
-        int dot = v.indexOf('.');
+    /** web-app/version as the effective Servlet version ({@code getEffectiveMajorVersion}). */
+    private static void effectiveVersion(WebAppModel.Builder model, String version) {
+        if (version == null) return;
+        int dot = version.indexOf('.');
         try {
-            int major = Integer.parseInt(dot < 0 ? v : v.substring(0, dot));
-            int minor = dot < 0 ? 0 : Integer.parseInt(v.substring(dot + 1));
-            builder.effectiveVersion(major, minor);
-        } catch (NumberFormatException ignored) {}
-        var instances = new java.util.HashMap<String, jakarta.servlet.Servlet>();
-        var servletParams = new java.util.HashMap<String, java.util.Map<String, String>>();
-        var asyncSupportedByName = new java.util.HashMap<String, Boolean>();
-        for (WebAppDescriptor.ServletDef sd : desc.servlets()) {
-            if (sd.className() == null) continue;
-            try {
-                Class<?> c = WebComponentRegistry.loadClass(sd.className(), cl);
-                if (!jakarta.servlet.Servlet.class.isAssignableFrom(c)) continue;
-                jakarta.servlet.Servlet s = (jakarta.servlet.Servlet) registry.lookup(c).newInstance();
-                instances.put(sd.name(), s);
-                servletParams.put(sd.name(),
-                        sd.initParams() == null ? java.util.Map.of() : sd.initParams());
-                asyncSupportedByName.put(sd.name(), Boolean.TRUE.equals(sd.asyncSupported()));
-            } catch (ClassNotFoundException | RuntimeException ignored) {}
+            int major = Integer.parseInt(dot < 0 ? version : version.substring(0, dot));
+            int minor = dot < 0 ? 0 : Integer.parseInt(version.substring(dot + 1));
+            model.effectiveVersion(major, minor);
+        } catch (NumberFormatException ignored) {
+            // malformed version: the container default stays
         }
-        for (WebAppDescriptor.ServletMappingDef m : desc.servletMappings()) {
-            jakarta.servlet.Servlet s = instances.get(m.servletName());
-            if (s != null) {
-                boolean async = asyncSupportedByName.getOrDefault(m.servletName(), Boolean.FALSE);
-                builder.servlet(m.urlPattern(), s, m.servletName(),
-                        servletParams.getOrDefault(m.servletName(), java.util.Map.of()), async);
-                registered.add(m.servletName());
+    }
+
+    /**
+     * The annotated servlets, filters and listeners among the war's classes, from their static
+     * descriptors ({@link ComponentFactory#descriptor}); instances come from the factory. A class
+     * misusing the Servlet annotations is skipped with a message.
+     */
+    private static AnnotatedComponents annotatedComponents(List<Class<?>> classes, ComponentFactory factory) {
+        List<ServletDecl> servlets = new ArrayList<>();
+        List<FilterDecl> filters = new ArrayList<>();
+        List<FilterMappingDecl> filterMappings = new ArrayList<>();
+        List<ListenerDecl> listeners = new ArrayList<>();
+        for (Class<?> cls : classes) {
+            WebComponentDescriptor d;
+            try {
+                // Classified from the class bytes first, so plain war classes never enter the registry.
+                if (ClassFileDescriptorReader.read(cls).isEmpty()) continue;
+                d = factory.descriptor(cls);
+            } catch (IllegalArgumentException e) {
+                System.err.println("[VidocqTCK] skipping " + cls.getName() + ": " + e.getMessage());
+                continue;
             }
-        }
-        var filterInstances = new java.util.HashMap<String, jakarta.servlet.Filter>();
-        var filterParams = new java.util.HashMap<String, java.util.Map<String, String>>();
-        for (WebAppDescriptor.FilterDef fd : desc.filters()) {
-            try {
-                Class<?> c = WebComponentRegistry.loadClass(fd.className(), cl);
-                if (!jakarta.servlet.Filter.class.isAssignableFrom(c)) continue;
-                jakarta.servlet.Filter f = (jakarta.servlet.Filter) registry.lookup(c).newInstance();
-                filterInstances.put(fd.name(), f);
-                filterParams.put(fd.name(),
-                        fd.initParams() == null ? java.util.Map.of() : fd.initParams());
-            } catch (ClassNotFoundException | RuntimeException ignored) {}
-        }
-        for (WebAppDescriptor.FilterMappingDef m : desc.filterMappings()) {
-            jakarta.servlet.Filter f = filterInstances.get(m.filterName());
-            if (f == null) continue;
-            var params = filterParams.getOrDefault(m.filterName(), java.util.Map.of());
-            var dispatchers = m.dispatcherTypes();
-            if (m.urlPattern() != null) {
-                builder.filter(m.urlPattern(), f, m.filterName(), params, dispatchers);
-            } else if (m.servletName() != null) {
-                // Résout le servlet-name en ses url-patterns via servletMappings
-                for (String pattern : desc.patternsFor(m.servletName())) {
-                    builder.filter(pattern, f, m.filterName(), params, dispatchers);
+            switch (d.kind()) {
+                case SERVLET -> {
+                    if (!Servlet.class.isAssignableFrom(cls)) continue;
+                    var type = cls.asSubclass(Servlet.class);
+                    servlets.add(new ServletDecl(d.name(), type, supplier(factory, type), d.urlPatterns(),
+                            d.initParams(), d.loadOnStartup(), d.asyncSupported(), d.servletSecurity(),
+                            d.multipartConfig(), true));
                 }
+                case FILTER -> {
+                    if (!Filter.class.isAssignableFrom(cls)) continue;
+                    var type = cls.asSubclass(Filter.class);
+                    filters.add(new FilterDecl(d.name(), type, supplier(factory, type), d.initParams(),
+                            d.asyncSupported()));
+                    Set<DispatcherType> types = d.dispatcherTypes().isEmpty()
+                            ? EnumSet.of(DispatcherType.REQUEST) : EnumSet.copyOf(d.dispatcherTypes());
+                    for (String p : d.urlPatterns()) filterMappings.add(new FilterMappingDecl(d.name(), p, null, types));
+                    for (String n : d.servletNames()) filterMappings.add(new FilterMappingDecl(d.name(), null, n, types));
+                }
+                case LISTENER -> {
+                    if (!EventListener.class.isAssignableFrom(cls)) continue;
+                    var type = cls.asSubclass(EventListener.class);
+                    listeners.add(new ListenerDecl(type, supplier(factory, type)));
+                }
+                default -> { /* not a web component */ }
             }
         }
-        for (String lc : desc.listenerClasses()) {
+        return new AnnotatedComponents(servlets, filters, filterMappings, listeners);
+    }
+
+    private static <T> Supplier<T> supplier(ComponentFactory factory, Class<? extends T> type) {
+        return () -> {
             try {
-                Class<?> c = WebComponentRegistry.loadClass(lc, cl);
-                if (!java.util.EventListener.class.isAssignableFrom(c)) continue;
-                builder.listener((java.util.EventListener) registry.lookup(c).newInstance());
-            } catch (ClassNotFoundException | RuntimeException ignored) {}
-        }
-        // Error pages du web.xml — indispensable pour les TCK qui attendent
-        // un dispatch sur <location> en cas d'exception ou de status code.
-        for (WebAppDescriptor.ErrorPageDef ep : desc.errorPages()) {
-            if (ep.location() == null) continue;
-            if (ep.statusCode() != null) {
-                builder.errorPage(ep.statusCode(), ep.location());
-            } else if (ep.exceptionType() != null) {
+                return factory.newInstance(type);
+            } catch (ServletException e) {
+                throw new IllegalStateException(e.getMessage(), e);
+            }
+        };
+    }
+
+    /**
+     * The {@link ServletContainerInitializer}s of {@code WEB-INF/classes}, then of each lib jar
+     * in discovery order, whose root {@code retained} accepts (§8.2.4: a jar excluded by the
+     * absolute ordering contributes none); only those are loaded and instantiated, through the
+     * factory. An initializer that cannot be created is reported and skipped.
+     */
+    private static List<ServletContainerInitializer> initializers(WarContent content, Predicate<URL> retained,
+                                                                  ComponentFactory factory) {
+        var out = new ArrayList<ServletContainerInitializer>();
+        for (var e : content.initializerNames().entrySet()) {
+            if (!retained.test(e.getKey())) continue;
+            for (String fqn : e.getValue()) {
                 try {
-                    Class<?> c = WebComponentRegistry.loadClass(ep.exceptionType(), cl);
-                    if (Throwable.class.isAssignableFrom(c)) {
-                        @SuppressWarnings("unchecked")
-                        Class<? extends Throwable> exc = (Class<? extends Throwable>) c;
-                        builder.errorPage(exc, ep.location());
-                    }
-                } catch (ClassNotFoundException ignored) {}
-            }
-        }
-    }
-
-    /** Scans the WAR for {@code META-INF/services/jakarta.servlet.ServletContainerInitializer}
-     *  files and registers referenced SCIs on the builder. */
-    private static void discoverAndRegisterSCIs(WebArchive war, ClassLoader cl, WebComponentRegistry registry,
-                                                ServletTestHarness.Builder builder) {
-        for (Node node : flatten(war).values()) {
-            String path = node.getPath().get();
-            if (!path.endsWith("/jakarta.servlet.ServletContainerInitializer")) continue;
-            if (node.getAsset() == null) continue;
-            try (var in = node.getAsset().openStream()) {
-                try (var reader = new java.io.BufferedReader(new java.io.InputStreamReader(in))) {
-                    String line;
-                    while ((line = reader.readLine()) != null) {
-                        String fqn = line.trim();
-                        if (fqn.isEmpty() || fqn.startsWith("#")) continue;
-                        try {
-                            Class<?> c = WebComponentRegistry.loadClass(fqn, cl);
-                            builder.servletContainerInitializer(
-                                    (jakarta.servlet.ServletContainerInitializer) registry.lookup(c).newInstance());
-                        } catch (Throwable t) {
-                            System.err.println("[VidocqTCK] failed to load SCI " + fqn + ": " + t);
-                        }
-                    }
+                    Class<?> c = factory.load(fqn);
+                    out.add(factory.newInstance(c.asSubclass(ServletContainerInitializer.class)));
+                } catch (Exception | LinkageError t) {
+                    System.err.println("[VidocqTCK] failed to load SCI " + fqn + ": " + t);
                 }
-            } catch (java.io.IOException ignored) {}
-        }
-    }
-
-    /**
-     * Registers {@code cls} when it is an annotated servlet, filter or listener. The class is
-     * classified from its bytes first, so that plain WAR classes never enter the registry;
-     * metadata and instances then come from {@link WebComponentRegistry#lookup(Class)}.
-     */
-    private static void registerIfAnnotated(ServletTestHarness.Builder builder, Class<?> cls,
-                                            WebComponentRegistry registry, List<String> registered) {
-        Optional<WebComponentDescriptor> read;
-        try {
-            read = ClassFileDescriptorReader.read(cls);
-        } catch (IllegalArgumentException e) {
-            System.err.println("[VidocqTCK] skipping " + cls.getName() + ": " + e.getMessage());
-            return;
-        }
-        if (read.isEmpty()) return;
-        WebComponentDescriptor.Kind kind = read.get().kind();
-        boolean servlet = kind == WebComponentDescriptor.Kind.SERVLET && Servlet.class.isAssignableFrom(cls);
-        boolean filter = kind == WebComponentDescriptor.Kind.FILTER && Filter.class.isAssignableFrom(cls);
-        boolean listener = kind == WebComponentDescriptor.Kind.LISTENER && EventListener.class.isAssignableFrom(cls);
-        if (!servlet && !filter && !listener) return;
-        WebComponent component = registry.lookup(cls);
-        WebComponentDescriptor d = component.descriptor();
-        Object instance;
-        try {
-            instance = component.newInstance();
-        } catch (RuntimeException e) {
-            return;
-        }
-        if (servlet) {
-            for (String p : d.urlPatterns()) {
-                builder.servlet(p, (Servlet) instance, d.name(), d.initParams(), d.asyncSupported());
             }
-            registered.add(cls.getSimpleName());
-        } else if (filter) {
-            Set<DispatcherType> types = d.dispatcherTypes().isEmpty()
-                    ? EnumSet.of(DispatcherType.REQUEST) : EnumSet.copyOf(d.dispatcherTypes());
-            for (String p : d.urlPatterns()) {
-                builder.filter(p, (Filter) instance, d.name(), d.initParams(), types);
-            }
-        } else {
-            builder.listener((EventListener) instance);
         }
-    }
-
-    /**
-     * {@code @HandlesTypes} resolution over the WAR's own classes (§8.2.4), by the class-bytes scanner
-     * ({@link ClassFileHandlesTypesScanner#scanNamed}): supertypes, and annotations on the class, its fields
-     * and its methods. The handled types themselves are excluded; {@code null} when nothing matches.
-     */
-    private static HandlesTypesResolver warHandlesTypes(WebComponentRegistry registry, List<String> warClassNames,
-                                                        ClassLoader cl) {
-        return IndexedHandlesTypesResolver.scanOnly(registry, cl,
-                () -> ClassFileHandlesTypesScanner.scanNamed(warClassNames, cl));
-    }
-
-    private static java.util.Map<org.jboss.shrinkwrap.api.ArchivePath, Node> flatten(WebArchive war) {
-        return war.getContent();
+        return out;
     }
 
     @Override
@@ -403,7 +322,8 @@ public class VidocqDeployableContainer implements DeployableContainer<VidocqCont
     @Override public void deploy(Descriptor descriptor) {}
     @Override public void undeploy(Descriptor descriptor) {}
 
-    /** Exposes files from a {@link WebArchive} through
+    /** Exposes files from a {@link WebArchive}, then the {@code META-INF/resources} of its lib
+     *  jars, through
      *  {@link io.vidocq.foy.internal.container.VidocqServletContext.ResourceProvider}.
      *  Materializes assets in a mirrored temporary directory so {@code getResource()} can
      *  return a {@code file:} URL containing the original path (required by TCK
@@ -412,10 +332,12 @@ public class VidocqDeployableContainer implements DeployableContainer<VidocqCont
     private static final class WarResourceProvider
             implements io.vidocq.foy.internal.container.VidocqServletContext.ResourceProvider {
         private final WebArchive war;
+        private final Map<String, byte[]> jarResources;
         private final java.nio.file.Path mirror;
 
-        WarResourceProvider(WebArchive war) {
+        WarResourceProvider(WebArchive war, Map<String, byte[]> jarResources) {
             this.war = war;
+            this.jarResources = jarResources;
             java.nio.file.Path base;
             try {
                 base = java.nio.file.Files.createTempDirectory("vidocq-war-");
@@ -445,14 +367,25 @@ public class VidocqDeployableContainer implements DeployableContainer<VidocqCont
                     }
                 } catch (java.io.IOException ignored) {}
             }
+            // Lib jar resources come after the war root: a war file of the same path wins.
+            for (var e : jarResources.entrySet()) {
+                try {
+                    java.nio.file.Path dst = mirror.resolve(e.getKey().substring(1));
+                    if (java.nio.file.Files.exists(dst)) continue;
+                    java.nio.file.Files.createDirectories(dst.getParent());
+                    java.nio.file.Files.write(dst, e.getValue());
+                } catch (java.io.IOException | RuntimeException ignored) {}
+            }
         }
 
         @Override public java.util.Set<String> listPaths(String path) {
             if (path == null || !path.startsWith("/")) return null;
             String prefix = path.endsWith("/") ? path : path + "/";
+            java.util.List<String> paths = new ArrayList<>();
+            for (Node node : war.getContent().values()) paths.add(node.getPath().get());
+            paths.addAll(jarResources.keySet());
             java.util.Set<String> out = new java.util.LinkedHashSet<>();
-            for (Node node : war.getContent().values()) {
-                String p = node.getPath().get();
+            for (String p : paths) {
                 if (p == null || !p.startsWith(prefix) || p.equals(prefix)) continue;
                 String rest = p.substring(prefix.length());
                 int slash = rest.indexOf('/');
@@ -468,8 +401,10 @@ public class VidocqDeployableContainer implements DeployableContainer<VidocqCont
         @Override public java.io.InputStream openStream(String path) {
             if (path == null) return null;
             Node node = war.get(path);
-            if (node == null || node.getAsset() == null) return null;
-            return node.getAsset().openStream();
+            if (node != null && node.getAsset() != null) return node.getAsset().openStream();
+            if (node != null) return null;
+            byte[] bytes = jarResources.get(path);
+            return bytes == null ? null : new java.io.ByteArrayInputStream(bytes);
         }
 
         @Override public java.net.URL toUrl(String path) {
