@@ -32,6 +32,7 @@ module io.vidocq.foy.core {
     requires io.vidocq.chappe.api;
 
     uses io.vidocq.foy.spi.gen.WebComponent;
+    uses jakarta.servlet.ServletContainerInitializer;
 
     exports io.vidocq.foy.internal.async;
     exports io.vidocq.foy.internal.boot;

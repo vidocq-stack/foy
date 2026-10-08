@@ -20,6 +20,8 @@
 package io.vidocq.foy.chappe;
 
 import io.vidocq.chappe.api.Handler;
+import io.vidocq.foy.internal.boot.ApplicationSources;
+import io.vidocq.foy.internal.boot.ApplicationSources.Initializer;
 import io.vidocq.foy.internal.boot.ComponentFactory;
 import io.vidocq.foy.internal.boot.DeployOptions;
 import io.vidocq.foy.internal.boot.DescriptorMerger;
@@ -31,6 +33,9 @@ import io.vidocq.foy.internal.boot.WebAppModel;
 import io.vidocq.foy.internal.container.VidocqServletContext;
 import io.vidocq.foy.internal.gen.RegistryComponentFactory;
 import io.vidocq.foy.internal.gen.WebComponentRegistry;
+import io.vidocq.foy.internal.webxml.Fragment;
+import io.vidocq.foy.internal.webxml.FragmentMerger;
+import io.vidocq.foy.internal.webxml.FragmentOrderer;
 import io.vidocq.foy.internal.webxml.WebAppDescriptor;
 import io.vidocq.foy.internal.webxml.WebXmlParser;
 import jakarta.enterprise.inject.spi.BeanManager;
@@ -38,15 +43,22 @@ import jakarta.servlet.ServletException;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.net.URL;
+import java.util.HashSet;
+import java.util.List;
 import java.util.Optional;
+import java.util.ServiceConfigurationError;
+import java.util.Set;
 
 /**
  * Bootstrap Foy on Chappe HTTP transport.
  *
  * <p>Merges the CDI-discovered {@code @WebServlet}, {@code @WebFilter} and
  * {@code @WebListener} components with the {@code web.xml} descriptor (explicit stream,
- * else {@code WEB-INF/web.xml}, else {@code META-INF/web.xml} from the class loader),
- * deploys the result through {@link WebAppDeployer} and exposes a {@link Handler} ready to be
+ * else {@code WEB-INF/web.xml}, else {@code META-INF/web.xml} from the class loader) and the
+ * web fragments of the jars on the class and module path, registers the
+ * {@code ServletContainerInitializer}s found by {@link java.util.ServiceLoader} that the
+ * fragment ordering retains, deploys the result through {@link WebAppDeployer} and exposes a {@link Handler} ready to be
  * mounted on Chappe.</p>
  *
  * <h3>Example of usage</h3>
@@ -94,12 +106,18 @@ public final class FoyChappeBoot {
 
     public static final class Builder {
         private BeanManager beanManager;
-        private String contextPath = "/";
+        private String contextPath;
         private int sessionTimeoutSeconds = 30 * 60;
         private ClassLoader classLoader = Thread.currentThread().getContextClassLoader();
         private InputStream webXml;
+        private boolean discoverFragments = true;
 
         public Builder beanManager(BeanManager bm) { this.beanManager = bm; return this; }
+
+        /**
+         * Context path of the application; when never set, the merged descriptors'
+         * {@code <default-context-path>} applies, else {@code "/"}.
+         */
         public Builder contextPath(String path) { this.contextPath = path == null ? "/" : path; return this; }
         public Builder sessionTimeoutSeconds(int seconds) { this.sessionTimeoutSeconds = seconds; return this; }
 
@@ -109,6 +127,21 @@ public final class FoyChappeBoot {
         /** Explicit descriptor; wins over the class loader lookup. */
         public Builder webXml(InputStream in) { this.webXml = in; return this; }
 
+        /**
+         * Whether the web fragments ({@code META-INF/web-fragment.xml}) and the
+         * {@link jakarta.servlet.ServletContainerInitializer}s ({@link java.util.ServiceLoader})
+         * visible to the class loader are discovered; {@code true} by default. Embedders that
+         * assemble the application themselves turn it off.
+         */
+        public Builder discoverFragments(boolean discover) { this.discoverFragments = discover; return this; }
+
+        /**
+         * Discovers and deploys the application: web.xml, then the fragments ordered per
+         * §8.2.2 ({@link FragmentOrderer}), merged with the annotated components per §8.2.3
+         * (the annotations of jars whose fragment is excluded by the ordering or
+         * {@code metadata-complete} are dropped), then the container initializers the ordering
+         * retains (§8.2.4, {@link ApplicationSources#retainOrdered}).
+         */
         public Optional<Mounted> build() throws ServletException {
             ClassLoader loader = classLoader != null ? classLoader : FoyChappeBoot.class.getClassLoader();
             // One registry for discovery, web.xml classes, dynamic registrations and @HandlesTypes.
@@ -124,17 +157,43 @@ public final class FoyChappeBoot {
             }
             WebAppDescriptor descriptor = loadDescriptor(loader);
 
-            if (descriptor.isEmpty() && annotated.servlets().isEmpty() && annotated.filters().isEmpty()
-                    && annotated.listeners().isEmpty()) {
+            List<Fragment> fragments = List.of();
+            List<Fragment> ordered = List.of();
+            List<Initializer> initializers = List.of();
+            if (discoverFragments) {
+                fragments = ApplicationSources.fragments(loader);
+                ordered = FragmentOrderer.order(descriptor.absoluteOrdering(), fragments);
+                Set<URL> fragmentJars = new HashSet<>();
+                for (Fragment f : fragments) fragmentJars.add(f.jar());
+                Set<URL> dropped = new HashSet<>(ApplicationSources.excludedJars(fragments, ordered));
+                for (Fragment f : ordered) if (f.descriptor().metadataComplete()) dropped.add(f.jar());
+                annotated = annotated.excludingSources(dropped);
+                try {
+                    initializers = ApplicationSources.retainOrdered(ApplicationSources.initializers(loader),
+                            descriptor.absoluteOrdering(), ordered, fragmentJars,
+                            ApplicationSources.applicationRoots(loader, fragmentJars));
+                } catch (ServiceConfigurationError e) {
+                    throw new ServletException("Foy deployment failed: " + e.getMessage(), e);
+                }
+            }
+            // Fresh descriptor each call: only read here for emptiness and the default context path.
+            WebAppDescriptor effective = FragmentMerger.merge(descriptor, ordered);
+
+            if (effective.isEmpty() && initializers.isEmpty() && annotated.servlets().isEmpty()
+                    && annotated.filters().isEmpty() && annotated.listeners().isEmpty()) {
                 LOG.log(System.Logger.Level.INFO,
-                        "No @WebServlet / @WebFilter / @WebListener beans or web.xml discovered — Foy inactive");
+                        "No @WebServlet / @WebFilter / @WebListener beans, web.xml, web fragment or "
+                                + "ServletContainerInitializer discovered — Foy inactive");
                 return Optional.empty();
             }
 
-            WebAppModel.Builder modelBuilder = WebAppModel.builder(contextPath);
-            DescriptorMerger.merge(descriptor, annotated, factory, modelBuilder);
-            // The merger copies the web.xml timeout (-1 when absent); the builder default applies then.
-            if (descriptor.sessionTimeoutMinutes() < 0) {
+            String path = contextPath != null ? contextPath
+                    : effective.defaultContextPath() != null ? effective.defaultContextPath() : "/";
+            WebAppModel.Builder modelBuilder = WebAppModel.builder(path);
+            DescriptorMerger.merge(descriptor, ordered, annotated, factory, modelBuilder);
+            for (Initializer i : initializers) modelBuilder.initializer(i.sci());
+            // The merger copies the descriptors' timeout (-1 when absent); the builder default applies then.
+            if (effective.sessionTimeoutMinutes() < 0) {
                 modelBuilder.sessionTimeoutMinutes((sessionTimeoutSeconds + 59) / 60);
             }
             WebAppModel model = modelBuilder.build();
@@ -146,7 +205,14 @@ public final class FoyChappeBoot {
                 throw new ServletException("Foy deployment failed: " + e.getMessage(), e);
             }
 
-            String mountPrefix = "/".equals(contextPath) ? "" : contextPath;
+            String mountPrefix = "/".equals(path) ? "" : path;
+            for (var f : ordered) {
+                LOG.log(System.Logger.Level.INFO, "Merged web fragment {0} from {1}", f.id(), f.jar());
+            }
+            for (var i : initializers) {
+                LOG.log(System.Logger.Level.INFO, "Registered ServletContainerInitializer: {0}",
+                        i.sci().getClass().getName());
+            }
             for (var s : model.servlets()) {
                 LOG.log(System.Logger.Level.INFO, "Mapped servlet {0} -> {1}", s.name(), s.urlPatterns());
             }
