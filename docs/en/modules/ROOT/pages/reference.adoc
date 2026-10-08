@@ -215,7 +215,7 @@ The `io.vidocq.foy.internal.*` packages are exported to allow advanced integrati
 
 | `<default-context-path>`
 | applied
-| used when the builder sets no context path
+| used when the builder sets no context path; web.xml only — a fragment's is ignored with a warning
 
 | `<welcome-file-list>`
 | parsed
@@ -259,7 +259,7 @@ The `version` and `metadata-complete` attributes of `<web-app>` and `<web-fragme
 
 | Async (`AsyncContext`)
 | ⚠️
-| Standard cases OK; non-blocking I/O listeners and part of the `spec.async` suite still fail (TCK 22/39 in errors).
+| The `spec.async` suite passes (TCK 39/39, 0 in errors); the non-blocking I/O listener tests (`ReadListener`, `WriteListener`) still fail.
 
 | Multipart (`@MultipartConfig`)
 | ⚠️
@@ -271,7 +271,7 @@ The `version` and `metadata-complete` attributes of `<web-app>` and `<web-fragme
 
 | Security (Basic)
 | ⚠️
-| `BasicAuthenticator` + `@ServletSecurity` constraints (`SecurityConstraintEnforcer`); `<security-constraint>` in `web.xml` is not parsed. 8 of 14 `secbasic` TCK tests still fail.
+| `BasicAuthenticator` + `@ServletSecurity` constraints (`SecurityConstraintEnforcer`); `<security-constraint>` in `web.xml` and the fragments is parsed and merged but not enforced yet (security phase, Phase 6). 8 of 14 `secbasic` TCK tests still fail.
 
 | Security (Form, Digest, Jakarta Auth)
 | ❌

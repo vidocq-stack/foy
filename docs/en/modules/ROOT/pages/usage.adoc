@@ -159,10 +159,10 @@ Discovery is on by default and is driven by `FoyChappeBoot.builder()`:
 
 * `discoverPluggability(false)` turns off the discovery of both the fragments and the initializers, for embedders that assemble the application themselves.
 * `applicationRoot(URL...)` declares jars or directories as the application itself: their initializers always run, whatever the absolute ordering. A root holding a `web.xml` without a fragment, and the roots of the CDI-discovered annotated components, are application roots without being declared.
-* `contextPath(...)` wins; otherwise the merged `<default-context-path>` applies, else `/`.
-* `resourceProvider(...)` replaces the default `ClassPathResourceProvider`, which serves `META-INF/resources/` of the application roots, then of the ordered fragments' jars, then of any other root. It rejects empty and dot segments, never follows a symbolic link out of the root, and never serves `WEB-INF` or `META-INF`.
+* `contextPath(...)` wins; otherwise web.xml's `<default-context-path>` applies, else `/`. The element is web.xml-only: a fragment's is ignored with a warning.
+* `resourceProvider(...)` replaces the default `ClassPathResourceProvider`, which serves `META-INF/resources/` of the application roots, then of the ordered fragments' jars, then of any other root. It rejects empty and dot segments and never follows a symbolic link out of the root. `getResource*` does reach the `WEB-INF/` and `META-INF/` subtrees of the resource root, as the spec allows; `ClassPathResourceProvider.isServable`, the check the future default servlet applies, refuses them.
 
-Fragments are ordered per Servlet 6.1 §8.2.2: an `<absolute-ordering>` in `web.xml` replaces any `<ordering>` in the fragments; without it, `<before>`/`<after>` constraints and `<others/>` apply. Initializers run in `ServiceLoader` order, restricted to the roots the ordering retains (§8.2.4). A jar excluded by an absolute ordering contributes neither its fragment, nor its annotations, nor its initializers.
+Fragments are ordered per Servlet 6.1 §8.2.2: an `<absolute-ordering>` in `web.xml` replaces any `<ordering>` in the fragments; without it, `<before>`/`<after>` constraints and `<others/>` apply. Initializers run in `ServiceLoader` order, restricted to the roots the ordering retains (§8.2.4). A jar excluded by an absolute ordering contributes neither its fragment, nor its annotations, nor its initializers, nor its `META-INF/resources/` (in no lookup tier, the "any other root" fallback included), nor its classes to a `@HandlesTypes` initializer (its class index is not read and it is not scanned).
 
 [NOTE]
 ====

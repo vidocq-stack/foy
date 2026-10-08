@@ -109,6 +109,16 @@ No real-world migration has been documented yet — the Tomcat and Jetty tables 
 
 Cross-context dispatch (`ServletContext.getContext`) **is implemented** via `CrossContextRegistry` — strict contextPath match on the contexts deployed in the same JVM.
 
+== Behaviour changes for `FoyChappeBoot` embedders
+
+Applications that already embedded Foy through `FoyChappeBoot.builder()` before descriptors and pluggability landed see these changes:
+
+* **Discovery is on by default.** Every `META-INF/web-fragment.xml` on the class or module path is merged and every `ServletContainerInitializer` the ordering retains runs. A lone initializer on the path is enough to activate Foy, even without servlet, filter, listener or descriptor.
+* **Descriptor errors now fail the deployment** (`ServletException` from `build()`): a malformed `web-fragment.xml`, two fragments with the same `<name>`, conflicting values between fragments that web.xml does not settle (§8.2.3), and a url-pattern mapped to two servlets (§12.2).
+* **`<default-context-path>` changes the mount path** when the builder sets no `contextPath(...)`.
+* **`discoverPluggability(false)`** opts out of the fragment and initializer discovery, for embedders that assemble the application themselves.
+* **New builder methods:** `resourceProvider(...)` replaces the source behind `ServletContext.getResource*`; `applicationRoot(URL...)` declares the roots whose initializers always run, whatever the absolute ordering.
+
 == Common pitfalls
 
 * **`ServletContainerInitializer`s and fragments are discovered at boot.** `ApplicationSources` loads the initializers through `ServiceLoader` (`META-INF/services` or `provides`) and the `META-INF/web-fragment.xml` of every root, then orders them per §8.2.2 and §8.2.4. Component classes themselves are still never scanned.
