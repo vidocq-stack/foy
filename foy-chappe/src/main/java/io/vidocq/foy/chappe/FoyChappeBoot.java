@@ -30,6 +30,7 @@ import io.vidocq.foy.internal.boot.Deployment;
 import io.vidocq.foy.internal.boot.WebAppDeployer;
 import io.vidocq.foy.internal.boot.WebAppDiscovery;
 import io.vidocq.foy.internal.boot.WebAppModel;
+import io.vidocq.foy.internal.container.ClassPathResourceProvider;
 import io.vidocq.foy.internal.container.VidocqServletContext;
 import io.vidocq.foy.internal.gen.RegistryComponentFactory;
 import io.vidocq.foy.internal.gen.WebComponentRegistry;
@@ -45,7 +46,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.net.URL;
 import java.util.ArrayList;
-import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
@@ -114,6 +115,7 @@ public final class FoyChappeBoot {
         private InputStream webXml;
         private boolean discoverPluggability = true;
         private final List<URL> applicationRoots = new ArrayList<>();
+        private VidocqServletContext.ResourceProvider resourceProvider;
 
         public Builder beanManager(BeanManager bm) { this.beanManager = bm; return this; }
 
@@ -156,6 +158,17 @@ public final class FoyChappeBoot {
         }
 
         /**
+         * Source of the static resources behind {@code ServletContext.getResource*}. When never
+         * set, a {@link ClassPathResourceProvider} serves the {@code META-INF/resources/} of the
+         * application roots, then of the ordered fragments' jars, then of any other root of the
+         * class loader.
+         */
+        public Builder resourceProvider(VidocqServletContext.ResourceProvider provider) {
+            this.resourceProvider = provider;
+            return this;
+        }
+
+        /**
          * Discovers and deploys the application: web.xml, then the fragments ordered per
          * §8.2.2 ({@link FragmentOrderer}), merged with the annotated components per §8.2.3
          * (the annotations of jars whose fragment is excluded by the ordering or
@@ -185,14 +198,18 @@ public final class FoyChappeBoot {
 
             List<Fragment> ordered = List.of();
             List<Initializer> initializers = List.of();
+            // Static resource roots, by priority: application roots, then the ordered fragments' jars.
+            Set<URL> resourceRoots = new LinkedHashSet<>(applicationRoots);
             if (discoverPluggability) {
                 List<Fragment> fragments = ApplicationSources.fragments(loader);
                 ordered = FragmentOrderer.order(descriptor.absoluteOrdering(), fragments);
-                Set<URL> fragmentJars = new HashSet<>();
+                Set<URL> fragmentJars = new LinkedHashSet<>();
                 for (Fragment f : fragments) fragmentJars.add(f.jar());
-                Set<URL> appRoots = new HashSet<>(applicationRoots);
+                Set<URL> appRoots = new LinkedHashSet<>(applicationRoots);
                 appRoots.addAll(ApplicationSources.applicationRoots(loader, fragmentJars));
                 appRoots.addAll(ApplicationSources.codeSources(annotated));
+                resourceRoots.addAll(appRoots);
+                for (Fragment f : ordered) resourceRoots.add(f.jar());
                 // metadata-complete fragments' jars are dropped by DescriptorMerger itself.
                 annotated = annotated.excludingSources(ApplicationSources.excludedJars(fragments, ordered));
                 try {
@@ -225,7 +242,10 @@ public final class FoyChappeBoot {
 
             Deployment deployment;
             try {
-                deployment = WebAppDeployer.deploy(model, DeployOptions.defaults(loader, registry).withComponentFactory(factory));
+                VidocqServletContext.ResourceProvider resources = resourceProvider != null ? resourceProvider
+                        : new ClassPathResourceProvider(loader, List.copyOf(resourceRoots));
+                deployment = WebAppDeployer.deploy(model, DeployOptions.defaults(loader, registry)
+                        .withComponentFactory(factory).withResourceProvider(resources));
             } catch (RuntimeException e) {
                 throw new ServletException("Foy deployment failed: " + e.getMessage(), e);
             }
