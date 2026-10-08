@@ -1,0 +1,10 @@
+# foy class index v1
+
+malformed-line-without-bars
+only|one
+io.vidocq.foy.internal.gen.IndexedHandlesTypesResolverTest$Impl|java.lang.Object,java.lang.Runnable|
+io.vidocq.foy.internal.gen.IndexedHandlesTypesResolverTest$Marked|java.lang.Object|java.lang.Deprecated
+io.vidocq.foy.internal.gen.IndexedHandlesTypesResolverTest$Other|java.lang.Object|
+io.vidocq.foy.internal.gen.IndexedHandlesTypesResolverTest$Impl|java.lang.Object,java.lang.Runnable|
+io.vidocq.foy.internal.gen.IndexedHandlesTypesResolverTest$Gone|java.lang.Object,java.lang.Runnable|
+io.vidocq.foy.internal.gen.IndexedHandlesTypesResolverTest$Handled|java.lang.Object,java.lang.Runnable|
