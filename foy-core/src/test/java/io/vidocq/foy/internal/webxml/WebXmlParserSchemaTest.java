@@ -228,4 +228,42 @@ class WebXmlParserSchemaTest {
         assertNull(d.loginConfig());
         assertTrue(d.securityRoles().isEmpty());
     }
+
+    @Test
+    void booleansAcceptTheXsdBooleanLexicalForms() throws IOException {
+        for (String t : List.of("true", "1", " true ", "\n1\t")) {
+            var d = WebXmlParser.parse(new ByteArrayInputStream(("<web-app version=\"6.1\" metadata-complete=\""
+                    + t + "\"><servlet><servlet-name>s</servlet-name><servlet-class>a.S</servlet-class>"
+                    + "<async-supported>" + t + "</async-supported><enabled>" + t + "</enabled></servlet>"
+                    + "<filter><filter-name>f</filter-name><filter-class>a.F</filter-class>"
+                    + "<async-supported>" + t + "</async-supported></filter>"
+                    + "<session-config><cookie-config><http-only>" + t + "</http-only><secure>" + t
+                    + "</secure></cookie-config></session-config></web-app>").getBytes(StandardCharsets.UTF_8)));
+            assertTrue(d.metadataComplete(), t);
+            assertEquals(Boolean.TRUE, d.servlets().getFirst().asyncSupported(), t);
+            assertTrue(d.servlets().getFirst().enabled(), t);
+            assertEquals(Boolean.TRUE, d.filters().getFirst().asyncSupported(), t);
+            assertEquals(Boolean.TRUE, d.cookieConfig().httpOnly(), t);
+            assertEquals(Boolean.TRUE, d.cookieConfig().secure(), t);
+        }
+        for (String f : List.of("false", "0", " 0 ")) {
+            var d = WebXmlParser.parse(new ByteArrayInputStream(("<web-app version=\"6.1\" metadata-complete=\""
+                    + f + "\"><servlet><servlet-name>s</servlet-name><servlet-class>a.S</servlet-class>"
+                    + "<async-supported>" + f + "</async-supported><enabled>" + f + "</enabled></servlet>"
+                    + "<session-config><cookie-config><http-only>" + f + "</http-only><secure>" + f
+                    + "</secure></cookie-config></session-config></web-app>").getBytes(StandardCharsets.UTF_8)));
+            assertFalse(d.metadataComplete(), f);
+            assertEquals(Boolean.FALSE, d.servlets().getFirst().asyncSupported(), f);
+            assertFalse(d.servlets().getFirst().enabled(), f);
+            assertEquals(Boolean.FALSE, d.cookieConfig().httpOnly(), f);
+            assertEquals(Boolean.FALSE, d.cookieConfig().secure(), f);
+        }
+        assertFalse(parse("").metadataComplete(), "absent metadata-complete is false");
+        var e = assertThrows(IOException.class, () -> parse(
+                "<servlet><servlet-name>s</servlet-name><enabled>yes</enabled></servlet>"));
+        assertTrue(e.getMessage().contains("<enabled>") && e.getMessage().contains("yes"), e.getMessage());
+        e = assertThrows(IOException.class, () -> parse(
+                "<session-config><cookie-config><secure>maybe</secure></cookie-config></session-config>"));
+        assertTrue(e.getMessage().contains("<secure>"), e.getMessage());
+    }
 }

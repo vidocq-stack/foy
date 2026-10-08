@@ -216,7 +216,9 @@ public final class WebXmlParser {
                 .withLoginConfig(loginConfig)
                 .withSecurityRoles(securityRoles)
                 .withAbsoluteOrdering(absoluteOrdering)
-                .withMetadataComplete(Boolean.parseBoolean(root.getAttribute("metadata-complete").trim()));
+                .withMetadataComplete(Boolean.TRUE.equals(xsdBoolean(
+                        root.hasAttribute("metadata-complete") ? root.getAttribute("metadata-complete") : null,
+                        "metadata-complete attribute")));
     }
 
     private static WebAppDescriptor.ServletDef parseServlet(Element e) {
@@ -228,7 +230,7 @@ public final class WebXmlParser {
                 parseAsync(e),
                 parseLoadOnStartup(e, name),
                 parseMultipart(e),
-                !"false".equalsIgnoreCase(firstText(e, "enabled")),
+                !Boolean.FALSE.equals(xsdBoolean(firstText(e, "enabled"), "<enabled> of servlet " + name)),
                 runAs(e),
                 firstText(e, "jsp-file"));
     }
@@ -262,8 +264,23 @@ public final class WebXmlParser {
 
     /** {@code null} when the element is absent (tri-state, §8.2.3). */
     private static Boolean parseAsync(Element e) {
-        String async = firstText(e, "async-supported");
-        return async == null ? null : Boolean.parseBoolean(async.trim());
+        return xsdBoolean(firstText(e, "async-supported"), "<async-supported>");
+    }
+
+    /**
+     * An {@code xsd:boolean} value ({@code true-falseType}): {@code true}, {@code false}, {@code 1}
+     * or {@code 0}, surrounding whitespace ignored. {@code null} when {@code text} is {@code null}.
+     *
+     * @throws IllegalArgumentException for any other value, naming {@code where}
+     */
+    static Boolean xsdBoolean(String text, String where) {
+        if (text == null) return null;
+        return switch (text.strip()) {
+            case "true", "1" -> Boolean.TRUE;
+            case "false", "0" -> Boolean.FALSE;
+            default -> throw new IllegalArgumentException("invalid " + where + " value '" + text
+                    + "': expected true, false, 1 or 0");
+        };
     }
 
     /**

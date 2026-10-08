@@ -310,16 +310,21 @@ public final class WebAppDeployer {
         if (instance != null) return factory.isVisible(instance.getClass()) ? instance : null;
         try {
             Class<? extends T> c = klass;
-            if (c == null && className != null) c = factory.load(className).asSubclass(base);
+            if (c == null && className != null) {
+                Class<?> loaded = factory.load(className);
+                if (!base.isAssignableFrom(loaded)) {
+                    LOG.log(System.Logger.Level.WARNING, "dynamic " + kind + " '" + name + "' skipped: class "
+                            + className + " is not a " + base.getName());
+                    return null;
+                }
+                c = loaded.asSubclass(base);
+            }
             if (c == null) return null; // addJspFile without a real implementation
             // Class loader isolation: ignore classes absent from the WAR.
             if (!factory.isVisible(c)) return null;
             return factory.newInstance(c);
-        } catch (ClassCastException ex) {
-            LOG.log(System.Logger.Level.WARNING, "dynamic " + kind + " '" + name + "' skipped: class "
-                    + className + " is not a " + base.getName());
-            return null;
-        } catch (ClassNotFoundException | ServletException ex) {
+        } catch (ClassNotFoundException | ServletException | RuntimeException ex) {
+            // RuntimeException: a factory that does not wrap what the constructor throws.
             LOG.log(System.Logger.Level.WARNING, "cannot instantiate dynamic " + kind + " " + name, ex);
             return null;
         }

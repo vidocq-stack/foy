@@ -42,20 +42,24 @@ import java.util.Set;
  *
  * <p><b>metadata-complete.</b> When web.xml is {@code metadata-complete="true"}, the fragments are
  * not merged: a copy of web.xml is returned, and the caller ignores every annotation; the ordering
- * still decides which jars' container initializers run (§8.2.4). Source: the
+ * still decides which jars' container initializers run (§8.2.4). Sources: the
  * {@code metadata-complete} documentation of {@code web-common_6_1.xsd} shipped in
  * {@code jakarta.servlet-api} 6.1.0 ("this deployment descriptor and other related deployment
- * descriptors for this module ... are complete"; annotations "must" then be ignored); the spec
- * text of §8.2.1 was not reachable from the build machine, so the fragment part follows Apache
- * Tomcat ({@code ContextConfig.webConfig}: no fragment merge when web.xml is metadata-complete,
+ * descriptors for this module ... are complete"; annotations "must" then be ignored), and Apache
+ * Tomcat's {@code ContextConfig.webConfig} (no fragment merge when web.xml is metadata-complete,
  * container initializers still run). A fragment's own {@code metadata-complete="true"} keeps its
  * descriptor in the merge and only drops the annotations of its jar, which is the caller's job
  * ({@code DescriptorMerger}).</p>
+ *
+ * <p>{@code <default-context-path>} is a web.xml-only element: a fragment's is ignored, with one
+ * warning per fragment.</p>
  *
  * <p>Fragments excluded by an {@code <absolute-ordering>} are expected to be absent from
  * {@code ordered} already ({@link FragmentOrderer#order}); this class neither filters nor re-orders.</p>
  */
 public final class FragmentMerger {
+
+    private static final System.Logger LOG = System.getLogger(FragmentMerger.class.getName());
 
     private FragmentMerger() {}
 
@@ -92,8 +96,6 @@ public final class FragmentMerger {
                 .webXml(webXml.requestCharacterEncoding());
         var responseEncoding = new Single<String>("<response-character-encoding>")
                 .webXml(webXml.responseCharacterEncoding());
-        var defaultContextPath = new Single<String>("<default-context-path>")
-                .webXml(webXml.defaultContextPath());
         var loginConfig = new Single<SecurityDefs.LoginConfigDef>("<login-config>")
                 .webXml(webXml.loginConfig());
         boolean denyUncovered = webXml.denyUncoveredHttpMethods();
@@ -113,7 +115,11 @@ public final class FragmentMerger {
             trackingModes.fragment(id, modes(d));
             requestEncoding.fragment(id, d.requestCharacterEncoding());
             responseEncoding.fragment(id, d.responseCharacterEncoding());
-            defaultContextPath.fragment(id, d.defaultContextPath());
+            if (d.defaultContextPath() != null) {
+                // web-app-only element (web-app_6_1.xsd; web-fragment_6_1.xsd does not declare it).
+                LOG.log(System.Logger.Level.WARNING, "Ignoring <default-context-path> {0} in web fragment {1}: "
+                        + "the element is only allowed in web.xml", d.defaultContextPath(), id);
+            }
             loginConfig.fragment(id, d.loginConfig());
             // A boolean flag: declared means true, so any declaring descriptor turns it on.
             denyUncovered |= d.denyUncoveredHttpMethods();
@@ -141,7 +147,7 @@ public final class FragmentMerger {
                 .withMimeMappings(mimeMappings.values())
                 .withRequestCharacterEncoding(requestEncoding.value())
                 .withResponseCharacterEncoding(responseEncoding.value())
-                .withDefaultContextPath(defaultContextPath.value())
+                .withDefaultContextPath(webXml.defaultContextPath())
                 .withDenyUncoveredHttpMethods(denyUncovered)
                 .withCookieConfig(cookieConfig.value())
                 .withTrackingModes(modes == null ? Set.of() : modes)

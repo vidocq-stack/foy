@@ -348,6 +348,36 @@ class WebAppDeployerEndToEndTest {
     }
 
     @Test
+    void dynamicComponentWhoseConstructionThrowsClassCastExceptionIsNotReportedAsAWrongType() throws Exception {
+        // A factory that does not wrap constructor failures, as a CDI-backed one may not.
+        var delegate = new RecordingFactory();
+        ComponentFactory throwing = new ComponentFactory() {
+            @Override public Class<?> load(String className) throws ClassNotFoundException, ServletException {
+                return delegate.load(className);
+            }
+            @Override public <T> T newInstance(Class<T> type) throws ServletException {
+                if (type == Recording.class) throw new ClassCastException("thrown by the constructor");
+                return delegate.newInstance(type);
+            }
+        };
+        ServletContainerInitializer sci = (classes, ctx) -> {
+            ctx.addServlet("ctor", Recording.class).addMapping("/ctor");
+            ctx.addServlet("wrong", "java.lang.Object").addMapping("/wrong");
+        };
+        try (var log = io.vidocq.foy.internal.LogCapture.of(WebAppDeployer.class.getName())) {
+            deploy(WebAppModel.builder("/").initializer(sci).build(), options(throwing));
+            var warnings = log.warnings();
+            assertTrue(warnings.stream().anyMatch(w -> w.contains("cannot instantiate dynamic servlet ctor")),
+                    warnings::toString);
+            assertTrue(warnings.stream().noneMatch(w -> w.contains("'ctor'") || w.contains("class null")),
+                    warnings::toString);
+            assertTrue(warnings.stream().anyMatch(w -> w.contains("'wrong'")
+                    && w.contains("java.lang.Object is not a jakarta.servlet.Servlet")), warnings::toString);
+        }
+        assertEquals(404, get("/ctor").statusCode());
+    }
+
+    @Test
     void contextCreateAndAddListenerGoThroughTheDeploymentFactory() {
         var factory = new RecordingFactory();
         ServletContainerInitializer sci = (classes, ctx) -> {

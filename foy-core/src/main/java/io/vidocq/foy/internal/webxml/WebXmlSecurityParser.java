@@ -112,7 +112,7 @@ final class WebXmlSecurityParser {
     /** {@code null} when the child is absent. */
     private static Boolean bool(Element parent, String tag) {
         String t = firstText(parent, tag);
-        return t == null ? null : Boolean.parseBoolean(t);
+        return WebXmlParser.xsdBoolean(t, "<" + tag + "> in <" + parent.getTagName() + ">");
     }
 
     private static List<String> texts(Element parent, String tag) {

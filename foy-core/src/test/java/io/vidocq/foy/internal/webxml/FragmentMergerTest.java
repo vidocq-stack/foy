@@ -417,7 +417,7 @@ class FragmentMergerTest {
         assertEquals(20, m.sessionTimeoutMinutes());
         assertEquals(Set.of(SessionTrackingMode.COOKIE), m.trackingModes());
         assertEquals("UTF-8", m.requestCharacterEncoding());
-        assertEquals("/frag", m.defaultContextPath());
+        assertNull(m.defaultContextPath(), "<default-context-path> is a web.xml-only element");
         assertNull(m.responseCharacterEncoding());
         assertNull(m.cookieConfig());
         assertFalse(m.denyUncoveredHttpMethods());
@@ -441,10 +441,21 @@ class FragmentMergerTest {
                 frag("F1", "<response-character-encoding>A</response-character-encoding>"),
                 frag("F2", "<response-character-encoding>B</response-character-encoding>"))));
         assertConflict(enc, "<response-character-encoding>", "F1", "F2");
-        var path = assertThrows(ServletException.class, () -> FragmentMerger.merge(web(""), List.of(
-                frag("F1", "<default-context-path>/a</default-context-path>"),
-                frag("F2", "<default-context-path>/b</default-context-path>"))));
-        assertConflict(path, "<default-context-path>", "F1", "F2");
+    }
+
+    @Test
+    void defaultContextPathOfAFragmentIsIgnoredWithOneWarning() throws Exception {
+        try (var log = io.vidocq.foy.internal.LogCapture.of(FragmentMerger.class.getName())) {
+            var m = FragmentMerger.merge(web(""), List.of(
+                    frag("F1", "<default-context-path>/a</default-context-path>"),
+                    frag("F2", "<default-context-path>/b</default-context-path>")));
+            assertNull(m.defaultContextPath(), "no conflict either: both are ignored");
+            var warnings = log.warnings().stream().filter(w -> w.contains("<default-context-path>")).toList();
+            assertEquals(2, warnings.size(), warnings::toString);
+            assertTrue(warnings.get(0).contains("F1") && warnings.get(1).contains("F2"), warnings::toString);
+        }
+        assertEquals("/xml", FragmentMerger.merge(web("<default-context-path>/xml</default-context-path>"),
+                List.of(frag("F1", "<default-context-path>/a</default-context-path>"))).defaultContextPath());
     }
 
     @Test
