@@ -77,11 +77,23 @@ public record DeployOptions(SecurityProvider securityProvider,
     public static DeployOptions defaults(ClassLoader loader,
                                          io.vidocq.foy.internal.gen.WebComponentRegistry registry,
                                          java.util.List<java.nio.file.Path> handlesTypesRoots) {
+        return defaults(loader, registry, handlesTypesRoots, Set.of());
+    }
+
+    /**
+     * As {@link #defaults(ClassLoader, io.vidocq.foy.internal.gen.WebComponentRegistry, java.util.List)},
+     * and the class indexes of {@code excludedRoots} (the jars an absolute ordering excludes) are
+     * not read: their classes are never handed to a {@code @HandlesTypes} initializer.
+     */
+    public static DeployOptions defaults(ClassLoader loader,
+                                         io.vidocq.foy.internal.gen.WebComponentRegistry registry,
+                                         java.util.List<java.nio.file.Path> handlesTypesRoots,
+                                         Set<java.net.URL> excludedRoots) {
         Objects.requireNonNull(registry, "registry");
         return new DeployOptions(null, null, null, Set.of(), Set.of(), Set.of(),
                 new io.vidocq.foy.internal.gen.RegistryComponentFactory(registry, loader),
                 new io.vidocq.foy.internal.gen.IndexedHandlesTypesResolver(registry, loader,
-                        java.util.List.copyOf(handlesTypesRoots)));
+                        java.util.List.copyOf(handlesTypesRoots), excludedRoots));
     }
 
     public DeployOptions withComponentFactory(ComponentFactory f) {

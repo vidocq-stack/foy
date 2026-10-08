@@ -260,6 +260,124 @@ public class FoyChappeBootFragmentsTest {
         }
     }
 
+    /** The type the application initializer of {@link #excludedJarContributesNoResourceNorHandledClass} handles. */
+    public interface Marker {}
+
+    /**
+     * Compiles {@code sources} (binary name to source) against the Servlet API and the test
+     * classes into jar {@code name}, adding the {@code resources} (entry name to content).
+     */
+    private static Path compiledJar(Path dir, String name, java.util.Map<String, String> sources,
+                                    java.util.Map<String, String> resources) throws Exception {
+        Path src = dir.resolve("src-" + name);
+        Path classes = dir.resolve("classes-" + name);
+        var files = new java.util.ArrayList<String>();
+        for (var e : sources.entrySet()) {
+            Path file = src.resolve(e.getKey().replace('.', '/') + ".java");
+            Files.createDirectories(file.getParent());
+            Files.writeString(file, e.getValue());
+            files.add(file.toString());
+        }
+        String servletApi = Path.of(HttpServlet.class.getProtectionDomain().getCodeSource().getLocation().toURI())
+                .toString();
+        var args = new java.util.ArrayList<>(java.util.List.of(
+                "-cp", servletApi + java.io.File.pathSeparator + testClasses(), "-d", classes.toString()));
+        args.addAll(files);
+        int rc = java.util.spi.ToolProvider.findFirst("javac").orElseThrow().run(System.out, System.err,
+                args.toArray(String[]::new));
+        assertEquals(0, rc, "test classes must compile");
+        Path jar = dir.resolve(name);
+        try (var out = new JarOutputStream(Files.newOutputStream(jar)); var walk = Files.walk(classes)) {
+            for (Path p : walk.filter(Files::isRegularFile).toList()) {
+                out.putNextEntry(new JarEntry(classes.relativize(p).toString().replace('\\', '/')));
+                out.write(Files.readAllBytes(p));
+                out.closeEntry();
+            }
+            for (var e : resources.entrySet()) {
+                out.putNextEntry(new JarEntry(e.getKey()));
+                out.write(e.getValue().getBytes());
+                out.closeEntry();
+            }
+        }
+        return jar;
+    }
+
+    /** A BeanManager whose only Servlet bean is {@code servletClass} (no CdiWebComponents index). */
+    private static jakarta.enterprise.inject.spi.BeanManager servletBeans(Class<?> servletClass) {
+        var bean = (jakarta.enterprise.inject.spi.Bean<?>) java.lang.reflect.Proxy.newProxyInstance(
+                jakarta.enterprise.inject.spi.Bean.class.getClassLoader(),
+                new Class<?>[]{jakarta.enterprise.inject.spi.Bean.class}, (p, m, a) -> switch (m.getName()) {
+                    case "getBeanClass" -> servletClass;
+                    case "hashCode" -> System.identityHashCode(p);
+                    case "equals" -> p == a[0];
+                    case "toString" -> "Bean[" + servletClass.getName() + "]";
+                    default -> throw new UnsupportedOperationException(m.getName());
+                });
+        return (jakarta.enterprise.inject.spi.BeanManager) java.lang.reflect.Proxy.newProxyInstance(
+                jakarta.enterprise.inject.spi.BeanManager.class.getClassLoader(),
+                new Class<?>[]{jakarta.enterprise.inject.spi.BeanManager.class}, (p, m, a) -> switch (m.getName()) {
+                    case "getBeans" -> a[0] == jakarta.servlet.Servlet.class ? java.util.Set.of(bean) : java.util.Set.of();
+                    case "hashCode" -> System.identityHashCode(p);
+                    case "equals" -> p == a[0];
+                    case "toString" -> "FakeBeanManager";
+                    default -> throw new UnsupportedOperationException(m.getName());
+                });
+    }
+
+    @Test
+    void excludedJarContributesNoResourceNorHandledClass(@TempDir Path dir) throws Exception {
+        String marker = Marker.class.getCanonicalName();
+        String fragment = "<web-fragment xmlns=\"https://jakarta.ee/xml/ns/jakartaee\" version=\"6.1\"><name>%s</name>"
+                + "</web-fragment>";
+        // ex.jar (no class index, so only a class-bytes scan could see it) and exidx.jar (a class
+        // index): both have a fragment the absolute ordering excludes.
+        Path ex = compiledJar(dir, "ex.jar", java.util.Map.of(
+                "expkg.ExServlet", """
+                        package expkg;
+                        @jakarta.servlet.annotation.WebServlet("/ex")
+                        public class ExServlet extends jakarta.servlet.http.HttpServlet {}""",
+                "expkg.ExMarker", "package expkg; public class ExMarker implements " + marker + " {}"),
+                java.util.Map.of("META-INF/web-fragment.xml", fragment.formatted("Ex"),
+                        "META-INF/resources/ex.txt", "excluded"));
+        Path exIdx = compiledJar(dir, "exidx.jar", java.util.Map.of(
+                "exidxpkg.IdxMarker", "package exidxpkg; public class IdxMarker implements " + marker + " {}"),
+                java.util.Map.of("META-INF/web-fragment.xml", fragment.formatted("ExIdx"),
+                        "META-INF/foy/class-index.list", "exidxpkg.IdxMarker|" + Marker.class.getName() + "|\n",
+                        "META-INF/resources/exidx.txt", "excluded"));
+        // app.jar: the application, whose initializer records the classes it is handed.
+        Path app = compiledJar(dir, "app.jar", java.util.Map.of(
+                "apppkg.AppMarker", "package apppkg; public class AppMarker implements " + marker + " {}",
+                "apppkg.Sci", """
+                        package apppkg;
+                        @jakarta.servlet.annotation.HandlesTypes(%s.class)
+                        public class Sci implements jakarta.servlet.ServletContainerInitializer {
+                            public void onStartup(java.util.Set<Class<?>> c, jakarta.servlet.ServletContext ctx) {
+                                var names = new java.util.TreeSet<String>();
+                                if (c != null) for (Class<?> k : c) names.add(k.getName());
+                                ctx.setAttribute("handled", names.toString());
+                            }
+                        }""".formatted(marker)),
+                java.util.Map.of("META-INF/services/jakarta.servlet.ServletContainerInitializer", "apppkg.Sci\n",
+                        "META-INF/resources/app.txt", "app"));
+        try (var l = loader(ex, exIdx, app)) {
+            String xml = webXml("<absolute-ordering><name>Other</name></absolute-ordering>");
+            var mounted = FoyChappeBoot.builder().classLoader(l).applicationRoot(app.toUri().toURL())
+                    .beanManager(servletBeans(l.loadClass("expkg.ExServlet")))
+                    .webXml(new ByteArrayInputStream(xml.getBytes())).build().orElseThrow();
+            var ctx = mounted.servletContext();
+            assertEquals("[apppkg.AppMarker]", ctx.getAttribute("handled"),
+                    "an excluded jar's classes are not handed to @HandlesTypes");
+            assertNotNull(ctx.getResource("/app.txt"));
+            assertNull(ctx.getResource("/ex.txt"), "an excluded jar's META-INF/resources are not served");
+            assertNull(ctx.getResource("/exidx.txt"));
+            var paths = ctx.getResourcePaths("/");
+            assertTrue(paths.contains("/app.txt") && !paths.contains("/ex.txt") && !paths.contains("/exidx.txt"),
+                    paths::toString);
+            assertNull(ctx.getServletRegistration("expkg.ExServlet"));
+            assertArrayEquals(new String[] {"200:app", "404"}, get(mounted, "/app", "/ex"));
+        }
+    }
+
     @Test
     void explicitContextPathWinsOverTheDefaultContextPath(@TempDir Path dir) throws Exception {
         try (var l = loader(fragmentJar(dir))) {

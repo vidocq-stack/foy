@@ -161,7 +161,7 @@ public final class FoyChappeBoot {
          * Source of the static resources behind {@code ServletContext.getResource*}. When never
          * set, a {@link ClassPathResourceProvider} serves the {@code META-INF/resources/} of the
          * application roots, then of the ordered fragments' jars, then of any other root of the
-         * class loader.
+         * class loader, never those of a jar whose fragment the absolute ordering excludes.
          */
         public Builder resourceProvider(VidocqServletContext.ResourceProvider provider) {
             this.resourceProvider = provider;
@@ -202,9 +202,15 @@ public final class FoyChappeBoot {
             Set<URL> resourceRoots = new LinkedHashSet<>(applicationRoots);
             // Jars and directories whose classes @HandlesTypes may match (those with a class index are skipped).
             Set<URL> scanRoots = new LinkedHashSet<>(applicationRoots);
+            // Jars of the fragments the ordering excludes: no annotation, initializer, resource or handled class.
+            Set<URL> excluded = Set.of();
             if (discoverPluggability) {
                 List<Fragment> fragments = ApplicationSources.fragments(loader);
                 ordered = FragmentOrderer.order(descriptor.absoluteOrdering(), fragments);
+                excluded = ApplicationSources.excludedJars(fragments, ordered);
+                // First, so that an excluded jar's components never make it an application root.
+                // metadata-complete fragments' jars are dropped by DescriptorMerger itself.
+                annotated = annotated.excludingSources(excluded);
                 Set<URL> fragmentJars = new LinkedHashSet<>();
                 for (Fragment f : fragments) fragmentJars.add(f.jar());
                 Set<URL> appRoots = new LinkedHashSet<>(applicationRoots);
@@ -213,8 +219,6 @@ public final class FoyChappeBoot {
                 resourceRoots.addAll(appRoots);
                 for (Fragment f : ordered) resourceRoots.add(f.jar());
                 scanRoots.addAll(resourceRoots);
-                // metadata-complete fragments' jars are dropped by DescriptorMerger itself.
-                annotated = annotated.excludingSources(ApplicationSources.excludedJars(fragments, ordered));
                 try {
                     initializers = ApplicationSources.initializers(loader, ApplicationSources.ordering(
                             descriptor.absoluteOrdering(), ordered, fragmentJars, appRoots));
@@ -249,9 +253,9 @@ public final class FoyChappeBoot {
             Deployment deployment;
             try {
                 VidocqServletContext.ResourceProvider resources = resourceProvider != null ? resourceProvider
-                        : new ClassPathResourceProvider(loader, List.copyOf(resourceRoots));
+                        : new ClassPathResourceProvider(loader, List.copyOf(resourceRoots), excluded);
                 deployment = WebAppDeployer.deploy(model, DeployOptions
-                        .defaults(loader, registry, ApplicationSources.scanRoots(scanRoots))
+                        .defaults(loader, registry, ApplicationSources.scanRoots(scanRoots), excluded)
                         .withComponentFactory(factory).withResourceProvider(resources));
             } catch (RuntimeException e) {
                 throw new ServletException("Foy deployment failed: " + e.getMessage(), e);

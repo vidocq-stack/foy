@@ -53,7 +53,8 @@ import java.util.stream.Stream;
  * <p><b>Lookup order.</b> The order between jars is unspecified by the specification; Foy uses
  * <em>application roots first, then the ordered web fragments' jars</em> (the
  * {@code orderedJars} passed to the constructor, in that order), <em>then every other root</em> of
- * the class loader that holds the resource, in class-loader order. The first root that holds a
+ * the class loader that holds the resource, in class-loader order. The excluded jars passed to
+ * the constructor are skipped in every tier. The first root that holds a
  * path wins for {@link #toUrl} and {@link #openStream}; {@link #listPaths} merges all of them.</p>
  *
  * <p>Jars are read through an entry-name index built once per jar (lazily, thread-safe), so a
@@ -84,6 +85,7 @@ public final class ClassPathResourceProvider implements ResourceProvider {
     private final ClassLoader loader;
     private final List<Loc.Root> ordered = new ArrayList<>();
     private final Set<String> orderedKeys = new HashSet<>();
+    private final Set<String> excludedKeys = new HashSet<>();
     private final Map<Path, JarIndex> indexes = new ConcurrentHashMap<>();
 
     /**
@@ -91,10 +93,22 @@ public final class ClassPathResourceProvider implements ResourceProvider {
      * @param orderedJars jars or directories (code-source or {@code jar:} URLs), by priority
      */
     public ClassPathResourceProvider(ClassLoader loader, List<URL> orderedJars) {
+        this(loader, orderedJars, Set.of());
+    }
+
+    /**
+     * @param loader       class loader whose other {@code META-INF/resources/} roots come last
+     * @param orderedJars  jars or directories (code-source or {@code jar:} URLs), by priority
+     * @param excludedJars jars or directories never served, whatever the tier: the jars an
+     *                     absolute ordering excludes (Servlet 6.1 §8.2.2); they win over
+     *                     {@code orderedJars}
+     */
+    public ClassPathResourceProvider(ClassLoader loader, List<URL> orderedJars, java.util.Collection<URL> excludedJars) {
         this.loader = java.util.Objects.requireNonNull(loader, "loader");
+        for (URL u : excludedJars) excludedKeys.add(Fragment.sourceKey(u));
         for (URL u : orderedJars) {
             String key = Fragment.sourceKey(u);
-            if (!orderedKeys.add(key)) continue;
+            if (excludedKeys.contains(key) || !orderedKeys.add(key)) continue;
             Path p = pathOf(key);
             if (p != null) {
                 ordered.add(Files.isDirectory(p) ? new Loc.Dir(p.resolve(ROOT)) : new Loc.Jar(index(p)));
@@ -185,7 +199,8 @@ public final class ClassPathResourceProvider implements ResourceProvider {
             Enumeration<URL> urls = loader.getResources(name);
             while (urls.hasMoreElements()) {
                 URL url = urls.nextElement();
-                if (orderedKeys.contains(Fragment.sourceKey(rootOf(url, name)))) continue;
+                String key = Fragment.sourceKey(rootOf(url, name));
+                if (orderedKeys.contains(key) || excludedKeys.contains(key)) continue;
                 Loc loc = Loc.of(url, this::index);
                 if (loc != null && !(jarsOnly && loc instanceof DirLoc)) add(out, f.apply(loc));
             }
@@ -409,7 +424,14 @@ public final class ClassPathResourceProvider implements ResourceProvider {
                 f.close();
                 throw new IOException("not a file: " + entry);
             }
-            return new FilterInputStream(f.getInputStream(e)) {
+            InputStream in;
+            try {
+                in = f.getInputStream(e);
+            } catch (IOException | RuntimeException ex) {
+                try { f.close(); } catch (IOException suppressed) { ex.addSuppressed(suppressed); }
+                throw ex;
+            }
+            return new FilterInputStream(in) {
                 @Override public void close() throws IOException {
                     try { super.close(); } finally { f.close(); }
                 }

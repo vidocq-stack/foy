@@ -20,6 +20,7 @@
 package io.vidocq.foy.internal.gen;
 
 import io.vidocq.foy.internal.boot.HandlesTypesResolver;
+import io.vidocq.foy.internal.webxml.Fragment;
 import jakarta.servlet.ServletContainerInitializer;
 
 import java.io.BufferedReader;
@@ -62,6 +63,7 @@ public final class IndexedHandlesTypesResolver implements HandlesTypesResolver {
     private final ClassLoader loader;
     private final Supplier<List<ClassFileHandlesTypesScanner.Entry>> scanner;
     private final boolean useIndex;
+    private final Set<String> excludedRoots;
     private volatile List<IndexEntry> entries;
 
     /** Class index only. */
@@ -74,14 +76,25 @@ public final class IndexedHandlesTypesResolver implements HandlesTypesResolver {
      * {@code scanRoots} (jars and directories); a root that ships a class index is left to it.
      */
     public IndexedHandlesTypesResolver(WebComponentRegistry registry, ClassLoader loader, List<Path> scanRoots) {
+        this(registry, loader, scanRoots, Set.of());
+    }
+
+    /**
+     * As {@link #IndexedHandlesTypesResolver(WebComponentRegistry, ClassLoader, List)}, ignoring
+     * the class indexes of the {@code excludedRoots} (jars or directories, compared by
+     * {@link Fragment#sourceKey}): the roots an absolute ordering excludes (§8.2.2) contribute no
+     * class. They must also be absent from {@code scanRoots}.
+     */
+    public IndexedHandlesTypesResolver(WebComponentRegistry registry, ClassLoader loader, List<Path> scanRoots,
+                                       Set<URL> excludedRoots) {
         this(registry, loader, scanRoots.isEmpty() ? List::of
-                : () -> ClassFileHandlesTypesScanner.scan(scanRoots, loader));
+                : () -> ClassFileHandlesTypesScanner.scan(scanRoots, loader), true, excludedRoots);
     }
 
     /** Class index, plus entries from an arbitrary scan, run once at the first resolution. */
     public IndexedHandlesTypesResolver(WebComponentRegistry registry, ClassLoader loader,
                                        Supplier<List<ClassFileHandlesTypesScanner.Entry>> scanner) {
-        this(registry, loader, scanner, true);
+        this(registry, loader, scanner, true, Set.of());
     }
 
     /**
@@ -90,13 +103,16 @@ public final class IndexedHandlesTypesResolver implements HandlesTypesResolver {
      */
     public static IndexedHandlesTypesResolver scanOnly(WebComponentRegistry registry, ClassLoader loader,
                                                       Supplier<List<ClassFileHandlesTypesScanner.Entry>> scanner) {
-        return new IndexedHandlesTypesResolver(registry, loader, scanner, false);
+        return new IndexedHandlesTypesResolver(registry, loader, scanner, false, Set.of());
     }
 
     private IndexedHandlesTypesResolver(WebComponentRegistry registry, ClassLoader loader,
                                         Supplier<List<ClassFileHandlesTypesScanner.Entry>> scanner,
-                                        boolean useIndex) {
+                                        boolean useIndex, Set<URL> excludedRoots) {
         this.useIndex = useIndex;
+        Set<String> keys = new HashSet<>();
+        for (URL root : excludedRoots) keys.add(Fragment.sourceKey(root));
+        this.excludedRoots = Set.copyOf(keys);
         this.registry = Objects.requireNonNull(registry, "registry");
         this.loader = Objects.requireNonNull(loader, "loader");
         this.scanner = Objects.requireNonNull(scanner, "scanner");
@@ -155,6 +171,9 @@ public final class IndexedHandlesTypesResolver implements HandlesTypesResolver {
             var urls = loader.getResources(INDEX_RESOURCE);
             while (urls.hasMoreElements()) {
                 URL url = urls.nextElement();
+                if (!excludedRoots.isEmpty() && excludedRoots.contains(rootKey(url))) {
+                    continue;
+                }
                 try (BufferedReader reader = new BufferedReader(
                         new InputStreamReader(url.openStream(), StandardCharsets.UTF_8))) {
                     String line;
@@ -167,6 +186,17 @@ public final class IndexedHandlesTypesResolver implements HandlesTypesResolver {
             }
         } catch (IOException e) {
             LOG.log(Level.WARNING, "Cannot enumerate class indexes: {0}", e.toString());
+        }
+    }
+
+    /** {@link Fragment#sourceKey} of the jar or directory holding the class index {@code url}. */
+    private static String rootKey(URL url) {
+        String s = url.toString();
+        if (s.endsWith(INDEX_RESOURCE)) s = s.substring(0, s.length() - INDEX_RESOURCE.length());
+        try {
+            return Fragment.sourceKey(java.net.URI.create(s).toURL());
+        } catch (java.net.MalformedURLException | IllegalArgumentException e) {
+            return Fragment.sourceKey(url);
         }
     }
 
