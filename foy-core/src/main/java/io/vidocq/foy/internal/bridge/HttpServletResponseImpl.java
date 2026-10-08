@@ -195,10 +195,10 @@ public final class HttpServletResponseImpl implements HttpServletResponse {
 
     @Override public String getContentType() {
         if (contentType == null) return null;
-        if (contentType.toLowerCase(Locale.ROOT).contains("charset=") || characterEncoding == null) {
+        if (contentType.toLowerCase(Locale.ROOT).contains("charset=") || getCharacterEncoding() == null) {
             return contentType;
         }
-        return mediaType + ";charset=" + characterEncoding;
+        return mediaType + ";charset=" + getCharacterEncoding();
     }
     @Override public void setContentType(String type) {
         // Servlet 6.1 §5.4 : si la réponse est déjà committed, setContentType est silencieusement ignoré.
@@ -218,9 +218,13 @@ public final class HttpServletResponseImpl implements HttpServletResponse {
         }
         refreshContentTypeHeader();
     }
+    /** Context default response encoding, used only while the application has set none. */
+    private String defaultCharacterEncoding;
+    public void setDefaultCharacterEncoding(String encoding) { this.defaultCharacterEncoding = encoding; }
+
     @Override public String getCharacterEncoding() {
-        // Servlet 6.1 §5.4 : null si aucun encoding n'a été explicitement setté.
-        return characterEncoding;
+        // Servlet 6.1 §5.4 : null si aucun encoding n'a été explicitement setté ni configuré pour le contexte.
+        return characterEncoding != null ? characterEncoding : defaultCharacterEncoding;
     }
     @Override public void setCharacterEncoding(String charset) {
         if (committed || charsetLocked) return;
@@ -242,7 +246,7 @@ public final class HttpServletResponseImpl implements HttpServletResponse {
         // "ISO-8859-1", cf. Servlet 6.1 §5.4) afin que le header Content-Type final
         // reflète l'encodage réellement utilisé par getWriter().
         boolean isText = mediaType.toLowerCase(Locale.ROOT).startsWith("text/");
-        String enc = characterEncoding != null ? characterEncoding
+        String enc = getCharacterEncoding() != null ? getCharacterEncoding()
                 : (isText ? "ISO-8859-1" : null);
         String composed = enc != null ? mediaType + ";charset=" + enc : mediaType;
         List<String> list = new ArrayList<>();
@@ -270,7 +274,9 @@ public final class HttpServletResponseImpl implements HttpServletResponse {
             }
             // Résout le charset (ISO-8859-1 par défaut) et verrouille — le state
             // reflète désormais le charset réellement utilisé pour écrire le body.
-            if (characterEncoding == null) characterEncoding = "ISO-8859-1";
+            if (characterEncoding == null) {
+                characterEncoding = defaultCharacterEncoding != null ? defaultCharacterEncoding : "ISO-8859-1";
+            }
             charsetLocked = true;
             writer = new PrintWriter(new java.io.OutputStreamWriter(outputStream, charset()), false);
             refreshContentTypeHeader();
@@ -279,8 +285,9 @@ public final class HttpServletResponseImpl implements HttpServletResponse {
     }
 
     private Charset charset() {
-        if (characterEncoding == null) return StandardCharsets.ISO_8859_1;
-        try { return Charset.forName(characterEncoding); }
+        String enc = getCharacterEncoding();
+        if (enc == null) return StandardCharsets.ISO_8859_1;
+        try { return Charset.forName(enc); }
         catch (RuntimeException e) { return StandardCharsets.ISO_8859_1; }
     }
 

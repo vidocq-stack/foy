@@ -88,7 +88,7 @@ public final class WebAppDiscovery {
                     if (!Servlet.class.isAssignableFrom(cls)) continue;
                     servlets.add(new ServletDecl(d.name(), cls.asSubclass(Servlet.class),
                             reference(bm, c.bean(), Servlet.class), d.urlPatterns(), d.initParams(),
-                            d.loadOnStartup(), d.asyncSupported(), d.servletSecurity()));
+                            d.loadOnStartup(), d.asyncSupported(), d.servletSecurity(), d.multipartConfig(), true));
                 }
                 case FILTER -> {
                     if (!Filter.class.isAssignableFrom(cls)) continue;

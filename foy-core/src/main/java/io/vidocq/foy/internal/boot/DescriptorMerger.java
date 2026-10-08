@@ -28,6 +28,7 @@ import io.vidocq.foy.internal.webxml.Fragment;
 import io.vidocq.foy.internal.webxml.FragmentMerger;
 import io.vidocq.foy.internal.webxml.WebAppDescriptor;
 import jakarta.servlet.Filter;
+import jakarta.servlet.MultipartConfigElement;
 import jakarta.servlet.Servlet;
 import jakarta.servlet.ServletException;
 
@@ -151,6 +152,17 @@ public final class DescriptorMerger {
         target.sessionTimeoutMinutes(webXml.sessionTimeoutMinutes());
         target.localeEncodingMappings(webXml.localeEncodingMappings());
         target.errorPages(errorPages(webXml, factory));
+        target.welcomeFiles(webXml.welcomeFiles());
+        target.mimeMappings(webXml.mimeMappings());
+        target.requestCharacterEncoding(webXml.requestCharacterEncoding());
+        target.responseCharacterEncoding(webXml.responseCharacterEncoding());
+        target.defaultContextPath(webXml.defaultContextPath());
+        target.denyUncoveredHttpMethods(webXml.denyUncoveredHttpMethods());
+        target.cookieConfig(webXml.cookieConfig());
+        target.trackingModes(webXml.trackingModes());
+        target.securityConstraints(webXml.securityConstraints());
+        target.loginConfig(webXml.loginConfig());
+        target.securityRoles(webXml.securityRoles());
 
         mergeServlets(webXml, ann, factory, target);
         mergeFilters(webXml, ann, factory, target);
@@ -183,17 +195,27 @@ public final class DescriptorMerger {
                     : (a != null && a.asyncSupported());
             // §13.4.1: @ServletSecurity applies to the class, whatever declared the servlet
             // (unless metadata-complete turns annotation processing off, §8.1).
-            var security = webXml.metadataComplete() ? null
-                    : descriptor(factory, type, "servlet", def.name()).servletSecurity();
+            var classDescriptor = webXml.metadataComplete() ? null
+                    : descriptor(factory, type, "servlet", def.name());
+            var security = classDescriptor == null ? null : classDescriptor.servletSecurity();
+            // §8.2.3: a descriptor <multipart-config> overrides the class's @MultipartConfig.
+            var multipart = def.multipartConfig() != null ? multipartElement(def.multipartConfig())
+                    : classDescriptor == null ? null : classDescriptor.multipartConfig();
             target.servlet(new ServletDecl(def.name(), type, supplier(factory, type), patterns,
-                    params, load, async, security));
+                    params, load, async, security, multipart, def.enabled()));
         }
         for (ServletDecl a : ann.servlets()) {
             if (done.contains(a.name())) continue;
             List<String> xmlPatterns = webXml.patternsFor(a.name());
             target.servlet(xmlPatterns.isEmpty() ? a : new ServletDecl(a.name(), a.type(), a.factory(),
-                    xmlPatterns, a.initParams(), a.loadOnStartup(), a.asyncSupported(), a.servletSecurity()));
+                    xmlPatterns, a.initParams(), a.loadOnStartup(), a.asyncSupported(), a.servletSecurity(),
+                    a.multipartConfig(), a.enabled()));
         }
+    }
+
+    private static MultipartConfigElement multipartElement(WebAppDescriptor.MultipartConfigDef d) {
+        return new MultipartConfigElement(d.location() == null ? "" : d.location(), d.maxFileSize(),
+                d.maxRequestSize(), d.fileSizeThreshold());
     }
 
     private static void mergeFilters(WebAppDescriptor webXml, AnnotatedComponents ann,

@@ -53,8 +53,12 @@ public final class VidocqServletContext implements ServletContext {
     private final String serverInfo;
     private final Map<String, Object> attributes = new HashMap<>();
     private final Map<String, String> initParameters = new HashMap<>();
-    private String requestCharacterEncoding = "UTF-8";
-    private String responseCharacterEncoding = "UTF-8";
+    /** Configured default encodings; {@code null} until the descriptor or the application sets one. */
+    private String requestCharacterEncoding;
+    private String responseCharacterEncoding;
+    private Map<String, String> mimeMappings = Map.of();
+    private java.util.List<String> welcomeFiles = java.util.List.of();
+    private Set<SessionTrackingMode> descriptorTrackingModes;
     private int sessionTimeout = 30;
     private ListenerRegistry listenerRegistry = new ListenerRegistry();
     private DispatchResolver dispatchResolver;
@@ -281,11 +285,43 @@ public final class VidocqServletContext implements ServletContext {
     }
     @Override public int getEffectiveMajorVersion() { return effectiveMajor; }
     @Override public int getEffectiveMinorVersion() { return effectiveMinor; }
+    /** The descriptor's {@code mime-mapping} entries (lower-case extension, no dot), consulted first. */
+    public void setMimeMappings(Map<String, String> mappings) { this.mimeMappings = Map.copyOf(mappings); }
+
+    /** The descriptor's welcome files, in declaration order (used by the Phase 4 welcome-file dispatch). */
+    public void setWelcomeFiles(java.util.List<String> files) { this.welcomeFiles = java.util.List.copyOf(files); }
+    public java.util.List<String> getWelcomeFiles() { return welcomeFiles; }
+
+    /** Pre-populates the session cookie configuration from the descriptor (before initialisation). */
+    public void applyCookieConfig(io.vidocq.foy.internal.webxml.WebAppDescriptor.CookieConfigDef def) {
+        if (def == null) return;
+        if (def.name() != null) sessionCookieConfig.setName(def.name());
+        if (def.domain() != null) sessionCookieConfig.setDomain(def.domain());
+        if (def.path() != null) sessionCookieConfig.setPath(def.path());
+        if (def.maxAge() != null) sessionCookieConfig.setMaxAge(def.maxAge());
+        if (def.httpOnly() != null) sessionCookieConfig.setHttpOnly(def.httpOnly());
+        if (def.secure() != null) sessionCookieConfig.setSecure(def.secure());
+        def.attributes().forEach(sessionCookieConfig::setAttribute);
+    }
+
+    /** Tracking modes declared by the descriptor; they replace the container default. */
+    public void setDescriptorTrackingModes(Set<SessionTrackingMode> modes) {
+        this.descriptorTrackingModes = EnumSet.copyOf(modes);
+    }
+
+    /** The configured default request encoding, {@code null} when none (the client's charset rules). */
+    public String configuredRequestCharacterEncoding() { return requestCharacterEncoding; }
+
+    /** The configured default response encoding, {@code null} when none. */
+    public String configuredResponseCharacterEncoding() { return responseCharacterEncoding; }
+
     @Override public String getMimeType(String file) {
         if (file == null) return null;
         int dot = file.lastIndexOf('.');
         if (dot < 0) return null;
         String ext = file.substring(dot + 1).toLowerCase(java.util.Locale.ROOT);
+        String mapped = mimeMappings.get(ext);
+        if (mapped != null) return mapped;
         return switch (ext) {
             case "class" -> "application/x-java-class";
             case "html", "htm" -> "text/html";
@@ -623,11 +659,12 @@ public final class VidocqServletContext implements ServletContext {
         this.effectiveSessionTrackingModes = modes == null ? null : EnumSet.copyOf(modes);
     }
     @Override public Set<SessionTrackingMode> getDefaultSessionTrackingModes() {
-        return EnumSet.of(SessionTrackingMode.COOKIE);
+        return descriptorTrackingModes == null ? EnumSet.of(SessionTrackingMode.COOKIE)
+                : EnumSet.copyOf(descriptorTrackingModes);
     }
     @Override public Set<SessionTrackingMode> getEffectiveSessionTrackingModes() {
         return effectiveSessionTrackingModes == null
-                ? EnumSet.of(SessionTrackingMode.COOKIE)
+                ? getDefaultSessionTrackingModes()
                 : EnumSet.copyOf(effectiveSessionTrackingModes);
     }
     /** Flag "initialized" no longer prevents tracking modes from being read from a contextInitialized. */
@@ -647,12 +684,16 @@ public final class VidocqServletContext implements ServletContext {
     @Override public void declareRoles(String... roleNames) {}
     @Override public String getVirtualServerName() { return "vidocq"; }
 
-    @Override public String getRequestCharacterEncoding() { return requestCharacterEncoding; }
+    @Override public String getRequestCharacterEncoding() {
+        return requestCharacterEncoding != null ? requestCharacterEncoding : "UTF-8";
+    }
     @Override public void setRequestCharacterEncoding(String encoding) { this.requestCharacterEncoding = encoding; }
     @Override public void setRequestCharacterEncoding(java.nio.charset.Charset encoding) {
         this.requestCharacterEncoding = encoding == null ? null : encoding.name();
     }
-    @Override public String getResponseCharacterEncoding() { return responseCharacterEncoding; }
+    @Override public String getResponseCharacterEncoding() {
+        return responseCharacterEncoding != null ? responseCharacterEncoding : "UTF-8";
+    }
     @Override public void setResponseCharacterEncoding(String encoding) { this.responseCharacterEncoding = encoding; }
     @Override public void setResponseCharacterEncoding(java.nio.charset.Charset encoding) {
         this.responseCharacterEncoding = encoding == null ? null : encoding.name();

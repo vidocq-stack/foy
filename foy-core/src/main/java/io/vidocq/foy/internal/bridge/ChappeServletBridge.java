@@ -125,6 +125,7 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
 
         HttpServletRequestImpl req;
         HttpServletResponseImpl res = new HttpServletResponseImpl();
+        res.setDefaultCharacterEncoding(servletContext.configuredResponseCharacterEncoding());
 
         if (match.isEmpty()) {
             req = new HttpServletRequestImpl(request, servletContext, contextPath, path, null,

@@ -344,7 +344,9 @@ public final class HttpServletRequestImpl implements HttpServletRequest {
                 return v;
             }
         }
-        return null;
+        // No client charset: the context's default request encoding (descriptor or setter), if any.
+        return servletContext instanceof io.vidocq.foy.internal.container.VidocqServletContext v
+                ? v.configuredRequestCharacterEncoding() : null;
     }
     @Override public void setCharacterEncoding(String env) throws java.io.UnsupportedEncodingException {
         // Servlet 6.1 §3.11 : appel après getReader()/getInputStream() est un no-op.

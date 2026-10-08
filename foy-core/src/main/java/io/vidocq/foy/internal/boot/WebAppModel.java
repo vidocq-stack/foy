@@ -20,11 +20,16 @@
 package io.vidocq.foy.internal.boot;
 
 import io.vidocq.foy.internal.error.ErrorPageRegistry;
+import io.vidocq.foy.internal.webxml.SecurityDefs.LoginConfigDef;
+import io.vidocq.foy.internal.webxml.SecurityDefs.SecurityConstraintDef;
+import io.vidocq.foy.internal.webxml.WebAppDescriptor.CookieConfigDef;
 import jakarta.servlet.DispatcherType;
 import jakarta.servlet.Filter;
+import jakarta.servlet.MultipartConfigElement;
 import jakarta.servlet.Servlet;
 import jakarta.servlet.ServletContainerInitializer;
 import jakarta.servlet.ServletSecurityElement;
+import jakarta.servlet.SessionTrackingMode;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -55,6 +60,17 @@ import java.util.function.Supplier;
  * @param localeEncodingMappings locale to encoding mappings
  * @param effectiveMajorVersion  effective Servlet major version
  * @param effectiveMinorVersion  effective Servlet minor version
+ * @param welcomeFiles           welcome files, in declaration order (dispatch is Phase 4)
+ * @param mimeMappings           extension (lower case, no dot) to MIME type
+ * @param requestCharacterEncoding  default request encoding, {@code null} when not configured
+ * @param responseCharacterEncoding default response encoding, {@code null} when not configured
+ * @param defaultContextPath     {@code default-context-path}, {@code null} when absent
+ * @param denyUncoveredHttpMethods whether uncovered HTTP methods are denied (not enforced yet, Phase 6)
+ * @param cookieConfig           session cookie configuration, {@code null} when absent
+ * @param trackingModes          session tracking modes, empty for the container default
+ * @param securityConstraints    security constraints (stored only, enforced from Phase 6)
+ * @param loginConfig            login configuration (stored only, enforced from Phase 6), may be {@code null}
+ * @param securityRoles          declared security roles (stored only)
  */
 public record WebAppModel(String contextPath,
                           String displayName,
@@ -68,7 +84,18 @@ public record WebAppModel(String contextPath,
                           int sessionTimeoutMinutes,
                           Map<String, String> localeEncodingMappings,
                           int effectiveMajorVersion,
-                          int effectiveMinorVersion) {
+                          int effectiveMinorVersion,
+                          List<String> welcomeFiles,
+                          Map<String, String> mimeMappings,
+                          String requestCharacterEncoding,
+                          String responseCharacterEncoding,
+                          String defaultContextPath,
+                          boolean denyUncoveredHttpMethods,
+                          CookieConfigDef cookieConfig,
+                          Set<SessionTrackingMode> trackingModes,
+                          List<SecurityConstraintDef> securityConstraints,
+                          LoginConfigDef loginConfig,
+                          List<String> securityRoles) {
 
     public WebAppModel {
         Objects.requireNonNull(contextPath, "contextPath");
@@ -80,18 +107,29 @@ public record WebAppModel(String contextPath,
         listeners = List.copyOf(listeners);
         initializers = List.copyOf(initializers);
         localeEncodingMappings = copyOf(localeEncodingMappings);
+        welcomeFiles = List.copyOf(welcomeFiles);
+        mimeMappings = copyOf(mimeMappings);
+        trackingModes = trackingModes.isEmpty() ? Set.of()
+                : Collections.unmodifiableSet(EnumSet.copyOf(trackingModes));
+        securityConstraints = List.copyOf(securityConstraints);
+        securityRoles = List.copyOf(securityRoles);
     }
 
     /**
      * A servlet declaration. {@code loadOnStartup == Integer.MIN_VALUE} means absent;
-     * {@code servletSecurity} is the class's {@code @ServletSecurity} constraint, {@code null} for none.
+     * {@code servletSecurity} is the class's {@code @ServletSecurity} constraint, {@code null} for none;
+     * {@code multipartConfig} is the effective multipart configuration (descriptor first, else the
+     * class's {@code @MultipartConfig}), {@code null} for none; a servlet with {@code enabled == false}
+     * is declared but neither instantiated nor mapped.
      */
     public record ServletDecl(String name, Class<? extends Servlet> type,
                               Supplier<? extends Servlet> factory,
                               List<String> urlPatterns, Map<String, String> initParams,
                               int loadOnStartup,
                               boolean asyncSupported,
-                              ServletSecurityElement servletSecurity) {
+                              ServletSecurityElement servletSecurity,
+                              MultipartConfigElement multipartConfig,
+                              boolean enabled) {
         public ServletDecl {
             Objects.requireNonNull(name, "name");
             Objects.requireNonNull(type, "type");
@@ -100,11 +138,19 @@ public record WebAppModel(String contextPath,
             initParams = copyOf(initParams);
         }
 
+        /** An enabled declaration without multipart configuration. */
+        public ServletDecl(String name, Class<? extends Servlet> type, Supplier<? extends Servlet> factory,
+                           List<String> urlPatterns, Map<String, String> initParams, int loadOnStartup,
+                           boolean asyncSupported, ServletSecurityElement servletSecurity) {
+            this(name, type, factory, urlPatterns, initParams, loadOnStartup, asyncSupported, servletSecurity,
+                    null, true);
+        }
+
         /** A declaration without security constraints. */
         public ServletDecl(String name, Class<? extends Servlet> type, Supplier<? extends Servlet> factory,
                            List<String> urlPatterns, Map<String, String> initParams, int loadOnStartup,
                            boolean asyncSupported) {
-            this(name, type, factory, urlPatterns, initParams, loadOnStartup, asyncSupported, null);
+            this(name, type, factory, urlPatterns, initParams, loadOnStartup, asyncSupported, null, null, true);
         }
     }
 
@@ -172,6 +218,17 @@ public record WebAppModel(String contextPath,
         private Map<String, String> localeEncodingMappings = Map.of();
         private int effectiveMajorVersion = 6;
         private int effectiveMinorVersion = 1;
+        private List<String> welcomeFiles = List.of();
+        private Map<String, String> mimeMappings = Map.of();
+        private String requestCharacterEncoding;
+        private String responseCharacterEncoding;
+        private String defaultContextPath;
+        private boolean denyUncoveredHttpMethods;
+        private CookieConfigDef cookieConfig;
+        private Set<SessionTrackingMode> trackingModes = Set.of();
+        private List<SecurityConstraintDef> securityConstraints = List.of();
+        private LoginConfigDef loginConfig;
+        private List<String> securityRoles = List.of();
 
         private Builder(String contextPath) {
             this.contextPath = Objects.requireNonNull(contextPath, "contextPath");
@@ -233,6 +290,61 @@ public record WebAppModel(String contextPath,
             return this;
         }
 
+        public Builder welcomeFiles(List<String> welcomeFiles) {
+            this.welcomeFiles = Objects.requireNonNull(welcomeFiles, "welcomeFiles");
+            return this;
+        }
+
+        public Builder mimeMappings(Map<String, String> mimeMappings) {
+            this.mimeMappings = Objects.requireNonNull(mimeMappings, "mimeMappings");
+            return this;
+        }
+
+        public Builder requestCharacterEncoding(String requestCharacterEncoding) {
+            this.requestCharacterEncoding = requestCharacterEncoding;
+            return this;
+        }
+
+        public Builder responseCharacterEncoding(String responseCharacterEncoding) {
+            this.responseCharacterEncoding = responseCharacterEncoding;
+            return this;
+        }
+
+        public Builder defaultContextPath(String defaultContextPath) {
+            this.defaultContextPath = defaultContextPath;
+            return this;
+        }
+
+        public Builder denyUncoveredHttpMethods(boolean denyUncoveredHttpMethods) {
+            this.denyUncoveredHttpMethods = denyUncoveredHttpMethods;
+            return this;
+        }
+
+        public Builder cookieConfig(CookieConfigDef cookieConfig) {
+            this.cookieConfig = cookieConfig;
+            return this;
+        }
+
+        public Builder trackingModes(Set<SessionTrackingMode> trackingModes) {
+            this.trackingModes = Objects.requireNonNull(trackingModes, "trackingModes");
+            return this;
+        }
+
+        public Builder securityConstraints(List<SecurityConstraintDef> securityConstraints) {
+            this.securityConstraints = Objects.requireNonNull(securityConstraints, "securityConstraints");
+            return this;
+        }
+
+        public Builder loginConfig(LoginConfigDef loginConfig) {
+            this.loginConfig = loginConfig;
+            return this;
+        }
+
+        public Builder securityRoles(List<String> securityRoles) {
+            this.securityRoles = Objects.requireNonNull(securityRoles, "securityRoles");
+            return this;
+        }
+
         /**
          * Builds the model.
          *
@@ -260,7 +372,10 @@ public record WebAppModel(String contextPath,
             }
             return new WebAppModel(contextPath, displayName, contextParams, servlets, filters,
                     filterMappings, listeners, initializers, errorPages, sessionTimeoutMinutes,
-                    localeEncodingMappings, effectiveMajorVersion, effectiveMinorVersion);
+                    localeEncodingMappings, effectiveMajorVersion, effectiveMinorVersion, welcomeFiles,
+                    mimeMappings, requestCharacterEncoding, responseCharacterEncoding, defaultContextPath,
+                    denyUncoveredHttpMethods, cookieConfig, trackingModes, securityConstraints, loginConfig,
+                    securityRoles);
         }
     }
 }

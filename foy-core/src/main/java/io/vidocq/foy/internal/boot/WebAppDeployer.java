@@ -100,6 +100,10 @@ public final class WebAppDeployer {
             // ServletContext.getServletRegistrations() — visibility required by the TCK
             // (RegistrationTests.servletRegistrationsTest).
             registerStatic(ctx, servlets, filters);
+            for (ServletDecl d : model.servlets()) {
+                if (!d.enabled()) ctx.registerStaticServlet(d.name(), d.type(), List.of(), d.initParams(),
+                        d.asyncSupported());
+            }
             // <context-param> init params (web.xml) — must be set before markInitialized.
             model.contextParams().forEach(ctx::setInitParameter);
             tempDir = createTempDir(ctx);
@@ -160,6 +164,12 @@ public final class WebAppDeployer {
         VidocqServletContext ctx = new VidocqServletContext(model.contextPath());
         ctx.setErrorPages(model.errorPages());
         ctx.setLocaleEncodingMappings(model.localeEncodingMappings());
+        ctx.setMimeMappings(model.mimeMappings());
+        ctx.setWelcomeFiles(model.welcomeFiles());
+        if (model.requestCharacterEncoding() != null) ctx.setRequestCharacterEncoding(model.requestCharacterEncoding());
+        if (model.responseCharacterEncoding() != null) ctx.setResponseCharacterEncoding(model.responseCharacterEncoding());
+        ctx.applyCookieConfig(model.cookieConfig());
+        if (!model.trackingModes().isEmpty()) ctx.setDescriptorTrackingModes(model.trackingModes());
         ctx.setEffectiveVersion(model.effectiveMajorVersion(), model.effectiveMinorVersion());
         if (options.resourceProvider() != null) ctx.setResourceProvider(options.resourceProvider());
         String name = options.servletContextName() != null ? options.servletContextName() : model.displayName();
@@ -180,6 +190,8 @@ public final class WebAppDeployer {
      */
     private static void instantiateStatic(WebAppModel model, List<ServletUnit> servlets, List<FilterUnit> filters) {
         for (ServletDecl d : model.servlets()) {
+            // A disabled servlet is declared (registerDisabled) but never instantiated nor mapped.
+            if (!d.enabled()) continue;
             servlets.add(new ServletUnit(d.name(), d.type(), d.factory().get(), d.urlPatterns(), d.initParams(),
                     d.loadOnStartup(), d.asyncSupported(), d.servletSecurity()));
         }
