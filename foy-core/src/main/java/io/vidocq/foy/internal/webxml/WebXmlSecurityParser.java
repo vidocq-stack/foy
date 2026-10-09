@@ -74,11 +74,12 @@ final class WebXmlSecurityParser {
         return modes;
     }
 
-    static SecurityDefs.SecurityConstraintDef parseSecurityConstraint(Element e) {
+    static SecurityDefs.SecurityConstraintDef parseSecurityConstraint(Element e, boolean legacy) {
         var collections = new ArrayList<SecurityDefs.WebResourceCollectionDef>();
         for (Element c : childrenByTag(e, "web-resource-collection")) {
             var col = new SecurityDefs.WebResourceCollectionDef(
-                    firstText(c, "web-resource-name"), texts(c, "url-pattern"),
+                    firstText(c, "web-resource-name"), texts(c, "url-pattern").stream()
+                            .map(u -> WebXmlParser.lenientPattern(u, legacy)).toList(),
                     texts(c, "http-method"), texts(c, "http-method-omission"));
             if (!col.httpMethods().isEmpty() && !col.httpMethodOmissions().isEmpty()) {
                 LOG.log(System.Logger.Level.WARNING, "<web-resource-collection> '" + col.name()

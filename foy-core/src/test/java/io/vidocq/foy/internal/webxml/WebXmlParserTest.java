@@ -111,10 +111,10 @@ class WebXmlParserTest {
     }
 
     @Test
-    void rejectsDoctypeDeclaration() {
+    void acceptsDoctypeWithoutResolvingIt() throws IOException {
+        // Legacy 2.2 / 2.3 descriptors carry a DOCTYPE; see WebXmlParserLegacyTest for the XXE guards.
         String xml = "<!DOCTYPE web-app SYSTEM \"foo.dtd\"><web-app/>";
-        assertThrows(IOException.class,
-                () -> WebXmlParser.parse(new ByteArrayInputStream(xml.getBytes())));
+        assertTrue(WebXmlParser.parse(new ByteArrayInputStream(xml.getBytes())).isEmpty());
     }
 
     @Test

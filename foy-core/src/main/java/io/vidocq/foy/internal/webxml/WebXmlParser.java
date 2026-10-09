@@ -22,15 +22,18 @@ package io.vidocq.foy.internal.webxml;
 import jakarta.servlet.DispatcherType;
 import jakarta.servlet.SessionTrackingMode;
 import org.w3c.dom.Document;
+import org.w3c.dom.DocumentType;
 import org.w3c.dom.Element;
 import org.w3c.dom.Node;
 import org.w3c.dom.NodeList;
+import org.xml.sax.InputSource;
 
 import javax.xml.XMLConstants;
 import javax.xml.parsers.DocumentBuilder;
 import javax.xml.parsers.DocumentBuilderFactory;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.StringReader;
 import java.util.ArrayList;
 import java.util.EnumSet;
 import java.util.LinkedHashMap;
@@ -71,9 +74,18 @@ public final class WebXmlParser {
             var factory = DocumentBuilderFactory.newInstance();
             factory.setNamespaceAware(false);
             factory.setFeature(XMLConstants.FEATURE_SECURE_PROCESSING, true);
-            factory.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true);
+            // Legacy 2.2 / 2.3 descriptors carry a DOCTYPE. Accept it, but never resolve or expand
+            // anything: no external DTD, no external entities, no entity expansion.
+            factory.setFeature("http://apache.org/xml/features/disallow-doctype-decl", false);
+            factory.setFeature("http://apache.org/xml/features/nonvalidating/load-external-dtd", false);
+            factory.setFeature("http://xml.org/sax/features/external-general-entities", false);
+            factory.setFeature("http://xml.org/sax/features/external-parameter-entities", false);
+            factory.setAttribute(XMLConstants.ACCESS_EXTERNAL_DTD, "");
+            factory.setAttribute(XMLConstants.ACCESS_EXTERNAL_SCHEMA, "");
+            factory.setXIncludeAware(false);
             factory.setExpandEntityReferences(false);
             DocumentBuilder builder = factory.newDocumentBuilder();
+            builder.setEntityResolver((publicId, systemId) -> new InputSource(new StringReader("")));
             doc = builder.parse(in);
         } catch (Exception e) {
             throw new IOException("invalid " + what, e);
@@ -85,10 +97,49 @@ public final class WebXmlParser {
             throw new IOException("expected <" + expectedRoot + "> root, found <" + found + ">");
         }
         try {
-            return parse(root, expectedRoot.equals("web-fragment"));
+            return parse(root, expectedRoot.equals("web-fragment"), doctypeVersion(doc));
         } catch (RuntimeException e) {
             throw new IOException("invalid " + what + ": " + e.getMessage(), e);
         }
+    }
+
+    /** Version implied by a legacy DOCTYPE public id ("2.2", "2.3"), or {@code null}. */
+    private static String doctypeVersion(Document doc) {
+        DocumentType dt = doc.getDoctype();
+        String id = dt == null ? null : dt.getPublicId();
+        if (id == null) return null;
+        String marker = "DTD Web Application ";
+        int i = id.indexOf(marker);
+        if (i < 0) return null;
+        String rest = id.substring(i + marker.length());
+        int end = rest.indexOf("//");
+        String v = (end < 0 ? rest : rest.substring(0, end)).trim();
+        return v.matches("\\d+\\.\\d+") ? v : null;
+    }
+
+    /** {@code true} for a descriptor version below 2.4 (lenient url-patterns, Tomcat compatibility). */
+    private static boolean isPre24(String version) {
+        if (version == null || version.isBlank()) return false;
+        String[] parts = version.trim().split("\\.");
+        try {
+            int major = Integer.parseInt(parts[0]);
+            int minor = parts.length > 1 ? Integer.parseInt(parts[1]) : 0;
+            return major < 2 || (major == 2 && minor < 4);
+        } catch (NumberFormatException e) {
+            return false;
+        }
+    }
+
+    /**
+     * A pre-2.4 descriptor tolerated a url-pattern without leading slash: prepend it, except for
+     * extension patterns and the empty pattern. Newer descriptors keep the pattern untouched.
+     */
+    static String lenientPattern(String pattern, boolean legacy) {
+        if (!legacy || pattern == null || pattern.isEmpty() || pattern.startsWith("/")
+                || pattern.startsWith("*.")) {
+            return pattern;
+        }
+        return "/" + pattern;
     }
 
     static String localName(Element e) {
@@ -97,7 +148,10 @@ public final class WebXmlParser {
         return i < 0 ? n : n.substring(i + 1);
     }
 
-    private static WebAppDescriptor parse(Element root, boolean fragment) {
+    private static WebAppDescriptor parse(Element root, boolean fragment, String doctypeVersion) {
+        String declared = root.getAttribute("version");
+        String version = declared.isEmpty() ? doctypeVersion : declared;
+        boolean legacy = isPre24(version);
         Map<String, String> contextParams = new LinkedHashMap<>();
         var servlets = new ArrayList<WebAppDescriptor.ServletDef>();
         var servletMappings = new ArrayList<WebAppDescriptor.ServletMappingDef>();
@@ -146,11 +200,11 @@ public final class WebXmlParser {
                 case "servlet-mapping" -> {
                     String sname = firstText(e, "servlet-name");
                     for (Element url : childrenByTag(e, "url-pattern")) {
-                        servletMappings.add(new WebAppDescriptor.ServletMappingDef(sname, text(url)));
+                        servletMappings.add(new WebAppDescriptor.ServletMappingDef(sname, lenientPattern(text(url), legacy)));
                     }
                 }
                 case "filter" -> filters.add(parseFilter(e));
-                case "filter-mapping" -> filterMappings.addAll(parseFilterMapping(e));
+                case "filter-mapping" -> filterMappings.addAll(parseFilterMapping(e, legacy));
                 case "listener" -> {
                     String cls = firstText(e, "listener-class");
                     if (cls != null) listenerClasses.add(cls);
@@ -184,7 +238,7 @@ public final class WebXmlParser {
                 case "default-context-path" -> defaultContextPath = text(e);
                 case "deny-uncovered-http-methods" -> denyUncovered = true;
                 case "security-constraint" ->
-                        securityConstraints.add(WebXmlSecurityParser.parseSecurityConstraint(e));
+                        securityConstraints.add(WebXmlSecurityParser.parseSecurityConstraint(e, legacy));
                 case "login-config" -> loginConfig = WebXmlSecurityParser.parseLoginConfig(e);
                 case "security-role" -> {
                     String r = firstText(e, "role-name");
@@ -202,7 +256,7 @@ public final class WebXmlParser {
         }
         return new WebAppDescriptor(contextParams, servlets, servletMappings, filters,
                 filterMappings, listenerClasses, errorPages, sessionTimeoutMinutes,
-                localeEncodingMappings).withVersion(root.getAttribute("version"))
+                localeEncodingMappings).withVersion(version)
                 .withDisplayName(displayName)
                 .withKind(fragment ? WebAppDescriptor.Kind.WEB_FRAGMENT : WebAppDescriptor.Kind.WEB_APP)
                 .withFragmentName(fragmentName)
@@ -359,7 +413,7 @@ public final class WebXmlParser {
                 parseAsync(e));
     }
 
-    private static List<WebAppDescriptor.FilterMappingDef> parseFilterMapping(Element e) {
+    private static List<WebAppDescriptor.FilterMappingDef> parseFilterMapping(Element e, boolean legacy) {
         String filterName = firstText(e, "filter-name");
         Set<DispatcherType> types = EnumSet.noneOf(DispatcherType.class);
         for (Element d : childrenByTag(e, "dispatcher")) {
@@ -374,7 +428,7 @@ public final class WebXmlParser {
         if (types.isEmpty()) types = EnumSet.of(DispatcherType.REQUEST);
         var out = new ArrayList<WebAppDescriptor.FilterMappingDef>();
         for (Element url : childrenByTag(e, "url-pattern")) {
-            out.add(new WebAppDescriptor.FilterMappingDef(filterName, text(url), null, types));
+            out.add(new WebAppDescriptor.FilterMappingDef(filterName, lenientPattern(text(url), legacy), null, types));
         }
         for (Element sn : childrenByTag(e, "servlet-name")) {
             out.add(new WebAppDescriptor.FilterMappingDef(filterName, null, text(sn), types));
