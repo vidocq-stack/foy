@@ -226,6 +226,16 @@ class DispatcherSemanticsTest {
         assertEquals(List.of("committed=true"), events);
     }
 
+    @Test
+    void responseStaysOpenWhenTheForwardTargetDispatchesAsync() throws Exception {
+        start(map("/C", servlet((req, resp) -> req.getRequestDispatcher("/T").forward(req, resp)), "C"),
+                map("/T", servlet((req, resp) -> {
+                    resp.getWriter().write(req.getDispatcherType() + ";");
+                    if (req.getDispatcherType() == DispatcherType.FORWARD) req.startAsync(req, resp).dispatch();
+                }), "T"));
+        assertEquals("FORWARD;ASYNC;", get("/C"));
+    }
+
     // ---- Exceptions propagate unchanged ----
 
     @Test

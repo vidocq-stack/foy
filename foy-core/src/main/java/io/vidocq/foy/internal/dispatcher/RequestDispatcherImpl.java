@@ -20,6 +20,7 @@
 package io.vidocq.foy.internal.dispatcher;
 
 import io.vidocq.foy.internal.bridge.ForwardedRequest;
+import io.vidocq.foy.internal.bridge.HttpServletRequestImpl;
 import io.vidocq.foy.internal.bridge.HttpServletResponseImpl;
 import io.vidocq.foy.internal.bridge.IncludedRequest;
 import io.vidocq.foy.internal.bridge.IncludedResponse;
@@ -112,7 +113,7 @@ public final class RequestDispatcherImpl implements RequestDispatcher {
         // Section 9.4: the response is committed and closed once the forward returns, unless the
         // target started async processing or the forward happens inside an include (the including
         // servlet still owns the response).
-        if (!req.isAsyncStarted() && !insideInclude(response)) {
+        if (!asyncEntered(req) && !insideInclude(response)) {
             HttpServletResponseImpl impl = unwrapImpl(response);
             if (impl != null) impl.closeAfterForward();
             else if (!res.isCommitted()) res.flushBuffer();
@@ -131,6 +132,21 @@ public final class RequestDispatcherImpl implements RequestDispatcher {
         // wrapper: they last for the include only. Exceptions of the target propagate unchanged.
         invoker.invoke(target, new IncludedRequest(req, target), new IncludedResponse(res),
                 DispatcherType.INCLUDE);
+    }
+
+    /**
+     * True when the target put the request into async mode. {@code isAsyncStarted()} is not enough:
+     * it turns false as soon as {@code AsyncContext.dispatch()} is called, and the pending async
+     * dispatch must still be able to write the response.
+     */
+    private static boolean asyncEntered(HttpServletRequest req) {
+        ServletRequest r = req;
+        while (r != null) {
+            if (r instanceof HttpServletRequestImpl impl) return impl.asyncContextInternal() != null;
+            if (r instanceof jakarta.servlet.ServletRequestWrapper w) r = w.getRequest();
+            else break;
+        }
+        return req.isAsyncStarted();
     }
 
     private static boolean insideInclude(ServletResponse r) {
