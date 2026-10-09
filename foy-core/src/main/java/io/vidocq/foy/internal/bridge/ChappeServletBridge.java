@@ -24,6 +24,8 @@ import io.vidocq.chappe.api.Handler;
 import io.vidocq.chappe.api.Request;
 import io.vidocq.chappe.api.Response;
 import io.vidocq.chappe.api.StatusCode;
+import io.vidocq.foy.internal.container.DefaultServlet;
+import io.vidocq.foy.internal.container.ResourcePaths;
 import io.vidocq.foy.internal.dispatcher.DispatchResolver;
 import io.vidocq.foy.internal.dispatcher.DispatchTarget;
 import io.vidocq.foy.internal.dispatcher.FilterRegistry;
@@ -232,22 +234,44 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
 
     private static boolean isContainerDefault(Optional<ServletDispatcher.Mapping> match) {
         return match.isPresent()
-                && match.get().servlet() instanceof io.vidocq.foy.internal.container.DefaultServlet;
+                && match.get().servlet() instanceof DefaultServlet;
     }
 
     /**
      * The redirect location when the request names a directory without its trailing slash
      * (section 10.10), keeping the query string; {@code null} otherwise. The context root requested
-     * as {@code /ctx} is such a directory. The location is the raw request path plus a slash, so
-     * that its encoding is the client's own.
+     * as {@code /ctx} is such a directory.
+     *
+     * <p>The location is the context path plus the CANONICAL path re-encoded segment by segment
+     * (RFC 3986), so it always starts with a single {@code '/'}: {@code //dir} in a root context
+     * must not become the protocol-relative {@code //dir/}. A {@code ;jsessionid} path parameter of
+     * the request is not carried over (the redirect target is a fresh navigation; a session tracked
+     * by cookie is unaffected).</p>
+     *
+     * <p>Directory detection uses {@code ServletContext#getResourcePaths}, the only directory probe
+     * the resource-provider SPI offers; it is asked only for a path the default servlet would
+     * otherwise answer 404 or serve as a file, and answers {@code null} at once for a file.</p>
      */
     private String welcomeRedirect(String rawPath, String path, String query) {
         boolean contextRoot = !contextPath.isEmpty() && !"/".equals(contextPath) && rawPath.equals(contextPath);
         if (!contextRoot && (path.endsWith("/") || servletContext.getResourcePaths(path + "/") == null)) {
             return null;
         }
-        String location = rawPath + "/";
+        String base = contextPath.isEmpty() || "/".equals(contextPath) ? "" : contextPath;
+        String location = contextRoot ? base + "/" : base + encodePath(path) + "/";
         return query == null || query.isEmpty() ? location : location + "?" + query;
+    }
+
+    /** Percent-encodes (UTF-8) every character of a decoded path other than an RFC 3986 pchar or '/'. */
+    private static String encodePath(String decoded) {
+        var out = new StringBuilder(decoded.length() + 8);
+        for (byte b : decoded.getBytes(java.nio.charset.StandardCharsets.UTF_8)) {
+            int c = b & 0xff;
+            boolean plain = c < 0x80 && (Character.isLetterOrDigit(c) || "-._~!$&'()*+,;=:@/".indexOf(c) >= 0);
+            if (plain) out.append((char) c);
+            else out.append('%').append("0123456789ABCDEF".charAt(c >> 4)).append("0123456789ABCDEF".charAt(c & 15));
+        }
+        return out.toString();
     }
 
     /**
@@ -260,13 +284,15 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
      * set (Tomcat's internal forward behaves the same).
      */
     private String welcomeTarget(String dir) {
-        if (!"/".equals(dir) && servletContext.getResourcePaths(dir) == null) return null;
         for (String wf : servletContext.getWelcomeFiles()) {
             String name = wf.startsWith("/") ? wf.substring(1) : wf;
             if (name.isEmpty()) continue;
             String candidate = dir + name;
-            if (io.vidocq.foy.internal.container.ResourcePaths.isServable(candidate)
-                    && servletContext.getResourcePaths(candidate + "/") == null) {
+            // Both branches: no dot or empty segment, backslash, NUL or encoded separator, so a
+            // welcome file such as "../x.ts" can never leave the directory.
+            if (!ResourcePaths.isDispatchable(candidate)) continue;
+            // Static branch only: a client may not reach WEB-INF/ or META-INF/ (a welcome servlet may, section 10.10).
+            if (ResourcePaths.isServable(candidate) && servletContext.getResourcePaths(candidate + "/") == null) {
                 try (var in = servletContext.getResourceAsStream(candidate)) {
                     if (in != null) return candidate;
                 } catch (IOException ignored) {
@@ -274,9 +300,7 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
                 }
             }
             var m = dispatcher.find(candidate);
-            if (m.isPresent() && !(m.get().servlet() instanceof io.vidocq.foy.internal.container.DefaultServlet)) {
-                return candidate;
-            }
+            if (m.isPresent() && !(m.get().servlet() instanceof DefaultServlet)) return candidate;
         }
         return null;
     }
@@ -309,7 +333,7 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
      * to be generalised: BUG-20261009-03).
      */
     private static HttpServletRequest errorTargetRequest(HttpServletRequestImpl req, DispatchTarget target) {
-        if (!(target.servlet() instanceof io.vidocq.foy.internal.container.DefaultServlet)) return req;
+        if (!(target.servlet() instanceof DefaultServlet)) return req;
         return new jakarta.servlet.http.HttpServletRequestWrapper(req) {
             @Override public String getServletPath() { return target.servletPath(); }
             @Override public String getPathInfo() { return target.pathInfo(); }

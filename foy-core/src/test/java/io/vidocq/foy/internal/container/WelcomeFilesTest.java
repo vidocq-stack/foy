@@ -229,4 +229,72 @@ class WelcomeFilesTest {
         assertEquals(200, r.statusCode());
         assertNotNull(r.headers().firstValue("Allow").orElse(null));
     }
+
+    @Test
+    void doubleSlashDirectoryRedirectsToTheSameHost() throws Exception {
+        var b = WebAppModel.builder("/").welcomeFiles(List.of("index.html"));
+        deployment = WebAppDeployer.deploy(b.build(),
+                DeployOptions.defaults(getClass().getClassLoader()).withResourceProvider(new Provider(root)));
+        var r = TestServerLauncherAccess.start(deployment.handler());
+        server = r.server();
+        port = r.port();
+        var resp = get("//foo");
+        assertEquals(302, resp.statusCode());
+        assertEquals("http://127.0.0.1:" + port + "/foo/", location(resp));
+    }
+
+    @Test
+    void redirectReEncodesTheCanonicalPath() throws Exception {
+        Files.createDirectories(root.resolve("my dir"));
+        Files.createDirectories(root.resolve("caf\u00e9"));
+        Files.writeString(root.resolve("my dir/a.txt"), "a");
+        Files.writeString(root.resolve("café/a.txt"), "a");
+        deploy(List.of("index.html"));
+        assertTrue(location(get("/ctx/my%20dir")).endsWith("/ctx/my%20dir/"), location(get("/ctx/my%20dir")));
+        assertTrue(location(get("/ctx/caf%C3%A9")).endsWith("/ctx/caf%C3%A9/"));
+    }
+
+    @Test
+    void unsafeOrProtectedWelcomeFilesAreNotResolved() throws Exception {
+        Files.createDirectories(root.resolve("WEB-INF"));
+        Files.writeString(root.resolve("WEB-INF/x.html"), "SECRET");
+        Files.writeString(root.resolve("x.ts"), "ts");
+        deploy(List.of("../x.ts", "../WEB-INF/x.html", "a//b.ts"), who("ext", "*.ts"));
+        assertEquals(404, get("/ctx/foo/").statusCode());
+        tearDown();
+        deploy(List.of("WEB-INF/x.html"));
+        assertEquals(404, get("/ctx/").statusCode());
+    }
+
+    @Test
+    void aWelcomeServletMayLiveUnderWebInfMappings() throws Exception {
+        deploy(List.of("index.ts"), who("ext", "*.ts"));
+        assertTrue(get("/ctx/").body().startsWith("WHO SP=/index.ts"));
+    }
+
+    /** Counts its REQUEST runs. */
+    public static class Count implements jakarta.servlet.Filter {
+        static final java.util.concurrent.atomic.AtomicInteger FILTER = new java.util.concurrent.atomic.AtomicInteger();
+        @Override public void doFilter(jakarta.servlet.ServletRequest q, jakarta.servlet.ServletResponse s,
+                                       jakarta.servlet.FilterChain c) throws IOException, jakarta.servlet.ServletException {
+            FILTER.incrementAndGet();
+            c.doFilter(q, s);
+        }
+    }
+
+    @Test
+    void filterRunsOnceOnAWelcomeHit() throws Exception {
+        Count.FILTER.set(0);
+        var b = WebAppModel.builder("/ctx").welcomeFiles(List.of("index.html"))
+                .filter(new WebAppModel.FilterDecl("cnt", Count.class, Count::new, Map.of(), true))
+                .filterMapping(new WebAppModel.FilterMappingDecl("cnt", "/foo/index.html", null,
+                        Set.of(jakarta.servlet.DispatcherType.REQUEST)));
+        deployment = WebAppDeployer.deploy(b.build(),
+                DeployOptions.defaults(getClass().getClassLoader()).withResourceProvider(new Provider(root)));
+        var r = TestServerLauncherAccess.start(deployment.handler());
+        server = r.server();
+        port = r.port();
+        assertEquals("INDEX from foo/index.html", get("/ctx/foo/").body());
+        assertEquals(1, Count.FILTER.get());
+    }
 }
