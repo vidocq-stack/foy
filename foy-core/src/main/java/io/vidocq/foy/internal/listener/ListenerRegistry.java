@@ -109,12 +109,24 @@ public final class ListenerRegistry {
         }
     }
 
+    /**
+     * Notifies the context listeners in reverse declaration order (Servlet 6.1 chapter 11). A failing
+     * listener is logged and does not keep the others from being notified: each one releases its
+     * own resources at undeploy. A {@link VirtualMachineError} is rethrown at once.
+     */
     public void fireContextDestroyed(ServletContext ctx) {
         if (contextListeners.isEmpty()) return;
         var evt = new ServletContextEvent(ctx);
-        // Ordre inverse (spec Servlet 6.1 §4.5)
         for (int i = contextListeners.size() - 1; i >= 0; i--) {
-            contextListeners.get(i).contextDestroyed(evt);
+            ServletContextListener l = contextListeners.get(i);
+            try {
+                l.contextDestroyed(evt);
+            } catch (VirtualMachineError e) {
+                throw e;
+            } catch (RuntimeException | Error e) {
+                System.getLogger(ListenerRegistry.class.getName()).log(System.Logger.Level.WARNING,
+                        "contextDestroyed failed for listener " + l.getClass().getName(), e);
+            }
         }
     }
 

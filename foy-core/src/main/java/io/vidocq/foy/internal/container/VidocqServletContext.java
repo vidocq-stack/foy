@@ -433,7 +433,26 @@ public final class VidocqServletContext implements ServletContext {
     @Override public void log(String message, Throwable throwable) {
         System.getLogger("servlet.log").log(System.Logger.Level.ERROR, message, throwable);
     }
-    @Override public String getRealPath(String path) { return null; }
+    /**
+     * The file-system path of {@code path} when the resource provider serves it from a directory
+     * ({@code file:} URL) and it exists; {@code null} otherwise (no provider, a resource inside an
+     * archive, a missing resource). A path without a leading {@code '/'} is taken as relative to
+     * the context root.
+     */
+    @Override public String getRealPath(String path) {
+        if (path == null || resourceProvider == null) return null;
+        String absolute = path.startsWith("/") ? path : "/" + path;
+        // Never resolve a path that climbs out of the application root.
+        for (String segment : absolute.split("[/\\\\]")) if ("..".equals(segment)) return null;
+        java.net.URL url = resourceProvider.toUrl(absolute);
+        if (url == null || !"file".equalsIgnoreCase(url.getProtocol())) return null;
+        try {
+            java.nio.file.Path file = java.nio.file.Path.of(url.toURI());
+            return java.nio.file.Files.exists(file) ? file.toAbsolutePath().toString() : null;
+        } catch (java.net.URISyntaxException | IllegalArgumentException | java.nio.file.FileSystemNotFoundException e) {
+            return null;
+        }
+    }
     @Override public String getServerInfo() { return serverInfo; }
     @Override public String getInitParameter(String name) {
         if (name == null) throw new NullPointerException("name is null");
@@ -718,7 +737,10 @@ public final class VidocqServletContext implements ServletContext {
     @Override public JspConfigDescriptor getJspConfigDescriptor() { return null; }
     @Override public ClassLoader getClassLoader() { return Thread.currentThread().getContextClassLoader(); }
     @Override public void declareRoles(String... roleNames) {}
-    @Override public String getVirtualServerName() { return "vidocq"; }
+    private volatile String virtualServerName = "vidocq";
+    @Override public String getVirtualServerName() { return virtualServerName; }
+    /** Deploy-time setting ({@code FoyChappeBoot.Builder.virtualServerName}); {@code null} keeps {@code "vidocq"}. */
+    public void setVirtualServerName(String name) { if (name != null) this.virtualServerName = name; }
 
     /** {@code null} when nothing is configured (Servlet 6.1). */
     @Override public String getRequestCharacterEncoding() { return requestCharacterEncoding; }

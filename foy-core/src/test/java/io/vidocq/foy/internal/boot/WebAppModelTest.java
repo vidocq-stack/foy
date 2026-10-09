@@ -91,4 +91,18 @@ class WebAppModelTest {
         assertEquals(1, m.effectiveMinorVersion());
         assertNotNull(m.errorPages());
     }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"", "/", "/ctx", "/a/b", "/my-app_1.0", "/caf\u00e9"})
+    void validContextPathsAreAccepted(String path) {
+        assertEquals(path, WebAppModel.builder(path).build().contextPath());
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"ctx", "/ctx/", "//", "/a\\b", "/a\u0000b", "/a\tb",
+            "/a\u007fb", "/a%2Fb", "/a;b", "/a?b", "/a#b", "/.", "/..", "/a/../b", "/a/./b", "/a//b"})
+    void invalidContextPathsAreRejectedAtBuild(String path) {
+        var ex = assertThrows(IllegalArgumentException.class, () -> WebAppModel.builder(path).build());
+        assertTrue(ex.getMessage().contains("context path"), ex.getMessage());
+    }
 }

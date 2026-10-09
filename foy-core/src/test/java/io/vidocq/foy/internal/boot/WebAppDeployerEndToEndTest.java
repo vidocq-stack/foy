@@ -392,26 +392,40 @@ class WebAppDeployerEndToEndTest {
     }
 
     @Test
-    void failingComponentSupplierLeaksNothing() throws Exception {
-        var before = vidocqTempDirs();
+    void failingComponentSupplierLeaksNothing(@org.junit.jupiter.api.io.TempDir java.nio.file.Path tempRoot)
+            throws Exception {
         var model = WebAppModel.builder("/failing-supplier")
                 .servlet(decl("ok", 1, "/ok"))
                 .listener(new ListenerDecl(ServletContextListener.class, () -> {
                     throw new IllegalStateException("cannot instantiate");
                 }))
                 .build();
-        assertThrows(IllegalStateException.class,
-                () -> WebAppDeployer.deploy(model, DeployOptions.defaults(getClass().getClassLoader())));
+        assertThrows(IllegalStateException.class, () -> WebAppDeployer.deploy(model,
+                DeployOptions.defaults(getClass().getClassLoader()).withTempDirRoot(tempRoot)));
         assertEquals(List.of(), EVENTS, "nothing initialised, nothing destroyed");
         assertNull(io.vidocq.foy.internal.container.CrossContextRegistry.lookup("/failing-supplier"));
-        assertEquals(before, vidocqTempDirs(), "no temp dir leaked");
+        try (var entries = java.nio.file.Files.list(tempRoot)) {
+            assertEquals(List.of(), entries.toList(), "no temp dir leaked");
+        }
     }
 
-    private static Set<java.nio.file.Path> vidocqTempDirs() throws IOException {
-        var tmp = java.nio.file.Path.of(System.getProperty("java.io.tmpdir"));
-        try (var s = java.nio.file.Files.list(tmp)) {
-            return new HashSet<>(s.filter(p -> p.getFileName().toString().startsWith("vidocq-servlet-")).toList());
-        }
+    @Test
+    void tempDirIsCreatedUnderTheConfiguredRoot(@org.junit.jupiter.api.io.TempDir java.nio.file.Path tempRoot) {
+        deploy(WebAppModel.builder("/").build(),
+                DeployOptions.defaults(getClass().getClassLoader()).withTempDirRoot(tempRoot));
+        var dir = (java.io.File) deployment.servletContext().getAttribute(ServletContext.TEMPDIR);
+        assertEquals(tempRoot, dir.toPath().getParent());
+    }
+
+    @Test
+    void virtualServerNameDefaultsToVidocqAndIsConfigurable() {
+        deploy(WebAppModel.builder("/").build());
+        assertEquals("vidocq", deployment.servletContext().getVirtualServerName());
+        server.stop();
+        deployment.close();
+        deploy(WebAppModel.builder("/").build(),
+                DeployOptions.defaults(getClass().getClassLoader()).withVirtualServerName("example.org"));
+        assertEquals("example.org", deployment.servletContext().getVirtualServerName());
     }
 
     @Test

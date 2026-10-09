@@ -106,7 +106,7 @@ public final class WebAppDeployer {
             }
             // <context-param> init params (web.xml) — must be set before markInitialized.
             model.contextParams().forEach(ctx::setInitParameter);
-            tempDir = createTempDir(ctx);
+            tempDir = createTempDir(ctx, options.tempDirRoot());
             var listeners = new ArrayList<EventListener>();
             for (var l : model.listeners()) listeners.add(l.factory().get());
             ListenerRegistry registry = new ListenerRegistry();
@@ -159,9 +159,10 @@ public final class WebAppDeployer {
     }
 
     /** Servlet 6.1 §4.8.1: the "jakarta.servlet.context.tempdir" attribute is required. */
-    private static Path createTempDir(VidocqServletContext ctx) {
+    private static Path createTempDir(VidocqServletContext ctx, Path root) {
         try {
-            Path tmp = Files.createTempDirectory("vidocq-servlet-");
+            Path tmp = root == null ? Files.createTempDirectory("vidocq-servlet-")
+                    : Files.createTempDirectory(root, "vidocq-servlet-");
             ctx.setAttribute(ServletContext.TEMPDIR, tmp.toFile());
             return tmp;
         } catch (IOException ignored) {
@@ -182,6 +183,7 @@ public final class WebAppDeployer {
         if (!model.trackingModes().isEmpty()) ctx.setDescriptorTrackingModes(model.trackingModes());
         ctx.setEffectiveVersion(model.effectiveMajorVersion(), model.effectiveMinorVersion());
         if (options.resourceProvider() != null) ctx.setResourceProvider(options.resourceProvider());
+        ctx.setVirtualServerName(options.virtualServerName());
         String name = options.servletContextName() != null ? options.servletContextName() : model.displayName();
         if (name != null) ctx.setServletContextName(name);
         // -1 = not configured (container default, 30 minutes); zero or less otherwise = never expire.

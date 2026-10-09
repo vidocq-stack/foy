@@ -37,6 +37,9 @@ import java.util.Set;
  * @param reservedUrlPatterns  URL patterns a dynamic {@code addMapping} must not take
  * @param componentFactory     loads and instantiates dynamically registered components
  * @param handlesTypes         computes the class set passed to each initializer
+ * @param virtualServerName    {@code ServletContext.getVirtualServerName()}; {@code null} gives {@code "vidocq"}
+ * @param tempDirRoot          directory under which the context temp dir is created; {@code null} gives
+ *                             {@code java.io.tmpdir}
  */
 public record DeployOptions(SecurityProvider securityProvider,
                             VidocqServletContext.ResourceProvider resourceProvider,
@@ -45,7 +48,9 @@ public record DeployOptions(SecurityProvider securityProvider,
                             Set<String> reservedFilterNames,
                             Set<String> reservedUrlPatterns,
                             ComponentFactory componentFactory,
-                            HandlesTypesResolver handlesTypes) {
+                            HandlesTypesResolver handlesTypes,
+                            String virtualServerName,
+                            java.nio.file.Path tempDirRoot) {
 
     public DeployOptions {
         reservedServletNames = Set.copyOf(reservedServletNames);
@@ -53,6 +58,19 @@ public record DeployOptions(SecurityProvider securityProvider,
         reservedUrlPatterns = Set.copyOf(reservedUrlPatterns);
         Objects.requireNonNull(componentFactory, "componentFactory");
         Objects.requireNonNull(handlesTypes, "handlesTypes");
+    }
+
+    /** Without virtual server name and temp-dir root (their defaults apply). */
+    public DeployOptions(SecurityProvider securityProvider,
+                         VidocqServletContext.ResourceProvider resourceProvider,
+                         String servletContextName,
+                         Set<String> reservedServletNames,
+                         Set<String> reservedFilterNames,
+                         Set<String> reservedUrlPatterns,
+                         ComponentFactory componentFactory,
+                         HandlesTypesResolver handlesTypes) {
+        this(securityProvider, resourceProvider, servletContextName, reservedServletNames, reservedFilterNames,
+                reservedUrlPatterns, componentFactory, handlesTypes, null, null);
     }
 
     /** Registry-backed component factory (generated, Class-File, then reflective tiers) and class-index {@code @HandlesTypes} resolution on {@code loader}, nothing reserved. */
@@ -98,31 +116,47 @@ public record DeployOptions(SecurityProvider securityProvider,
 
     public DeployOptions withComponentFactory(ComponentFactory f) {
         return new DeployOptions(securityProvider, resourceProvider, servletContextName,
-                reservedServletNames, reservedFilterNames, reservedUrlPatterns, f, handlesTypes);
+                reservedServletNames, reservedFilterNames, reservedUrlPatterns, f, handlesTypes,
+                virtualServerName, tempDirRoot);
     }
 
     public DeployOptions withHandlesTypes(HandlesTypesResolver r) {
         return new DeployOptions(securityProvider, resourceProvider, servletContextName,
-                reservedServletNames, reservedFilterNames, reservedUrlPatterns, componentFactory, r);
+                reservedServletNames, reservedFilterNames, reservedUrlPatterns, componentFactory, r,
+                virtualServerName, tempDirRoot);
     }
 
     public DeployOptions withSecurityProvider(SecurityProvider p) {
         return new DeployOptions(p, resourceProvider, servletContextName,
-                reservedServletNames, reservedFilterNames, reservedUrlPatterns, componentFactory, handlesTypes);
+                reservedServletNames, reservedFilterNames, reservedUrlPatterns, componentFactory, handlesTypes,
+                virtualServerName, tempDirRoot);
     }
 
     public DeployOptions withResourceProvider(VidocqServletContext.ResourceProvider p) {
         return new DeployOptions(securityProvider, p, servletContextName,
-                reservedServletNames, reservedFilterNames, reservedUrlPatterns, componentFactory, handlesTypes);
+                reservedServletNames, reservedFilterNames, reservedUrlPatterns, componentFactory, handlesTypes,
+                virtualServerName, tempDirRoot);
     }
 
     public DeployOptions withServletContextName(String n) {
         return new DeployOptions(securityProvider, resourceProvider, n,
-                reservedServletNames, reservedFilterNames, reservedUrlPatterns, componentFactory, handlesTypes);
+                reservedServletNames, reservedFilterNames, reservedUrlPatterns, componentFactory, handlesTypes,
+                virtualServerName, tempDirRoot);
     }
 
     public DeployOptions withReserved(Set<String> servletNames, Set<String> filterNames, Set<String> urlPatterns) {
         return new DeployOptions(securityProvider, resourceProvider, servletContextName,
-                servletNames, filterNames, urlPatterns, componentFactory, handlesTypes);
+                servletNames, filterNames, urlPatterns, componentFactory, handlesTypes,
+                virtualServerName, tempDirRoot);
+    }
+
+    public DeployOptions withVirtualServerName(String name) {
+        return new DeployOptions(securityProvider, resourceProvider, servletContextName, reservedServletNames,
+                reservedFilterNames, reservedUrlPatterns, componentFactory, handlesTypes, name, tempDirRoot);
+    }
+
+    public DeployOptions withTempDirRoot(java.nio.file.Path root) {
+        return new DeployOptions(securityProvider, resourceProvider, servletContextName, reservedServletNames,
+                reservedFilterNames, reservedUrlPatterns, componentFactory, handlesTypes, virtualServerName, root);
     }
 }

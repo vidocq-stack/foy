@@ -91,6 +91,30 @@ class ListenerRegistryTest {
     }
 
     @Test
+    void contextDestroyedReachesEveryListenerEvenWhenOneThrows() {
+        List<String> trace = new ArrayList<>();
+        ServletContextListener a = new ServletContextListener() {
+            @Override public void contextDestroyed(ServletContextEvent e) { trace.add("a"); }
+        };
+        ServletContextListener b = new ServletContextListener() {
+            @Override public void contextDestroyed(ServletContextEvent e) {
+                trace.add("b");
+                throw new IllegalStateException("b fails");
+            }
+        };
+        ServletContextListener c = new ServletContextListener() {
+            @Override public void contextDestroyed(ServletContextEvent e) {
+                trace.add("c");
+                throw new Error("c fails");
+            }
+        };
+        var reg = new ListenerRegistry();
+        reg.registerAll(List.of(a, b, c));
+        assertDoesNotThrow(() -> reg.fireContextDestroyed(new VidocqServletContext("/")));
+        assertEquals(List.of("c", "b", "a"), trace, "reverse order, every listener called");
+    }
+
+    @Test
     void registerAllRegistersEachListener() {
         var a = new ServletContextListener() {};
         var b = new ServletContextListener() {};

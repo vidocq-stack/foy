@@ -98,7 +98,7 @@ public record WebAppModel(String contextPath,
                           List<String> securityRoles) {
 
     public WebAppModel {
-        Objects.requireNonNull(contextPath, "contextPath");
+        validateContextPath(contextPath);
         Objects.requireNonNull(errorPages, "errorPages");
         contextParams = copyOf(contextParams);
         servlets = List.copyOf(servlets);
@@ -197,6 +197,55 @@ public record WebAppModel(String contextPath,
 
     private static Map<String, String> copyOf(Map<String, String> source) {
         return Collections.unmodifiableMap(new LinkedHashMap<>(source));
+    }
+
+    /**
+     * Checks a configured context path: {@code ""} or {@code "/"} (the root context), or
+     * {@code '/'} followed by non-empty segments, without a trailing {@code '/'}. A segment is
+     * never {@code "."} or {@code ".."}, and the path holds no backslash, no control character and
+     * none of {@code % ; ? #}: the container matches request URIs against the context path as a
+     * literal prefix, so a character that a client would send encoded, or that ends or splits a
+     * path, would make the application unreachable or ambiguous.
+     *
+     * @throws IllegalArgumentException with the reason, for an invalid path
+     * @throws NullPointerException     for {@code null}
+     */
+    public static void validateContextPath(String contextPath) {
+        Objects.requireNonNull(contextPath, "contextPath");
+        if (contextPath.isEmpty() || "/".equals(contextPath)) return;
+        String reason = null;
+        if (contextPath.charAt(0) != '/') reason = "must be empty or start with '/'";
+        else if (contextPath.endsWith("/")) reason = "must not end with '/'";
+        else {
+            for (int i = 0; i < contextPath.length() && reason == null; i++) {
+                char c = contextPath.charAt(i);
+                if (c < 0x20 || c == 0x7f) reason = "must not contain a control character";
+                else if (c == '\\') reason = "must not contain a backslash";
+                else if ("%;?#".indexOf(c) >= 0) reason = "must not contain '" + c + "'";
+            }
+            if (reason == null) {
+                for (String segment : contextPath.substring(1).split("/", -1)) {
+                    if (segment.isEmpty()) reason = "must not contain an empty segment";
+                    else if (".".equals(segment) || "..".equals(segment)) {
+                        reason = "must not contain a '" + segment + "' segment";
+                    }
+                    if (reason != null) break;
+                }
+            }
+        }
+        if (reason != null) {
+            throw new IllegalArgumentException("invalid context path \"" + printable(contextPath) + "\": " + reason);
+        }
+    }
+
+    /** The path with control characters escaped as Java Unicode escapes, for an error message. */
+    private static String printable(String s) {
+        var out = new StringBuilder(s.length());
+        for (char c : s.toCharArray()) {
+            if (c < 0x20 || c == 0x7f) out.append(String.format("\\u%04x", (int) c));
+            else out.append(c);
+        }
+        return out.toString();
     }
 
     public static Builder builder(String contextPath) {

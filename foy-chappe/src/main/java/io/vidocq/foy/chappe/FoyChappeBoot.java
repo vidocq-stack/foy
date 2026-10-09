@@ -116,6 +116,7 @@ public final class FoyChappeBoot {
         private boolean discoverPluggability = true;
         private final List<URL> applicationRoots = new ArrayList<>();
         private VidocqServletContext.ResourceProvider resourceProvider;
+        private String virtualServerName = "vidocq";
 
         public Builder beanManager(BeanManager bm) { this.beanManager = bm; return this; }
 
@@ -124,6 +125,15 @@ public final class FoyChappeBoot {
          * {@code <default-context-path>} applies, else {@code "/"}.
          */
         public Builder contextPath(String path) { this.contextPath = path == null ? "/" : path; return this; }
+
+        /**
+         * {@code ServletContext.getVirtualServerName()} of the application (the host Foy serves it
+         * on, as a container would name it); {@code "vidocq"} by default.
+         */
+        public Builder virtualServerName(String name) {
+            this.virtualServerName = Objects.requireNonNull(name, "name");
+            return this;
+        }
 
         /**
          * Session timeout used only when neither web.xml nor any merged web fragment declares a
@@ -244,6 +254,12 @@ public final class FoyChappeBoot {
 
             String path = contextPath != null ? contextPath
                     : effective.defaultContextPath() != null ? effective.defaultContextPath() : "/";
+            try {
+                // The builder's and the descriptors' <default-context-path> alike.
+                WebAppModel.validateContextPath(path);
+            } catch (IllegalArgumentException e) {
+                throw new ServletException("Foy deployment failed: " + e.getMessage(), e);
+            }
             WebAppModel.Builder modelBuilder = WebAppModel.builder(path);
             DescriptorMerger.mergeMerged(effective, ordered, annotated, factory, modelBuilder);
             for (Initializer i : initializers) {
@@ -264,7 +280,8 @@ public final class FoyChappeBoot {
                         : new ClassPathResourceProvider(loader, List.copyOf(resourceRoots), excluded);
                 deployment = WebAppDeployer.deploy(model, DeployOptions
                         .defaults(loader, registry, ApplicationSources.scanRoots(scanRoots), excluded)
-                        .withComponentFactory(factory).withResourceProvider(resources));
+                        .withComponentFactory(factory).withResourceProvider(resources)
+                        .withVirtualServerName(virtualServerName));
             } catch (RuntimeException e) {
                 throw new ServletException("Foy deployment failed: " + e.getMessage(), e);
             }

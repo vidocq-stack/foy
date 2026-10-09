@@ -93,6 +93,37 @@ class FoyChappeBootTest {
         assertEquals(1, DESTROYS.get());
     }
 
+    private static FoyChappeBoot.Builder plainApp(String defaultContextPath) {
+        String xml = """
+            <web-app xmlns="https://jakarta.ee/xml/ns/jakartaee" version="6.1">%s
+              <servlet><servlet-name>p</servlet-name><servlet-class>%s</servlet-class></servlet>
+              <servlet-mapping><servlet-name>p</servlet-name><url-pattern>/p</url-pattern></servlet-mapping>
+            </web-app>""".formatted(defaultContextPath == null ? ""
+                : "<default-context-path>" + defaultContextPath + "</default-context-path>", Plain.class.getName());
+        return FoyChappeBoot.builder().classLoader(FoyChappeBootTest.class.getClassLoader())
+                .discoverPluggability(false).webXml(new ByteArrayInputStream(xml.getBytes()));
+    }
+
+    @Test
+    void virtualServerNameIsConfigurableAndDefaultsToVidocq() throws Exception {
+        try (var mounted = plainApp(null).contextPath("/").build().orElseThrow()) {
+            assertEquals("vidocq", mounted.servletContext().getVirtualServerName());
+        }
+        try (var mounted = plainApp(null).contextPath("/").virtualServerName("example.org").build().orElseThrow()) {
+            assertEquals("example.org", mounted.servletContext().getVirtualServerName());
+        }
+    }
+
+    @Test
+    void invalidContextPathIsADeploymentFailure() {
+        for (String bad : new String[] {"app", "/app/", "/a\\b", "/a;b", "/a%20b", "/../x"}) {
+            var ex = assertThrows(ServletException.class, () -> plainApp(null).contextPath(bad).build(), bad);
+            assertTrue(ex.getMessage().contains("context path"), ex.getMessage());
+        }
+        var ex = assertThrows(ServletException.class, () -> plainApp("/dcp/").build());
+        assertTrue(ex.getMessage().contains("context path"), ex.getMessage());
+    }
+
     @Test
     void emptyApplicationYieldsEmpty() throws Exception {
         assertTrue(FoyChappeBoot.builder().classLoader(new ClassLoader(null) {}).build().isEmpty());

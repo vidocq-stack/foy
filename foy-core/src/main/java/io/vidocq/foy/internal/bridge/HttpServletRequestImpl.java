@@ -179,7 +179,18 @@ public final class HttpServletRequestImpl implements HttpServletRequest {
         String q = chappe.query();
         return q == null || q.isEmpty() ? null : q;
     }
-    @Override public String getRequestId() { return ""; }
+    /** Source of {@link #getRequestId()}: unique within the JVM, never reused. */
+    private static final java.util.concurrent.atomic.AtomicLong REQUEST_IDS =
+            new java.util.concurrent.atomic.AtomicLong();
+    /** A decimal counter value, unique for the lifetime of the JVM, assigned when the request is built. */
+    private final String requestId = Long.toString(REQUEST_IDS.incrementAndGet());
+
+    @Override public String getRequestId() { return requestId; }
+
+    /**
+     * {@code ""}: HTTP/1.x has no request identifier, and Chappe does not expose the HTTP/2
+     * stream id to the request API.
+     */
     @Override public String getProtocolRequestId() { return ""; }
 
     // ---- Headers ----
@@ -774,7 +785,37 @@ public final class HttpServletRequestImpl implements HttpServletRequest {
         if (asyncContext == null) throw new IllegalStateException("no async context");
         return asyncContext;
     }
+    /**
+     * The connection as Chappe describes it. Chappe exposes no connection object, so the
+     * connection id is the pair of socket addresses: the same for every request of one connection
+     * and distinct between open connections; a later connection may reuse a closed one's ephemeral
+     * port, hence its id. The protocol is the ALPN identifier ({@code http/1.0}, {@code http/1.1},
+     * {@code h2} over TLS, {@code h2c} in clear text); no HTTP/1.x or HTTP/2 connection id is
+     * exposed ({@code getProtocolConnectionId()} is {@code ""}).
+     */
     @Override public ServletConnection getServletConnection() {
-        throw new UnsupportedOperationException("ServletConnection not implemented");
+        var remote = chappe.remoteAddress();
+        var local = chappe.localAddress();
+        String id = endpoint(remote) + "-" + endpoint(local);
+        String protocol = switch (chappe.version()) {
+            case HTTP_1_0 -> "http/1.0";
+            case HTTP_2 -> chappe.isSecure() ? "h2" : "h2c";
+            default -> "http/1.1";
+        };
+        return new Connection(id, protocol, chappe.isSecure());
+    }
+
+    private static String endpoint(java.net.InetSocketAddress a) {
+        if (a == null) return "?";
+        String host = a.getAddress() != null ? a.getAddress().getHostAddress() : a.getHostString();
+        return host + ":" + a.getPort();
+    }
+
+    /** Immutable {@link ServletConnection} snapshot. */
+    private record Connection(String id, String protocol, boolean secure) implements ServletConnection {
+        @Override public String getConnectionId() { return id; }
+        @Override public String getProtocol() { return protocol; }
+        @Override public String getProtocolConnectionId() { return ""; }
+        @Override public boolean isSecure() { return secure; }
     }
 }
