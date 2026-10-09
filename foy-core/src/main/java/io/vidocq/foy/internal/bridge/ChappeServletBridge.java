@@ -204,7 +204,8 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
     /**
      * The request an error dispatch hands its target. The container default servlet finds the
      * resource from the servlet path, so a static error page (for example {@code /error.html})
-     * sees the location's paths; other targets keep the original request (unchanged behaviour).
+     * sees the location's paths; other targets keep the original request (unchanged behaviour,
+     * to be generalised: BUG-20261009-03).
      */
     private static HttpServletRequest errorTargetRequest(HttpServletRequestImpl req, DispatchTarget target) {
         if (!(target.servlet() instanceof io.vidocq.foy.internal.container.DefaultServlet)) return req;

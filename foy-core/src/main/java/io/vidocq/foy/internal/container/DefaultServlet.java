@@ -36,9 +36,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.io.OutputStream;
-import java.net.JarURLConnection;
 import java.net.URL;
-import java.net.URLConnection;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -50,9 +48,11 @@ import java.nio.file.Path;
  * maps nothing to {@code /}, and it is not an application registration.
  *
  * <p><b>Path.</b> {@code servletPath + pathInfo}, or the {@code jakarta.servlet.include.*} paths
- * on an include. Paths {@link ResourcePaths#isServable} refuses ({@code WEB-INF/},
- * {@code META-INF/}, dot segments, encoded separators) are 404 whatever the resource provider.
- * A directory is 404 (no listing).</p>
+ * on an include. Whatever the resource provider, a path with a dot or empty segment, a backslash,
+ * a NUL or an encoded separator is 404 ({@link ResourcePaths#isDispatchable}); a client request
+ * additionally cannot reach {@code WEB-INF/} or {@code META-INF/} ({@link ResourcePaths#isServable}),
+ * which forward, include, async and error dispatches may serve (section 10.5). A directory is 404
+ * (no listing).</p>
  *
  * <p><b>Methods.</b> On a request (or async) dispatch: {@code GET} and {@code HEAD} (same headers,
  * no body), {@code OPTIONS} (an {@code Allow} header), anything else 405. A forward, include or
@@ -71,11 +71,13 @@ import java.nio.file.Path;
  * entity-tag {@code If-Range} needs a strong comparison (RFC 9110 section 13.1.5), which the weak
  * {@code ETag} never satisfies, so it yields the whole body.</p>
  *
- * <p><b>Body.</b> The resource is copied through a small buffer, never loaded whole by this class;
- * the Foy response itself still buffers the full body until the bridge sends it (streaming to the
- * connection is Phase 5). When a filter or an including servlet already uses the writer, the
- * resource is decoded as UTF-8 and written through it. A Content-Length is declared only on a
- * response that holds no content yet.</p>
+ * <p><b>Body.</b> When the provider gives the resource's metadata or a {@code file:} URL, the
+ * resource is copied through a small buffer; otherwise its length is only known once read, so it
+ * is read whole first and the declared length is that of the bytes read. The Foy response itself
+ * still buffers the full body until the bridge sends it (streaming to the connection is Phase 5).
+ * When a filter or an including servlet already uses the writer, the resource is decoded with the
+ * response's character encoding and written through it. A Content-Length is declared only when
+ * this servlet writes the body alone, as bytes.</p>
  */
 public final class DefaultServlet extends GenericServlet {
 
@@ -110,7 +112,7 @@ public final class DefaultServlet extends GenericServlet {
             }
         }
         String path = resourcePath(req, type);
-        Resource r = locate(path);
+        Resource r = locate(path, type);
         if (r == null) {
             // Tomcat behaviour: an include of a missing resource fails the including servlet.
             if (type == DispatcherType.INCLUDE) throw new FileNotFoundException(path);
@@ -260,20 +262,32 @@ public final class DefaultServlet extends GenericServlet {
         return path.isEmpty() ? "/" : path;
     }
 
-    /** The resource behind {@code path}, or {@code null} when not servable, missing or a directory. */
-    private Resource locate(String path) throws IOException {
-        if (!ResourcePaths.isServable(path) || path.endsWith("/")) return null;
+    /**
+     * The resource behind {@code path}, or {@code null} when refused, missing or a directory. A
+     * client request may not reach {@code WEB-INF/} or {@code META-INF/}; a dispatch may
+     * (section 10.5). Metadata comes from the provider ({@link VidocqServletContext.ResourceProvider#metadata})
+     * or the file system, never from a URL connection: a {@code jar:} connection opened only for
+     * its headers leaks a jar handle per request.
+     */
+    private Resource locate(String path, DispatcherType type) throws IOException {
+        boolean allowed = type == DispatcherType.REQUEST
+                ? ResourcePaths.isServable(path) : ResourcePaths.isDispatchable(path);
+        if (!allowed || path.endsWith("/")) return null;
         var ctx = getServletContext();
-        URL url;
-        try {
-            url = ctx.getResource(path);
-        } catch (java.net.MalformedURLException e) {
-            return null;
-        }
         long length = -1;
         long lastModified = -1;
-        if (url != null) {
-            if ("file".equalsIgnoreCase(url.getProtocol())) {
+        URL url = null;
+        var meta = ctx instanceof VidocqServletContext v ? v.resourceMetadata(path) : null;
+        if (meta != null) {
+            length = meta.length();
+            lastModified = meta.lastModified() > 0 ? meta.lastModified() : -1;
+        } else {
+            try {
+                url = ctx.getResource(path);
+            } catch (java.net.MalformedURLException e) {
+                return null;
+            }
+            if (url != null && "file".equalsIgnoreCase(url.getProtocol())) {
                 Path file;
                 try {
                     file = Path.of(url.toURI());
@@ -283,19 +297,11 @@ public final class DefaultServlet extends GenericServlet {
                 if (!Files.isRegularFile(file)) return null;
                 length = Files.size(file);
                 lastModified = Files.getLastModifiedTime(file).toMillis();
-            } else {
-                if (url.toString().endsWith("/")) return null;
-                URLConnection c = url.openConnection();
-                if (c instanceof JarURLConnection jar) {
-                    var entry = jar.getJarEntry();
-                    if (entry == null || entry.isDirectory()) return null;
-                }
-                length = c.getContentLengthLong();
-                long lm = c.getLastModified();
-                lastModified = lm > 0 ? lm : -1;
+            } else if (url != null && url.toString().endsWith("/")) {
+                return null; // a directory of some other scheme
             }
         }
-        // The provider's own stream (it releases jars on close), else the URL's.
+        // The provider's own stream (it releases jars on close), else the URL's; the caller closes it.
         InputStream in = ctx.getResourceAsStream(path);
         if (in == null && url != null) {
             try {
@@ -306,7 +312,7 @@ public final class DefaultServlet extends GenericServlet {
         }
         if (in == null) return null;
         if (length < 0) {
-            // A provider without URL metadata: the length is only known once read.
+            // Neither provider metadata nor a file: the length is that of the bytes actually read.
             byte[] bytes;
             try (InputStream all = in) {
                 bytes = all.readAllBytes();
@@ -321,6 +327,15 @@ public final class DefaultServlet extends GenericServlet {
         ServletResponse r = res;
         while (r instanceof ServletResponseWrapper w) r = w.getResponse();
         return r instanceof HttpServletResponseImpl impl && !res.isCommitted() && !impl.bodyStarted();
+    }
+
+    private static java.nio.charset.Charset responseCharset(ServletResponse res) {
+        String enc = res.getCharacterEncoding();
+        try {
+            return enc == null ? StandardCharsets.ISO_8859_1 : java.nio.charset.Charset.forName(enc);
+        } catch (RuntimeException unsupported) {
+            return StandardCharsets.ISO_8859_1;
+        }
     }
 
     /** Copies {@code count} bytes ({@code -1}: all) through the stream, or the writer when it is in use. */
@@ -344,7 +359,8 @@ public final class DefaultServlet extends GenericServlet {
                     return n;
                 }
             };
-            new InputStreamReader(bounded, StandardCharsets.UTF_8).transferTo(res.getWriter());
+            // The writer encodes with the response's charset: decode the resource with the same one.
+            new InputStreamReader(bounded, responseCharset(res)).transferTo(res.getWriter());
             return;
         }
         if (count < 0) {

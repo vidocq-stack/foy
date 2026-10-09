@@ -26,15 +26,22 @@ import java.util.Locale;
  *
  * <p>{@link #isSafe} is the structural check every resource lookup applies: an absolute path
  * without a {@code .} or {@code ..} segment, an empty segment ({@code //}, a trailing slash
- * excepted), a backslash or a NUL character. {@link #isServable} is what the container default
- * servlet may serve over HTTP: a safe path outside the {@code WEB-INF/} and {@code META-INF/}
- * trees (first segment compared case-insensitively, since a case-insensitive file system would
- * otherwise serve {@code /web-inf/web.xml}).</p>
+ * excepted), a backslash or a NUL character.</p>
  *
- * <p>The default servlet receives a path that is already percent-decoded: an encoded dot,
- * slash, backslash or NUL ({@code %2e}, {@code %2f}, {@code %5c}, {@code %00}) still present at
- * that point is a double encoding and is refused, so that a provider which decodes once more
- * can never be steered outside the resource root.</p>
+ * <p>The container default servlet applies two levels. {@link #isDispatchable}, for every dispatch
+ * type: a safe path free of encoded dots and separators ({@code %2e}, {@code %2f}, {@code %5c},
+ * {@code %00}). {@link #isServable}, for a client request: a dispatchable path outside the
+ * {@code WEB-INF/} and {@code META-INF/} trees, which section 10.5 keeps from clients but lets the
+ * application expose through a {@code RequestDispatcher} (forward, include, error page). The first
+ * segment is compared case-insensitively and without trailing dots or spaces, so neither a
+ * case-insensitive file system ({@code /web-inf/web.xml}) nor Windows name aliasing
+ * ({@code /WEB-INF./web.xml}, {@code /WEB-INF /web.xml}) reaches the protected trees.</p>
+ *
+ * <p><b>Decoding.</b> Foy currently hands servlets the raw, still percent-encoded request path
+ * (BUG-20261009-02): the default servlet looks resources up under that raw form. Refusing the
+ * encoded dots and separators keeps a provider that would decode the path from being steered
+ * outside the resource root, and stays correct once the path is decoded upstream (the encoded
+ * forms then only appear through double encoding).</p>
  */
 public final class ResourcePaths {
 
@@ -53,15 +60,23 @@ public final class ResourcePaths {
         return true;
     }
 
+    /** Whether the default servlet may serve {@code path} on a forward, include, async or error dispatch. */
+    public static boolean isDispatchable(String path) {
+        return isSafe(path) && !hasEncodedSeparator(path);
+    }
+
     /**
-     * Whether the default servlet may serve {@code path}: a safe path, free of encoded
-     * separators or dots, outside the {@code WEB-INF/} and {@code META-INF/} trees.
+     * Whether the default servlet may serve {@code path} to a client request: a dispatchable path
+     * outside the {@code WEB-INF/} and {@code META-INF/} trees.
      */
     public static boolean isServable(String path) {
-        if (!isSafe(path) || hasEncodedSeparator(path)) return false;
+        if (!isDispatchable(path)) return false;
         int slash = path.indexOf('/', 1);
-        String first = (slash < 0 ? path.substring(1) : path.substring(1, slash)).toUpperCase(Locale.ROOT);
-        return !first.equals("WEB-INF") && !first.equals("META-INF");
+        String first = slash < 0 ? path.substring(1) : path.substring(1, slash);
+        int end = first.length();
+        while (end > 0 && (first.charAt(end - 1) == '.' || first.charAt(end - 1) == ' ')) end--;
+        String name = first.substring(0, end).toUpperCase(Locale.ROOT);
+        return !name.equals("WEB-INF") && !name.equals("META-INF");
     }
 
     private static boolean hasEncodedSeparator(String path) {

@@ -359,6 +359,15 @@ public final class VidocqServletContext implements ServletContext {
         /** Returns a URL (for example {@code file:}) exposing {@code path}
          *  with original path case and structure, or {@code null}. */
         default java.net.URL toUrl(String path) { return null; }
+        /**
+         * Size and last-modification time of the file at {@code path}, read from the provider's
+         * own index or file system so that no URL connection is opened for metadata;
+         * {@code null} when {@code path} is not a file or the provider does not know.
+         */
+        default Metadata metadata(String path) { return null; }
+
+        /** A file's length in bytes and modification time in epoch milliseconds ({@code -1}: unknown). */
+        record Metadata(long length, long lastModified) {}
     }
 
     private ResourceProvider resourceProvider;
@@ -377,6 +386,11 @@ public final class VidocqServletContext implements ServletContext {
         }
         if (resourceProvider == null) return null;
         return resourceProvider.toUrl(path);
+    }
+    /** {@link ResourceProvider#metadata} of the configured provider, {@code null} when unknown. */
+    public ResourceProvider.Metadata resourceMetadata(String path) {
+        if (path == null || !path.startsWith("/") || resourceProvider == null) return null;
+        return resourceProvider.metadata(path);
     }
     @Override public java.io.InputStream getResourceAsStream(String path) {
         if (path == null || !path.startsWith("/")) return null;

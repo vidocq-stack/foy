@@ -104,6 +104,12 @@ class DefaultServletTest {
         }
     }
 
+    public static class Arith extends HttpServlet {
+        @Override protected void doGet(HttpServletRequest req, HttpServletResponse resp) {
+            throw new ArithmeticException("arith");
+        }
+    }
+
     public static class App extends HttpServlet {
         @Override protected void doGet(HttpServletRequest req, HttpServletResponse resp) throws IOException {
             resp.getWriter().write("APP " + req.getServletPath());
@@ -136,6 +142,12 @@ class DefaultServletTest {
         }
     }
 
+    /** Like {@link DirProvider}, but without URLs: the default servlet only has the stream. */
+    record StreamOnlyProvider(Path root) implements VidocqServletContext.ResourceProvider {
+        @Override public Set<String> listPaths(String path) { return null; }
+        @Override public InputStream openStream(String path) { return new DirProvider(root).openStream(path); }
+    }
+
     private static final Instant MTIME = Instant.parse("2026-01-02T03:04:05Z");
     private static final DateTimeFormatter IMF_FIXDATE =
             DateTimeFormatter.ofPattern("EEE, dd MMM yyyy HH:mm:ss 'GMT'", java.util.Locale.US);
@@ -153,6 +165,10 @@ class DefaultServletTest {
         Files.writeString(root.resolve("HTMLErrorPage.html"), "<html>error page</html>");
         Files.createDirectories(root.resolve("WEB-INF"));
         Files.writeString(root.resolve("WEB-INF/web.xml"), "<web-app/>");
+        Files.createDirectories(root.resolve("WEB-INF/views"));
+        Files.writeString(root.resolve("WEB-INF/views/x.html"), "<html>view</html>");
+        Files.writeString(root.resolve("WEB-INF/views/error.html"), "<html>private error page</html>");
+        Files.write(root.resolve("latin1.txt"), new byte[] {'c', 'a', 'f', (byte) 0xE9});
         Files.createDirectories(root.resolve("META-INF"));
         Files.writeString(root.resolve("META-INF/MANIFEST.MF"), "Manifest-Version: 1.0");
         Files.createDirectories(root.resolve("dir"));
@@ -172,12 +188,14 @@ class DefaultServletTest {
     }
 
     private void deployStandard() {
-        var errors = new ErrorPageRegistry().register(IllegalStateException.class, "/HTMLErrorPage.html");
+        var errors = new ErrorPageRegistry().register(IllegalStateException.class, "/HTMLErrorPage.html")
+                .register(ArithmeticException.class, "/WEB-INF/views/error.html");
         var b = WebAppModel.builder("/ctx")
                 .servlet(servlet("fwd", Forwarder.class, Forwarder::new, "/fwd"))
                 .servlet(servlet("inc", Includer.class, Includer::new, "/inc"))
                 .servlet(servlet("probe", Probe.class, Probe::new, "/probe"))
                 .servlet(servlet("boom", Boom.class, Boom::new, "/boom"))
+                .servlet(servlet("arith", Arith.class, Arith::new, "/arith"))
                 .filter(new FilterDecl("req", Marker.class, () -> new Marker("REQ"), Map.of(), true))
                 .filter(new FilterDecl("fwdf", Marker.class, () -> new Marker("FWD"), Map.of(), true))
                 .filter(new FilterDecl("incf", Marker.class, () -> new Marker("INC"), Map.of(), true))
@@ -189,8 +207,12 @@ class DefaultServletTest {
     }
 
     private void deploy(WebAppModel model) {
+        deploy(model, new DirProvider(root));
+    }
+
+    private void deploy(WebAppModel model, VidocqServletContext.ResourceProvider provider) {
         deployment = WebAppDeployer.deploy(model,
-                DeployOptions.defaults(getClass().getClassLoader()).withResourceProvider(new DirProvider(root)));
+                DeployOptions.defaults(getClass().getClassLoader()).withResourceProvider(provider));
         var r = TestServerLauncherAccess.start(deployment.handler());
         server = r.server();
         port = r.port();
@@ -255,10 +277,94 @@ class DefaultServletTest {
     void protectedTreesAre404() throws Exception {
         deployStandard();
         for (String p : new String[] {"/WEB-INF/web.xml", "/web-inf/web.xml", "/META-INF/MANIFEST.MF",
-                "/meta-inf/MANIFEST.MF", "/WEB-INF/", "/fwd?to=/WEB-INF/web.xml"}) {
+                "/meta-inf/MANIFEST.MF", "/WEB-INF/", "/WEB-INF/views/x.html"}) {
             var r = get("/ctx" + p);
             assertEquals(404, r.statusCode(), p);
             assertFalse(r.body().contains("web-app") || r.body().contains("Manifest"), p);
+        }
+    }
+
+    @Test
+    void protectedTreesAreServedThroughTheDispatcher() throws Exception {
+        deployStandard();
+        var fwd = get("/ctx/fwd?to=/WEB-INF/views/x.html");
+        assertEquals(200, fwd.statusCode());
+        assertEquals("<html>view</html>", fwd.body());
+        assertEquals("before|<html>view</html>|after", get("/ctx/inc?to=/WEB-INF/views/x.html").body());
+        var error = get("/ctx/arith");
+        assertEquals(500, error.statusCode());
+        assertEquals("<html>private error page</html>", error.body());
+        assertEquals(404, get("/ctx/fwd?to=/WEB-INF/../WEB-INF/web.xml").statusCode(),
+                "segment safety still applies to a dispatch");
+    }
+
+    @Test
+    void writerSideIncludeDecodesWithTheResponseEncoding() throws Exception {
+        deployStandard();
+        var r = HttpClient.newHttpClient().send(HttpRequest.newBuilder(
+                        URI.create("http://127.0.0.1:" + port + "/ctx/inc?to=/latin1.txt")).build(),
+                HttpResponse.BodyHandlers.ofByteArray());
+        byte[] expected = "before|caf\u00e9|after".getBytes(java.nio.charset.StandardCharsets.ISO_8859_1);
+        assertArrayEquals(expected, r.body(), new String(r.body(), java.nio.charset.StandardCharsets.ISO_8859_1));
+    }
+
+    @Test
+    void providerWithoutUrlsStillDeclaresTheReadLength() throws Exception {
+        deploy(WebAppModel.builder("/ctx").build(), new StreamOnlyProvider(root));
+        var r = get("/ctx/digits.txt");
+        assertEquals(200, r.statusCode());
+        assertEquals("0123456789", r.body());
+        assertEquals("10", r.headers().firstValue("Content-Length").orElse(null));
+        assertFalse(r.headers().firstValue("ETag").isPresent(), "no validators without a modification time");
+    }
+
+    @Test
+    void jarBackedResourcesCarryEntryMetadataWithoutLeakingHandles() throws Exception {
+        Path jar = root.resolve("res.jar");
+        Instant even = MTIME.minusSeconds(1); // jar entries keep DOS time, two-second precision
+        long entryTime = even.toEpochMilli();
+        try (var out = new java.util.jar.JarOutputStream(Files.newOutputStream(jar))) {
+            for (String[] e : new String[][] {{"META-INF/resources/static.txt", "jar body"},
+                    {"META-INF/resources/WEB-INF/views/j.html", "<html>jar view</html>"}}) {
+                var entry = new java.util.jar.JarEntry(e[0]);
+                entry.setTime(entryTime);
+                out.putNextEntry(entry);
+                out.write(e[1].getBytes());
+                out.closeEntry();
+            }
+        }
+        var provider = new ClassPathResourceProvider(new java.net.URLClassLoader(new URL[0], null),
+                List.of(jar.toUri().toURL()));
+        deploy(WebAppModel.builder("/ctx").servlet(servlet("fwd", Forwarder.class, Forwarder::new, "/fwd")).build(),
+                provider);
+        var first = get("/ctx/static.txt");
+        assertEquals(200, first.statusCode());
+        assertEquals("jar body", first.body());
+        assertEquals("8", first.headers().firstValue("Content-Length").orElse(null));
+        assertEquals(IMF_FIXDATE.format(even.atOffset(ZoneOffset.UTC)),
+                first.headers().firstValue("Last-Modified").orElse(null));
+        assertEquals("<html>jar view</html>", get("/ctx/fwd?to=/WEB-INF/views/j.html").body());
+        assertEquals(404, get("/ctx/WEB-INF/views/j.html").statusCode());
+
+        Path fds = Path.of("/dev/fd");
+        org.junit.jupiter.api.Assumptions.assumeTrue(Files.isDirectory(fds), "no /dev/fd to count descriptors");
+        var client = HttpClient.newHttpClient();
+        var request = HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port + "/ctx/static.txt")).build();
+        client.send(request, HttpResponse.BodyHandlers.ofString());
+        long before = openDescriptors(fds);
+        var head = HttpRequest.newBuilder(request.uri()).method("HEAD", HttpRequest.BodyPublishers.noBody()).build();
+        for (int i = 0; i < 200; i++) {
+            assertEquals(200, client.send(request, HttpResponse.BodyHandlers.ofString()).statusCode());
+            assertEquals(200, client.send(head, HttpResponse.BodyHandlers.ofString()).statusCode());
+        }
+        long after = openDescriptors(fds);
+        assertTrue(after - before < 50, "open descriptors grew from " + before + " to " + after);
+    }
+
+    /** No GC here: a cleaner would close leaked streams and hide the leak. */
+    private static long openDescriptors(Path fds) throws IOException {
+        try (var s = Files.list(fds)) {
+            return s.count();
         }
     }
 
@@ -345,7 +451,7 @@ class DefaultServletTest {
     @Test
     void containerDefaultIsNotARegistration() throws Exception {
         deployStandard();
-        assertEquals("[boom, fwd, inc, probe]|null", get("/ctx/probe").body());
+        assertEquals("[arith, boom, fwd, inc, probe]|null", get("/ctx/probe").body());
     }
 
     @Test
@@ -360,9 +466,15 @@ class DefaultServletTest {
     void servablePathsRejectUnsafeAndProtectedPaths() {
         for (String bad : new String[] {"/WEB-INF/web.xml", "/web-inf/x", "/Meta-Inf/x", "/WEB-INF", "/a/../b",
                 "/./WEB-INF/web.xml", "/a//b", "/a\\b", "/a\0b", "/%2e%2e/WEB-INF/web.xml", "/a%2Fb", "/a%5cb",
-                "/%2E/x", "/a%00b", "relative", "", null}) {
+                "/%2E/x", "/a%00b", "relative", "", null, "/WEB-INF./web.xml", "/WEB-INF /web.xml",
+                "/META-INF.. /x", "/web-inf."}) {
             assertFalse(ResourcePaths.isServable(bad), String.valueOf(bad));
         }
+        for (String bad : new String[] {"/a/../b", "/./x", "/a//b", "/a\\b", "/a\0b", "/%2e%2e/x", "/a%2fb", null}) {
+            assertFalse(ResourcePaths.isDispatchable(bad), String.valueOf(bad));
+        }
+        assertTrue(ResourcePaths.isDispatchable("/WEB-INF/views/x.html"));
+        assertTrue(ResourcePaths.isDispatchable("/META-INF/x"));
         for (String ok : new String[] {"/dummy.html", "/css/META-INF.css", "/a/b/c.txt", "/100%25.txt"}) {
             assertTrue(ResourcePaths.isServable(ok), ok);
         }

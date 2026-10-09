@@ -127,3 +127,40 @@ Statuts : `OPEN` → `INVESTIGATING` → `FIXED` (commit hash) → `CLOSED`.
   application's wrapper chain (Tomcat `ApplicationDispatcher.wrapRequest`).
 - **Investigations** :
   - 2026-10-09 : noted during the Task 4.4 fix round; no failing TCK test identified.
+
+## BUG-20261009-02 — getServletPath/getPathInfo are not percent-decoded
+
+- **Date** : 2026-10-09
+- **Statut** : OPEN (owned by Task 4.5b)
+- **Module touché** : `foy-core` (`ChappeServletBridge.handle`, `HttpServletRequestImpl`)
+- **Symptôme** : the bridge derives the servlet path and path info from the raw chappe
+  `request.path()`, which is not percent-decoded. Servlet 6.1 section 3.6 (and the
+  `getServletPath`/`getPathInfo` Javadoc) require decoded values. Mapping and static resource
+  lookup therefore see the encoded form: `GET /my%20file.txt` answers 404 although the WAR holds
+  `/my file.txt`.
+- **Reproduction minimale** : deploy a resource `/my file.txt` (container default servlet), then
+  `GET /ctx/my%20file.txt` → 404; a servlet mapped `/a b` is not reached by `/a%20b`.
+- **Hypothèse de cause** : no decoding step between the chappe request path and the dispatcher;
+  `getRequestURI` must stay raw, the servlet path and path info must be decoded (UTF-8), with the
+  default servlet's encoded-separator check (`ResourcePaths`) kept against double encoding.
+- **Investigations** :
+  - 2026-10-09 : found during Task 4.5 (default servlet). The default servlet refuses encoded
+    `.`, `/`, `\` and NUL, so the raw path is not a traversal risk today.
+
+## BUG-20261009-03 — error dispatch shows the error-page location's paths only to the default servlet
+
+- **Date** : 2026-10-09
+- **Statut** : OPEN
+- **Module touché** : `foy-core` (`ChappeServletBridge.maybeHandleError` / `errorTargetRequest`)
+- **Symptôme** : on an ERROR dispatch the target receives the original request, whose
+  `getServletPath`/`getPathInfo` describe the failing request, not the error-page location
+  (section 10.9: the error dispatch behaves like a forward to the location). Only the container
+  default servlet gets a wrapper with the location's paths (an `instanceof DefaultServlet` special
+  case), so that static error pages are found.
+- **Reproduction minimale** : error page `500 → /err` mapped to a servlet printing
+  `req.getServletPath()`; a servlet throwing → the error servlet prints the failing servlet's path.
+- **Hypothèse de cause** : `maybeHandleError` invokes the target with the container request instead
+  of a forward-style wrapper; generalise `errorTargetRequest` to every target once the TCK impact
+  is checked.
+- **Investigations** :
+  - 2026-10-09 : special case introduced by Task 4.5; generalisation deferred.

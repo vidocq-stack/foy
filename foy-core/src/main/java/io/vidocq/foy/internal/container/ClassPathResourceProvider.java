@@ -148,6 +148,14 @@ public final class ClassPathResourceProvider implements ResourceProvider {
         return null;
     }
 
+    @Override public Metadata metadata(String path) {
+        if (!safe(path) || path.endsWith("/")) return null;
+        for (Loc loc : locate(path.substring(1))) {
+            if (loc.isFile()) return loc.metadata();
+        }
+        return null;
+    }
+
     @Override public URL toUrl(String path) {
         if (!safe(path)) return null;
         for (Loc loc : locate(path.substring(1))) {
@@ -223,7 +231,8 @@ public final class ClassPathResourceProvider implements ResourceProvider {
         private final Path jar;
         private volatile Data data;
 
-        private record Data(Set<String> files, Map<String, List<String>> children) {}
+        /** {@code files} maps each file entry to its size and time ({@code -1}: unknown). */
+        private record Data(Map<String, Metadata> files, Map<String, List<String>> children) {}
 
         JarIndex(Path jar) { this.jar = jar; }
 
@@ -238,11 +247,11 @@ public final class ClassPathResourceProvider implements ResourceProvider {
                     }
                 }
             }
-            return d != null ? d : new Data(Set.of(), Map.of());
+            return d != null ? d : new Data(Map.of(), Map.of());
         }
 
         private Data build() {
-            Set<String> files = new HashSet<>();
+            Map<String, Metadata> files = new HashMap<>();
             Map<String, TreeSet<String>> children = new HashMap<>();
             try (JarFile f = new JarFile(jar.toFile())) {
                 f.stream().forEach(e -> {
@@ -250,7 +259,7 @@ public final class ClassPathResourceProvider implements ResourceProvider {
                     boolean dir = name.endsWith("/");
                     String trimmed = dir ? name.substring(0, name.length() - 1) : name;
                     if (trimmed.isEmpty()) return;
-                    if (!dir) files.add(trimmed);
+                    if (!dir) files.put(trimmed, new Metadata(e.getSize(), e.getTime()));
                     String child = trimmed;
                     boolean childIsDir = dir;
                     while (true) {
@@ -268,10 +277,11 @@ public final class ClassPathResourceProvider implements ResourceProvider {
             }
             Map<String, List<String>> frozen = new HashMap<>();
             children.forEach((k, v) -> frozen.put(k, List.copyOf(v)));
-            return new Data(Set.copyOf(files), Map.copyOf(frozen));
+            return new Data(Map.copyOf(files), Map.copyOf(frozen));
         }
 
-        boolean isFile(String entry) { return data().files().contains(entry); }
+        boolean isFile(String entry) { return data().files().containsKey(entry); }
+        Metadata metadata(String entry) { return data().files().get(entry); }
         boolean isDirectory(String entry) { return data().children().containsKey(entry); }
         List<String> children(String entry) {
             return data().children().getOrDefault(entry, List.of());
@@ -285,6 +295,8 @@ public final class ClassPathResourceProvider implements ResourceProvider {
         boolean isFile();
         List<String> children();
         InputStream open() throws IOException;
+        /** Size and time of this file, {@code null} when it is not a readable file. */
+        Metadata metadata();
         /** The URL of this location, {@code null} if it cannot be expressed. */
         URL url();
         /** The location {@code rel} (relative, no leading slash) below this directory. */
@@ -343,6 +355,7 @@ public final class ClassPathResourceProvider implements ResourceProvider {
         @Override public boolean isFile() { return false; }
         @Override public List<String> children() { return List.of(); }
         @Override public InputStream open() throws IOException { throw new IOException("missing"); }
+        @Override public Metadata metadata() { return null; }
         @Override public URL url() { return null; }
         @Override public Loc resolve(String rel) { return this; }
     }
@@ -386,6 +399,13 @@ public final class ClassPathResourceProvider implements ResourceProvider {
             try { return p.toRealPath().startsWith(realBase); } catch (IOException e) { return false; }
         }
         @Override public InputStream open() throws IOException { return Files.newInputStream(path); }
+        @Override public Metadata metadata() {
+            try {
+                return new Metadata(Files.size(path), Files.getLastModifiedTime(path).toMillis());
+            } catch (IOException e) {
+                return null;
+            }
+        }
         @Override public URL url() {
             try {
                 return path.toUri().toURL();
@@ -405,6 +425,7 @@ public final class ClassPathResourceProvider implements ResourceProvider {
         @Override public boolean isFile() { return index.isFile(entry); }
         @Override public boolean isDirectory() { return index.isDirectory(entry); }
         @Override public List<String> children() { return index.children(entry); }
+        @Override public Metadata metadata() { return index.metadata(entry); }
 
         @Override public InputStream open() throws IOException {
             JarFile f = new JarFile(index.jar.toFile());
