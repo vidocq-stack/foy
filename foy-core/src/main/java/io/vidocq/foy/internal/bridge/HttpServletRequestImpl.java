@@ -109,6 +109,29 @@ public final class HttpServletRequestImpl implements HttpServletRequest {
      */
     public String canonicalPath() { return canonicalPath; }
 
+    /**
+     * The decoded, canonical URI ({@code contextPath + path}) a zero-argument
+     * {@code AsyncContext.dispatch()} targets (section 2.3.3.3): the URI of the innermost
+     * container forward or async dispatch in the wrapper chain (already built from a decoded path),
+     * else the canonical path of the container request. Application wrappers are looked through, so
+     * a wrapped request never falls back to the raw, encoded {@code getRequestURI()}. Returns
+     * {@code null} when {@code request} wraps no HTTP request.
+     */
+    public static String canonicalDispatchUri(jakarta.servlet.ServletRequest request) {
+        jakarta.servlet.ServletRequest r = request;
+        while (r != null) {
+            if (r instanceof HttpServletRequestImpl impl) {
+                return impl.canonicalPath == null ? impl.getRequestURI()
+                        : impl.getContextPath() + impl.canonicalPath;
+            }
+            if (r instanceof ForwardedRequest f && !f.isNamed()) return f.getRequestURI();
+            if (r instanceof AsyncDispatchRequest a) return a.getRequestURI();
+            if (r instanceof jakarta.servlet.ServletRequestWrapper w) r = w.getRequest();
+            else return r instanceof HttpServletRequest h ? h.getRequestURI() : null;
+        }
+        return null;
+    }
+
     public void bindAuthenticated(io.vidocq.foy.spi.security.AuthenticatedUser user,
                                   String authType) {
         this.currentUser = user;

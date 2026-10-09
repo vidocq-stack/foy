@@ -56,17 +56,12 @@ class RequestPathsTest {
             "/a;jsessionid=ABC         | /a",
             "/a;p=1;q=2/b;r            | /a/b",
             "/;x/a                     | /a",
-            "/..;x/a                   | ''",
             "/a/..;x/b                 | /b",
             "/a/b%2Bc                  | /a/b+c",
             "/a+b                      | /a+b",
     })
     void canonicalisesValidPaths(String raw, String expected) {
-        if (expected.isEmpty()) {
-            assertNull(RequestPaths.canonicalize(raw), raw);
-        } else {
-            assertEquals(expected, RequestPaths.canonicalize(raw), raw);
-        }
+        assertEquals(expected, RequestPaths.canonicalize(raw), raw);
     }
 
     @ParameterizedTest
@@ -74,10 +69,38 @@ class RequestPathsTest {
             "/..%2fWEB-INF/web.xml", "/WEB-INF%2fweb.xml", "/WEB-INF%2Fweb.xml", "/a%00b", "/a%5Cb", "/a%5cb",
             "/a\\b", "%zz", "/a%zz", "/a%2", "/a%", "/a%g0", "/../x", "/a/../../x", "/%2e%2e/x", "/./../x",
             "/a\u0000b", "/a\u0001b", "/a\tb", "/a\u007fb", "/a%0Ab", "/a%0db", "/a%7F", "relative", "",
-            "/a%C3", "/a%C3%28", "/a%FF", "/a%C0%AF", "/a%ED%A0%80", "/café.txt",
+            "/a%C3", "/a%C3%28", "/..;x/a", "/a/...", "/a/..%20/b", "/a/.%20", "/a/%20", "/a/%20%20/b",
+            "/a/. ./b", "/....", "/a%FF", "/a%C0%AF", "/a%ED%A0%80", "/café.txt",
     })
     void rejectsInvalidPaths(String raw) {
         assertNull(RequestPaths.canonicalize(raw), raw);
+    }
+
+    @ParameterizedTest(name = "{0} in {1} -> {2}")
+    @CsvSource(delimiter = '|', value = {
+            "/ctx/a             | /ctx | /a",
+            "/ctx               | /ctx | /",
+            "/ctx/              | /ctx | /",
+            "/ctx;x=1/a         | /ctx | /a",
+            "/ctx;x=1           | /ctx | /",
+            "/ctx;jsessionid=A/a| /ctx | /a",
+            "/a/b               | /    | /a/b",
+            "/a/b               | ''   | /a/b",
+    })
+    void stripsTheContextPathOnASegmentBoundary(String raw, String ctx, String expected) {
+        assertEquals(expected, RequestPaths.stripContextPath(raw, ctx));
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"/ctx2/a", "/ctxa", "/other/a", "/ct"})
+    void aPathOutsideTheContextHasNoRelativePath(String raw) {
+        assertNull(RequestPaths.stripContextPath(raw, "/ctx"), raw);
+    }
+
+    @Test
+    void dotsInsideANameAreKept() {
+        assertEquals("/a/.hidden/b..c/x.", RequestPaths.canonicalize("/a/.hidden/b..c/x."));
+        assertEquals("/a/ b", RequestPaths.canonicalize("/a/%20b"));
     }
 
     @Test

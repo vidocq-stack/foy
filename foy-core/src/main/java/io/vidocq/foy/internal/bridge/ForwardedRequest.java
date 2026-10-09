@@ -70,6 +70,9 @@ public final class ForwardedRequest extends HttpServletRequestWrapper {
         }
     }
 
+    /** Whether this is a named forward, which keeps the caller's URI and paths. */
+    public boolean isNamed() { return target.named(); }
+
     @Override public Object getAttribute(String name) {
         if (name != null && name.startsWith(INCLUDE_PREFIX)) return null;
         if (forwardAttributes.containsKey(name)) return forwardAttributes.get(name);

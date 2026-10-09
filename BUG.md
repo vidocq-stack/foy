@@ -131,7 +131,7 @@ Statuts : `OPEN` → `INVESTIGATING` → `FIXED` (commit hash) → `CLOSED`.
 ## BUG-20261009-02 — getServletPath/getPathInfo are not percent-decoded
 
 - **Date** : 2026-10-09
-- **Statut** : FIXED (2026-10-09, Task 4.5b)
+- **Statut** : FIXED (1906b44, fix round in the following `fix(core)` commit — Task 4.5b)
 - **Module touché** : `foy-core` (`ChappeServletBridge.handle`, `HttpServletRequestImpl`)
 - **Symptôme** : the bridge derives the servlet path and path info from the raw chappe
   `request.path()`, which is not percent-decoded. Servlet 6.1 section 3.6 (and the
@@ -155,6 +155,11 @@ Statuts : `OPEN` → `INVESTIGATING` → `FIXED` (commit hash) → `CLOSED`.
     `getRequestURI`/`getRequestURL` stay raw. A 400 honours a status error page. Dispatch paths
     (`getRequestDispatcher`, `DispatchResolver`) are normalised but not decoded again; one climbing
     above the root gets no dispatcher. Tests: `RequestPathsTest`, `RequestPathCanonicalisationTest`.
+  - 2026-10-09 (fix round) : a zero-argument `AsyncContext.dispatch()` on an application-wrapped
+    request now uses the canonical path found through the wrapper chain
+    (`HttpServletRequestImpl.canonicalDispatchUri`); the context path is removed on a segment
+    boundary (`/ctx;x=1/a` → `/a`, `/ctx2/a` → 404); segments made only of dots and spaces
+    (`...`, `..%20`) are refused with 400; `OPTIONS *` is dispatched unchanged.
 
 ## BUG-20261009-03 — error dispatch shows the error-page location's paths only to the default servlet
 
@@ -173,3 +178,22 @@ Statuts : `OPEN` → `INVESTIGATING` → `FIXED` (commit hash) → `CLOSED`.
   is checked.
 - **Investigations** :
   - 2026-10-09 : special case introduced by Task 4.5; generalisation deferred.
+
+## BUG-20261009-04 — decoded paths leak into dispatch URIs (query split, wrapper URIs)
+
+- **Date** : 2026-10-09
+- **Statut** : OPEN (low)
+- **Module touché** : `foy-core` (`AsyncContextImpl.dispatch()`, `ForwardedRequest`, `IncludedRequest`, `AsyncDispatchRequest`)
+- **Symptôme** : (1) a zero-argument `AsyncContext.dispatch()` builds its target from the decoded
+  canonical path; an encoded `%3F` in the request path decodes to `?`, which the dispatch then
+  splits as a query string (Tomcat behaves the same). (2) `jakarta.servlet.include.request_uri`,
+  the forwarded `getRequestURI()` and the async-dispatched `getRequestURI()` are built from the
+  decoded dispatch path instead of a re-encoded URI.
+- **Reproduction minimale** : servlet mapped `/a?b/*` (decoded), `GET /ctx/a%3Fb/x` → startAsync +
+  `dispatch()` → resolves `/ctx/a` with query `b/x`. Forward to `/my file.txt` →
+  `getRequestURI()` is `/ctx/my file.txt`, not `/ctx/my%20file.txt`.
+- **Hypothèse de cause** : dispatch paths are decoded context-relative paths (section 9.1.1); the
+  wrappers concatenate them into the URI without percent-encoding, and the zero-argument dispatch
+  passes a path through the string-based `dispatch(String)` API that splits on `?`.
+- **Investigations** :
+  - 2026-10-09 : found in the Task 4.5b review; not exercised by the TCK.

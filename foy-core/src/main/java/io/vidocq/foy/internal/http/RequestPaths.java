@@ -33,15 +33,18 @@ import java.nio.charset.StandardCharsets;
  * bridge calls it once per request and keeps the result on the request. The steps, in order:</p>
  * <ol>
  *   <li>Refuse a path that does not start with {@code /}, or that holds a raw backslash, a control
- *       character ({@code U+0000}–{@code U+001F}, {@code U+007F}) or a non-ASCII character (RFC 3986
- *       allows only ASCII in a request target; Tomcat's request-line parser rejects the others too).</li>
+ *       character ({@code U+0000}–{@code U+001F}, {@code U+007F}) or a non-ASCII character. The last
+ *       one is Foy's own choice: the request-target grammar (RFC 7230 section 5.3, RFC 3986) is ASCII
+ *       only, non-ASCII names must arrive percent-encoded.</li>
  *   <li>Remove the path parameters of every segment ({@code ;name=value…} up to the next {@code /}),
  *       {@code ;jsessionid=} included.</li>
  *   <li>Refuse an encoded separator or NUL ({@code %2F}, {@code %5C}, {@code %00}, any case): decoding
  *       them would let a client forge segments. Tomcat's default {@code encodedSolidusHandling=reject}
  *       ({@code CoyoteAdapter.postParseRequest}, {@code UDecoder.convert}) answers 400 the same way.</li>
  *   <li>Percent-decode once as UTF-8; a malformed escape or an invalid UTF-8 sequence (overlong
- *       forms and surrogates included) is refused, and so is a decoded control character.</li>
+ *       forms and surrogates included) is refused, and so is a decoded control character, and a
+ *       segment other than {@code .}/{@code ..} made only of dots and spaces ({@code ...},
+ *       {@code ..%20}: Windows name aliasing, defence in depth).</li>
  *   <li>Normalise ({@link #normalize}): collapse repeated {@code /}, drop {@code .} segments and resolve
  *       {@code ..} segments; a {@code ..} that would climb above the context root is refused
  *       (Tomcat's {@code CoyoteAdapter.normalize} / {@code RequestUtil.normalize}).</li>
@@ -55,6 +58,26 @@ public final class RequestPaths {
     private RequestPaths() {}
 
     /**
+     * Removes the context path from a raw request path on a segment boundary: the context path must
+     * be followed by the end of the path, a {@code /}, or path parameters of its last segment
+     * ({@code /ctx;x=1/a} → {@code /a}). Returns {@code "/"} for the context root itself and
+     * {@code null} when the raw path is not under the context ({@code /ctx2/a} for {@code /ctx}).
+     * The root context ({@code ""} or {@code "/"}) leaves the path unchanged.
+     */
+    public static String stripContextPath(String raw, String contextPath) {
+        if (raw == null) return null;
+        if (contextPath == null || contextPath.isEmpty() || contextPath.equals("/")) return raw;
+        if (!raw.startsWith(contextPath)) return null;
+        String rest = raw.substring(contextPath.length());
+        if (rest.isEmpty()) return "/";
+        char c = rest.charAt(0);
+        if (c == '/') return rest;
+        if (c != ';') return null;
+        int slash = rest.indexOf('/');
+        return slash < 0 ? "/" : rest.substring(slash);
+    }
+
+    /**
      * Canonical form of a raw request path (context path removed, query string excluded), or
      * {@code null} when the path must be refused with 400 (see the class documentation).
      */
@@ -66,8 +89,34 @@ public final class RequestPaths {
         }
         String stripped = stripPathParameters(raw);
         String decoded = decode(stripped);
-        if (decoded == null) return null;
+        if (decoded == null || hasDotOrSpaceOnlySegment(decoded)) return null;
         return normalize(decoded);
+    }
+
+    /**
+     * Whether a segment other than {@code .} and {@code ..} is made only of dots and spaces
+     * ({@code ...}, {@code .. }, a lone space): Windows file systems alias such names to their
+     * parent or to {@code ..}, so they are refused as defence in depth.
+     */
+    private static boolean hasDotOrSpaceOnlySegment(String path) {
+        int start = 1;
+        while (start <= path.length()) {
+            int end = path.indexOf('/', start);
+            if (end < 0) end = path.length();
+            if (end > start) {
+                String segment = path.substring(start, end);
+                if (!segment.equals(".") && !segment.equals("..")) {
+                    boolean onlyDotsAndSpaces = true;
+                    for (int i = 0; i < segment.length() && onlyDotsAndSpaces; i++) {
+                        char c = segment.charAt(i);
+                        onlyDotsAndSpaces = c == '.' || c == ' ';
+                    }
+                    if (onlyDotsAndSpaces) return true;
+                }
+            }
+            start = end + 1;
+        }
+        return false;
     }
 
     /**

@@ -116,19 +116,23 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
             urlSessionId = rawPath.substring(endSid, stop);
             rawPath = rawPath.substring(0, sidx) + rawPath.substring(stop);
         }
-        // Strip the context path from the incoming path before dispatching.
-        String relative = rawPath;
-        if (!contextPath.isEmpty() && !"/".equals(contextPath) && rawPath.startsWith(contextPath)) {
-            relative = rawPath.substring(contextPath.length());
-            if (relative.isEmpty()) relative = "/";
-        }
         final String finalUrlSessionId = urlSessionId;
         HttpServletResponseImpl res = new HttpServletResponseImpl();
         res.setDefaultCharacterEncoding(servletContext.configuredResponseCharacterEncoding());
 
-        // Section 3.5.2: the canonical (decoded, normalised) path drives every mapping decision.
-        String path = RequestPaths.canonicalize(relative);
-        if (path == null) return badRequest(request, res);
+        String path;
+        if ("*".equals(rawPath)) {
+            // "OPTIONS *" (RFC 9110 section 9.3.7): the asterisk-form target names the server, not
+            // a path; it is dispatched unchanged, as before canonicalisation existed.
+            path = rawPath;
+        } else {
+            // Strip the context path on a segment boundary; a path outside the context is a 404.
+            String relative = RequestPaths.stripContextPath(rawPath, contextPath);
+            if (relative == null) return rejected(request, res, 404);
+            // Section 3.5.2: the canonical (decoded, normalised) path drives every mapping decision.
+            path = RequestPaths.canonicalize(relative);
+            if (path == null) return rejected(request, res, 400);
+        }
 
         Optional<ServletDispatcher.Mapping> match = dispatcher.find(path);
         ListenerRegistry registry = servletContext.listenerRegistry();
@@ -210,19 +214,21 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
     }
 
     /**
-     * Answers 400 for a request path refused by {@link RequestPaths#canonicalize} (section 3.5.2),
-     * before any filter or servlet of the application runs and without request listeners. An error
-     * page registered for 400 is honoured through the regular error dispatch.
+     * Answers {@code status} for a request path refused before mapping: 400 for a path refused by
+     * {@link RequestPaths#canonicalize} (section 3.5.2), 404 for a path outside the context. No
+     * filter or servlet of the application runs and no request listener fires; an error page
+     * registered for the status is honoured through the regular error dispatch.
      */
-    private Response badRequest(Request request, HttpServletResponseImpl res) {
+    private Response rejected(Request request, HttpServletResponseImpl res, int status) {
         var req = new HttpServletRequestImpl(request, servletContext, contextPath, "", null, sessionManager);
         req.bindResponse(res);
-        try { res.sendError(400); } catch (IOException ignored) {}
+        try { res.sendError(status); } catch (IOException ignored) {}
         try { maybeHandleError(req, res, null, null); }
         catch (ServletException e) { return error(e); }
         if (errorPageHandled(req)) return toChappeResponse(res);
+        if (status == 404) return notFound();
         return Response.builder()
-                .status(StatusCode.of(400))
+                .status(StatusCode.of(status))
                 .header("Content-Type", "text/plain")
                 .body(Body.of("Bad Request".getBytes(java.nio.charset.StandardCharsets.US_ASCII)))
                 .build();

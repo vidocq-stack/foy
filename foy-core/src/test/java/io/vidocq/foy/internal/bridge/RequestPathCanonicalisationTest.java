@@ -74,6 +74,18 @@ class RequestPathCanonicalisationTest {
         }
     }
 
+    /** Starts async on an application wrapper, then dispatches with no argument. */
+    public static class WrappedAsync extends HttpServlet {
+        @Override protected void doGet(HttpServletRequest req, HttpServletResponse resp) throws IOException {
+            if (req.getDispatcherType() == jakarta.servlet.DispatcherType.ASYNC) {
+                resp.setCharacterEncoding("UTF-8");
+                resp.getWriter().write("ASYNC SP=" + req.getServletPath() + "|PI=" + req.getPathInfo());
+                return;
+            }
+            req.startAsync(new jakarta.servlet.http.HttpServletRequestWrapper(req), resp).dispatch();
+        }
+    }
+
     public static class BadRequestPage extends HttpServlet {
         @Override protected void doGet(HttpServletRequest req, HttpServletResponse resp) throws IOException {
             resp.getWriter().write("BAD-REQUEST-PAGE " + req.getAttribute("jakarta.servlet.error.status_code"));
@@ -127,6 +139,7 @@ class RequestPathCanonicalisationTest {
                 .servlet(servlet("exact", Paths.class, Paths::new, "/a b", "/a/b"))
                 .servlet(servlet("prefix", Paths.class, Paths::new, "/p/*"))
                 .servlet(servlet("fwd", Forwarder.class, Forwarder::new, "/fwd"))
+                .servlet(servlet("async", WrappedAsync.class, WrappedAsync::new, "/as ync/*"))
                 .servlet(servlet("bad", BadRequestPage.class, BadRequestPage::new, "/bad"));
         if (errors != null) b.errorPages(errors);
         deployment = WebAppDeployer.deploy(b.build(),
@@ -138,10 +151,14 @@ class RequestPathCanonicalisationTest {
 
     /** Sends the request target verbatim (no client-side normalisation or validation). */
     private Reply get(String target) throws IOException {
+        return send("GET", target);
+    }
+
+    private Reply send(String method, String target) throws IOException {
         try (Socket s = new Socket("127.0.0.1", port)) {
             s.setSoTimeout(10_000);
             OutputStream out = s.getOutputStream();
-            out.write(("GET " + target + " HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
+            out.write((method + " " + target + " HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
                     .getBytes(StandardCharsets.ISO_8859_1));
             out.flush();
             ByteArrayOutputStream buf = new ByteArrayOutputStream();
@@ -229,5 +246,37 @@ class RequestPathCanonicalisationTest {
         var spaced = get("/ctx/fwd?to=/my%2520file.txt");
         assertEquals(404, spaced.status(), "the dispatch path is not decoded again: " + spaced.body());
         assertEquals("spaced", get("/ctx/fwd?to=/my%20file.txt").body());
+    }
+
+    @Test
+    void zeroArgumentAsyncDispatchOfAWrappedRequestUsesTheCanonicalPath() throws Exception {
+        deploy(null);
+        var r = get("/ctx/as%20ync;p=1/caf%C3%A9");
+        assertEquals(200, r.status(), r.body());
+        assertEquals("ASYNC SP=/as ync|PI=/caf\u00e9", r.body());
+    }
+
+    @Test
+    void theContextPathIsStrippedOnASegmentBoundary() throws Exception {
+        deploy(null);
+        var params = get("/ctx;x=1/a/b");
+        assertEquals(200, params.status(), params.body());
+        assertTrue(params.body().startsWith("SP=/a/b|PI=null|URI=/ctx;x=1/a/b|"), params.body());
+        assertEquals(404, get("/ctx2/a/b").status(), "outside the context: 404, not 400");
+    }
+
+    @Test
+    void dotAndSpaceOnlySegmentsAre400() throws Exception {
+        deploy(null);
+        for (String p : new String[] {"/ctx/a/.../b", "/ctx/a/..%20/b", "/ctx/%20/x.html", "/ctx/x.html/.%20"}) {
+            assertEquals(400, get(p).status(), p);
+        }
+    }
+
+    @Test
+    void optionsAsteriskIsNotRefused() throws Exception {
+        deploy(null);
+        var r = send("OPTIONS", "*");
+        assertNotEquals(400, r.status(), r.body());
     }
 }
