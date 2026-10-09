@@ -33,6 +33,7 @@ import io.vidocq.foy.internal.async.AsyncContextImpl;
 import io.vidocq.foy.internal.dispatcher.VidocqFilterChain;
 import io.vidocq.foy.internal.error.ErrorPageRegistry;
 import io.vidocq.foy.internal.http.CookieCodec;
+import io.vidocq.foy.internal.http.RequestPaths;
 import io.vidocq.foy.internal.listener.ListenerRegistry;
 import io.vidocq.foy.internal.session.HttpSessionImpl;
 import io.vidocq.foy.internal.session.SessionManager;
@@ -115,25 +116,31 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
             urlSessionId = rawPath.substring(endSid, stop);
             rawPath = rawPath.substring(0, sidx) + rawPath.substring(stop);
         }
-        // Strip le contextPath du path entrant avant le dispatching.
-        String path = rawPath;
+        // Strip the context path from the incoming path before dispatching.
+        String relative = rawPath;
         if (!contextPath.isEmpty() && !"/".equals(contextPath) && rawPath.startsWith(contextPath)) {
-            path = rawPath.substring(contextPath.length());
-            if (path.isEmpty()) path = "/";
+            relative = rawPath.substring(contextPath.length());
+            if (relative.isEmpty()) relative = "/";
         }
         final String finalUrlSessionId = urlSessionId;
+        HttpServletResponseImpl res = new HttpServletResponseImpl();
+        res.setDefaultCharacterEncoding(servletContext.configuredResponseCharacterEncoding());
+
+        // Section 3.5.2: the canonical (decoded, normalised) path drives every mapping decision.
+        String path = RequestPaths.canonicalize(relative);
+        if (path == null) return badRequest(request, res);
+
         Optional<ServletDispatcher.Mapping> match = dispatcher.find(path);
         ListenerRegistry registry = servletContext.listenerRegistry();
 
         HttpServletRequestImpl req;
-        HttpServletResponseImpl res = new HttpServletResponseImpl();
-        res.setDefaultCharacterEncoding(servletContext.configuredResponseCharacterEncoding());
 
         if (match.isEmpty()) {
             // Last-resort fallback: a deployed application always matches (its own "/" servlet or
             // the container default servlet); only a bridge built without one reaches this branch.
             req = new HttpServletRequestImpl(request, servletContext, contextPath, path, null,
                     sessionManager);
+            req.setCanonicalPath(path);
             req.bindResponse(res);
             req.setUrlSessionId(finalUrlSessionId);
             List<Filter> filters = filterRegistry.chainFor(path, DispatcherType.REQUEST);
@@ -166,6 +173,7 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
                 DispatchResolver.mappingFor(m, path, servletPath));
         req = new HttpServletRequestImpl(request, servletContext, contextPath, servletPath, pathInfo,
                 sessionManager);
+        req.setCanonicalPath(path);
         req.setHttpServletMapping(target.mapping());
         req.bindResponse(res);
         // §2.3.3.3: async only when the servlet and every filter of the chain support it.
@@ -199,6 +207,25 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
         }
         maybeAttachSessionCookie(req, res);
         return toChappeResponse(res);
+    }
+
+    /**
+     * Answers 400 for a request path refused by {@link RequestPaths#canonicalize} (section 3.5.2),
+     * before any filter or servlet of the application runs and without request listeners. An error
+     * page registered for 400 is honoured through the regular error dispatch.
+     */
+    private Response badRequest(Request request, HttpServletResponseImpl res) {
+        var req = new HttpServletRequestImpl(request, servletContext, contextPath, "", null, sessionManager);
+        req.bindResponse(res);
+        try { res.sendError(400); } catch (IOException ignored) {}
+        try { maybeHandleError(req, res, null, null); }
+        catch (ServletException e) { return error(e); }
+        if (errorPageHandled(req)) return toChappeResponse(res);
+        return Response.builder()
+                .status(StatusCode.of(400))
+                .header("Content-Type", "text/plain")
+                .body(Body.of("Bad Request".getBytes(java.nio.charset.StandardCharsets.US_ASCII)))
+                .build();
     }
 
     /**

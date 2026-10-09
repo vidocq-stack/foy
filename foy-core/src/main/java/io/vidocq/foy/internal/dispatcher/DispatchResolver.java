@@ -43,6 +43,13 @@ public final class DispatchResolver {
             justPath = path.substring(0, q);
             queryString = path.substring(q + 1);
         }
+        // Dispatch paths (forward/include, async dispatch, error-page locations) are decoded
+        // context-relative paths: normalise their dot segments, never decode them again.
+        // A path without a leading slash (the empty context-root path) keeps its historical resolution.
+        if (justPath.startsWith("/")) {
+            justPath = io.vidocq.foy.internal.http.RequestPaths.normalize(justPath);
+            if (justPath == null) return Optional.empty();
+        }
         Optional<ServletDispatcher.Mapping> match = dispatcher.find(justPath);
         if (match.isEmpty()) return Optional.empty();
         ServletDispatcher.Mapping m = match.get();

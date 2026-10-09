@@ -409,7 +409,14 @@ public final class VidocqServletContext implements ServletContext {
             tmp = path.substring(contextPath.length());
             if (tmp.isEmpty()) tmp = "/";
         }
-        final String resolvePath = tmp;
+        // Section 9.1.1: the dispatch path is already decoded; only its dot segments are normalised
+        // (query string split off first). A path climbing above the context root has no dispatcher.
+        String query = "";
+        int q = tmp.indexOf('?');
+        if (q >= 0) { query = tmp.substring(q); tmp = tmp.substring(0, q); }
+        String normalized = io.vidocq.foy.internal.http.RequestPaths.normalize(tmp);
+        if (normalized == null) return null;
+        final String resolvePath = normalized + query;
         return dispatchResolver.resolve(resolvePath)
                 .<RequestDispatcher>map(t -> new RequestDispatcherImpl(t, dispatchInvoker))
                 .orElseGet(() -> RequestDispatcherImpl.notFound(resolvePath));

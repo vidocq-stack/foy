@@ -37,11 +37,14 @@ import java.util.Locale;
  * case-insensitive file system ({@code /web-inf/web.xml}) nor Windows name aliasing
  * ({@code /WEB-INF./web.xml}, {@code /WEB-INF /web.xml}) reaches the protected trees.</p>
  *
- * <p><b>Decoding.</b> Foy currently hands servlets the raw, still percent-encoded request path
- * (BUG-20261009-02): the default servlet looks resources up under that raw form. Refusing the
- * encoded dots and separators keeps a provider that would decode the path from being steered
- * outside the resource root, and stays correct once the path is decoded upstream (the encoded
- * forms then only appear through double encoding).</p>
+ * <p><b>Decoding.</b> The servlet path and path info the default servlet reads are slices of the
+ * canonical request path ({@link io.vidocq.foy.internal.http.RequestPaths}, section 3.5.2): already
+ * decoded once, normalised, without path parameters, and refused with 400 upstream when they held an
+ * encoded separator or climbed above the root. The checks here are defence in depth: an encoded
+ * dot or separator still present can only come from double encoding ({@code %252e}) and is refused
+ * so that a provider decoding again cannot be steered outside the resource root; the
+ * {@code WEB-INF}/{@code META-INF} check applies to the canonical first segment, so path
+ * parameters ({@code /WEB-INF;x=1/web.xml}) or encoded letters ({@code /%57EB-INF/}) do not hide it.</p>
  */
 public final class ResourcePaths {
 

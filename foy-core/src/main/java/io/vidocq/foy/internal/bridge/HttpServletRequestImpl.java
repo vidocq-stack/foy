@@ -95,6 +95,19 @@ public final class HttpServletRequestImpl implements HttpServletRequest {
 
     private io.vidocq.foy.spi.security.AuthenticatedUser currentUser;
     private String authType;
+    private String canonicalPath;
+
+    /**
+     * Records the canonical request path (section 3.5.2, {@link io.vidocq.foy.internal.http.RequestPaths}),
+     * computed once by the bridge.
+     */
+    public void setCanonicalPath(String canonicalPath) { this.canonicalPath = canonicalPath; }
+
+    /**
+     * The canonical (decoded, normalised, context-relative) request path, as used for servlet and
+     * filter mapping and security constraints; {@code null} for a request the bridge did not build.
+     */
+    public String canonicalPath() { return canonicalPath; }
 
     public void bindAuthenticated(io.vidocq.foy.spi.security.AuthenticatedUser user,
                                   String authType) {
@@ -117,6 +130,7 @@ public final class HttpServletRequestImpl implements HttpServletRequest {
     }
     @Override public String getScheme() { return chappe.scheme(); }
     @Override public boolean isSecure() { return chappe.isSecure(); }
+    /** The request URI as received: neither decoded nor normalised, path parameters included. */
     @Override public String getRequestURI() { return chappe.path(); }
     @Override public StringBuffer getRequestURL() {
         StringBuffer sb = new StringBuffer();
@@ -134,6 +148,7 @@ public final class HttpServletRequestImpl implements HttpServletRequest {
         // retourner une chaîne vide. Pour "/foo", retourner "/foo".
         return "/".equals(contextPath) ? "" : contextPath;
     }
+    /** Slice of the canonical, decoded request path (section 3.5.2). */
     @Override public String getServletPath() { return servletPath; }
     @Override public String getPathInfo() { return pathInfo; }
     @Override public String getPathTranslated() { return null; }

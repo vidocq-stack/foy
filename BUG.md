@@ -131,7 +131,7 @@ Statuts : `OPEN` → `INVESTIGATING` → `FIXED` (commit hash) → `CLOSED`.
 ## BUG-20261009-02 — getServletPath/getPathInfo are not percent-decoded
 
 - **Date** : 2026-10-09
-- **Statut** : OPEN (owned by Task 4.5b)
+- **Statut** : FIXED (2026-10-09, Task 4.5b)
 - **Module touché** : `foy-core` (`ChappeServletBridge.handle`, `HttpServletRequestImpl`)
 - **Symptôme** : the bridge derives the servlet path and path info from the raw chappe
   `request.path()`, which is not percent-decoded. Servlet 6.1 section 3.6 (and the
@@ -146,6 +146,15 @@ Statuts : `OPEN` → `INVESTIGATING` → `FIXED` (commit hash) → `CLOSED`.
 - **Investigations** :
   - 2026-10-09 : found during Task 4.5 (default servlet). The default servlet refuses encoded
     `.`, `/`, `\` and NUL, so the raw path is not a traversal risk today.
+  - 2026-10-09 : fixed by `RequestPaths.canonicalize` (section 3.5.2), called once in
+    `ChappeServletBridge.handle`: path parameters stripped from every segment, encoded `/`, `\`,
+    NUL, raw `\`, control and non-ASCII characters refused with 400 (Tomcat
+    `encodedSolidusHandling=reject`), one UTF-8 percent-decoding (malformed → 400), dot segments and
+    repeated slashes normalised (`..` above the root → 400). Servlet/filter mapping, the default
+    servlet and the security enforcer see the canonical path (kept on the request);
+    `getRequestURI`/`getRequestURL` stay raw. A 400 honours a status error page. Dispatch paths
+    (`getRequestDispatcher`, `DispatchResolver`) are normalised but not decoded again; one climbing
+    above the root gets no dispatcher. Tests: `RequestPathsTest`, `RequestPathCanonicalisationTest`.
 
 ## BUG-20261009-03 — error dispatch shows the error-page location's paths only to the default servlet
 

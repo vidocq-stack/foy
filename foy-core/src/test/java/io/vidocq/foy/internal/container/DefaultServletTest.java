@@ -294,8 +294,12 @@ class DefaultServletTest {
         var error = get("/ctx/arith");
         assertEquals(500, error.statusCode());
         assertEquals("<html>private error page</html>", error.body());
-        assertEquals(404, get("/ctx/fwd?to=/WEB-INF/../WEB-INF/web.xml").statusCode(),
-                "segment safety still applies to a dispatch");
+        // Section 9.1.1: a dispatch path is normalised (as Tomcat does); one climbing above the
+        // context root gets no dispatcher at all.
+        assertEquals("<html>view</html>", get("/ctx/fwd?to=/WEB-INF/x/../views/x.html").body());
+        var escape = get("/ctx/fwd?to=/../WEB-INF/web.xml");
+        assertNotEquals(200, escape.statusCode());
+        assertFalse(escape.body().contains("web-app"), escape.body());
     }
 
     @Test
