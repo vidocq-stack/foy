@@ -188,7 +188,7 @@ A path outside the context path (`/app2/x` for context `/app`) is 404; the conte
 
 == Response semantics
 
-`sendError` and `sendRedirect` reset the buffer and the declared `Content-Length` and commit the response. `setStatus`, headers, `setLocale`, `setContentType` and charset changes are ignored once the response is committed (`flushBuffer`, `isCommitted`, buffer overflow). A cookie with a `Max-Age` also carries an `Expires` attribute (RFC 6265). The default character encoding follows `<response-character-encoding>`, then the `ISO-8859-1` default, and a `Content-Type` charset or locale-encoding mapping overrides it until `getWriter` is called.
+`sendError` and `sendRedirect` reset the buffer and the declared `Content-Length` and commit the response. `setStatus`, headers, `setLocale`, `setContentType` and charset changes are ignored once the response is committed (after `flushBuffer`, or once the declared `Content-Length` is reached; the buffer never overflows because the body is held whole until the handler returns). A cookie with a `Max-Age` also carries an `Expires` attribute (RFC 6265). The default character encoding follows `<response-character-encoding>`, then the `ISO-8859-1` default, and a `Content-Type` charset or locale-encoding mapping overrides it until `getWriter` is called.
 
 == Legacy deployment descriptors
 

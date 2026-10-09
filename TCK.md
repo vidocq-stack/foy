@@ -41,7 +41,7 @@ Remaining 65 errors, by class and by phase:
 Open bugs: BUG-20261009-01 (dispatch drops a non-HTTP wrapper), -03 (error dispatch paths),
 -04 (decoded paths in dispatch URIs), -09 (connection and HTTP/2 stream ids, chappe follow-up).
 
-## 0.0 Phase 3 exit: descriptors and pluggability (2026-10-09)
+## 0.1 Phase 3 exit: descriptors and pluggability (2026-10-09)
 
 `pr/ybl/servlet-completion-phase3`, `./run-official-tck-servlet6.1.sh --all`:
 1714 run, **1587 pass**, 127 errors, 13 min 52 s (Phase 2: 928). Per family:
@@ -63,7 +63,7 @@ BUG-20261008-02), `httpservletresponse`, `httpservletresponse30`,
 `fragment.FragmentTests` (1). They belong to the request/response phase (default
 servlet, welcome files) and the security phase.
 
-## 0.1 Phase 2 exit: build-time code generation (2026-10-08)
+## 0.2 Phase 2 exit: build-time code generation (2026-10-08)
 
 `pr/ybl/servlet-completion-phase2`, `./run-official-tck-servlet6.1.sh --all`:
 1714 run, **928 pass**, 786 errors, 11 min 19 s (Phase 1: 921). Per family:
@@ -161,7 +161,9 @@ The 95.5 % on `api.*` (the largest family) shows the M1 core is much better
 than the raw 53.7 % suggests: **81 % of all errors (641/794) come from a single
 missing feature** — web-fragment scanning.
 
-## 3. Root causes identified
+## 3. Root causes identified (2026-06 diagnosis, kept for history)
+
+This section and §4 are the diagnosis made on the 2026-06-11 baseline (921/1714). They are history: several causes were resolved by Phases 1 to 4 (see §0 for the current tally and the remaining failures).
 
 ### 3.1 Web fragments not scanned — 641 errors (81 % of all errors)
 
@@ -199,14 +201,14 @@ timeouts, event ordering).
 `metadatacomplete`: FORM/BASIC auth flows and TLS client-cert mapping are
 partial in the chappe adapter + `SecurityProvider` SPI.
 
-### 3.6 Scattered behavioral gaps
+### 3.6 Scattered behavioral gaps (2026-06 diagnosis; resolved in Phase 4 except server push and Upgrade)
 
 `spec.errorpage` (4/4), `spec.serverpush` (7/8 — HTTP/2 server push through
 chappe), `spec.welcomefiles` (2/2), `spec.requestdispatcher` (13/20),
 `spec.srlistener` (5/13), `spec.i18n.encoding` (2/3), `compat.LeadingSlash`
 (2/2), `HttpUpgradeHandler` (1/1), plus singles visible in the per-class log.
 
-## 4. What this means for the roadmap
+## 4. What this means for the roadmap (2026-06 diagnosis, kept for history)
 
 By expected score gain:
 

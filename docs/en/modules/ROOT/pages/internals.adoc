@@ -232,7 +232,7 @@ The guard covers `foy-core` only: `foy-cdi-vauban`'s `CdiWebComponentsCreator` a
 == Known limits
 
 * Security constraints are parsed, not enforced; `WEB-INF/lib` nested jars of a WAR are not opened; see xref:tck.adoc[].
-* The response is buffered whole until the handler returns (no commit on buffer overflow or `flushBuffer` toward the connection), the non-blocking I/O listeners are incomplete, and HTTP/2 server push and HTTP Upgrade are missing: streaming, async and non-blocking I/O are the next phase.
+* The response body is buffered whole until the handler returns: `flushBuffer` marks the response committed (status and headers are then locked) but sends nothing to the connection, and the buffer never overflows (`setBufferSize` only changes the reported size), the non-blocking I/O listeners are incomplete, and HTTP/2 server push and HTTP Upgrade are missing: streaming, async and non-blocking I/O are the next phase.
 * Chappe exposes no connection identity and no HTTP/2 stream id: `getServletConnection().getConnectionId()` can repeat and `getProtocolRequestId()` is empty on HTTP/2 (BUG-20261009-09).
 * `getRequestDispatcher` and cross-context lookup compare the context path with a plain prefix test (no segment boundary), so `/app` also matches `/application/x`.
 * Cross-context dispatch (`ServletContext.getContext`): **implemented** via `CrossContextRegistry` (strict contextPath match on the contexts deployed in the same JVM).
