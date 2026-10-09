@@ -102,6 +102,33 @@ class HttpServletResponseImplTest {
     }
 
     @Test
+    void sendErrorDropsTheDeclaredContentLength() throws IOException {
+        var res = new HttpServletResponseImpl();
+        res.setContentLength(5);
+        res.sendError(500, "boom");
+        assertFalse(res.containsHeader("Content-Length"));
+        assertTrue(body(res).contains("boom"), body(res));
+    }
+
+    @Test
+    void sendRedirectDropsTheDeclaredContentLength() throws IOException {
+        var res = new HttpServletResponseImpl();
+        res.setContentLength(5);
+        res.getWriter().write("abc");
+        res.sendRedirect("http://example.com/n");
+        assertFalse(res.containsHeader("Content-Length"));
+    }
+
+    @Test
+    void setLocaleHonoursCommitByContentLength() throws IOException {
+        var res = new HttpServletResponseImpl();
+        res.setContentLength(2);
+        res.getWriter().write("abcd");
+        res.setLocale(Locale.FRANCE);
+        assertNull(res.getHeader("Content-Language"));
+    }
+
+    @Test
     void getHeadersIsAMutableCopy() {
         var res = new HttpServletResponseImpl();
         res.addHeader("X-A", "1");

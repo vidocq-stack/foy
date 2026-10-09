@@ -78,6 +78,7 @@ public final class HttpServletResponseImpl implements HttpServletResponse {
         // Servlet 6.1 §5.8: sendError clears the buffer, so whatever the servlet
         // wrote before is discarded. The default message is then written as raw bytes
         // directly into the internal buffer to avoid the getWriter()/getOutputStream() conflict.
+        clearContentLength();
         outputStream.resetBuffer();
         writer = null;
         streamAcquired = false;
@@ -107,6 +108,7 @@ public final class HttpServletResponseImpl implements HttpServletResponse {
     @Override public void sendRedirect(String location, int sc, boolean clearBuffer) throws IOException {
         if (isCommitted()) throw new IllegalStateException("response already committed");
         if (clearBuffer) {
+            clearContentLength();
             resetBuffer();
         } else {
             drainWriter();
@@ -355,6 +357,12 @@ public final class HttpServletResponseImpl implements HttpServletResponse {
         if (writer != null) writer.flush();
         committed = true;
     }
+    /** Drops the declared Content-Length, which no longer describes a cleared body. */
+    private void clearContentLength() {
+        contentLength = -1;
+        headers.remove("Content-Length");
+    }
+
     @Override public void resetBuffer() {
         if (isCommitted()) throw new IllegalStateException("committed");
         outputStream.resetBuffer();
@@ -386,7 +394,7 @@ public final class HttpServletResponseImpl implements HttpServletResponse {
         streamAcquired = false;
     }
     @Override public void setLocale(Locale loc) {
-        if (committed || loc == null) return;
+        if (isCommitted() || loc == null) return;
         this.locale = loc;
         // Servlet 6.1 §5.4: setLocale sets Content-Language (BCP 47 tag).
         setHeader("Content-Language", loc.toLanguageTag());
