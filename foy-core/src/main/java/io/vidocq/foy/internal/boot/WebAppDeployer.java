@@ -76,9 +76,6 @@ public final class WebAppDeployer {
 
     private WebAppDeployer() {}
 
-    /** Session lifetime when the model sets none (Servlet 6.1 leaves it to the container). */
-    static final int DEFAULT_SESSION_TIMEOUT_SECONDS = 1800;
-
     /**
      * Deploys {@code model}. When anything escapes (a listener, an initializer, a component
      * factory), what was already set up is torn down — destroy in reverse init order,
@@ -94,6 +91,7 @@ public final class WebAppDeployer {
         var initializedFilters = new ArrayList<Filter>();
         Path tempDir = null;
         ListenerRegistry contextInitializedListeners = null;
+        SessionManager sessions = null;
         try {
             var servlets = new ArrayList<ServletUnit>();
             var filters = new ArrayList<FilterUnit>();
@@ -114,11 +112,6 @@ public final class WebAppDeployer {
             ListenerRegistry registry = new ListenerRegistry();
             registry.registerAll(listeners);
             ctx.setListenerRegistry(registry);
-            int sessionTimeoutSeconds = model.sessionTimeoutMinutes() > 0
-                    ? model.sessionTimeoutMinutes() * 60 : DEFAULT_SESSION_TIMEOUT_SECONDS;
-            SessionManager sessions = new SessionManager(new InMemorySessionStore(), ctx, sessionTimeoutSeconds);
-            sessions.setListenerRegistry(registry);
-
             runInitializers(model, options, ctx);
             contextInitializedListeners = registry;
             registry.fireContextInitialized(ctx);
@@ -134,20 +127,35 @@ public final class WebAppDeployer {
             // End of the initialisation phase (Servlet 6.1 §4.4) — from now on the dynamic
             // configuration methods must throw IllegalStateException.
             ctx.markInitialized();
+            // The session timeout is read once the initializers and the context listeners ran:
+            // ServletContext.setSessionTimeout is honoured from both (section 4.4.1).
+            sessions = new SessionManager(new InMemorySessionStore(), ctx, sessionTimeoutSeconds(ctx));
+            sessions.setListenerRegistry(registry);
+            sessions.start();
             var bridge = new ChappeServletBridge(liveServlets,
                     new FilterRegistry(liveFilters), ctx, sessions, model.contextPath());
             // Register the context for cross-context lookups (§4.8 / cross-context async dispatch).
             CrossContextRegistry.register(ctx);
-            return new Deployment(bridge, ctx, registry, initializedServlets, initializedFilters, tempDir);
+            return new Deployment(bridge, ctx, registry, initializedServlets, initializedFilters, tempDir, sessions);
         } catch (RuntimeException | Error e) {
             try {
                 Deployment.undeploy(ctx, contextInitializedListeners, initializedServlets, initializedFilters,
-                        tempDir);
+                        tempDir, sessions);
             } catch (RuntimeException cleanupFailure) {
                 e.addSuppressed(cleanupFailure);
             }
             throw e;
         }
+    }
+
+    /**
+     * The default session timeout in seconds: the context's value in minutes (descriptor, then
+     * {@code setSessionTimeout} from an initializer or a listener); zero or less means that
+     * sessions never time out.
+     */
+    static int sessionTimeoutSeconds(VidocqServletContext ctx) {
+        int minutes = ctx.getSessionTimeout();
+        return minutes <= 0 ? -1 : Math.multiplyExact(minutes, 60);
     }
 
     /** Servlet 6.1 §4.8.1: the "jakarta.servlet.context.tempdir" attribute is required. */

@@ -60,9 +60,21 @@ public final class VidocqSessionCookieConfig implements SessionCookieConfig {
     @Override public void setMaxAge(int maxAge) { checkNotInitialized(); this.maxAge = maxAge; }
 
     private boolean secure;
+    private boolean secureExplicit;
     private boolean httpOnly = true;
     @Override public boolean isSecure() { return secure; }
-    @Override public void setSecure(boolean secure) { checkNotInitialized(); this.secure = secure; }
+    @Override public void setSecure(boolean secure) {
+        checkNotInitialized();
+        this.secure = secure;
+        this.secureExplicit = true;
+    }
+
+    /**
+     * {@code true} once the application chose the {@code Secure} flag ({@link #setSecure},
+     * {@code <secure>} in the descriptor, or a {@code Secure} attribute); otherwise the container
+     * marks the session cookie {@code Secure} exactly when the request is secure (section 7.1.1).
+     */
+    public boolean isSecureExplicit() { return secureExplicit; }
     @Override public boolean isHttpOnly() { return httpOnly; }
     @Override public void setHttpOnly(boolean httpOnly) { checkNotInitialized(); this.httpOnly = httpOnly; }
 
@@ -88,6 +100,7 @@ public final class VidocqSessionCookieConfig implements SessionCookieConfig {
         if ("Max-Age".equalsIgnoreCase(name)) {
             this.maxAge = value == null ? -1 : Integer.parseInt(value); return;
         }
+        if ("Secure".equalsIgnoreCase(name)) secureExplicit = true;
         attributes.put(name, value);
     }
 }

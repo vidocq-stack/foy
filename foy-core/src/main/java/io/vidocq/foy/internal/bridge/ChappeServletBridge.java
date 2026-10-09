@@ -39,10 +39,12 @@ import io.vidocq.foy.internal.http.RequestPaths;
 import io.vidocq.foy.internal.listener.ListenerRegistry;
 import io.vidocq.foy.internal.session.HttpSessionImpl;
 import io.vidocq.foy.internal.session.SessionManager;
+import io.vidocq.foy.internal.session.VidocqSessionCookieConfig;
 import jakarta.servlet.DispatcherType;
 import jakarta.servlet.Filter;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.SessionCookieConfig;
+import jakarta.servlet.SessionTrackingMode;
 import jakarta.servlet.http.Cookie;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
@@ -103,6 +105,17 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
 
     @Override
     public Response handle(Request request) throws Exception {
+        var requests = new java.util.ArrayList<HttpServletRequestImpl>(1);
+        try {
+            return handle(request, requests);
+        } finally {
+            // End of request processing (asynchronous processing included, awaited by handle):
+            // the sessions used by the request become idle, and their last-accessed time moves.
+            for (HttpServletRequestImpl r : requests) r.endSessionAccess();
+        }
+    }
+
+    private Response handle(Request request, List<HttpServletRequestImpl> requests) throws Exception {
         String rawPath = request.path();
         // URL rewriting (§7.1) : extrait un jsessionid inline du path et le retire
         // du path utilisé pour le dispatching.
@@ -130,10 +143,10 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
         } else {
             // Strip the context path on a segment boundary; a path outside the context is a 404.
             String relative = RequestPaths.stripContextPath(rawPath, contextPath);
-            if (relative == null) return rejected(request, res, 404);
+            if (relative == null) return rejected(request, requests, res, 404);
             // Section 3.5.2: the canonical (decoded, normalised) path drives every mapping decision.
             path = RequestPaths.canonicalize(relative);
-            if (path == null) return rejected(request, res, 400);
+            if (path == null) return rejected(request, requests, res, 400);
         }
 
         Optional<ServletDispatcher.Mapping> match = dispatcher.find(path);
@@ -144,6 +157,7 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
             if (redirect != null) {
                 var redirected = new HttpServletRequestImpl(request, servletContext, contextPath, "", null,
                         sessionManager);
+                requests.add(redirected);
                 redirected.bindResponse(res);
                 try { res.sendRedirect(redirect); } catch (IOException ignored) {}
                 return toChappeResponse(res);
@@ -163,6 +177,7 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
             // the container default servlet); only a bridge built without one reaches this branch.
             req = new HttpServletRequestImpl(request, servletContext, contextPath, path, null,
                     sessionManager);
+            requests.add(req);
             req.setCanonicalPath(path);
             req.bindResponse(res);
             req.setUrlSessionId(finalUrlSessionId);
@@ -196,6 +211,7 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
                 DispatchResolver.mappingFor(m, path, servletPath));
         req = new HttpServletRequestImpl(request, servletContext, contextPath, servletPath, pathInfo,
                 sessionManager);
+        requests.add(req);
         req.setCanonicalPath(path);
         req.setHttpServletMapping(target.mapping());
         req.bindResponse(res);
@@ -311,8 +327,10 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
      * filter or servlet of the application runs and no request listener fires; an error page
      * registered for the status is honoured through the regular error dispatch.
      */
-    private Response rejected(Request request, HttpServletResponseImpl res, int status) {
+    private Response rejected(Request request, List<HttpServletRequestImpl> requests, HttpServletResponseImpl res,
+                              int status) {
         var req = new HttpServletRequestImpl(request, servletContext, contextPath, "", null, sessionManager);
+        requests.add(req);
         req.bindResponse(res);
         try { res.sendError(status); } catch (IOException ignored) {}
         try { maybeHandleError(req, res, null, null); }
@@ -548,18 +566,26 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
         return null;
     }
 
+    /**
+     * Emits the session cookie when the request ends bound to a session the client does not know
+     * by that id yet (a new session, or a {@code changeSessionId}). Nothing is emitted when the
+     * effective tracking modes leave out {@code COOKIE} (section 7.1.1). The cookie is
+     * {@code Secure} on a secure request unless the application set the flag explicitly
+     * ({@link SessionCookieConfig#setSecure}, {@code <secure>} in the descriptor).
+     */
     private void maybeAttachSessionCookie(HttpServletRequestImpl req, HttpServletResponseImpl res) {
         HttpSessionImpl session = req.boundSession();
         if (session == null || session.isInvalidated()) return;
+        if (!servletContext.getEffectiveSessionTrackingModes().contains(SessionTrackingMode.COOKIE)) return;
         String requested = req.getRequestedSessionId();
         if (!session.getId().equals(requested)) {
-            SessionCookieConfig cfg = servletContext.sessionCookieConfigInternal();
+            VidocqSessionCookieConfig cfg = servletContext.sessionCookieConfigInternal();
             Cookie c = new Cookie(cfg.getName(), session.getId());
             String path = cfg.getPath();
             c.setPath(path != null && !path.isEmpty() ? path : "/".equals(contextPath) ? "/" : contextPath);
             if (cfg.getDomain() != null) c.setDomain(cfg.getDomain());
             if (cfg.getMaxAge() >= 0) c.setMaxAge(cfg.getMaxAge());
-            c.setSecure(cfg.isSecure());
+            c.setSecure(cfg.isSecureExplicit() ? cfg.isSecure() : req.isSecure());
             c.setHttpOnly(cfg.isHttpOnly());
             cfg.getAttributes().forEach(c::setAttribute);
             res.addHeaderInternal("Set-Cookie", CookieCodec.serializeSetCookie(c));

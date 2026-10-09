@@ -23,6 +23,8 @@ import io.vidocq.foy.spi.session.SessionStore;
 
 import jakarta.servlet.http.HttpSession;
 
+import java.util.Collection;
+import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
@@ -52,5 +54,10 @@ public final class InMemorySessionStore implements SessionStore {
     @Override
     public int size() {
         return sessions.size();
+    }
+
+    @Override
+    public Collection<HttpSession> sessions() {
+        return List.copyOf(sessions.values());
     }
 }

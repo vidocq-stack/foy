@@ -582,24 +582,31 @@ public final class HttpServletRequestImpl implements HttpServletRequest {
             return null;
         }
         String id = getRequestedSessionId();
-        HttpSessionImpl existing = id == null ? null : sessionManager.find(id);
+        // Only the requested session is looked up, and once: after it was invalidated in this
+        // request, only a new one can be bound.
+        HttpSessionImpl existing = id == null || currentSession != null ? null : sessionManager.find(id);
         if (existing != null) {
+            accessedSessions.add(existing);
             currentSession = existing;
             return existing;
         }
         if (!create) return null;
-        currentSession = sessionManager.createNew();
-        return currentSession;
+        HttpSessionImpl created = sessionManager.createNew();
+        created.beginAccess();
+        accessedSessions.add(created);
+        currentSession = created;
+        return created;
     }
     @Override public HttpSession getSession() { return getSession(true); }
     @Override public String changeSessionId() {
-        HttpSession s = getSession(false);
-        if (s == null) throw new IllegalStateException("no session");
-        throw new UnsupportedOperationException("changeSessionId not implemented");
+        if (!(getSession(false) instanceof HttpSessionImpl s)) throw new IllegalStateException("no session");
+        return sessionManager.changeSessionId(s);
     }
     @Override public boolean isRequestedSessionIdValid() {
         String id = getRequestedSessionId();
-        return id != null && sessionManager != null && sessionManager.find(id) != null;
+        if (id == null || sessionManager == null) return false;
+        if (currentSession != null) return !currentSession.isInvalidated() && id.equals(currentSession.getId());
+        return sessionManager.peek(id) != null;
     }
     @Override public boolean isRequestedSessionIdFromCookie() {
         return getRequestedSessionId() != null && !sessionIdFromUrl;
@@ -620,6 +627,18 @@ public final class HttpServletRequestImpl implements HttpServletRequest {
     }
 
     public HttpSessionImpl boundSession() { return currentSession; }
+
+    /** Sessions this request began an access to; ended by {@link #endSessionAccess()}. */
+    private final java.util.List<HttpSessionImpl> accessedSessions = new java.util.ArrayList<>(1);
+
+    /**
+     * End of request processing: ends the access of every session this request used, so that
+     * its end becomes their last-accessed time and they may expire again.
+     */
+    public void endSessionAccess() {
+        for (HttpSessionImpl s : accessedSessions) s.endAccess();
+        accessedSessions.clear();
+    }
 
     @Override public boolean authenticate(jakarta.servlet.http.HttpServletResponse response) throws IOException {
         if (currentUser != null) return true;

@@ -164,7 +164,7 @@ The `io.vidocq.foy.internal.*` packages are exported to allow advanced integrati
 | Type | Role
 
 | `io.vidocq.foy.spi.session.SessionStore`
-| Session storage backend. Default: `InMemorySessionStore`. Implement to back Redis, Hazelcast, JDBC, etc.
+| Session storage backend. Default: `InMemorySessionStore`. Implement to back Redis, Hazelcast, JDBC, etc. Optional default methods: `rename(oldId, session)` (used by `changeSessionId`; default put-then-remove) and `sessions()` (the snapshot scanned by the expiry reaper and invalidated on undeploy; default empty, for stores that expire entries themselves).
 
 | `io.vidocq.foy.spi.security.SecurityProvider`
 | Application authentication. Default: `AnonymousSecurityProvider` (dev) or `BasicAuthenticator`. Implement for OIDC, LDAP, JWT.

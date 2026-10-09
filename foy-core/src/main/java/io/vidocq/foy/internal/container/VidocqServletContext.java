@@ -322,7 +322,9 @@ public final class VidocqServletContext implements ServletContext {
     public String configuredResponseCharacterEncoding() { return responseCharacterEncoding; }
 
     /** The session cookie configuration, without the programmatic-listener guard (container use). */
-    public SessionCookieConfig sessionCookieConfigInternal() { return sessionCookieConfig; }
+    public io.vidocq.foy.internal.session.VidocqSessionCookieConfig sessionCookieConfigInternal() {
+        return sessionCookieConfig;
+    }
 
     @Override public String getMimeType(String file) {
         if (file == null) return null;

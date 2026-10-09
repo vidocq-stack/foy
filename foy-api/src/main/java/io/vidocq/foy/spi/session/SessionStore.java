@@ -21,6 +21,8 @@ package io.vidocq.foy.spi.session;
 
 import jakarta.servlet.http.HttpSession;
 
+import java.util.Collection;
+import java.util.List;
 import java.util.Optional;
 
 /**
@@ -44,4 +46,24 @@ public interface SessionStore {
 
     /** Number of sessions currently stored (diagnostic). */
     int size();
+
+    /**
+     * Re-keys {@code session}, whose {@link HttpSession#getId()} already returns its new id, from
+     * {@code oldId} (Servlet 6.1 section 7.3, {@code HttpServletRequest.changeSessionId}). The
+     * default stores the session under its new id before removing the old key, so that the
+     * session is never absent; a store that can move a key atomically should override it.
+     */
+    default void rename(String oldId, HttpSession session) {
+        put(session);
+        remove(oldId);
+    }
+
+    /**
+     * A snapshot of the sessions held locally, scanned by the container's expiry reaper and
+     * invalidated on undeploy. The default is empty: a remote store that expires its entries
+     * itself does not need the container to scan it.
+     */
+    default Collection<HttpSession> sessions() {
+        return List.of();
+    }
 }

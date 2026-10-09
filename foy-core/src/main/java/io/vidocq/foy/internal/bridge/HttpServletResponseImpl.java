@@ -424,8 +424,65 @@ public final class HttpServletResponseImpl implements HttpServletResponse {
 
     // ---- URL encoding ----
 
-    @Override public String encodeURL(String url) { return url; }
-    @Override public String encodeRedirectURL(String url) { return url; }
+    /**
+     * URL rewriting (Servlet 6.1 section 7.1.3): appends {@code ;jsessionid=<id>} to the path of
+     * {@code url} when the effective tracking modes contain {@code URL}, the request has a
+     * session, the client does not already send its id in a cookie, and {@code url} targets this
+     * application (a relative URL, or one whose path is under the context path and, when
+     * absolute, on the request's scheme, host and port). Otherwise {@code url} is unchanged.
+     */
+    @Override public String encodeURL(String url) {
+        if (url == null || boundRequest == null) return url;
+        var ctx = boundRequest.getServletContext();
+        if (ctx == null || !ctx.getEffectiveSessionTrackingModes()
+                .contains(jakarta.servlet.SessionTrackingMode.URL)) return url;
+        var session = boundRequest.getSession(false);
+        if (session == null || boundRequest.isRequestedSessionIdFromCookie()) return url;
+        if (!targetsThisApplication(url)) return url;
+        int end = url.length();
+        int q = url.indexOf('?');
+        if (q >= 0) end = q;
+        int f = url.indexOf('#');
+        if (f >= 0 && f < end) end = f;
+        return url.substring(0, end) + ";jsessionid=" + session.getId() + url.substring(end);
+    }
+
+    /** Same rule as {@link #encodeURL}: Foy does not distinguish redirect targets. */
+    @Override public String encodeRedirectURL(String url) { return encodeURL(url); }
+
+    private boolean targetsThisApplication(String url) {
+        if (url.isEmpty() || url.startsWith("#") || url.contains(";jsessionid=")) return false;
+        String path;
+        boolean absolute = url.startsWith("//") || url.matches("^[A-Za-z][A-Za-z0-9+.-]*:.*");
+        if (absolute) {
+            java.net.URI uri;
+            try {
+                uri = new java.net.URI(url.startsWith("//") ? boundRequest.getScheme() + ":" + url : url);
+            } catch (java.net.URISyntaxException e) {
+                return false;
+            }
+            if (uri.isOpaque() || uri.getHost() == null) return false;
+            String scheme = uri.getScheme();
+            if (!scheme.equalsIgnoreCase(boundRequest.getScheme())) return false;
+            if (!uri.getHost().equalsIgnoreCase(boundRequest.getServerName())) return false;
+            int port = uri.getPort() >= 0 ? uri.getPort()
+                    : "https".equalsIgnoreCase(scheme) ? 443 : "http".equalsIgnoreCase(scheme) ? 80 : -1;
+            if (port != boundRequest.getServerPort()) return false;
+            path = uri.getRawPath() == null || uri.getRawPath().isEmpty() ? "/" : uri.getRawPath();
+        } else if (url.startsWith("/")) {
+            path = url;
+        } else {
+            return true; // relative to the current request: same application
+        }
+        int end = path.length();
+        for (char c : new char[] {'?', '#', ';'}) {
+            int i = path.indexOf(c);
+            if (i >= 0 && i < end) end = i;
+        }
+        path = path.substring(0, end);
+        String cp = boundRequest.getContextPath();
+        return cp == null || cp.isEmpty() || path.equals(cp) || path.startsWith(cp + "/");
+    }
 
     // ---- Internal access for the Chappe bridge ----
 

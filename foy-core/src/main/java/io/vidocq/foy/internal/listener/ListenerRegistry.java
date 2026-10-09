@@ -33,6 +33,7 @@ import jakarta.servlet.http.HttpSession;
 import jakarta.servlet.http.HttpSessionAttributeListener;
 import jakarta.servlet.http.HttpSessionBindingEvent;
 import jakarta.servlet.http.HttpSessionEvent;
+import jakarta.servlet.http.HttpSessionIdListener;
 import jakarta.servlet.http.HttpSessionListener;
 
 import java.util.ArrayList;
@@ -55,6 +56,7 @@ public final class ListenerRegistry {
     private final List<ServletRequestAttributeListener> requestAttrListeners = new ArrayList<>();
     private final List<HttpSessionListener> sessionListeners = new ArrayList<>();
     private final List<HttpSessionAttributeListener> sessionAttrListeners = new ArrayList<>();
+    private final List<HttpSessionIdListener> sessionIdListeners = new ArrayList<>();
 
     /** Tracks listeners added programmatically (ctx.addListener...) —
      *  Servlet 6.1 §4.4.3: they do not have access to dynamic configuration APIs. */
@@ -70,6 +72,7 @@ public final class ListenerRegistry {
         if (listener instanceof ServletRequestAttributeListener l) requestAttrListeners.add(l);
         if (listener instanceof HttpSessionListener l) sessionListeners.add(l);
         if (listener instanceof HttpSessionAttributeListener l) sessionAttrListeners.add(l);
+        if (listener instanceof HttpSessionIdListener l) sessionIdListeners.add(l);
         programmatic.put(listener, isProgrammatic);
     }
 
@@ -181,6 +184,13 @@ public final class ListenerRegistry {
         for (int i = sessionListeners.size() - 1; i >= 0; i--) {
             sessionListeners.get(i).sessionDestroyed(evt);
         }
+    }
+
+    /** {@code HttpServletRequest.changeSessionId} (Servlet 6.1 section 7.3): fired once per change. */
+    public void fireSessionIdChanged(HttpSession session, String oldSessionId) {
+        if (sessionIdListeners.isEmpty()) return;
+        var evt = new HttpSessionEvent(session);
+        for (var l : sessionIdListeners) l.sessionIdChanged(evt, oldSessionId);
     }
 
     public void fireSessionAttributeAdded(HttpSession s, String name, Object value) {

@@ -24,6 +24,7 @@ import jakarta.servlet.http.HttpSession;
 import jakarta.servlet.http.HttpSessionBindingEvent;
 import jakarta.servlet.http.HttpSessionBindingListener;
 
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Enumeration;
 import java.util.concurrent.ConcurrentHashMap;
@@ -32,19 +33,35 @@ import java.util.concurrent.ConcurrentMap;
 /**
  * Thread-safe in-memory implementation of {@link HttpSession}.
  *
- * <p>Delegates expiration management to {@link SessionManager} who consults
- * {@link #getLastAccessedTime()} and {@link #getMaxInactiveInterval()}.</p>
+ * <p>Access times follow the {@code HttpSession} Javadoc: {@link #getLastAccessedTime()} is the
+ * time of the <em>previous</em> request associated with the session. A request begins an access
+ * ({@link #tryAccess}/{@link #beginAccess}) and ends it once processed ({@link #endAccess}); only
+ * the end of an access moves the last-accessed time. A session in use by an in-flight request is
+ * never expired, whatever its idle time.</p>
+ *
+ * <p>Invalidation (explicit or by expiry) fires {@code sessionDestroyed} while the session is
+ * still valid, so that listeners can read its attributes, then unbinds every attribute
+ * ({@code valueUnbound} and {@code attributeRemoved}) and removes the session from its store.</p>
  */
 public final class HttpSessionImpl implements HttpSession {
 
-    private final String id;
+    private static final System.Logger LOG = System.getLogger(HttpSessionImpl.class.getName());
+
+    private volatile String id;
     private final ServletContext servletContext;
     private final SessionManager manager;
     private final long creationTime;
+    /** End of the previous access: the value of {@link #getLastAccessedTime()}. */
     private volatile long lastAccessedTime;
+    /** Start or end of the most recent access: the idle time is measured from it. */
+    private volatile long thisAccessedTime;
     private volatile int maxInactiveInterval;
     private volatile boolean newSession = true;
+    /** Set once an invalidation started; guarded by {@code this}. */
+    private boolean invalidating;
     private volatile boolean invalidated;
+    /** Requests currently using the session; guarded by {@code this}. */
+    private int accessCount;
     private final ConcurrentMap<String, Object> attributes = new ConcurrentHashMap<>();
 
     public HttpSessionImpl(String id, ServletContext ctx, SessionManager manager, int maxInactiveSeconds) {
@@ -53,14 +70,96 @@ public final class HttpSessionImpl implements HttpSession {
         this.manager = manager;
         this.creationTime = System.currentTimeMillis();
         this.lastAccessedTime = creationTime;
+        this.thisAccessedTime = creationTime;
         this.maxInactiveInterval = maxInactiveSeconds;
     }
 
-    void markAccessed() {
-        if (invalidated) throw new IllegalStateException("session invalidated");
-        this.lastAccessedTime = System.currentTimeMillis();
-        this.newSession = false;
+    // ---- access tracking ----
+
+    /**
+     * Begins an access by a request that found the session by its id. Returns {@code false},
+     * leaving the session untouched, when it is invalidated or has expired while unused.
+     */
+    synchronized boolean tryAccess(long now) {
+        if (invalidating || invalidated) return false;
+        if (accessCount == 0 && isIdleExpired(now)) return false;
+        accessCount++;
+        thisAccessedTime = now;
+        newSession = false;
+        return true;
     }
+
+    /** Begins an access by the request that created the session. */
+    public synchronized void beginAccess() {
+        accessCount++;
+        thisAccessedTime = System.currentTimeMillis();
+    }
+
+    /** Ends an access: the end of this request becomes the session's last-accessed time. */
+    public synchronized void endAccess() {
+        if (accessCount > 0) accessCount--;
+        long now = System.currentTimeMillis();
+        thisAccessedTime = now;
+        lastAccessedTime = now;
+        newSession = false;
+    }
+
+    /** {@code true} when the session is idle beyond its maximum inactive interval. */
+    private boolean isIdleExpired(long now) {
+        int max = maxInactiveInterval;
+        return max > 0 && now - thisAccessedTime >= max * 1000L;
+    }
+
+    /**
+     * Claims the session for expiry: succeeds only when no request uses it, it has been idle
+     * beyond its maximum inactive interval and no invalidation started. The caller then
+     * {@linkplain #completeInvalidation() completes} the invalidation.
+     */
+    synchronized boolean claimExpired(long now) {
+        if (invalidating || invalidated || accessCount > 0 || !isIdleExpired(now)) return false;
+        invalidating = true;
+        return true;
+    }
+
+    /** Claims the session for an invalidation that does not depend on idleness (undeploy). */
+    synchronized boolean claimInvalidation() {
+        if (invalidating || invalidated) return false;
+        invalidating = true;
+        return true;
+    }
+
+    /**
+     * Second half of an invalidation claimed by {@link #claimExpired}, {@link #claimInvalidation}
+     * or {@link #invalidate()}: {@code sessionDestroyed}, then the unbinding of the attributes,
+     * then the removal from the store. A failing listener is logged and does not stop the
+     * invalidation.
+     */
+    void completeInvalidation() {
+        try {
+            manager.listenerRegistry().fireSessionDestroyed(this);
+        } catch (RuntimeException e) {
+            LOG.log(System.Logger.Level.WARNING, "sessionDestroyed failed for session " + id, e);
+        }
+        invalidated = true;
+        for (String name : new ArrayList<>(attributes.keySet())) {
+            Object v = attributes.remove(name);
+            if (v == null) continue;
+            try {
+                if (v instanceof HttpSessionBindingListener l) {
+                    l.valueUnbound(new HttpSessionBindingEvent(this, name, v));
+                }
+                manager.listenerRegistry().fireSessionAttributeRemoved(this, name, v);
+            } catch (RuntimeException e) {
+                LOG.log(System.Logger.Level.WARNING, "unbinding " + name + " failed for session " + id, e);
+            }
+        }
+        manager.onInvalidated(this);
+    }
+
+    /** Re-keys the session ({@link SessionManager#changeSessionId}). */
+    void setId(String newId) { this.id = newId; }
+
+    // ---- HttpSession ----
 
     @Override public long getCreationTime() { checkValid(); return creationTime; }
     @Override public String getId() { return id; }
@@ -72,7 +171,7 @@ public final class HttpSessionImpl implements HttpSession {
     @Override public Object getAttribute(String name) { checkValid(); return attributes.get(name); }
     @Override public Enumeration<String> getAttributeNames() {
         checkValid();
-        return Collections.enumeration(attributes.keySet());
+        return Collections.enumeration(new ArrayList<>(attributes.keySet()));
     }
     @Override public void setAttribute(String name, Object value) {
         checkValid();
@@ -103,16 +202,8 @@ public final class HttpSessionImpl implements HttpSession {
 
     @Override public void invalidate() {
         checkValid();
-        invalidated = true;
-        // Unbind attributes before destroying to trigger binding listeners + attribute removed events.
-        for (String name : Collections.list(Collections.enumeration(attributes.keySet()))) {
-            Object v = attributes.remove(name);
-            if (v instanceof HttpSessionBindingListener l) {
-                l.valueUnbound(new HttpSessionBindingEvent(this, name, v));
-            }
-            manager.listenerRegistry().fireSessionAttributeRemoved(this, name, v);
-        }
-        manager.onInvalidate(this);
+        if (!claimInvalidation()) throw new IllegalStateException("session already invalidated");
+        completeInvalidation();
     }
 
     @Override public boolean isNew() { checkValid(); return newSession; }

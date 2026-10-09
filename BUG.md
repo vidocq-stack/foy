@@ -197,3 +197,43 @@ Statuts : `OPEN` → `INVESTIGATING` → `FIXED` (commit hash) → `CLOSED`.
   passes a path through the string-based `dispatch(String)` API that splits on `?`.
 - **Investigations** :
   - 2026-10-09 : found in the Task 4.5b review; not exercised by the TCK.
+
+## BUG-20261009-05 — changeSessionId throws UnsupportedOperationException; HttpSessionIdListener ignored
+
+- **Date** : 2026-10-09
+- **Statut** : FIXED (Phase 4 Task 4.7, `feat(core): changeSessionId, session expiry reaper, ...`)
+- **Module touché** : `foy-core` (`HttpServletRequestImpl.changeSessionId`, `ListenerRegistry`)
+- **Symptôme** : `HttpServletRequest.changeSessionId()` answered 500 `UnsupportedOperationException:
+  changeSessionId not implemented` (TCK `HttpSessionIdListenerTests.changeSessionIDTest1`,
+  `HttpServletRequestWrapperTests.changeSessionIDTest1`); `ListenerRegistry.register` silently dropped
+  `HttpSessionIdListener` instances.
+- **Reproduction minimale** : a servlet calling `req.getSession(); req.changeSessionId()`.
+- **Hypothèse de cause** : not implemented (Phase 1 stub).
+- **Investigations** :
+  - 2026-10-09 : `SessionManager.changeSessionId` re-keys the session in the store
+    (`SessionStore.rename`, a backward-compatible default method), keeps attributes and times,
+    fires `sessionIdChanged` once; the bridge emits the new cookie (requested id != current id).
+
+## BUG-20261009-06 — expired sessions dropped without sessionDestroyed; wrong last-accessed time
+
+- **Date** : 2026-10-09
+- **Statut** : FIXED (Phase 4 Task 4.7, same commit)
+- **Module touché** : `foy-core` (`SessionManager`, `HttpSessionImpl`)
+- **Symptôme** : (1) `SessionManager.find` removed an expired session from the store without firing
+  `HttpSessionListener.sessionDestroyed` nor unbinding its attributes, and a session never asked for
+  again was never expired (no reaper). (2) `invalidate()` unbound the attributes and marked the
+  session invalid *before* `sessionDestroyed`, so a listener reading an attribute got an
+  `IllegalStateException`. (3) `getLastAccessedTime()` returned the start of the current request
+  instead of the previous request's time (TCK `HttpSessionTests.expireHttpSessionTest`:
+  "indicates last accessed at … which is after it was last accessed").
+- **Reproduction minimale** : (1) timeout 1 s, create a session holding an
+  `HttpSessionBindingListener`, wait 2 s, request it → no `sessionDestroyed`/`valueUnbound`.
+  (3) two requests on one session → the second sees its own start time.
+- **Hypothèse de cause** : lazy-only expiry with a bare `store.remove`; access time updated on lookup.
+- **Investigations** :
+  - 2026-10-09 : Tomcat semantics adopted: a request begins an access on lookup and ends it in the
+    bridge after processing (async included); the end becomes the last-accessed time; a session in
+    use is never expired. Expiry (lazy in `find`/`peek` and by a virtual-thread reaper, period
+    `min(60 s, max(1 s, timeout / 2))`) fires `sessionDestroyed` while the session is still valid,
+    then `valueUnbound`/`attributeRemoved`. Undeploy stops the reaper and invalidates every live
+    session with its listeners (no persistence).

@@ -23,6 +23,7 @@ import io.vidocq.chappe.api.Handler;
 import io.vidocq.foy.internal.container.CrossContextRegistry;
 import io.vidocq.foy.internal.container.VidocqServletContext;
 import io.vidocq.foy.internal.listener.ListenerRegistry;
+import io.vidocq.foy.internal.session.SessionManager;
 import jakarta.servlet.Filter;
 import jakarta.servlet.Servlet;
 
@@ -48,16 +49,19 @@ public final class Deployment implements AutoCloseable {
     private final List<Servlet> initializedServlets;
     private final List<Filter> initializedFilters;
     private final Path tempDir;
+    private final SessionManager sessionManager;
     private final AtomicBoolean closed = new AtomicBoolean();
 
     Deployment(Handler handler, VidocqServletContext servletContext, ListenerRegistry listeners,
-               List<Servlet> initializedServlets, List<Filter> initializedFilters, Path tempDir) {
+               List<Servlet> initializedServlets, List<Filter> initializedFilters, Path tempDir,
+               SessionManager sessionManager) {
         this.handler = handler;
         this.servletContext = servletContext;
         this.listeners = listeners;
         this.initializedServlets = List.copyOf(initializedServlets);
         this.initializedFilters = List.copyOf(initializedFilters);
         this.tempDir = tempDir;
+        this.sessionManager = sessionManager;
     }
 
     /** The request handler to mount on a Chappe server. */
@@ -67,6 +71,9 @@ public final class Deployment implements AutoCloseable {
 
     public ListenerRegistry listeners() { return listeners; }
 
+    /** The application's session manager. */
+    public SessionManager sessionManager() { return sessionManager; }
+
     /** Servlets whose {@code init()} succeeded, in init order. */
     public List<Servlet> initializedServlets() { return initializedServlets; }
 
@@ -75,22 +82,26 @@ public final class Deployment implements AutoCloseable {
 
     /**
      * Undeploys: Servlet 6.1 §2.3.4 — {@code destroy()} in reverse {@code init()} order
-     * (filters, then servlets), then {@code contextDestroyed}, then the context leaves the
-     * cross-context registry and its temp dir is removed. A second call is a no-op.
+     * (filters, then servlets), then the session reaper stops and every live session is
+     * invalidated with its listeners ({@code sessionDestroyed}, {@code valueUnbound}; Foy does not
+     * persist sessions across deployments), then {@code contextDestroyed}, then the context leaves
+     * the cross-context registry and its temp dir is removed. A second call is a no-op.
      */
     @Override
     public void close() {
         if (!closed.compareAndSet(false, true)) return;
-        undeploy(servletContext, listeners, initializedServlets, initializedFilters, tempDir);
+        undeploy(servletContext, listeners, initializedServlets, initializedFilters, tempDir, sessionManager);
     }
 
     /**
      * Tears down a full or partial deployment. {@code contextListeners} is {@code null} when
      * {@code contextInitialized} was never fired, so {@code contextDestroyed} is skipped;
-     * {@code tempDir} is {@code null} when none was created.
+     * {@code tempDir} is {@code null} when none was created, {@code sessions} when the session
+     * manager was not created yet.
      */
     static void undeploy(VidocqServletContext servletContext, ListenerRegistry contextListeners,
-                         List<Servlet> initializedServlets, List<Filter> initializedFilters, Path tempDir) {
+                         List<Servlet> initializedServlets, List<Filter> initializedFilters, Path tempDir,
+                         SessionManager sessions) {
         for (int i = initializedFilters.size() - 1; i >= 0; i--) {
             Filter f = initializedFilters.get(i);
             try { f.destroy(); } catch (RuntimeException e) { warn("destroy failed for filter " + f, e); }
@@ -98,6 +109,10 @@ public final class Deployment implements AutoCloseable {
         for (int i = initializedServlets.size() - 1; i >= 0; i--) {
             Servlet s = initializedServlets.get(i);
             try { s.destroy(); } catch (RuntimeException e) { warn("destroy failed for servlet " + s, e); }
+        }
+        if (sessions != null) {
+            try { sessions.close(); }
+            catch (RuntimeException e) { warn("session invalidation failed", e); }
         }
         if (contextListeners != null) {
             try { contextListeners.fireContextDestroyed(servletContext); }
