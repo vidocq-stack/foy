@@ -109,6 +109,10 @@ class SessionCoreTest {
                             + "|OUT=" + resp.encodeURL("/other/b")
                             + "|ABS=" + resp.encodeURL("http://localhost:" + port + "/ctx/z#q"));
                 }
+                case "peek" -> {
+                    HttpSession s = req.getSession(false);
+                    out.write("REQ=" + req.getRequestedSessionId() + "|S=" + (s == null ? null : s.getId()));
+                }
                 case "last" -> {
                     HttpSession s = req.getSession(true);
                     out.write("LA=" + s.getLastAccessedTime() + "|CT=" + s.getCreationTime());
@@ -382,7 +386,7 @@ class SessionCoreTest {
 
     @Test
     void encodeUrlIsIdentityWithoutUrlTracking() throws Exception {
-        deploy(WebAppModel.builder("/ctx").servlet(ops()));
+        deploy(WebAppModel.builder("/ctx").servlet(ops()).trackingModes(EnumSet.of(SessionTrackingMode.COOKIE)));
         var r = get("/ctx/s/encode", null);
         assertEquals("page?x=1#f", r.value("REL"));
         assertEquals("/ctx/a", r.value("REDIR"));
@@ -444,5 +448,141 @@ class SessionCoreTest {
                 DeployOptions.defaults(getClass().getClassLoader()));
         var plain = setCookies(false);
         assertTrue(plain.getFirst().contains("; Secure"), plain.getFirst());
+    }
+
+    // ---- fix round 1 ----
+
+    @Test
+    void defaultTrackingModesAreCookieAndUrl() {
+        var ctx = new VidocqServletContext("/");
+        assertEquals(EnumSet.of(SessionTrackingMode.COOKIE, SessionTrackingMode.URL),
+                ctx.getDefaultSessionTrackingModes());
+        assertEquals(ctx.getDefaultSessionTrackingModes(), ctx.getEffectiveSessionTrackingModes());
+    }
+
+    @Test
+    void defaultModesRewriteUrlsUntilTheClientSendsTheCookie() throws Exception {
+        deploy(WebAppModel.builder("/ctx").servlet(ops()));
+        var r = get("/ctx/s/encode", null);
+        String id = r.value("ID");
+        assertEquals("page;jsessionid=" + id + "?x=1#f", r.value("REL"));
+        assertEquals(1, r.headers("Set-Cookie").size(), r.head());
+        assertEquals("page?x=1#f", get("/ctx/s/encode", "JSESSIONID=" + id).value("REL"));
+    }
+
+    @Test
+    void urlSessionIdIsIgnoredWithoutUrlTracking() throws Exception {
+        deploy(WebAppModel.builder("/ctx").servlet(ops()).trackingModes(EnumSet.of(SessionTrackingMode.COOKIE)));
+        String id = get("/ctx/s/create", null).value("ID");
+        assertEquals("REQ=null|S=null", get("/ctx/s/peek;jsessionid=" + id, null).body());
+        assertEquals("REQ=" + id + "|S=" + id, get("/ctx/s/peek", "JSESSIONID=" + id).body());
+    }
+
+    @Test
+    void sessionCookieIsIgnoredWithoutCookieTracking() throws Exception {
+        deploy(WebAppModel.builder("/ctx").servlet(ops()).trackingModes(EnumSet.of(SessionTrackingMode.URL)));
+        String id = get("/ctx/s/create", null).value("ID");
+        assertEquals("REQ=null|S=null", get("/ctx/s/peek", "JSESSIONID=" + id).body());
+        assertEquals("REQ=" + id + "|S=" + id, get("/ctx/s/peek;jsessionid=" + id, null).body());
+    }
+
+    @Test
+    void aClosedManagerCreatesNoSession() {
+        manager = new SessionManager(new InMemorySessionStore(), new VidocqServletContext("/"), 1800);
+        manager.close();
+        assertThrows(IllegalStateException.class, manager::createNew);
+    }
+
+    @Test
+    void endingTheCreatingAccessKeepsTheSessionNew() {
+        manager = new SessionManager(new InMemorySessionStore(), new VidocqServletContext("/"), 1800);
+        var s = manager.createNew();
+        s.beginAccess();
+        s.endAccess();
+        assertTrue(s.isNew(), "the client has not joined the session yet");
+        assertSame(s, manager.find(s.getId()));
+        assertFalse(s.isNew());
+    }
+
+    @Test
+    void zeroOrNegativeSessionTimeoutNeverExpires() throws Exception {
+        deploy(WebAppModel.builder("/ctx").servlet(ops()).sessionTimeoutMinutes(0));
+        assertEquals("MAX=-1", get("/ctx/s/timeout", null).body());
+        tearDown();
+        server = null;
+        deployment = null;
+        deploy(WebAppModel.builder("/ctx").servlet(ops()).sessionTimeoutMinutes(-5));
+        assertEquals("MAX=-1", get("/ctx/s/timeout", null).body());
+    }
+
+    @Test
+    void secureAttributeKeepsIsSecureConsistent() {
+        var config = new VidocqSessionCookieConfig(new VidocqServletContext("/"));
+        assertFalse(config.isSecureExplicit());
+        config.setAttribute("Secure", "true");
+        assertTrue(config.isSecure());
+        assertTrue(config.isSecureExplicit());
+        assertEquals("true", config.getAttribute("Secure"));
+        config.setAttribute("Secure", "false");
+        assertFalse(config.isSecure());
+    }
+
+    private SessionManager racing(List<String> events, HttpSessionListener destroyed,
+                                  HttpSessionIdListener changed, InMemorySessionStore store) {
+        var registry = new ListenerRegistry();
+        registry.register(destroyed);
+        registry.register(changed);
+        manager = new SessionManager(store, new VidocqServletContext("/"), 1800);
+        manager.setListenerRegistry(registry);
+        return manager;
+    }
+
+    @Test
+    void changeSessionIdIsRefusedWhileTheSessionIsBeingDestroyed() throws Exception {
+        var events = Collections.synchronizedList(new ArrayList<String>());
+        var inDestroy = new CountDownLatch(1);
+        var release = new CountDownLatch(1);
+        var store = new InMemorySessionStore();
+        var m = racing(events, new HttpSessionListener() {
+            @Override public void sessionDestroyed(HttpSessionEvent se) {
+                events.add("destroyed");
+                inDestroy.countDown();
+                try { release.await(5, TimeUnit.SECONDS); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
+            }
+        }, (event, oldId) -> events.add("changed"), store);
+        var s = m.createNew();
+        Thread destroyer = Thread.ofVirtual().start(s::invalidate);
+        assertTrue(inDestroy.await(5, TimeUnit.SECONDS));
+        assertThrows(IllegalStateException.class, () -> m.changeSessionId(s));
+        release.countDown();
+        destroyer.join(5_000);
+        assertEquals(List.of("destroyed"), events, "no sessionIdChanged on a session being destroyed");
+        assertEquals(0, store.size(), "no store entry left under any id");
+    }
+
+    @Test
+    void anInvalidationDuringSessionIdChangedWaitsForTheListener() throws Exception {
+        var events = Collections.synchronizedList(new ArrayList<String>());
+        var inChange = new CountDownLatch(1);
+        var release = new CountDownLatch(1);
+        var store = new InMemorySessionStore();
+        var m = racing(events, new HttpSessionListener() {
+            @Override public void sessionDestroyed(HttpSessionEvent se) { events.add("destroyed"); }
+        }, (event, oldId) -> {
+            events.add("changed");
+            inChange.countDown();
+            try { release.await(5, TimeUnit.SECONDS); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
+        }, store);
+        var s = m.createNew();
+        Thread changer = Thread.ofVirtual().start(() -> m.changeSessionId(s));
+        assertTrue(inChange.await(5, TimeUnit.SECONDS));
+        Thread destroyer = Thread.ofVirtual().start(s::invalidate);
+        Thread.sleep(150);
+        assertEquals(List.of("changed"), events, "the invalidation waits for sessionIdChanged");
+        release.countDown();
+        changer.join(5_000);
+        destroyer.join(5_000);
+        assertEquals(List.of("changed", "destroyed"), events);
+        assertEquals(0, store.size(), "the session is not left under its new id");
     }
 }

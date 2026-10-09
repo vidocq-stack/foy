@@ -43,7 +43,8 @@ import java.util.concurrent.TimeUnit;
  * a request asks for it ({@link #find}) or by the reaper ({@link #start()}), a single
  * virtual-thread scheduled task running every {@link #reaperPeriodFor min(60 s, max(1 s,
  * timeout / 2))}. {@link #close()} stops the reaper and invalidates every live session, firing
- * the same listeners: Foy does not persist sessions across deployments.</p>
+ * the same listeners: Foy does not persist sessions across deployments. After {@code close()} no
+ * session can be created.</p>
  */
 public final class SessionManager implements AutoCloseable {
 
@@ -56,9 +57,11 @@ public final class SessionManager implements AutoCloseable {
     private final ServletContext servletContext;
     private final int defaultMaxInactiveSeconds;
     private ListenerRegistry listenerRegistry = new ListenerRegistry();
-    /** Serialises id changes, so that an id is never handed out twice. */
+    /** Serialises the store re-keying of id changes with the removal of invalidated sessions. */
     private final Object renameLock = new Object();
     private ScheduledExecutorService reaper;
+    /** Set by {@link #close()}: no session is created afterwards. */
+    private volatile boolean closed;
 
     public SessionManager(SessionStore store, ServletContext servletContext,
                           int defaultMaxInactiveSeconds) {
@@ -105,8 +108,14 @@ public final class SessionManager implements AutoCloseable {
         return impl;
     }
 
-    /** Creates a new session and stores it. */
+    /**
+     * Creates a new session and stores it.
+     *
+     * @throws IllegalStateException once the manager is {@linkplain #close() closed} (the
+     *         application is being undeployed): {@code getSession(true)} then throws it too
+     */
     public HttpSessionImpl createNew() {
+        if (closed) throw new IllegalStateException("the web application is being undeployed");
         String id = generateId();
         HttpSessionImpl s = new HttpSessionImpl(id, servletContext, this, defaultMaxInactiveSeconds);
         store.put(s);
@@ -118,26 +127,37 @@ public final class SessionManager implements AutoCloseable {
      * {@code HttpServletRequest.changeSessionId} (section 7.3): gives {@code session} a fresh id,
      * re-keys it in the store (attributes, creation and access times are kept) and fires
      * {@code HttpSessionIdListener.sessionIdChanged} once. Returns the new id.
+     *
+     * <p>The change runs under the session's monitor, which every invalidation claim takes too:
+     * a session whose invalidation already started is refused with
+     * {@link IllegalStateException}, and an invalidation that starts during the change waits
+     * until {@code sessionIdChanged} returned, so the listener never sees a destroyed session.
+     * The store is re-keyed under {@code renameLock}, which {@link #onInvalidated} takes to
+     * remove the session, so that a dead session is never re-inserted under its new id. Lock
+     * order: session monitor, then {@code renameLock}.</p>
      */
     public String changeSessionId(HttpSessionImpl session) {
-        String oldId;
-        String newId;
-        synchronized (renameLock) {
-            if (session.isInvalidated()) throw new IllegalStateException("session invalidated");
-            oldId = session.getId();
-            do {
-                newId = generateId();
-            } while (store.get(newId).isPresent());
-            session.setId(newId);
-            store.rename(oldId, session);
+        synchronized (session) {
+            if (!session.isLive()) throw new IllegalStateException("session invalidated");
+            String oldId = session.getId();
+            String newId;
+            synchronized (renameLock) {
+                do {
+                    newId = generateId();
+                } while (store.get(newId).isPresent());
+                session.setId(newId);
+                store.rename(oldId, session);
+            }
+            listenerRegistry.fireSessionIdChanged(session, oldId);
+            return newId;
         }
-        listenerRegistry.fireSessionIdChanged(session, oldId);
-        return newId;
     }
 
     /** Callback from {@link HttpSessionImpl#completeInvalidation()}. */
     void onInvalidated(HttpSessionImpl session) {
-        store.remove(session.getId());
+        synchronized (renameLock) {
+            store.remove(session.getId());
+        }
     }
 
     /** Expires {@code session} when it is idle beyond its interval and unused; reports it. */
@@ -196,15 +216,18 @@ public final class SessionManager implements AutoCloseable {
      */
     @Override
     public void close() {
+        closed = true;
         ScheduledExecutorService r;
         synchronized (this) {
             r = reaper;
         }
         if (r != null) {
-            r.shutdownNow();
+            // Let a scan in progress finish its listeners; interrupt it only if it overruns.
+            r.shutdown();
             try {
-                r.awaitTermination(5, TimeUnit.SECONDS);
+                if (!r.awaitTermination(5, TimeUnit.SECONDS)) r.shutdownNow();
             } catch (InterruptedException e) {
+                r.shutdownNow();
                 Thread.currentThread().interrupt();
             }
         }

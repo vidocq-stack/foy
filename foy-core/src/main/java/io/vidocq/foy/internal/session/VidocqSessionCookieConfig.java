@@ -86,6 +86,7 @@ public final class VidocqSessionCookieConfig implements SessionCookieConfig {
 
     @Override public String getAttribute(String name) {
         if ("Comment".equalsIgnoreCase(name)) return null;
+        if ("Secure".equalsIgnoreCase(name)) return secureExplicit ? String.valueOf(secure) : null;
         return attributes.get(name);
     }
     @Override public Map<String, String> getAttributes() {
@@ -100,7 +101,12 @@ public final class VidocqSessionCookieConfig implements SessionCookieConfig {
         if ("Max-Age".equalsIgnoreCase(name)) {
             this.maxAge = value == null ? -1 : Integer.parseInt(value); return;
         }
-        if ("Secure".equalsIgnoreCase(name)) secureExplicit = true;
+        if ("Secure".equalsIgnoreCase(name)) {
+            // Kept consistent with isSecure() (SessionCookieConfig.setAttribute Javadoc).
+            this.secure = Boolean.parseBoolean(value);
+            this.secureExplicit = true;
+            return;
+        }
         attributes.put(name, value);
     }
 }

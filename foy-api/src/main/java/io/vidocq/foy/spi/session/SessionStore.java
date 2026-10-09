@@ -60,8 +60,12 @@ public interface SessionStore {
 
     /**
      * A snapshot of the sessions held locally, scanned by the container's expiry reaper and
-     * invalidated on undeploy. The default is empty: a remote store that expires its entries
-     * itself does not need the container to scan it.
+     * invalidated on undeploy. The default is empty, for a remote store that expires its entries
+     * itself. With the default, the container never expires nor invalidates the store's sessions:
+     * an entry expired by the store, and every session left at undeploy, goes without
+     * {@code HttpSessionListener.sessionDestroyed}, {@code HttpSessionBindingListener.valueUnbound}
+     * or {@code HttpSessionAttributeListener.attributeRemoved}. Sessions expire lazily only when a
+     * request asks for them.
      */
     default Collection<HttpSession> sessions() {
         return List.of();

@@ -184,7 +184,8 @@ public final class WebAppDeployer {
         if (options.resourceProvider() != null) ctx.setResourceProvider(options.resourceProvider());
         String name = options.servletContextName() != null ? options.servletContextName() : model.displayName();
         if (name != null) ctx.setServletContextName(name);
-        if (model.sessionTimeoutMinutes() > 0) ctx.setSessionTimeoutInternal(model.sessionTimeoutMinutes());
+        // -1 = not configured (container default, 30 minutes); zero or less otherwise = never expire.
+        if (model.sessionTimeoutMinutes() != -1) ctx.setSessionTimeoutInternal(model.sessionTimeoutMinutes());
         options.reservedServletNames().forEach(ctx::reserveServletName);
         options.reservedFilterNames().forEach(ctx::reserveFilterName);
         options.reservedUrlPatterns().forEach(ctx::reserveUrlPattern);

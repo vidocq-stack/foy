@@ -213,6 +213,12 @@ Statuts : `OPEN` → `INVESTIGATING` → `FIXED` (commit hash) → `CLOSED`.
   - 2026-10-09 : `SessionManager.changeSessionId` re-keys the session in the store
     (`SessionStore.rename`, a backward-compatible default method), keeps attributes and times,
     fires `sessionIdChanged` once; the bridge emits the new cookie (requested id != current id).
+  - 2026-10-09 (Task 4.7 review, fix round 1) : race with invalidation/undeploy — the guard
+    checked `isInvalidated()` only, so `sessionIdChanged` could fire on a session being destroyed
+    and `rename` could re-insert a dead session under its new id. The change now runs under the
+    session monitor (which every invalidation claim takes) and refuses a session whose
+    invalidation started; the store removal of an invalidated session takes the same
+    `renameLock` as the re-keying.
 
 ## BUG-20261009-06 — expired sessions dropped without sessionDestroyed; wrong last-accessed time
 
@@ -237,3 +243,18 @@ Statuts : `OPEN` → `INVESTIGATING` → `FIXED` (commit hash) → `CLOSED`.
     `min(60 s, max(1 s, timeout / 2))`) fires `sessionDestroyed` while the session is still valid,
     then `valueUnbound`/`attributeRemoved`. Undeploy stops the reaper and invalidates every live
     session with its listeners (no persistence).
+
+## BUG-20261009-07 — tracking modes not enforced on input; COOKIE-only default
+
+- **Date** : 2026-10-09
+- **Statut** : FIXED (Phase 4 Task 4.7 fix round 1, `fix(core): ...`)
+- **Module touché** : `foy-core` (`HttpServletRequestImpl.getRequestedSessionId`, `VidocqServletContext`)
+- **Symptôme** : a `;jsessionid=` path parameter resolved the session even when `URL` was not an
+  effective tracking mode, and the session cookie did when `COOKIE` was not; the default modes
+  were `{COOKIE}` only, so URL rewriting was off by default.
+- **Reproduction minimale** : `<tracking-mode>COOKIE</tracking-mode>`, create a session, request
+  `/ctx/x;jsessionid=<id>` without the cookie → the session is found.
+- **Hypothèse de cause** : the request read both sources unconditionally.
+- **Investigations** :
+  - 2026-10-09 : ruling — default `{COOKIE, URL}` (Tomcat; `SSL` never by default), each source
+    read only when its mode is effective (section 7.1).

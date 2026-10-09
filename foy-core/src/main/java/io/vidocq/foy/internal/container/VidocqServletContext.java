@@ -675,7 +675,7 @@ public final class VidocqServletContext implements ServletContext {
 
     // ---- Sessions ----
 
-    private Set<SessionTrackingMode> effectiveSessionTrackingModes; // null = défaut COOKIE
+    private Set<SessionTrackingMode> effectiveSessionTrackingModes; // null = the default modes
     private final io.vidocq.foy.internal.session.VidocqSessionCookieConfig sessionCookieConfig
             = new io.vidocq.foy.internal.session.VidocqSessionCookieConfig(this);
     @Override public SessionCookieConfig getSessionCookieConfig() {
@@ -690,8 +690,12 @@ public final class VidocqServletContext implements ServletContext {
         }
         this.effectiveSessionTrackingModes = modes == null ? null : EnumSet.copyOf(modes);
     }
+    /**
+     * The container default is {@code COOKIE} and {@code URL} (as Tomcat; {@code SSL} is never a
+     * default); {@code <tracking-mode>} in the descriptor replaces it.
+     */
     @Override public Set<SessionTrackingMode> getDefaultSessionTrackingModes() {
-        return descriptorTrackingModes == null ? EnumSet.of(SessionTrackingMode.COOKIE)
+        return descriptorTrackingModes == null ? EnumSet.of(SessionTrackingMode.COOKIE, SessionTrackingMode.URL)
                 : EnumSet.copyOf(descriptorTrackingModes);
     }
     @Override public Set<SessionTrackingMode> getEffectiveSessionTrackingModes() {

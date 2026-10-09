@@ -158,7 +158,10 @@ public final class WebXmlParser {
                 case "error-page" -> errorPages.add(parseErrorPage(e));
                 case "session-config" -> {
                     String t = firstText(e, "session-timeout");
-                    if (t != null) sessionTimeoutMinutes = parseInt(t, "<session-timeout> in <session-config>");
+                    // Zero or less: sessions never time out. Normalised to 0, as -1 means "absent".
+                    if (t != null) {
+                        sessionTimeoutMinutes = Math.max(0, parseInt(t, "<session-timeout> in <session-config>"));
+                    }
                     var cc = WebXmlSecurityParser.parseCookieConfig(e);
                     if (cc != null) cookieConfig = cc;
                     trackingModes.addAll(WebXmlSecurityParser.parseTrackingModes(e));

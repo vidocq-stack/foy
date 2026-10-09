@@ -559,22 +559,29 @@ public final class HttpServletRequestImpl implements HttpServletRequest {
     }
     @Override public Principal getUserPrincipal() { return currentUser; }
     private String urlSessionId;
-    private boolean sessionIdFromUrl;
-    public void setUrlSessionId(String id) { this.urlSessionId = id; this.sessionIdFromUrl = (id != null); }
+    public void setUrlSessionId(String id) { this.urlSessionId = id; }
 
+    /**
+     * The session id sent by the client (section 7.1), read only through the effective tracking
+     * modes: a {@code ;jsessionid=} path parameter when {@code URL} is effective, else the session
+     * cookie when {@code COOKIE} is effective. A disabled mode's id is ignored.
+     */
     @Override public String getRequestedSessionId() {
-        if (requestedSessionId == null) {
-            // §7.1 : URL rewriting (;jsessionid=xxx) a priorité sur cookie pour la détection
-            // de la session demandée — mais un simple "cherche cookie sinon URL" convient aussi
-            // au TCK qui ne mixe jamais les deux.
-            if (urlSessionId != null) {
+        if (!requestedSessionIdResolved) {
+            requestedSessionIdResolved = true;
+            var modes = servletContext == null ? java.util.Set.<jakarta.servlet.SessionTrackingMode>of()
+                    : servletContext.getEffectiveSessionTrackingModes();
+            if (urlSessionId != null && modes.contains(jakarta.servlet.SessionTrackingMode.URL)) {
                 requestedSessionId = urlSessionId;
-            } else {
+                requestedSessionIdFromUrl = true;
+            } else if (modes.contains(jakarta.servlet.SessionTrackingMode.COOKIE)) {
                 requestedSessionId = extractSessionIdFromCookies();
             }
         }
         return requestedSessionId;
     }
+    private boolean requestedSessionIdResolved;
+    private boolean requestedSessionIdFromUrl;
     @Override public HttpSession getSession(boolean create) {
         if (currentSession != null && !currentSession.isInvalidated()) return currentSession;
         if (sessionManager == null) {
@@ -609,10 +616,10 @@ public final class HttpServletRequestImpl implements HttpServletRequest {
         return sessionManager.peek(id) != null;
     }
     @Override public boolean isRequestedSessionIdFromCookie() {
-        return getRequestedSessionId() != null && !sessionIdFromUrl;
+        return getRequestedSessionId() != null && !requestedSessionIdFromUrl;
     }
     @Override public boolean isRequestedSessionIdFromURL() {
-        return sessionIdFromUrl && getRequestedSessionId() != null;
+        return getRequestedSessionId() != null && requestedSessionIdFromUrl;
     }
 
     private String extractSessionIdFromCookies() {

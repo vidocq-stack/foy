@@ -95,13 +95,16 @@ public final class HttpSessionImpl implements HttpSession {
         thisAccessedTime = System.currentTimeMillis();
     }
 
-    /** Ends an access: the end of this request becomes the session's last-accessed time. */
+    /**
+     * Ends an access: the end of this request becomes the session's last-accessed time. The
+     * {@code isNew} flag is left alone: only a request that finds the session by the id the
+     * client sent ({@link #tryAccess}) shows that the client joined it.
+     */
     public synchronized void endAccess() {
         if (accessCount > 0) accessCount--;
         long now = System.currentTimeMillis();
         thisAccessedTime = now;
         lastAccessedTime = now;
-        newSession = false;
     }
 
     /** {@code true} when the session is idle beyond its maximum inactive interval. */
@@ -156,7 +159,14 @@ public final class HttpSessionImpl implements HttpSession {
         manager.onInvalidated(this);
     }
 
-    /** Re-keys the session ({@link SessionManager#changeSessionId}). */
+    /**
+     * {@code true} while no invalidation started. {@link SessionManager#changeSessionId} checks it
+     * while holding this session's monitor, which every invalidation claim also takes, so that an
+     * id change and an invalidation never interleave.
+     */
+    synchronized boolean isLive() { return !invalidating && !invalidated; }
+
+    /** Re-keys the session ({@link SessionManager#changeSessionId}, under this session's monitor). */
     void setId(String newId) { this.id = newId; }
 
     // ---- HttpSession ----

@@ -450,10 +450,13 @@ public final class HttpServletResponseImpl implements HttpServletResponse {
     /** Same rule as {@link #encodeURL}: Foy does not distinguish redirect targets. */
     @Override public String encodeRedirectURL(String url) { return encodeURL(url); }
 
+    /** An RFC 3986 scheme followed by ':' at the start of a URL. */
+    private static final java.util.regex.Pattern SCHEME = java.util.regex.Pattern.compile("[A-Za-z][A-Za-z0-9+.-]*:");
+
     private boolean targetsThisApplication(String url) {
         if (url.isEmpty() || url.startsWith("#") || url.contains(";jsessionid=")) return false;
         String path;
-        boolean absolute = url.startsWith("//") || url.matches("^[A-Za-z][A-Za-z0-9+.-]*:.*");
+        boolean absolute = url.startsWith("//") || SCHEME.matcher(url).lookingAt();
         if (absolute) {
             java.net.URI uri;
             try {
