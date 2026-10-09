@@ -58,6 +58,8 @@ public final class HttpServletResponseImpl implements HttpServletResponse {
     private PrintWriter writer;
     private boolean streamAcquired;
     private boolean committed;
+    /** Declared Content-Length, or -1 when none. */
+    private long contentLength = -1;
     private boolean errorTriggered;
     private String errorMessage;
 
@@ -65,18 +67,17 @@ public final class HttpServletResponseImpl implements HttpServletResponse {
 
     @Override public int getStatus() { return status; }
     @Override public void setStatus(int sc) {
-        if (committed) return;
+        if (isCommitted()) return;
         this.status = sc;
     }
     @Override public void sendError(int sc, String msg) throws IOException {
-        if (committed) throw new IllegalStateException("response already committed");
+        if (isCommitted()) throw new IllegalStateException("response already committed");
         setStatus(sc);
         this.errorTriggered = true;
         this.errorMessage = msg;
-        // Servlet 6.1 §5.8 : sendError vide le buffer — tout ce que le servlet
-        // a écrit avant est jeté. On écrit ensuite le msg par défaut en bytes
-        // bruts directement dans le buffer interne pour éviter le conflit
-        // getWriter()/getOutputStream() (IllegalStateException).
+        // Servlet 6.1 §5.8: sendError clears the buffer, so whatever the servlet
+        // wrote before is discarded. The default message is then written as raw bytes
+        // directly into the internal buffer to avoid the getWriter()/getOutputStream() conflict.
         outputStream.resetBuffer();
         writer = null;
         streamAcquired = false;
@@ -104,7 +105,7 @@ public final class HttpServletResponseImpl implements HttpServletResponse {
         sendRedirect(location, SC_FOUND, true);
     }
     @Override public void sendRedirect(String location, int sc, boolean clearBuffer) throws IOException {
-        if (committed) throw new IllegalStateException("response already committed");
+        if (isCommitted()) throw new IllegalStateException("response already committed");
         if (clearBuffer) {
             resetBuffer();
         } else {
@@ -120,26 +121,34 @@ public final class HttpServletResponseImpl implements HttpServletResponse {
     /** Servlet 6.1 §5.8.2 — sendRedirect must produce an absolute URL. */
     private String toAbsoluteRedirectUrl(String location) {
         if (location == null) return null;
-        // Déjà absolu.
-        if (location.regionMatches(true, 0, "http://", 0, 7)
-                || location.regionMatches(true, 0, "https://", 0, 8)) return location;
         if (boundRequest == null) return location;
         String scheme = boundRequest.getScheme();
         String host = boundRequest.getServerName();
         int port = boundRequest.getServerPort();
         boolean defaultPort = ("http".equals(scheme) && port == 80)
                 || ("https".equals(scheme) && port == 443);
-        var sb = new StringBuilder(scheme).append("://").append(host);
-        if (!defaultPort) sb.append(':').append(port);
-        if (location.startsWith("/")) {
-            sb.append(location);
-        } else {
-            // Chemin relatif — résolu par rapport à l'URI de la requête.
-            String uri = boundRequest.getRequestURI();
-            int slash = uri.lastIndexOf('/');
-            sb.append(slash >= 0 ? uri.substring(0, slash + 1) : "/").append(location);
+        var origin = new StringBuilder(scheme).append("://").append(host);
+        if (!defaultPort) origin.append(':').append(port);
+        String requestUri = boundRequest.getRequestURI();
+        if (requestUri == null || requestUri.isEmpty()) requestUri = "/";
+        try {
+            java.net.URI ref = new java.net.URI(location);
+            // Already absolute (any scheme).
+            if (ref.isAbsolute()) return location;
+            java.net.URI base = new java.net.URI(origin + requestUri);
+            if (location.startsWith("?")) {
+                // Query-only reference: keep the request path, replace the query.
+                return origin + requestUri + location;
+            }
+            // RFC 3986 resolution: a leading '/' is relative to the server root, anything else to
+            // the directory of the request URI, with "." and ".." segments removed.
+            return base.resolve(ref).toString();
+        } catch (java.net.URISyntaxException e) {
+            // Not a valid URI reference (e.g. unescaped characters): keep the simple concatenation.
+            if (location.startsWith("/")) return origin + location;
+            int slash = requestUri.lastIndexOf('/');
+            return origin + requestUri.substring(0, slash + 1) + location;
         }
-        return sb.toString();
     }
 
     private jakarta.servlet.http.HttpServletRequest boundRequest;
@@ -148,15 +157,20 @@ public final class HttpServletResponseImpl implements HttpServletResponse {
     // ---- Headers ----
 
     @Override public void setHeader(String name, String value) {
-        if (committed) return;
+        if (isCommitted()) return;
         putHeader(name, value);
     }
     @Override public void addHeader(String name, String value) {
-        if (committed) return;
+        if (isCommitted()) return;
         appendHeader(name, value);
     }
 
-    /** Bridge-internal header append which, unlike the public API, is not blocked by commit. */
+    /**
+     * Bridge-internal header append which, unlike the public API, is not blocked by commit.
+     * Used for the session cookie, which the buffered model can still attach after the servlet
+     * flushed. When Phase 5 introduces real streaming, this header must be emitted before the
+     * first flush instead.
+     */
     void addHeaderInternal(String name, String value) { appendHeader(name, value); }
 
     private void putHeader(String name, String value) {
@@ -194,6 +208,10 @@ public final class HttpServletResponseImpl implements HttpServletResponse {
     @Override public Collection<String> getHeaderNames() { return new HashSet<>(headers.keySet()); }
 
     private void interceptSpecialHeader(String name, String value) {
+        if ("Content-Length".equalsIgnoreCase(name)) {
+            try { this.contentLength = Long.parseLong(value.trim()); }
+            catch (RuntimeException e) { this.contentLength = -1; }
+        }
         if ("Content-Type".equalsIgnoreCase(name)) {
             this.contentType = value;
             int idx = value == null ? -1 : value.toLowerCase(Locale.ROOT).indexOf("charset=");
@@ -206,7 +224,7 @@ public final class HttpServletResponseImpl implements HttpServletResponse {
     // ---- Cookies ----
 
     @Override public void addCookie(Cookie cookie) {
-        if (committed) return;
+        if (isCommitted()) return;
         cookies.add(cookie);
     }
     public List<Cookie> cookies() { return cookies; }
@@ -228,14 +246,14 @@ public final class HttpServletResponseImpl implements HttpServletResponse {
         return mediaType + ";charset=" + enc;
     }
     @Override public void setContentType(String type) {
-        // Servlet 6.1 §5.4 : si la réponse est déjà committed, setContentType est silencieusement ignoré.
-        if (committed) return;
+        // Servlet 6.1 §5.4: setContentType is silently ignored once the response is committed.
+        if (isCommitted()) return;
         this.contentType = type;
         if (type == null) return;
         int idx = type.toLowerCase(Locale.ROOT).indexOf("charset=");
         if (idx >= 0) {
             this.mediaType = type.substring(0, idx).replaceAll(";\\s*$", "").trim();
-            // Le charset du contentType n'est accepté que si pas encore verrouillé par getWriter().
+            // The charset of the content type is only accepted while not yet locked by getWriter().
             if (!charsetLocked) {
                 this.characterEncoding = type.substring(idx + 8).trim();
                 this.charsetExplicit = true;
@@ -259,13 +277,13 @@ public final class HttpServletResponseImpl implements HttpServletResponse {
         return enc != null ? enc : "ISO-8859-1";
     }
     @Override public void setCharacterEncoding(String charset) {
-        if (committed || charsetLocked) return;
+        if (isCommitted() || charsetLocked) return;
         this.characterEncoding = charset;
         this.charsetExplicit = (charset != null);
         refreshContentTypeHeader();
     }
     @Override public void setCharacterEncoding(Charset encoding) {
-        if (committed || charsetLocked) return;
+        if (isCommitted() || charsetLocked) return;
         this.characterEncoding = encoding == null ? null : encoding.name();
         this.charsetExplicit = (encoding != null);
         refreshContentTypeHeader();
@@ -274,9 +292,9 @@ public final class HttpServletResponseImpl implements HttpServletResponse {
     /** Recalculates the {@code Content-Type} header by combining mediaType + charset. */
     private void refreshContentTypeHeader() {
         if (mediaType == null) return;
-        // Pour les types text/*, on inclut toujours le charset (explicite ou défaut
+        // For text/* types the charset is always included (explicit or default
         // "ISO-8859-1", cf. Servlet 6.1 §5.4) afin que le header Content-Type final
-        // reflète l'encodage réellement utilisé par getWriter().
+        // reflects the encoding actually used by getWriter().
         boolean isText = mediaType.toLowerCase(Locale.ROOT).startsWith("text/");
         String enc = configuredEncoding() != null ? configuredEncoding()
                 : (isText ? "ISO-8859-1" : null);
@@ -299,13 +317,13 @@ public final class HttpServletResponseImpl implements HttpServletResponse {
     @Override public PrintWriter getWriter() throws IOException {
         if (streamAcquired) throw new IllegalStateException("getOutputStream() already called");
         if (writer == null) {
-            // Servlet 6.1 §5.4 : si le charset a été explicitement setté et qu'il n'est
-            // pas supporté par la JVM, getWriter doit throw UnsupportedEncodingException.
+            // Servlet 6.1 §5.4: an explicitly set charset which the JVM does not support
+            // makes getWriter throw UnsupportedEncodingException.
             if (characterEncoding != null && !Charset.isSupported(characterEncoding)) {
                 throw new java.io.UnsupportedEncodingException(characterEncoding);
             }
-            // Résout le charset (ISO-8859-1 par défaut) et verrouille — le state
-            // reflète désormais le charset réellement utilisé pour écrire le body.
+            // Resolve the charset (ISO-8859-1 by default) and lock it: the state now
+            // reflects the charset actually used to write the body.
             if (characterEncoding == null) {
                 characterEncoding = defaultCharacterEncoding != null ? defaultCharacterEncoding : "ISO-8859-1";
             }
@@ -324,8 +342,8 @@ public final class HttpServletResponseImpl implements HttpServletResponse {
 
     // ---- Buffer / commit ----
 
-    // Taille de buffer nominale exposée au servlet — on bufferise tout en mémoire,
-    // donc la capacité effective est illimitée, mais on expose une valeur usuelle
+    // Nominal buffer size exposed to the servlet: everything is buffered in memory,
+    // so the effective capacity is unbounded, but a usual value is exposed
     // (8 KiB) conforme aux attentes des tests TCK.
     private int bufferSize = 8192;
     @Override public void setBufferSize(int size) {
@@ -338,15 +356,24 @@ public final class HttpServletResponseImpl implements HttpServletResponse {
         committed = true;
     }
     @Override public void resetBuffer() {
-        if (committed) throw new IllegalStateException("committed");
+        if (isCommitted()) throw new IllegalStateException("committed");
         outputStream.resetBuffer();
         writer = null;
         streamAcquired = false;
     }
-    @Override public boolean isCommitted() { return committed; }
+    @Override public boolean isCommitted() {
+        // Servlet 6.1 §5.1/§5.2 (setContentLength Javadoc): once the amount of content written
+        // reaches the declared content length, the response is committed and closed.
+        if (!committed && contentLength >= 0) {
+            drainWriter();
+            if (outputStream.size() > 0 && outputStream.size() >= contentLength) committed = true;
+        }
+        return committed;
+    }
     @Override public void reset() {
-        if (committed) throw new IllegalStateException("committed");
+        if (isCommitted()) throw new IllegalStateException("committed");
         status = 200;
+        contentLength = -1;
         headers.clear();
         cookies.clear();
         contentType = null;
@@ -361,9 +388,9 @@ public final class HttpServletResponseImpl implements HttpServletResponse {
     @Override public void setLocale(Locale loc) {
         if (committed || loc == null) return;
         this.locale = loc;
-        // Servlet 6.1 §5.4 : setLocale définit Content-Language (tag BCP 47).
+        // Servlet 6.1 §5.4: setLocale sets Content-Language (BCP 47 tag).
         setHeader("Content-Language", loc.toLanguageTag());
-        // Si le charset n'est pas explicite, résout via locale-encoding-mapping-list du web.xml.
+        // If the charset is not explicit, resolve it through the web.xml locale-encoding-mapping-list.
         if (!charsetExplicit && !charsetLocked && boundRequest != null
                 && boundRequest.getServletContext() instanceof
                 io.vidocq.foy.internal.container.VidocqServletContext vctx) {
@@ -381,7 +408,7 @@ public final class HttpServletResponseImpl implements HttpServletResponse {
     @Override public String encodeURL(String url) { return url; }
     @Override public String encodeRedirectURL(String url) { return url; }
 
-    // ---- Accès interne pour le bridge Chappe ----
+    // ---- Internal access for the Chappe bridge ----
 
     private void drainWriter() {
         if (writer == null) return;
@@ -391,7 +418,12 @@ public final class HttpServletResponseImpl implements HttpServletResponse {
 
     public byte[] bodyBytes() {
         drainWriter();
-        return outputStream.toByteArray();
+        byte[] all = outputStream.toByteArray();
+        // Content beyond the declared Content-Length is never sent.
+        if (contentLength >= 0 && all.length > contentLength) {
+            return java.util.Arrays.copyOf(all, (int) contentLength);
+        }
+        return all;
     }
 
     public Map<String, List<String>> allHeaders() {

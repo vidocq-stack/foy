@@ -39,12 +39,12 @@ public final class ServletOutputStreamImpl extends ServletOutputStream {
     private Runnable onFlush = () -> {};
 
     /** Hook executed every flush() — typically marks the committed response. */
-    /** While discarding, writes are silently dropped (response closed by sendError/sendRedirect). */
-    void setDiscarding(boolean discarding) { this.discarding = discarding; }
-
     public void setFlushListener(Runnable onFlush) {
         this.onFlush = onFlush == null ? () -> {} : onFlush;
     }
+
+    /** While discarding, writes are silently dropped (response closed by sendError/sendRedirect). */
+    void setDiscarding(boolean discarding) { this.discarding = discarding; }
 
     @Override
     public boolean isReady() {
@@ -72,9 +72,9 @@ public final class ServletOutputStreamImpl extends ServletOutputStream {
 
     @Override
     public void flush() {
-        // En vrai, pas d'I/O : le body est transféré au bridge en fin de dispatch.
-        // Mais sémantiquement, flush() doit marquer la réponse comme committed
-        // (Servlet 6.1 §5.2) — on délègue ça au listener.
+        // No real I/O: the body is handed to the bridge at the end of dispatch.
+        // Semantically though, flush() must mark the response as committed
+        // (Servlet 6.1 §5.2): this is delegated to the listener.
         onFlush.run();
     }
 

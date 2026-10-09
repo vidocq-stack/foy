@@ -38,6 +38,69 @@ class HttpServletResponseImplTest {
         return new String(res.bodyBytes(), StandardCharsets.ISO_8859_1);
     }
 
+    private static jakarta.servlet.http.HttpServletRequest request(String uri) {
+        return (jakarta.servlet.http.HttpServletRequest) java.lang.reflect.Proxy.newProxyInstance(
+                HttpServletResponseImplTest.class.getClassLoader(),
+                new Class<?>[] {jakarta.servlet.http.HttpServletRequest.class},
+                (proxy, method, args) -> switch (method.getName()) {
+                    case "getScheme" -> "http";
+                    case "getServerName" -> "example.com";
+                    case "getServerPort" -> 8080;
+                    case "getRequestURI" -> uri;
+                    default -> null;
+                });
+    }
+
+    private static String redirectLocation(String requestUri, String location) throws IOException {
+        var res = new HttpServletResponseImpl();
+        res.bindRequest(request(requestUri));
+        res.sendRedirect(location);
+        return res.getHeader("Location");
+    }
+
+    @Test
+    void relativeRedirectLocationsAreResolvedPerSection57() throws IOException {
+        assertEquals("http://example.com:8080/app/x", redirectLocation("/app/a/b", "/app/x"));
+        assertEquals("http://example.com:8080/app/a/x", redirectLocation("/app/a/b", "x"));
+        assertEquals("http://example.com:8080/app/x", redirectLocation("/app/a/b", "../x"));
+        assertEquals("http://example.com:8080/x", redirectLocation("/app/a/b", "../../x"));
+        assertEquals("http://example.com:8080/app/a/b?q=1", redirectLocation("/app/a/b", "?q=1"));
+        assertEquals("http://example.com:8080/app/a/x?q=1#f", redirectLocation("/app/a/b", "./x?q=1#f"));
+        assertEquals("https://other.org/y", redirectLocation("/app/a/b", "https://other.org/y"));
+        assertEquals("mailto:a@b.c", redirectLocation("/app/a/b", "mailto:a@b.c"));
+    }
+
+    @Test
+    void sendRedirectWithStatusOverloadSetsStatusAndLocation() throws IOException {
+        var res = new HttpServletResponseImpl();
+        res.bindRequest(request("/a/b"));
+        res.sendRedirect("c", HttpServletResponse.SC_MOVED_PERMANENTLY, true);
+        assertEquals(301, res.getStatus());
+        assertEquals("http://example.com:8080/a/c", res.getHeader("Location"));
+        assertTrue(res.isCommitted());
+    }
+
+    @Test
+    void responseIsCommittedOnceTheDeclaredContentLengthIsWritten() throws IOException {
+        var res = new HttpServletResponseImpl();
+        res.setContentLength(5);
+        res.getWriter().write("0123456789");
+        res.addIntHeader("header1", 12345);
+        assertTrue(res.isCommitted());
+        assertFalse(res.containsHeader("header1"));
+        assertEquals("01234", body(res));
+    }
+
+    @Test
+    void responseIsNotCommittedBeforeTheContentLengthIsReached() throws IOException {
+        var res = new HttpServletResponseImpl();
+        res.setContentLength(50);
+        res.getWriter().write("abc");
+        assertFalse(res.isCommitted());
+        res.addIntHeader("header1", 1);
+        assertTrue(res.containsHeader("header1"));
+    }
+
     @Test
     void getHeadersIsAMutableCopy() {
         var res = new HttpServletResponseImpl();

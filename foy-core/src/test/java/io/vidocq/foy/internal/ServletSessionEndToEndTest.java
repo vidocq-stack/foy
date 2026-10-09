@@ -86,6 +86,40 @@ class ServletSessionEndToEndTest {
     }
 
     @Test
+    void sessionCookieIsEmittedEvenWhenTheResponseWasFlushed() throws Exception {
+        HttpServlet s = new HttpServlet() {
+            @Override
+            protected void doGet(HttpServletRequest req, HttpServletResponse resp) throws IOException {
+                req.getSession();
+                resp.getWriter().write("x");
+                resp.flushBuffer();
+            }
+        };
+        startServer(s, "/flushed");
+        HttpResponse<String> r = get("http://127.0.0.1:" + port + "/flushed", null);
+        String setCookie = r.headers().firstValue("set-cookie").orElse(null);
+        assertNotNull(setCookie);
+        assertTrue(setCookie.startsWith("JSESSIONID="), setCookie);
+    }
+
+    @Test
+    void sessionCookieIsEmittedEvenWhenTheResponseWasRedirected() throws Exception {
+        HttpServlet s = new HttpServlet() {
+            @Override
+            protected void doGet(HttpServletRequest req, HttpServletResponse resp) throws IOException {
+                req.getSession();
+                resp.sendRedirect("/elsewhere");
+            }
+        };
+        startServer(s, "/redirected");
+        HttpResponse<String> r = get("http://127.0.0.1:" + port + "/redirected", null);
+        assertEquals(302, r.statusCode());
+        String setCookie = r.headers().firstValue("set-cookie").orElse(null);
+        assertNotNull(setCookie);
+        assertTrue(setCookie.startsWith("JSESSIONID="), setCookie);
+    }
+
+    @Test
     void sessionAttributePersistsBetweenRequests() throws Exception {
         HttpServlet counter = new HttpServlet() {
             @Override

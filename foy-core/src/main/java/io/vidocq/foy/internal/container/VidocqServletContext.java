@@ -144,7 +144,12 @@ public final class VidocqServletContext implements ServletContext {
 
     /** Mapping &lt;locale&gt; → &lt;encoding&gt; from {@code web.xml} (Servlet 6.1 §14.4). */
     public void setLocaleEncodingMappings(Map<String, String> mappings) {
-        this.localeEncodingMappings = mappings == null ? Map.of() : Map.copyOf(mappings);
+        var normalized = new java.util.HashMap<String, String>();
+        if (mappings != null) {
+            // Accept "zh_CN", "zh-CN" and "zh" spellings in any case.
+            mappings.forEach((k, v) -> normalized.put(k.trim().replace('_', '-').toLowerCase(java.util.Locale.ROOT), v));
+        }
+        this.localeEncodingMappings = Map.copyOf(normalized);
     }
     public String encodingForLocale(java.util.Locale locale) {
         if (locale == null) return null;
