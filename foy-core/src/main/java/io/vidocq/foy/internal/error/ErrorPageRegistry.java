@@ -19,6 +19,8 @@
  */
 package io.vidocq.foy.internal.error;
 
+import jakarta.servlet.ServletException;
+
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Objects;
@@ -58,24 +60,41 @@ public final class ErrorPageRegistry {
         return Optional.ofNullable(byStatus.get(statusCode));
     }
 
+    /** An exception error page together with the exception it matched. */
+    public record Match(String location, Throwable matched) {}
+
     /**
-     * Find the most specific page matching {@code throwable}.
-     * Goes up the chain of inheritance and {@link Throwable#getCause() cause}.
+     * Servlet 6.1 section 10.9.2 lookup: the class hierarchy of {@code throwable} first; when nothing
+     * matches and it is a {@link ServletException}, the same lookup is repeated on its
+     * {@link ServletException#getRootCause() root cause}, recursively through nested
+     * {@code ServletException}s only (arbitrary {@code getCause()} chains are not walked).
+     *
+     * @return the page and the exception that matched it (the unwrapped one when unwrapping found it)
      */
-    public Optional<String> findByException(Throwable throwable) {
-        if (throwable == null) return Optional.empty();
+    public Optional<Match> match(Throwable throwable) {
         Throwable current = throwable;
-        while (current != null) {
-            Class<?> c = current.getClass();
-            while (c != null && Throwable.class.isAssignableFrom(c)) {
-                String page = byException.get(c);
-                if (page != null) return Optional.of(page);
-                c = c.getSuperclass();
-            }
-            current = current.getCause();
-            if (current == throwable) break;
+        for (int depth = 0; current != null && depth < 64; depth++) {
+            String page = byHierarchy(current);
+            if (page != null) return Optional.of(new Match(page, current));
+            if (!(current instanceof ServletException se)) break;
+            current = se.getRootCause();
         }
         return Optional.empty();
+    }
+
+    /** Convenience over {@link #match(Throwable)} returning only the page location. */
+    public Optional<String> findByException(Throwable throwable) {
+        return match(throwable).map(Match::location);
+    }
+
+    private String byHierarchy(Throwable t) {
+        Class<?> c = t.getClass();
+        while (c != null && Throwable.class.isAssignableFrom(c)) {
+            String page = byException.get(c);
+            if (page != null) return page;
+            c = c.getSuperclass();
+        }
+        return null;
     }
 
     public int size() {

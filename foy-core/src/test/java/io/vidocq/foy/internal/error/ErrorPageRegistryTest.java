@@ -56,10 +56,16 @@ class ErrorPageRegistryTest {
     }
 
     @Test
-    void exceptionLookupInspectsCauseChain() {
+    void exceptionLookupUnwrapsServletExceptionRootCause() {
         var reg = new ErrorPageRegistry().register(NumberFormatException.class, "/nfe.html");
-        var wrapper = new RuntimeException("wrapper", new NumberFormatException("root"));
+        var wrapper = new jakarta.servlet.ServletException("wrapper", new NumberFormatException("root"));
         assertEquals("/nfe.html", reg.findByException(wrapper).orElseThrow());
+    }
+
+    @Test
+    void exceptionLookupDoesNotWalkArbitraryCauses() {
+        var reg = new ErrorPageRegistry().register(NumberFormatException.class, "/nfe.html");
+        assertTrue(reg.findByException(new RuntimeException("w", new NumberFormatException())).isEmpty());
     }
 
     @Test

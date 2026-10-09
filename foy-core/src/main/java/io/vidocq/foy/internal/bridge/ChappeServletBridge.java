@@ -278,8 +278,13 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
         ErrorPageRegistry pages = servletContext.errorPages();
         String location = null;
         Integer errorStatus = null;
+        Throwable matched = thrown;
         if (thrown != null) {
-            location = pages.findByException(thrown).orElse(null);
+            var match = pages.match(thrown).orElse(null);
+            if (match != null) {
+                location = match.location();
+                matched = match.matched();
+            }
             // Servlet 6.1 §2.3.3.2 : UnavailableException remonte explicitement
             // un status 404 (permanent) ou 503 (temporary) au lieu du 500 générique.
             Throwable root = thrown;
@@ -291,6 +296,9 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
             } else {
                 errorStatus = 500;
             }
+            // §10.9.2: no exception-type page matched, fall back to the status page; the
+            // attributes then describe the original exception.
+            if (location == null) location = pages.findByStatus(errorStatus).orElse(null);
         } else if (res.isErrorTriggered()) {
             errorStatus = res.getStatus();
             location = pages.findByStatus(errorStatus).orElse(null);
@@ -313,19 +321,24 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
         var target = new DispatchResolver(dispatcher).resolve(location).orElse(null);
         if (target == null) return;
 
+        // Capture the sendError message before clearErrorState() erases it.
+        String statusMessage = res.errorMessage();
         res.clearErrorState();
         res.resetBuffer();
 
         req.setAttribute("jakarta.servlet.error.status_code", errorStatus);
         req.setAttribute("jakarta.servlet.error.request_uri", req.getRequestURI());
         req.setAttribute("jakarta.servlet.error.servlet_name", servletName);
+        req.setAttribute("jakarta.servlet.error.query_string", req.getQueryString());
+        String message;
         if (thrown != null) {
-            req.setAttribute("jakarta.servlet.error.exception", thrown);
-            req.setAttribute("jakarta.servlet.error.exception_type", thrown.getClass());
-            req.setAttribute("jakarta.servlet.error.message", thrown.getMessage());
-        } else if (res.errorMessage() != null) {
-            req.setAttribute("jakarta.servlet.error.message", res.errorMessage());
+            req.setAttribute("jakarta.servlet.error.exception", matched);
+            req.setAttribute("jakarta.servlet.error.exception_type", matched.getClass());
+            message = statusMessage != null ? statusMessage : matched.getMessage();
+        } else {
+            message = statusMessage;
         }
+        req.setAttribute("jakarta.servlet.error.message", message == null ? "" : message);
         req.setAttribute("jakarta.servlet.error.handled", Boolean.TRUE);
 
         try {
@@ -335,7 +348,9 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
             req.setDispatcherType(DispatcherType.ERROR);
             try { invoke(target, req, res, DispatcherType.ERROR); }
             finally { req.setDispatcherType(previous); }
-        } catch (IOException | RuntimeException e) {
+        } catch (IOException | ServletException | RuntimeException e) {
+            // The error page itself failed: log and fall through to a plain 500, never recurse.
+            LOG.log(System.Logger.Level.ERROR, "error page " + location + " failed", e);
             throw new ServletException("error dispatch failed", e);
         }
     }
