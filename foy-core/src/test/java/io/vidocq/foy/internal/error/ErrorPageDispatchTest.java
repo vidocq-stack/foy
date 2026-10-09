@@ -166,6 +166,58 @@ class ErrorPageDispatchTest {
         pages.register(404, "/err");
         start(thrower((q, r) -> { throw new IllegalStateException("page boom"); }),
                 thrower((q, r) -> r.sendError(404)));
-        assertEquals(500, get("/t").statusCode());
+        var res = get("/t");
+        assertEquals(500, res.statusCode());
+        assertTrue(!res.body().contains("type="), res.body());
+    }
+
+    @Test
+    void exceptionAfterCommitKeepsCommittedContentAndDispatchesNoPage() throws Exception {
+        pages.register(500, "/err");
+        pages.register(RuntimeException.class, "/err");
+        start(reporter(), thrower((q, r) -> {
+            r.getWriter().print("committed-content");
+            r.flushBuffer();
+            throw new IllegalStateException("late");
+        }));
+        var res = get("/t");
+        assertEquals(200, res.statusCode());
+        assertEquals("committed-content", res.body());
+    }
+
+    @Test
+    void setStatusDoesNotDispatchTheErrorPage() throws Exception {
+        pages.register(404, "/err");
+        start(reporter(), thrower((q, r) -> { r.setStatus(404); r.getWriter().print("plain"); }));
+        var res = get("/t");
+        assertEquals(404, res.statusCode());
+        assertEquals("plain", res.body());
+    }
+
+    @Test
+    void exceptionInsideForwardReportsOriginalRequestUriAndServletName() throws Exception {
+        pages.register(RuntimeException.class, "/err");
+        var ctx = new VidocqServletContext("/");
+        ctx.setErrorPages(pages);
+        HttpServlet boom = thrower((q, r) -> { throw new IllegalStateException("fwd"); });
+        HttpServlet fwd = thrower((q, r) -> q.getRequestDispatcher("/boom").forward(q, r));
+        HttpServlet err = new HttpServlet() {
+            @Override protected void doGet(HttpServletRequest req, HttpServletResponse res) throws IOException {
+                res.getWriter().print(req.getAttribute("jakarta.servlet.error.request_uri") + "|"
+                        + req.getAttribute("jakarta.servlet.error.servlet_name"));
+            }
+        };
+        var bridge = new ChappeServletBridge(new ServletDispatcher(List.of(
+                new ServletDispatcher.Mapping(io.vidocq.foy.internal.dispatcher.UrlPatternMatcher.of("/t"),
+                        fwd, "FWD", true),
+                new ServletDispatcher.Mapping(io.vidocq.foy.internal.dispatcher.UrlPatternMatcher.of("/boom"),
+                        boom, "BOOM", true),
+                new ServletDispatcher.Mapping(io.vidocq.foy.internal.dispatcher.UrlPatternMatcher.of("/err"),
+                        err, "ERR", true))),
+                new FilterRegistry(List.of()), ctx, null, "/");
+        var r = TestServerLauncherAccess.start(bridge);
+        this.server = r.server();
+        this.port = r.port();
+        assertEquals("/t|FWD", get("/t").body());
     }
 }

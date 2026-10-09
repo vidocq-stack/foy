@@ -275,6 +275,14 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
 
     private void maybeHandleError(HttpServletRequestImpl req, HttpServletResponseImpl res,
                                   Throwable thrown, String servletName) throws ServletException {
+        if (thrown != null && res.isCommitted() && !res.isErrorTriggered()) {
+            // The response was already committed by the servlet: no error page can be dispatched and
+            // the committed content stands. Do not lose the exception.
+            LOG.log(System.Logger.Level.ERROR,
+                    "exception after the response was committed; no error page dispatched", thrown);
+            req.setAttribute("jakarta.servlet.error.handled", Boolean.TRUE);
+            return;
+        }
         ErrorPageRegistry pages = servletContext.errorPages();
         String location = null;
         Integer errorStatus = null;
