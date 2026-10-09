@@ -23,6 +23,7 @@ import jakarta.servlet.DispatcherType;
 import jakarta.servlet.Filter;
 
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 
 /**
@@ -45,24 +46,50 @@ public final class FilterRegistry {
         return mappings;
     }
 
-    /** Filters applicable for a request (path + dispatcherType). */
+    /** Filters applicable for a request matched by no servlet (path + dispatcherType). */
     public List<Filter> chainFor(String path, DispatcherType type) {
+        return chainFor(path, type, null);
+    }
+
+    /**
+     * Section 6.2.4: the URL-pattern mappings matching {@code path} in declaration order, then the
+     * servlet-name mappings naming {@code servletName} (or {@code *}) in declaration order; a filter
+     * appears at most once. {@code path == null} (named dispatch) matches no URL pattern.
+     *
+     * @param servletName the target servlet's name, {@code null} when no servlet serves the request
+     */
+    public List<Filter> chainFor(String path, DispatcherType type, String servletName) {
         List<Filter> out = new ArrayList<>();
-        for (FilterMapping m : mappings) {
-            if (m.applies(path, type)) out.add(m.filter());
-        }
+        for (FilterMapping m : applicable(path, type, servletName)) out.add(m.filter());
         return out;
     }
 
     /**
-     * §2.3.3.3: a request supports async only when every filter of its chain does.
+     * Section 2.3.3.3: a request supports async only when every filter of its chain does.
      *
-     * @return false when a filter applying to {@code path} for {@code type} is not async-capable
+     * @return false when a filter of the chain for {@code path}/{@code type}/{@code servletName} is not async-capable
      */
-    public boolean asyncSupported(String path, DispatcherType type) {
-        for (FilterMapping m : mappings) {
-            if (!m.asyncSupported() && m.applies(path, type)) return false;
+    public boolean asyncSupported(String path, DispatcherType type, String servletName) {
+        for (FilterMapping m : applicable(path, type, servletName)) {
+            if (!m.asyncSupported()) return false;
         }
         return true;
+    }
+
+    /** {@link #asyncSupported(String, DispatcherType, String)} for a request matched by no servlet. */
+    public boolean asyncSupported(String path, DispatcherType type) {
+        return asyncSupported(path, type, null);
+    }
+
+    private List<FilterMapping> applicable(String path, DispatcherType type, String servletName) {
+        var seen = new HashSet<String>();
+        List<FilterMapping> out = new ArrayList<>();
+        for (FilterMapping m : mappings) {
+            if (m.applies(path, type) && seen.add(m.filterName())) out.add(m);
+        }
+        for (FilterMapping m : mappings) {
+            if (m.appliesToServlet(servletName, type) && seen.add(m.filterName())) out.add(m);
+        }
+        return out;
     }
 }

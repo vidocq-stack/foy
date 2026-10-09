@@ -23,12 +23,19 @@ import io.vidocq.foy.internal.dispatcher.DispatchTarget;
 import jakarta.servlet.DispatcherType;
 import jakarta.servlet.RequestDispatcher;
 import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletMapping;
 import jakarta.servlet.http.HttpServletRequestWrapper;
+
+import java.nio.charset.StandardCharsets;
+import java.util.Enumeration;
+import java.util.Map;
 
 /**
  * {@link HttpServletRequestWrapper} used for a
- * {@link RequestDispatcher#forward forward}: exposes the new servletPath/pathInfo/queryString,
- * and reports {@link DispatcherType#FORWARD}.
+ * {@link RequestDispatcher#forward forward}: exposes the target's request URI, URL, servletPath,
+ * pathInfo and queryString, merges the dispatch query into the parameters (section 9.1.1), and
+ * reports {@link DispatcherType#FORWARD}. A named forward (section 9.4.2) keeps the caller's paths,
+ * query and parameters.
  *
  * <p>The original request receives {@code jakarta.servlet.forward.*}
  * attributes in {@link io.vidocq.foy.internal.dispatcher.RequestDispatcherImpl}
@@ -37,70 +44,46 @@ import jakarta.servlet.http.HttpServletRequestWrapper;
 public final class ForwardedRequest extends HttpServletRequestWrapper {
 
     private final DispatchTarget target;
-    private final java.util.Map<String, String[]> forwardParams;
+    private final DispatchParameters.View parameters;
 
     public ForwardedRequest(HttpServletRequest original, DispatchTarget target) {
         super(original);
         this.target = target;
-        this.forwardParams = parseQuery(target.queryString());
-    }
-
-    private static java.util.Map<String, String[]> parseQuery(String qs) {
-        if (qs == null || qs.isEmpty()) return null;
-        var out = new java.util.LinkedHashMap<String, java.util.List<String>>();
-        for (String pair : qs.split("&")) {
-            int eq = pair.indexOf('=');
-            String k = eq < 0 ? pair : pair.substring(0, eq);
-            String v = eq < 0 ? "" : pair.substring(eq + 1);
-            if (k.isEmpty()) continue;
-            k = java.net.URLDecoder.decode(k, java.nio.charset.StandardCharsets.UTF_8);
-            v = java.net.URLDecoder.decode(v, java.nio.charset.StandardCharsets.UTF_8);
-            out.computeIfAbsent(k, _ -> new java.util.ArrayList<>()).add(v);
-        }
-        var result = new java.util.LinkedHashMap<String, String[]>();
-        for (var e : out.entrySet()) result.put(e.getKey(), e.getValue().toArray(new String[0]));
-        return result;
+        this.parameters = new DispatchParameters.View(super::getParameterMap,
+                target.named() ? null : target.queryString(), StandardCharsets.UTF_8);
     }
 
     @Override public String getRequestURI() {
-        HttpServletRequest delegate = (HttpServletRequest) getRequest();
-        String ctx = delegate.getContextPath();
-        return ctx.equals("/") ? target.path() : ctx + target.path();
+        if (target.named()) return super.getRequestURI();
+        return getContextPath() + target.path();
     }
-    @Override public String getServletPath() { return target.servletPath(); }
-    @Override public String getPathInfo() { return target.pathInfo(); }
-    @Override public String getQueryString() { return target.queryString(); }
+    @Override public StringBuffer getRequestURL() {
+        if (target.named()) return super.getRequestURL();
+        StringBuffer sb = new StringBuffer();
+        String scheme = getScheme();
+        int port = getServerPort();
+        sb.append(scheme).append("://").append(getServerName());
+        if (("http".equals(scheme) && port != 80) || ("https".equals(scheme) && port != 443)) {
+            sb.append(':').append(port);
+        }
+        return sb.append(getRequestURI());
+    }
+    @Override public String getServletPath() { return target.named() ? super.getServletPath() : target.servletPath(); }
+    @Override public String getPathInfo() { return target.named() ? super.getPathInfo() : target.pathInfo(); }
+    @Override public String getQueryString() { return target.named() ? super.getQueryString() : target.queryString(); }
     @Override public DispatcherType getDispatcherType() { return DispatcherType.FORWARD; }
     /** The target's mapping; a named forward (no mapping) keeps the caller's. */
-    @Override public jakarta.servlet.http.HttpServletMapping getHttpServletMapping() {
-        return target.mapping() != null ? target.mapping() : super.getHttpServletMapping();
+    @Override public HttpServletMapping getHttpServletMapping() {
+        return target.named() ? super.getHttpServletMapping() : target.mapping();
+    }
+    /** Section 9.1: a relative path is resolved against the forwarded path. */
+    @Override public RequestDispatcher getRequestDispatcher(String path) {
+        if (path == null || path.startsWith("/") || target.named()) return super.getRequestDispatcher(path);
+        return super.getRequestDispatcher(DispatchParameters.resolveRelative(getServletPath(), getPathInfo(), path));
     }
 
-    // §9.4 : pendant un forward, les paramètres de la request doivent être
-    // l'agrégation des paramètres originaux *et* de ceux de la nouvelle
-    // query-string (ceux de la nouvelle query-string prévalent sur collision).
-    @Override public String getParameter(String name) {
-        if (forwardParams != null && forwardParams.containsKey(name)) {
-            String[] v = forwardParams.get(name);
-            return v.length == 0 ? null : v[0];
-        }
-        return super.getParameter(name);
-    }
-    @Override public String[] getParameterValues(String name) {
-        if (forwardParams != null && forwardParams.containsKey(name)) return forwardParams.get(name);
-        return super.getParameterValues(name);
-    }
-    @Override public java.util.Map<String, String[]> getParameterMap() {
-        if (forwardParams == null) return super.getParameterMap();
-        var out = new java.util.LinkedHashMap<>(super.getParameterMap());
-        out.putAll(forwardParams);
-        return java.util.Collections.unmodifiableMap(out);
-    }
-    @Override public java.util.Enumeration<String> getParameterNames() {
-        if (forwardParams == null) return super.getParameterNames();
-        var union = new java.util.LinkedHashSet<String>();
-        super.getParameterNames().asIterator().forEachRemaining(union::add);
-        union.addAll(forwardParams.keySet());
-        return java.util.Collections.enumeration(union);
-    }
+    @Override public String getParameter(String name) { return parameters.first(name); }
+    @Override public String[] getParameterValues(String name) { return parameters.values(name); }
+    @Override public Map<String, String[]> getParameterMap() { return parameters.map(); }
+    @Override public Enumeration<String> getParameterNames() { return parameters.names(); }
 }

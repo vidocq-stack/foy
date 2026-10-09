@@ -173,7 +173,8 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
         req.setHttpServletMapping(target.mapping());
         req.bindResponse(res);
         // §2.3.3.3: async only when the servlet and every filter of the chain support it.
-        req.setAsyncSupported(m.asyncSupported() && filterRegistry.asyncSupported(path, DispatcherType.REQUEST));
+        req.setAsyncSupported(m.asyncSupported()
+                && filterRegistry.asyncSupported(path, DispatcherType.REQUEST, m.servletName()));
         req.setUrlSessionId(finalUrlSessionId);
 
         registry.fireRequestInitialized(servletContext, req);
@@ -375,7 +376,9 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
     @Override
     public void invoke(DispatchTarget target, HttpServletRequest req, HttpServletResponse res,
                        DispatcherType type) throws IOException, ServletException {
-        List<Filter> filters = filterRegistry.chainFor(target.path(), type);
+        // Section 6.2.5: a named dispatch matches no URL pattern, only the target's servlet-name mappings.
+        String filterPath = target.named() ? null : target.path();
+        List<Filter> filters = filterRegistry.chainFor(filterPath, type, target.servletName());
         // §2.3.3.3 / ServletRequest#isAsyncSupported: async stays enabled only while the request is
         // within the scope of servlets and filters that support it. Recompute for this dispatch
         // (incoming && target servlet && every filter of this dispatch's chain) and restore the
@@ -392,7 +395,7 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
         }
         boolean previous = impl.isAsyncSupported();
         impl.setAsyncSupported(previous && target.asyncSupported()
-                && filterRegistry.asyncSupported(target.path(), type));
+                && filterRegistry.asyncSupported(filterPath, type, target.servletName()));
         try {
             new VidocqFilterChain(filters, target.servlet()).doFilter(req, res);
         } finally {

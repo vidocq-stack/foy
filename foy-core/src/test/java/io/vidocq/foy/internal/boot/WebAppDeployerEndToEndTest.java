@@ -116,6 +116,58 @@ class WebAppDeployerEndToEndTest {
         assertEquals(Set.of("/x", "/y"), Set.copyOf(ctx.getServletRegistration("a").getMappings()));
     }
 
+    public static class Counting implements Filter {
+        @Override public void doFilter(ServletRequest q, ServletResponse r, FilterChain c)
+                throws IOException, ServletException {
+            EVENTS.add("filter");
+            c.doFilter(q, r);
+        }
+    }
+
+    /** BUG-20261008-02: a filter mapped by URL pattern and by servlet name runs once. */
+    @Test
+    void filterMappedByUrlAndServletNameRunsOnce() throws Exception {
+        deploy(WebAppModel.builder("/")
+                .servlet(decl("a", Integer.MIN_VALUE, "/x"))
+                .filter(new FilterDecl("f", Counting.class, Counting::new, Map.of(), false))
+                .filterMapping(new FilterMappingDecl("f", "/x", null, Set.of(DispatcherType.REQUEST)))
+                .filterMapping(new FilterMappingDecl("f", null, "a", Set.of(DispatcherType.REQUEST)))
+                .build());
+        EVENTS.clear();
+        assertEquals("a:v-a", get("/x").body());
+        assertEquals(List.of("filter"), EVENTS);
+    }
+
+    /** Section 6.2.4: a servlet-name mapping applies only when that servlet serves the request. */
+    @Test
+    void servletNameFilterSkippedWhenAnotherServletWinsThePattern() throws Exception {
+        deploy(WebAppModel.builder("/")
+                .servlet(decl("a", Integer.MIN_VALUE, "/x/*"))
+                .servlet(decl("b", Integer.MIN_VALUE, "/x/y"))
+                .filter(new FilterDecl("f", Counting.class, Counting::new, Map.of(), false))
+                .filterMapping(new FilterMappingDecl("f", null, "a", Set.of(DispatcherType.REQUEST)))
+                .build());
+        EVENTS.clear();
+        assertEquals("b:v-b", get("/x/y").body());
+        assertEquals(List.of(), EVENTS);
+        assertEquals("a:v-a", get("/x/z").body());
+        assertEquals(List.of("filter"), EVENTS);
+    }
+
+    @Test
+    void starServletNameFilterAppliesToEveryServlet() throws Exception {
+        deploy(WebAppModel.builder("/")
+                .servlet(decl("a", Integer.MIN_VALUE, "/a"))
+                .servlet(decl("b", Integer.MIN_VALUE, "/b"))
+                .filter(new FilterDecl("f", Counting.class, Counting::new, Map.of(), false))
+                .filterMapping(new FilterMappingDecl("f", null, "*", Set.of(DispatcherType.REQUEST)))
+                .build());
+        EVENTS.clear();
+        get("/a");
+        get("/b");
+        assertEquals(List.of("filter", "filter"), EVENTS);
+    }
+
     @Test
     void loadOnStartupOrdersInitThenDeclarationOrder() {
         deploy(WebAppModel.builder("/")

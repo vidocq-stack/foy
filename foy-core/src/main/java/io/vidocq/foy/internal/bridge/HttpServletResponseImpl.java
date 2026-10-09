@@ -94,6 +94,17 @@ public final class HttpServletResponseImpl implements HttpServletResponse {
     }
     @Override public void sendError(int sc) throws IOException { sendError(sc, null); }
 
+    /**
+     * Servlet 6.1 section 9.4: once a forward returns, the response is committed and closed; the
+     * buffered content stands and any later write is discarded. No-op when already committed.
+     */
+    public void closeAfterForward() {
+        if (isCommitted()) return;
+        drainWriter();
+        committed = true;
+        outputStream.setDiscarding(true);
+    }
+
     public boolean isErrorTriggered() { return errorTriggered; }
     public String errorMessage() { return errorMessage; }
     public void clearErrorState() {

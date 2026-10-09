@@ -36,6 +36,9 @@ public record DispatchTarget(Servlet servlet,
                              String queryString,
                              boolean asyncSupported,
                              HttpServletMapping mapping) {
+    /** True for a named dispatch (section 9.1 {@code getNamedDispatcher}): no path, no mapping. */
+    public boolean named() { return mapping == null; }
+
     /** Clone with a new queryString (used for async dispatches). */
     public DispatchTarget withQueryString(String qs) {
         return new DispatchTarget(servlet, servletName, path, servletPath, pathInfo, qs, asyncSupported, mapping);

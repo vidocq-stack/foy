@@ -20,6 +20,7 @@
 package io.vidocq.foy.internal.dispatcher;
 
 import io.vidocq.foy.internal.bridge.ForwardedRequest;
+import io.vidocq.foy.internal.bridge.HttpServletResponseImpl;
 import io.vidocq.foy.internal.bridge.IncludedRequest;
 import io.vidocq.foy.internal.bridge.IncludedResponse;
 import jakarta.servlet.DispatcherType;
@@ -41,7 +42,9 @@ import java.io.IOException;
  *
  * <p>Servlet 6.1 contract §9.3 (include): the primary response keeps its headers/status
  * (the wrapper ignores mutators), and {@code jakarta.servlet.include.*}
- * attributes expose the included path.</p>
+ * attributes expose the included path for the duration of the include.</p>
+ *
+ * <p>Named dispatchers (section 9.1) set no dispatch attribute and keep the caller's paths.</p>
  */
 public final class RequestDispatcherImpl implements RequestDispatcher {
 
@@ -90,22 +93,30 @@ public final class RequestDispatcherImpl implements RequestDispatcher {
         }
         res.resetBuffer();
 
-        String fullUri = req.getContextPath().equals("/") ? target.path()
-                : req.getContextPath() + target.path();
-        req.setAttribute("jakarta.servlet.forward.request_uri", req.getRequestURI());
-        req.setAttribute("jakarta.servlet.forward.context_path", req.getContextPath());
-        req.setAttribute("jakarta.servlet.forward.servlet_path", req.getServletPath());
-        req.setAttribute("jakarta.servlet.forward.path_info", req.getPathInfo());
-        req.setAttribute("jakarta.servlet.forward.query_string", req.getQueryString());
-
-        if (target.mapping() != null) {
-            req.setAttribute("jakarta.servlet.forward.mapping", req.getHttpServletMapping());
+        // Section 9.4.2: a named forward sets no attribute; a nested forward keeps the values of the
+        // original request, so the attributes are only set when a previous forward has not.
+        if (!target.named() && req.getAttribute(RequestDispatcher.FORWARD_REQUEST_URI) == null) {
+            req.setAttribute(RequestDispatcher.FORWARD_REQUEST_URI, req.getRequestURI());
+            req.setAttribute(RequestDispatcher.FORWARD_CONTEXT_PATH, req.getContextPath());
+            req.setAttribute(RequestDispatcher.FORWARD_SERVLET_PATH, req.getServletPath());
+            req.setAttribute(RequestDispatcher.FORWARD_PATH_INFO, req.getPathInfo());
+            req.setAttribute(RequestDispatcher.FORWARD_QUERY_STRING, req.getQueryString());
+            if (req.getAttribute(RequestDispatcher.FORWARD_MAPPING) == null) {
+                req.setAttribute(RequestDispatcher.FORWARD_MAPPING, req.getHttpServletMapping());
+            }
         }
 
-        var wrappedReq = new ForwardedRequest(req, target);
-        invoker.invoke(target, wrappedReq, res, DispatcherType.FORWARD);
-        // Note : fullUri n'est pas exposé directement ; il est reconstituable via getRequestURI() du wrapper.
-        assert fullUri != null;
+        // Exceptions of the target reach the caller unchanged (no wrapping).
+        invoker.invoke(target, new ForwardedRequest(req, target), res, DispatcherType.FORWARD);
+
+        // Section 9.4: the response is committed and closed once the forward returns, unless the
+        // target started async processing or the forward happens inside an include (the including
+        // servlet still owns the response).
+        if (!req.isAsyncStarted() && !insideInclude(response)) {
+            HttpServletResponseImpl impl = unwrapImpl(response);
+            if (impl != null) impl.closeAfterForward();
+            else if (!res.isCommitted()) res.flushBuffer();
+        }
     }
 
     @Override
@@ -116,21 +127,28 @@ public final class RequestDispatcherImpl implements RequestDispatcher {
         if (req == null || res == null) {
             throw new ServletException("non-HTTP dispatch");
         }
-        String fullUri = req.getContextPath().equals("/") ? target.path()
-                : req.getContextPath() + target.path();
-        req.setAttribute("jakarta.servlet.include.request_uri", fullUri);
-        req.setAttribute("jakarta.servlet.include.context_path", req.getContextPath());
-        req.setAttribute("jakarta.servlet.include.servlet_path", target.servletPath());
-        req.setAttribute("jakarta.servlet.include.path_info", target.pathInfo());
-        req.setAttribute("jakarta.servlet.include.query_string", target.queryString());
+        // The include.* attributes (none for a named include) and the merged parameters live in the
+        // wrapper: they last for the include only. Exceptions of the target propagate unchanged.
+        invoker.invoke(target, new IncludedRequest(req, target), new IncludedResponse(res),
+                DispatcherType.INCLUDE);
+    }
 
-        if (target.mapping() != null) {
-            req.setAttribute("jakarta.servlet.include.mapping", target.mapping());
+    private static boolean insideInclude(ServletResponse r) {
+        while (r != null) {
+            if (r instanceof IncludedResponse) return true;
+            if (r instanceof jakarta.servlet.ServletResponseWrapper w) r = w.getResponse();
+            else return false;
         }
+        return false;
+    }
 
-        var wrappedReq = new IncludedRequest(req, target);
-        var wrappedRes = new IncludedResponse(res);
-        invoker.invoke(target, wrappedReq, wrappedRes, DispatcherType.INCLUDE);
+    private static HttpServletResponseImpl unwrapImpl(ServletResponse r) {
+        while (r != null) {
+            if (r instanceof HttpServletResponseImpl i) return i;
+            if (r instanceof jakarta.servlet.ServletResponseWrapper w) r = w.getResponse();
+            else return null;
+        }
+        return null;
     }
 
     /** Unwrap via {@link jakarta.servlet.ServletRequestWrapper#getRequest()} until

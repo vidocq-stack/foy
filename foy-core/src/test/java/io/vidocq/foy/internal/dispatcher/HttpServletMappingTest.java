@@ -194,10 +194,37 @@ class HttpServletMappingTest {
         assertTrue(UrlPatternMatcher.of("").precedence() < UrlPatternMatcher.of("*.x").precedence());
     }
 
+    @Test
+    void extensionMatchValueKeepsTheDirectories() throws Exception {
+        start(map("*.ts", reporter(), "Ext"));
+        assertEquals("matchValue=a/b, pattern=*.ts, servletName=Ext, mappingMatch=EXTENSION"
+                + "|sp=/a/b.ts|pi=null|fwd=null|inc=null|async=null", get("/a/b.ts"));
+    }
+
+    @Test
+    void pathMatchOnThePrefixItselfHasAnEmptyMatchValue() throws Exception {
+        start(map("/foo/*", reporter(), "P"));
+        assertEquals("matchValue=, pattern=/foo/*, servletName=P, mappingMatch=PATH"
+                + "|sp=/foo|pi=null|fwd=null|inc=null|async=null", get("/foo"));
+    }
+
+    @Test
+    void unmatchedRequestHasANonNullMappingWithoutMatch() throws Exception {
+        jakarta.servlet.Filter writer = (req, res, chain) -> res.getWriter().write(
+                describe(((HttpServletRequest) req).getHttpServletMapping()));
+        startWith(List.of(FilterMapping.onRequest(UrlPatternMatcher.of("/*"), writer, "W")),
+                map("/only", reporter(), "only"));
+        assertEquals("matchValue=, pattern=, servletName=, mappingMatch=null", get("/nothing"));
+    }
+
     private void start(ServletDispatcher.Mapping... mappings) {
+        startWith(List.of(), mappings);
+    }
+
+    private void startWith(List<FilterMapping> filters, ServletDispatcher.Mapping... mappings) {
         var ctx = new VidocqServletContext("/");
         var bridge = new ChappeServletBridge(new ServletDispatcher(List.of(mappings)),
-                new FilterRegistry(List.of()), ctx, null, "/");
+                new FilterRegistry(filters), ctx, null, "/");
         var r = TestServerLauncherAccess.start(bridge);
         this.server = r.server();
         this.port = r.port();

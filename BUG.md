@@ -87,7 +87,7 @@ Statuts : `OPEN` → `INVESTIGATING` → `FIXED` (commit hash) → `CLOSED`.
 ## BUG-20261008-02 — a filter mapped by URL pattern and by servlet name runs twice for one request
 
 - **Date** : 2026-10-08
-- **Statut** : OPEN (Phase 4)
+- **Statut** : FIXED (2026-10-09, Phase 4 Task 4.4)
 - **Module touché** : `foy-core` (`WebAppDeployer.buildFilterMappings`, `FilterRegistry` chain building)
 - **Symptôme** : a filter with a `<url-pattern>` mapping and a `<servlet-name>` mapping that both
   match the same request is invoked twice in the chain. Tomcat invokes it once (§6.2.4: the chain
@@ -99,3 +99,12 @@ Statuts : `OPEN` → `INVESTIGATING` → `FIXED` (commit hash) → `CLOSED`.
   mapping with no deduplication by filter name.
 - **Investigations** :
   - 2026-10-08 : noted during the Task 3.10 review; left unfixed (Phase 4 dispatch work).
+  - 2026-10-09 : cause confirmed. Expanding servlet-name mappings into URL patterns also broke the
+    §6.2.4 order (URL-pattern matches before servlet-name matches), applied a servlet-name filter
+    to requests another servlet serves, gave named dispatches the `/*` filters instead of the
+    target's servlet-name filters, and ignored `<servlet-name>*</servlet-name>`.
+- **Correction** : `FilterMapping` is either a URL-pattern or a servlet-name mapping (never
+  expanded); `FilterRegistry.chainFor(path, type, servletName)` returns the URL-pattern matches in
+  declaration order, then the servlet-name matches (`*` = every servlet), each filter at most once;
+  a named dispatch passes no path, only the target's name. Tests: `FilterRegistryServletNameTest`,
+  `WebAppDeployerEndToEndTest.filterMappedByUrlAndServletNameRunsOnce` and siblings.

@@ -125,7 +125,7 @@ public final class WebAppDeployer {
             // Materialise the dynamic registrations (SCI + listener-initialized) before init().
             var dynamicMappings = new ArrayList<FilterMapping>();
             materializeDynamic(model, ctx, factory, servlets, filters, dynamicMappings);
-            List<FilterMapping> filterMappings = buildFilterMappings(model, servlets, filters, dynamicMappings);
+            List<FilterMapping> filterMappings = buildFilterMappings(model, filters, dynamicMappings);
 
             var liveServlets = initServlets(ctx, servlets, initializedServlets);
             var liveFilters = initFilters(ctx, filters, filterMappings, initializedFilters);
@@ -288,11 +288,10 @@ public final class WebAppDeployer {
                 for (String pattern : mapping.urlPatterns()) {
                     dynamicMappings.add(filterMapping(pattern, instance, name, mapping.dispatchers(), async));
                 }
-                // servlet-name mappings: resolved to the url-patterns of the target servlets.
+                // Section 6.2.4: servlet-name mappings stay servlet-name mappings (never expanded).
                 for (String servletName : mapping.servletNames()) {
-                    for (String pattern : patternsOf(servlets, servletName)) {
-                        dynamicMappings.add(filterMapping(pattern, instance, name, mapping.dispatchers(), async));
-                    }
+                    dynamicMappings.add(FilterMapping.forServletName(servletName, instance, name,
+                            dispatcherTypes(mapping.dispatchers()), async));
                 }
             }
             // Like a declared filter, an unmapped dynamic filter is initialised (and destroyed) but
@@ -331,32 +330,28 @@ public final class WebAppDeployer {
     }
 
     /** Model mappings in declaration order, then the dynamic ones. */
-    private static List<FilterMapping> buildFilterMappings(WebAppModel model, List<ServletUnit> servlets,
+    private static List<FilterMapping> buildFilterMappings(WebAppModel model,
                                                            List<FilterUnit> filters,
                                                            List<FilterMapping> dynamicMappings) {
         var result = new ArrayList<FilterMapping>();
         for (FilterMappingDecl m : model.filterMappings()) {
             FilterUnit f = filters.stream().filter(u -> u.name().equals(m.filterName())).findFirst().orElseThrow();
-            List<String> patterns = m.urlPattern() != null
-                    ? List.of(m.urlPattern()) : patternsOf(servlets, m.servletName());
-            for (String p : patterns) {
-                result.add(filterMapping(p, f.instance(), f.name(), m.dispatcherTypes(), f.asyncSupported()));
-            }
+            result.add(m.urlPattern() != null
+                    ? filterMapping(m.urlPattern(), f.instance(), f.name(), m.dispatcherTypes(), f.asyncSupported())
+                    : FilterMapping.forServletName(m.servletName(), f.instance(), f.name(),
+                            dispatcherTypes(m.dispatcherTypes()), f.asyncSupported()));
         }
         result.addAll(dynamicMappings);
         return result;
     }
 
-    private static List<String> patternsOf(List<ServletUnit> servlets, String servletName) {
-        var patterns = new ArrayList<String>();
-        for (ServletUnit s : servlets) if (s.name().equals(servletName)) patterns.addAll(s.patterns());
-        return patterns;
+    private static Set<DispatcherType> dispatcherTypes(Set<DispatcherType> types) {
+        return types == null ? Set.of(DispatcherType.REQUEST) : types;
     }
 
     private static FilterMapping filterMapping(String pattern, Filter filter, String name, Set<DispatcherType> types,
                                                boolean asyncSupported) {
-        return new FilterMapping(UrlPatternMatcher.of(pattern), filter, name,
-                types == null ? Set.of(DispatcherType.REQUEST) : types, asyncSupported);
+        return new FilterMapping(UrlPatternMatcher.of(pattern), filter, name, dispatcherTypes(types), asyncSupported);
     }
 
     /**
