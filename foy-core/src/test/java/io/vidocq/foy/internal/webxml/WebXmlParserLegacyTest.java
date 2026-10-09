@@ -138,4 +138,87 @@ class WebXmlParserLegacyTest {
             assertFalse(String.valueOf(expected.getMessage()).contains("TOP-SECRET"));
         }
     }
+
+    @Test
+    void entityReferenceInContentIsRejected() {
+        String xml = "<!DOCTYPE web-app [<!ENTITY x 'v'>]><web-app><context-param><param-name>n</param-name>"
+                + "<param-value>&x;</param-value></context-param></web-app>";
+        var e = assertThrows(IOException.class, () -> WebXmlParser.parse(in(xml)));
+        assertTrue(e.getMessage().contains("entity references are not supported in web.xml (<param-value>)"),
+                e.getMessage());
+    }
+
+    @Test
+    void entityInUrlPatternDoesNotBecomeContextRoot() {
+        String xml = app("<!DOCTYPE web-app [<!ENTITY p '/a'>]>", "<url-pattern>&p;</url-pattern>");
+        assertThrows(IOException.class, () -> WebXmlParser.parse(in(xml)));
+    }
+
+    @Test
+    void predefinedEntitiesStillWork() throws IOException {
+        String xml = "<web-app><context-param><param-name>n</param-name><param-value>a&amp;b&lt;c</param-value>"
+                + "</context-param></web-app>";
+        assertEquals("a&b<c", WebXmlParser.parse(in(xml)).contextParams().get("n"));
+    }
+
+    @Test
+    void billionLaughsInContentIsRejectedFast() {
+        String xml = "<!DOCTYPE web-app [<!ENTITY a 'AAAAAAAAAA'><!ENTITY b '&a;&a;&a;&a;&a;&a;&a;&a;&a;&a;'>"
+                + "<!ENTITY c '&b;&b;&b;&b;&b;&b;&b;&b;&b;&b;'>]><web-app><display-name>&c;</display-name></web-app>";
+        assertTimeoutPreemptively(Duration.ofSeconds(5), () -> {
+            var e = assertThrows(IOException.class, () -> WebXmlParser.parse(in(xml)));
+            assertTrue(e.getMessage().contains("entity references are not supported"), e.getMessage());
+        });
+    }
+
+    @Test
+    void billionLaughsInAttributeIsRejectedBySecureProcessing() {
+        StringBuilder sb = new StringBuilder("<!DOCTYPE web-app [<!ENTITY l0 'ha'>");
+        for (int i = 1; i <= 12; i++) {
+            String prev = "&l" + (i - 1) + ";";
+            sb.append("<!ENTITY l").append(i).append(" '").append(prev.repeat(10)).append("'>");
+        }
+        sb.append("]><web-app version='&l12;'/>");
+        assertTimeoutPreemptively(Duration.ofSeconds(5), () ->
+                assertThrows(IOException.class, () -> WebXmlParser.parse(in(sb.toString()))));
+    }
+
+    @Test
+    void blankVersionFallsBackToDoctypeVersion() throws IOException {
+        String xml = DT22 + "<web-app version=' '/>";
+        assertEquals("2.2", WebXmlParser.parse(in(xml)).version());
+    }
+
+    @Test
+    void externalDtdAndEntityAreNeverFetched() throws Exception {
+        try (var ss = new java.net.ServerSocket(0, 1, java.net.InetAddress.getLoopbackAddress())) {
+            ss.setSoTimeout(1500);
+            String url = "http://127.0.0.1:" + ss.getLocalPort() + "/x";
+            String xml = "<!DOCTYPE web-app SYSTEM '" + url + ".dtd' [<!ENTITY e SYSTEM '" + url + "'>]>"
+                    + "<web-app version='3.0'/>";
+            WebXmlParser.parse(in(xml));
+            assertThrows(java.net.SocketTimeoutException.class, ss::accept);
+        }
+    }
+
+    @Test
+    void malformedInputDoesNotPrintToStderr() {
+        var old = System.err;
+        var buf = new java.io.ByteArrayOutputStream();
+        System.setErr(new java.io.PrintStream(buf));
+        try {
+            assertThrows(IOException.class, () -> WebXmlParser.parse(in("<web-app>")));
+        } finally {
+            System.setErr(old);
+        }
+        assertEquals("", buf.toString());
+    }
+
+    @Test
+    void versionsBelow25ImplyMetadataComplete() throws IOException {
+        assertTrue(WebXmlParser.parse(in(DT23 + "<web-app/>")).metadataComplete());
+        assertTrue(WebXmlParser.parse(in("<web-app version='2.4'/>")).metadataComplete());
+        assertFalse(WebXmlParser.parse(in("<web-app version='2.5'/>")).metadataComplete());
+        assertFalse(WebXmlParser.parse(in("<web-app/>")).metadataComplete());
+    }
 }

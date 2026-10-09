@@ -85,6 +85,11 @@ public final class WebXmlParser {
             factory.setXIncludeAware(false);
             factory.setExpandEntityReferences(false);
             DocumentBuilder builder = factory.newDocumentBuilder();
+            builder.setErrorHandler(new org.xml.sax.ErrorHandler() {
+                public void warning(org.xml.sax.SAXParseException x) { /* ignored */ }
+                public void error(org.xml.sax.SAXParseException x) throws org.xml.sax.SAXException { throw x; }
+                public void fatalError(org.xml.sax.SAXParseException x) throws org.xml.sax.SAXException { throw x; }
+            });
             builder.setEntityResolver((publicId, systemId) -> new InputSource(new StringReader("")));
             doc = builder.parse(in);
         } catch (Exception e) {
@@ -115,6 +120,12 @@ public final class WebXmlParser {
         int end = rest.indexOf("//");
         String v = (end < 0 ? rest : rest.substring(0, end)).trim();
         return v.matches("\\d+\\.\\d+") ? v : null;
+    }
+
+    /** Descriptors older than 2.5 imply metadata-complete (Servlet §8.1): annotations are ignored. */
+    private static boolean isPre25(String version) {
+        if (isPre24(version)) return true;
+        return version != null && version.trim().equals("2.4");
     }
 
     /** {@code true} for a descriptor version below 2.4 (lenient url-patterns, Tomcat compatibility). */
@@ -150,7 +161,7 @@ public final class WebXmlParser {
 
     private static WebAppDescriptor parse(Element root, boolean fragment, String doctypeVersion) {
         String declared = root.getAttribute("version");
-        String version = declared.isEmpty() ? doctypeVersion : declared;
+        String version = declared.isBlank() ? doctypeVersion : declared;
         boolean legacy = isPre24(version);
         Map<String, String> contextParams = new LinkedHashMap<>();
         var servlets = new ArrayList<WebAppDescriptor.ServletDef>();
@@ -273,7 +284,7 @@ public final class WebXmlParser {
                 .withLoginConfig(loginConfig)
                 .withSecurityRoles(securityRoles)
                 .withAbsoluteOrdering(absoluteOrdering)
-                .withMetadataComplete(Boolean.TRUE.equals(xsdBoolean(
+                .withMetadataComplete(isPre25(version) || Boolean.TRUE.equals(xsdBoolean(
                         root.hasAttribute("metadata-complete") ? root.getAttribute("metadata-complete") : null,
                         "metadata-complete attribute")));
     }
@@ -480,6 +491,12 @@ public final class WebXmlParser {
     }
 
     static String text(Element e) {
+        for (Node c = e.getFirstChild(); c != null; c = c.getNextSibling()) {
+            if (c.getNodeType() == Node.ENTITY_REFERENCE_NODE) {
+                throw new IllegalArgumentException("entity references are not supported in web.xml (<"
+                        + e.getTagName() + ">)");
+            }
+        }
         String t = e.getTextContent();
         return t == null ? null : t.trim();
     }
