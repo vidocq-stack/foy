@@ -19,8 +19,6 @@
  */
 package io.vidocq.foy.tck;
 
-import io.vidocq.chappe.api.Handler;
-import io.vidocq.chappe.api.Server;
 import io.vidocq.foy.internal.boot.ComponentFactory;
 import io.vidocq.foy.internal.boot.DeployOptions;
 import io.vidocq.foy.internal.boot.HandlesTypesResolver;
@@ -39,7 +37,6 @@ import jakarta.servlet.DispatcherType;
 import jakarta.servlet.Filter;
 import jakarta.servlet.Servlet;
 
-import java.net.ServerSocket;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -79,19 +76,19 @@ public final class ServletTestHarness implements AutoCloseable {
 
     private static final System.Logger LOG = System.getLogger(ServletTestHarness.class.getName());
 
-    private final Server server;
-    /** The shared host this deployment is mounted on, or {@code null} when it owns its server. */
     private final ServletTestHost host;
+    /** True when the harness created {@link #host} itself and must stop it on close. */
+    private final boolean ownsHost;
     private final int port;
     private final HttpClient client;
     private final String contextPath;
     private final Deployment deployment;
     private final WebAppModel model;
 
-    private ServletTestHarness(Server server, ServletTestHost host, int port, String contextPath,
+    private ServletTestHarness(ServletTestHost host, boolean ownsHost, int port, String contextPath,
                                Deployment deployment, WebAppModel model) {
-        this.server = server;
         this.host = host;
+        this.ownsHost = ownsHost;
         this.model = model;
         this.port = port;
         this.contextPath = contextPath;
@@ -120,8 +117,8 @@ public final class ServletTestHarness implements AutoCloseable {
     }
 
     @Override public void close() {
-        if (host != null) host.unmount(contextPath);
-        if (server != null) server.stop();
+        host.unmount(contextPath);
+        if (ownsHost) host.close();
         deployment.close();
     }
 
@@ -305,17 +302,16 @@ public final class ServletTestHarness implements AutoCloseable {
                     .withReserved(reservedServletNames, reservedFilterNames, reservedUrlPatterns);
             if (handlesTypes != null) options = options.withHandlesTypes(handlesTypes);
             Deployment d = WebAppDeployer.deploy(built, options);
-            if (host != null) {
-                try {
-                    host.mount(built.contextPath(), d.handler());
-                } catch (RuntimeException e) {
-                    d.close();
-                    throw e;
-                }
-                return new ServletTestHarness(null, host, host.port(), built.contextPath(), d, built);
+            boolean owned = host == null;
+            ServletTestHost mountHost = owned ? new ServletTestHost() : host;
+            try {
+                mountHost.mount(built.contextPath(), d.handler());
+            } catch (RuntimeException e) {
+                if (owned) mountHost.close();
+                d.close();
+                throw e;
             }
-            int port = startServerWithRetry(d.handler());
-            return new ServletTestHarness(currentServer, null, port, built.contextPath(), d, built);
+            return new ServletTestHarness(mountHost, owned, mountHost.port(), built.contextPath(), d, built);
         }
 
         /** Appends the pre-built instances registered on this builder (conformance tests). */
@@ -331,30 +327,6 @@ public final class ServletTestHarness implements AutoCloseable {
             for (EventListener l : listeners) {
                 b.listener(new ListenerDecl(l.getClass(), () -> l));
             }
-        }
-
-        private Server currentServer;
-
-        private int startServerWithRetry(Handler handler) {
-            RuntimeException last = null;
-            for (int attempt = 0; attempt < 5; attempt++) {
-                int port;
-                try (ServerSocket s = new ServerSocket(0)) { port = s.getLocalPort(); }
-                catch (Exception e) { throw new RuntimeException(e); }
-                try {
-                    // Short keep-alive idle timeout: some TCK clients (6.1.0
-                    // TrailerTest) read the response to EOF on a keep-alive
-                    // connection and rely on the container closing it — 60 s
-                    // (chappe default) would add a minute per such test.
-                    Server server = Server.builder().host("127.0.0.1").port(port)
-                            .idleTimeout(java.time.Duration.ofSeconds(5))
-                            .handler(handler).build();
-                    server.start();
-                    currentServer = server;
-                    return port;
-                } catch (RuntimeException e) { last = e; }
-            }
-            throw last;
         }
     }
 }

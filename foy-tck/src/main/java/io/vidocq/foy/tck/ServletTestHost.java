@@ -31,8 +31,8 @@ import java.util.concurrent.ConcurrentHashMap;
 /**
  * One Chappe {@link Server} serving several deployments, routed by context-path prefix (the
  * longest prefix wins; {@code ""} is the root context). A request under no mounted context is
- * answered {@code 404} by the router. Unmounting a context never touches the others: requests
- * already running on its handler complete.
+ * answered {@code 404} by the router. Unmounting a context never touches the others and does not
+ * interrupt requests already running on its handler (it only stops new ones from being routed).
  */
 public final class ServletTestHost implements AutoCloseable {
 
@@ -79,13 +79,16 @@ public final class ServletTestHost implements AutoCloseable {
         }
     }
 
-    /** Stops routing to {@code contextPath}; running requests complete. */
+    /** Stops routing new requests to {@code contextPath}; requests already running are not interrupted. */
     public void unmount(String contextPath) { mounts.remove(prefix(contextPath)); }
 
     @Override public void close() { server.stop(); }
 
     private static String prefix(String contextPath) {
-        return contextPath == null || contextPath.equals("/") ? "" : contextPath;
+        if (contextPath == null) return "";
+        String p = contextPath;
+        while (p.endsWith("/")) p = p.substring(0, p.length() - 1);
+        return p;
     }
 
     private Response route(io.vidocq.chappe.api.Request request) throws Exception {

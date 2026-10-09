@@ -115,7 +115,9 @@ public class VidocqDeployableContainer implements DeployableContainer<VidocqCont
         registriesByArchive.forEach((name, registry) ->
                 System.err.println("[VidocqTCK] undeploy archive=" + name + " tiers=" + registry.stats()));
         registriesByArchive.clear();
-        if (host != null) { host.close(); host = null; }
+        synchronized (this) {
+            if (host != null) { host.close(); host = null; }
+        }
     }
 
     @Override
@@ -175,7 +177,7 @@ public class VidocqDeployableContainer implements DeployableContainer<VidocqCont
 
         ServletTestHarness harness;
         try {
-            if (host == null) host = new ServletTestHost();
+            host = host();
             harness = ServletTestHarness.builder()
                 .host(host)
                 .model(model)
@@ -277,6 +279,11 @@ public class VidocqDeployableContainer implements DeployableContainer<VidocqCont
             }
         }
         return out;
+    }
+
+    private synchronized ServletTestHost host() {
+        if (host == null) host = new ServletTestHost();
+        return host;
     }
 
     @Override
