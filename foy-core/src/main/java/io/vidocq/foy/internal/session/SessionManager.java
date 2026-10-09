@@ -62,6 +62,14 @@ public final class SessionManager implements AutoCloseable {
     private ScheduledExecutorService reaper;
     /** Set by {@link #close()}: no session is created afterwards. */
     private volatile boolean closed;
+    /**
+     * {@link #createNew()} holds the read lock from its {@code closed} check until
+     * {@code sessionCreated} returned; {@link #close()} sets {@code closed} under the write lock.
+     * So every session created before the close is in the store, fully announced, when close
+     * scans it, and none is created afterwards.
+     */
+    private final java.util.concurrent.locks.ReadWriteLock closeLock =
+            new java.util.concurrent.locks.ReentrantReadWriteLock();
 
     public SessionManager(SessionStore store, ServletContext servletContext,
                           int defaultMaxInactiveSeconds) {
@@ -115,12 +123,17 @@ public final class SessionManager implements AutoCloseable {
      *         application is being undeployed): {@code getSession(true)} then throws it too
      */
     public HttpSessionImpl createNew() {
-        if (closed) throw new IllegalStateException("the web application is being undeployed");
-        String id = generateId();
-        HttpSessionImpl s = new HttpSessionImpl(id, servletContext, this, defaultMaxInactiveSeconds);
-        store.put(s);
-        listenerRegistry.fireSessionCreated(s);
-        return s;
+        closeLock.readLock().lock();
+        try {
+            if (closed) throw new IllegalStateException("the web application is being undeployed");
+            String id = generateId();
+            HttpSessionImpl s = new HttpSessionImpl(id, servletContext, this, defaultMaxInactiveSeconds);
+            store.put(s);
+            listenerRegistry.fireSessionCreated(s);
+            return s;
+        } finally {
+            closeLock.readLock().unlock();
+        }
     }
 
     /**
@@ -216,7 +229,12 @@ public final class SessionManager implements AutoCloseable {
      */
     @Override
     public void close() {
-        closed = true;
+        closeLock.writeLock().lock();
+        try {
+            closed = true;
+        } finally {
+            closeLock.writeLock().unlock();
+        }
         ScheduledExecutorService r;
         synchronized (this) {
             r = reaper;

@@ -202,4 +202,38 @@ class FoyChappeBootTest {
         var ex = assertThrows(ServletException.class, builder::build);
         assertTrue(ex.getMessage().contains(BothPatterns.class.getName()), ex.getMessage());
     }
+
+    /** A servlet with no side effect on the counters of the other tests. */
+    public static class Plain extends HttpServlet {}
+
+    @Test
+    void builderSessionTimeoutOfZeroOrLessNeverExpires() throws Exception {
+        String xml = """
+            <web-app xmlns="https://jakarta.ee/xml/ns/jakartaee" version="6.1">
+              <servlet><servlet-name>h</servlet-name><servlet-class>%s</servlet-class></servlet>
+              <servlet-mapping><servlet-name>h</servlet-name><url-pattern>/hello</url-pattern></servlet-mapping>
+            </web-app>""".formatted(Plain.class.getName());
+        for (int seconds : new int[] {-120, -1, 0}) {
+            var mounted = FoyChappeBoot.builder().contextPath("/").sessionTimeoutSeconds(seconds)
+                    .classLoader(getClass().getClassLoader())
+                    .webXml(new ByteArrayInputStream(xml.getBytes()))
+                    .build().orElseThrow();
+            try {
+                assertEquals(0, mounted.servletContext().getSessionTimeout(), "seconds=" + seconds);
+                assertEquals(-1, mounted.deployment().sessionManager().defaultMaxInactiveSeconds(),
+                        "seconds=" + seconds);
+            } finally {
+                mounted.close();
+            }
+        }
+        var mounted = FoyChappeBoot.builder().contextPath("/").sessionTimeoutSeconds(90)
+                .classLoader(getClass().getClassLoader())
+                .webXml(new ByteArrayInputStream(xml.getBytes()))
+                .build().orElseThrow();
+        try {
+            assertEquals(2, mounted.servletContext().getSessionTimeout());
+        } finally {
+            mounted.close();
+        }
+    }
 }

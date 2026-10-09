@@ -258,3 +258,6 @@ Statuts : `OPEN` → `INVESTIGATING` → `FIXED` (commit hash) → `CLOSED`.
 - **Investigations** :
   - 2026-10-09 : ruling — default `{COOKIE, URL}` (Tomcat; `SSL` never by default), each source
     read only when its mode is effective (section 7.1).
+  - 2026-10-09 (fix round 2) : session fixation — with both a `;jsessionid=` and a session
+    cookie, the URL id won; the cookie now wins when `COOKIE` is effective (Tomcat), the path
+    parameter applies only without a session cookie.

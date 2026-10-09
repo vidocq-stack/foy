@@ -127,9 +127,15 @@ public final class FoyChappeBoot {
 
         /**
          * Session timeout used only when neither web.xml nor any merged web fragment declares a
-         * {@code <session-timeout>}; rounded up to whole minutes.
+         * {@code <session-timeout>}; rounded up to whole minutes. Zero or less: sessions never
+         * expire.
          */
         public Builder sessionTimeoutSeconds(int seconds) { this.sessionTimeoutSeconds = seconds; return this; }
+
+        /** Seconds rounded up to whole minutes; zero or less gives 0 (sessions never expire). */
+        static int sessionTimeoutMinutes(int seconds) {
+            return seconds <= 0 ? 0 : (int) ((seconds + 59L) / 60);
+        }
 
         /** Class loader used to load components and to look up {@code web.xml}. */
         public Builder classLoader(ClassLoader cl) { this.classLoader = cl; return this; }
@@ -245,8 +251,10 @@ public final class FoyChappeBoot {
                 if (i.jar() != null) scanRoots.add(i.jar());
             }
             // The merger copies the descriptors' timeout (-1 when absent); the builder default applies then.
-            if (effective.sessionTimeoutMinutes() < 0) {
-                modelBuilder.sessionTimeoutMinutes((sessionTimeoutSeconds + 59) / 60);
+            // A builder timeout of zero or less means "never expire" (0 minutes), as in web.xml; it
+            // must not become -1, the model's "not configured" value.
+            if (effective.sessionTimeoutMinutes() == -1) {
+                modelBuilder.sessionTimeoutMinutes(sessionTimeoutMinutes(sessionTimeoutSeconds));
             }
             WebAppModel model = modelBuilder.build();
 

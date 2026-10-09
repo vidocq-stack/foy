@@ -563,19 +563,24 @@ public final class HttpServletRequestImpl implements HttpServletRequest {
 
     /**
      * The session id sent by the client (section 7.1), read only through the effective tracking
-     * modes: a {@code ;jsessionid=} path parameter when {@code URL} is effective, else the session
-     * cookie when {@code COOKIE} is effective. A disabled mode's id is ignored.
+     * modes. The session cookie wins when {@code COOKIE} is effective and the cookie is present
+     * (as Tomcat: a {@code ;jsessionid=} in a link cannot override the session the browser
+     * holds, which would ease session fixation); the {@code ;jsessionid=} path parameter is used
+     * only without a session cookie and when {@code URL} is effective. A disabled mode's id is
+     * ignored.
      */
     @Override public String getRequestedSessionId() {
         if (!requestedSessionIdResolved) {
             requestedSessionIdResolved = true;
             var modes = servletContext == null ? java.util.Set.<jakarta.servlet.SessionTrackingMode>of()
                     : servletContext.getEffectiveSessionTrackingModes();
-            if (urlSessionId != null && modes.contains(jakarta.servlet.SessionTrackingMode.URL)) {
+            String fromCookie = modes.contains(jakarta.servlet.SessionTrackingMode.COOKIE)
+                    ? extractSessionIdFromCookies() : null;
+            if (fromCookie != null) {
+                requestedSessionId = fromCookie;
+            } else if (urlSessionId != null && modes.contains(jakarta.servlet.SessionTrackingMode.URL)) {
                 requestedSessionId = urlSessionId;
                 requestedSessionIdFromUrl = true;
-            } else if (modes.contains(jakarta.servlet.SessionTrackingMode.COOKIE)) {
-                requestedSessionId = extractSessionIdFromCookies();
             }
         }
         return requestedSessionId;

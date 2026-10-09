@@ -113,6 +113,12 @@ class SessionCoreTest {
                     HttpSession s = req.getSession(false);
                     out.write("REQ=" + req.getRequestedSessionId() + "|S=" + (s == null ? null : s.getId()));
                 }
+                case "source" -> {
+                    HttpSession s = req.getSession(false);
+                    out.write("REQ=" + req.getRequestedSessionId() + "|S=" + (s == null ? null : s.getId())
+                            + "|COOKIE=" + req.isRequestedSessionIdFromCookie()
+                            + "|URL=" + req.isRequestedSessionIdFromURL());
+                }
                 case "last" -> {
                     HttpSession s = req.getSession(true);
                     out.write("LA=" + s.getLastAccessedTime() + "|CT=" + s.getCreationTime());
@@ -584,5 +590,50 @@ class SessionCoreTest {
         destroyer.join(5_000);
         assertEquals(List.of("changed", "destroyed"), events);
         assertEquals(0, store.size(), "the session is not left under its new id");
+    }
+
+    // ---- fix round 2 ----
+
+    @Test
+    void theSessionCookieWinsOverAJsessionidPathParameter() throws Exception {
+        deploy(WebAppModel.builder("/ctx").servlet(ops()));
+        String cookieId = get("/ctx/s/create", null).value("ID");
+        String urlId = get("/ctx/s/create", null).value("ID");
+        assertNotEquals(cookieId, urlId);
+        var r = get("/ctx/s/source;jsessionid=" + urlId, "JSESSIONID=" + cookieId);
+        assertEquals("REQ=" + cookieId + "|S=" + cookieId + "|COOKIE=true|URL=false", r.body());
+        // Without a session cookie, the path parameter applies.
+        assertEquals("REQ=" + urlId + "|S=" + urlId + "|COOKIE=false|URL=true",
+                get("/ctx/s/source;jsessionid=" + urlId, null).body());
+    }
+
+    @Test
+    void closeWaitsForAnInFlightCreationAndInvalidatesIt() throws Exception {
+        var events = Collections.synchronizedList(new ArrayList<String>());
+        var inCreated = new CountDownLatch(1);
+        var release = new CountDownLatch(1);
+        var registry = new ListenerRegistry();
+        registry.register(new HttpSessionListener() {
+            @Override public void sessionCreated(HttpSessionEvent se) {
+                events.add("created");
+                inCreated.countDown();
+                try { release.await(5, TimeUnit.SECONDS); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
+            }
+            @Override public void sessionDestroyed(HttpSessionEvent se) { events.add("destroyed"); }
+        });
+        var store = new InMemorySessionStore();
+        manager = new SessionManager(store, new VidocqServletContext("/"), 1800);
+        manager.setListenerRegistry(registry);
+        Thread creator = Thread.ofVirtual().start(manager::createNew);
+        assertTrue(inCreated.await(5, TimeUnit.SECONDS));
+        Thread closer = Thread.ofVirtual().start(manager::close);
+        Thread.sleep(150);
+        assertEquals(List.of("created"), events, "close waits for the creation in flight");
+        release.countDown();
+        creator.join(5_000);
+        closer.join(5_000);
+        assertEquals(List.of("created", "destroyed"), events);
+        assertEquals(0, store.size(), "no session survives the close");
+        assertThrows(IllegalStateException.class, manager::createNew);
     }
 }
