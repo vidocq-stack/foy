@@ -378,7 +378,8 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
                        DispatcherType type) throws IOException, ServletException {
         // Section 6.2.5: a named dispatch matches no URL pattern, only the target's servlet-name mappings.
         String filterPath = target.named() ? null : target.path();
-        List<Filter> filters = filterRegistry.chainFor(filterPath, type, target.servletName());
+        FilterRegistry.Chain chain = filterRegistry.chain(filterPath, type, target.servletName());
+        List<Filter> filters = chain.filters();
         // §2.3.3.3 / ServletRequest#isAsyncSupported: async stays enabled only while the request is
         // within the scope of servlets and filters that support it. Recompute for this dispatch
         // (incoming && target servlet && every filter of this dispatch's chain) and restore the
@@ -395,7 +396,7 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
         }
         boolean previous = impl.isAsyncSupported();
         impl.setAsyncSupported(previous && target.asyncSupported()
-                && filterRegistry.asyncSupported(filterPath, type, target.servletName()));
+                && chain.asyncSupported());
         try {
             new VidocqFilterChain(filters, target.servlet()).doFilter(req, res);
         } finally {

@@ -168,6 +168,51 @@ class WebAppDeployerEndToEndTest {
         assertEquals(List.of("filter", "filter"), EVENTS);
     }
 
+    /** Dispatches to the servlet named by the {@code target} query parameter, by named include or forward. */
+    public static class NamedCaller extends HttpServlet {
+        @Override protected void doGet(HttpServletRequest q, HttpServletResponse r) throws IOException, ServletException {
+            var rd = q.getServletContext().getNamedDispatcher(q.getParameter("target"));
+            if (rd == null) { r.getWriter().write("no-dispatcher"); return; }
+            if ("include".equals(q.getParameter("mode"))) {
+                r.getWriter().write("caller+");
+                rd.include(q, r);
+            } else {
+                rd.forward(q, r);
+            }
+        }
+    }
+
+    /** Section 9.1.2: a servlet without URL mapping, declared or dynamic, is reachable by name. */
+    @Test
+    void namedDispatchReachesServletsWithoutUrlMapping() throws Exception {
+        ServletContainerInitializer sci = (classes, ctx) -> ctx.addServlet("dynHidden", new Recording("dynHidden"));
+        deploy(WebAppModel.builder("/")
+                .servlet(new ServletDecl("caller", NamedCaller.class, NamedCaller::new, List.of("/call"), Map.of(),
+                        Integer.MIN_VALUE, true))
+                .servlet(decl("hidden", Integer.MIN_VALUE))
+                .initializer(sci)
+                .build());
+        assertEquals("hidden:v-hidden", get("/call?target=hidden").body());
+        assertEquals("caller+hidden:v-hidden", get("/call?target=hidden&mode=include").body());
+        assertEquals("dynHidden:null", get("/call?target=dynHidden").body());
+        assertEquals("caller+dynHidden:null", get("/call?target=dynHidden&mode=include").body());
+        assertEquals("no-dispatcher", get("/call?target=ghost").body());
+    }
+
+    @Test
+    void namedDispatchToAnUnmappedServletRunsItsServletNameFilters() throws Exception {
+        deploy(WebAppModel.builder("/")
+                .servlet(new ServletDecl("caller", NamedCaller.class, NamedCaller::new, List.of("/call"), Map.of(),
+                        Integer.MIN_VALUE, true))
+                .servlet(decl("hidden", Integer.MIN_VALUE))
+                .filter(new FilterDecl("f", Counting.class, Counting::new, Map.of(), false))
+                .filterMapping(new FilterMappingDecl("f", null, "hidden", Set.of(DispatcherType.FORWARD)))
+                .build());
+        EVENTS.clear();
+        assertEquals("hidden:v-hidden", get("/call?target=hidden").body());
+        assertEquals(List.of("filter"), EVENTS);
+    }
+
     @Test
     void loadOnStartupOrdersInitThenDeclarationOrder() {
         deploy(WebAppModel.builder("/")

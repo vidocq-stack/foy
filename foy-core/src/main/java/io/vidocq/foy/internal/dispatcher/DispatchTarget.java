@@ -25,8 +25,8 @@ import jakarta.servlet.http.HttpServletMapping;
 /**
  * Resolved target of a servlet dispatch: the servlet and contact details
  * URL it will see ({@code servletPath}, {@code pathInfo}, {@code queryString}).
- * {@code mapping} is the {@link HttpServletMapping} of the match, or {@code null} for a
- * named dispatch (which keeps the caller's mapping).
+ * {@code mapping} is the {@link HttpServletMapping} of the match, {@code null} for a named
+ * dispatch ({@code named == true}), which has no path and keeps the caller's paths and mapping.
  */
 public record DispatchTarget(Servlet servlet,
                              String servletName,
@@ -35,12 +35,22 @@ public record DispatchTarget(Servlet servlet,
                              String pathInfo,
                              String queryString,
                              boolean asyncSupported,
-                             HttpServletMapping mapping) {
-    /** True for a named dispatch (section 9.1 {@code getNamedDispatcher}): no path, no mapping. */
-    public boolean named() { return mapping == null; }
+                             HttpServletMapping mapping,
+                             boolean named) {
+
+    /** A path-resolved target. */
+    public DispatchTarget(Servlet servlet, String servletName, String path, String servletPath, String pathInfo,
+                          String queryString, boolean asyncSupported, HttpServletMapping mapping) {
+        this(servlet, servletName, path, servletPath, pathInfo, queryString, asyncSupported, mapping, false);
+    }
+
+    /** A named-dispatch target (section 9.1.2): no path, no query, no mapping. */
+    public static DispatchTarget named(Servlet servlet, String servletName, boolean asyncSupported) {
+        return new DispatchTarget(servlet, servletName, null, null, null, null, asyncSupported, null, true);
+    }
 
     /** Clone with a new queryString (used for async dispatches). */
     public DispatchTarget withQueryString(String qs) {
-        return new DispatchTarget(servlet, servletName, path, servletPath, pathInfo, qs, asyncSupported, mapping);
+        return new DispatchTarget(servlet, servletName, path, servletPath, pathInfo, qs, asyncSupported, mapping, named);
     }
 }

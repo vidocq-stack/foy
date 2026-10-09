@@ -127,13 +127,13 @@ public final class WebAppDeployer {
             materializeDynamic(model, ctx, factory, servlets, filters, dynamicMappings);
             List<FilterMapping> filterMappings = buildFilterMappings(model, filters, dynamicMappings);
 
-            var liveServlets = initServlets(ctx, servlets, initializedServlets);
+            ServletDispatcher liveServlets = initServlets(ctx, servlets, initializedServlets);
             var liveFilters = initFilters(ctx, filters, filterMappings, initializedFilters);
 
             // End of the initialisation phase (Servlet 6.1 §4.4) — from now on the dynamic
             // configuration methods must throw IllegalStateException.
             ctx.markInitialized();
-            var bridge = new ChappeServletBridge(new ServletDispatcher(liveServlets),
+            var bridge = new ChappeServletBridge(liveServlets,
                     new FilterRegistry(liveFilters), ctx, sessions, model.contextPath());
             // Register the context for cross-context lookups (§4.8 / cross-context async dispatch).
             CrossContextRegistry.register(ctx);
@@ -255,7 +255,8 @@ public final class WebAppDeployer {
             if (staticServletNames.contains(name)) continue;
             Servlet instance = instantiate("servlet", name, reg.instance(), reg.klass(), reg.getClassName(),
                     Servlet.class, factory);
-            if (instance == null || reg.getMappings().isEmpty()) continue;
+            // An unmapped dynamic servlet is still initialised and reachable by name (section 9.1.2).
+            if (instance == null) continue;
             // setServletSecurity wins; otherwise the class's @ServletSecurity applies (§13.4.1).
             ServletSecurityElement security = reg.getServletSecurity();
             if (security == null) {
@@ -357,9 +358,10 @@ public final class WebAppDeployer {
     /**
      * Servlet 6.1 §2.3: init() before the first request — load-on-startup servlets first,
      * ascending (stable on declaration order), then the others in declaration order (eager
-     * init of the rest is allowed by §2.3.1). Returns the dispatcher mappings in declaration order.
+     * init of the rest is allowed by §2.3.1). Returns the dispatcher: the URL mappings in declaration
+     * order and every servlet by name, mapped or not (section 9.1.2 named dispatch).
      */
-    private static List<ServletDispatcher.Mapping> initServlets(VidocqServletContext ctx, List<ServletUnit> servlets,
+    private static ServletDispatcher initServlets(VidocqServletContext ctx, List<ServletUnit> servlets,
                                                                 List<Servlet> initialized) {
         var order = new ArrayList<ServletUnit>();
         servlets.stream().filter(s -> s.loadOnStartup() >= 0)
@@ -384,8 +386,11 @@ public final class WebAppDeployer {
             }
         }
         var live = new ArrayList<ServletDispatcher.Mapping>();
+        var named = new ArrayList<ServletDispatcher.NamedServlet>();
         for (ServletUnit s : servlets) {
             Servlet stub = failures.get(s.instance());
+            named.add(stub != null ? new ServletDispatcher.NamedServlet(s.name(), stub, true)
+                    : new ServletDispatcher.NamedServlet(s.name(), s.instance(), s.asyncSupported()));
             for (String p : s.patterns()) {
                 live.add(stub != null
                         ? new ServletDispatcher.Mapping(UrlPatternMatcher.of(p), stub, s.name())
@@ -393,7 +398,7 @@ public final class WebAppDeployer {
                                 s.asyncSupported(), s.security()));
             }
         }
-        return live;
+        return new ServletDispatcher(live, named);
     }
 
     /** init() filters in declaration order; a failing filter is logged and left out of the chain. */

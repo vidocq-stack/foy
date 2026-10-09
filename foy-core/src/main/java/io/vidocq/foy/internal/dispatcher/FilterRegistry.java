@@ -76,6 +76,20 @@ public final class FilterRegistry {
         return true;
     }
 
+    /** The filters of one dispatch and whether they all support async, from a single lookup. */
+    public record Chain(List<Filter> filters, boolean asyncSupported) {}
+
+    /** {@link #chainFor(String, DispatcherType, String)} and {@link #asyncSupported(String, DispatcherType, String)} at once. */
+    public Chain chain(String path, DispatcherType type, String servletName) {
+        List<Filter> filters = new ArrayList<>();
+        boolean async = true;
+        for (FilterMapping m : applicable(path, type, servletName)) {
+            filters.add(m.filter());
+            async &= m.asyncSupported();
+        }
+        return new Chain(List.copyOf(filters), async);
+    }
+
     /** {@link #asyncSupported(String, DispatcherType, String)} for a request matched by no servlet. */
     public boolean asyncSupported(String path, DispatcherType type) {
         return asyncSupported(path, type, null);

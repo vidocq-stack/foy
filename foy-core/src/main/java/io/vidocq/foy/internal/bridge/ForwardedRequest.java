@@ -27,7 +27,10 @@ import jakarta.servlet.http.HttpServletMapping;
 import jakarta.servlet.http.HttpServletRequestWrapper;
 
 import java.nio.charset.StandardCharsets;
+import java.util.Collections;
 import java.util.Enumeration;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.Map;
 
 /**
@@ -37,20 +40,60 @@ import java.util.Map;
  * reports {@link DispatcherType#FORWARD}. A named forward (section 9.4.2) keeps the caller's paths,
  * query and parameters.
  *
- * <p>The original request receives {@code jakarta.servlet.forward.*}
- * attributes in {@link io.vidocq.foy.internal.dispatcher.RequestDispatcherImpl}
- * before this wrapper is invoked.</p>
+ * <p>The {@code jakarta.servlet.forward.*} attributes (section 9.4.2) are held by this wrapper: they
+ * describe the original request, a nested forward inherits those of the first forward, a named
+ * forward sets none, and they disappear when the forward returns. The {@code jakarta.servlet.include.*}
+ * attributes of an enclosing include are hidden from the forward target.</p>
  */
 public final class ForwardedRequest extends HttpServletRequestWrapper {
 
+    private static final String FORWARD_PREFIX = "jakarta.servlet.forward.";
+    private static final String INCLUDE_PREFIX = "jakarta.servlet.include.";
+
     private final DispatchTarget target;
     private final DispatchParameters.View parameters;
+    /** The forward attributes; empty when inherited (nested forward) or not set (named forward). */
+    private final Map<String, Object> forwardAttributes = new LinkedHashMap<>();
 
     public ForwardedRequest(HttpServletRequest original, DispatchTarget target) {
         super(original);
         this.target = target;
         this.parameters = new DispatchParameters.View(super::getParameterMap,
                 target.named() ? null : target.queryString(), StandardCharsets.UTF_8);
+        if (!target.named() && original.getAttribute(RequestDispatcher.FORWARD_REQUEST_URI) == null) {
+            forwardAttributes.put(RequestDispatcher.FORWARD_REQUEST_URI, original.getRequestURI());
+            forwardAttributes.put(RequestDispatcher.FORWARD_CONTEXT_PATH, original.getContextPath());
+            forwardAttributes.put(RequestDispatcher.FORWARD_SERVLET_PATH, original.getServletPath());
+            forwardAttributes.put(RequestDispatcher.FORWARD_PATH_INFO, original.getPathInfo());
+            forwardAttributes.put(RequestDispatcher.FORWARD_QUERY_STRING, original.getQueryString());
+            forwardAttributes.put(RequestDispatcher.FORWARD_MAPPING, original.getHttpServletMapping());
+        }
+    }
+
+    @Override public Object getAttribute(String name) {
+        if (name != null && name.startsWith(INCLUDE_PREFIX)) return null;
+        if (forwardAttributes.containsKey(name)) return forwardAttributes.get(name);
+        return super.getAttribute(name);
+    }
+    @Override public Enumeration<String> getAttributeNames() {
+        var names = new LinkedHashSet<String>();
+        super.getAttributeNames().asIterator().forEachRemaining(n -> {
+            if (!n.startsWith(INCLUDE_PREFIX)) names.add(n);
+        });
+        forwardAttributes.forEach((k, v) -> { if (v == null) names.remove(k); else names.add(k); });
+        return Collections.enumeration(names);
+    }
+    @Override public void setAttribute(String name, Object value) {
+        if (ownsForward(name)) forwardAttributes.put(name, value);
+        else super.setAttribute(name, value);
+    }
+    @Override public void removeAttribute(String name) {
+        if (ownsForward(name)) forwardAttributes.put(name, null);
+        else super.removeAttribute(name);
+    }
+
+    private boolean ownsForward(String name) {
+        return !forwardAttributes.isEmpty() && name != null && name.startsWith(FORWARD_PREFIX);
     }
 
     @Override public String getRequestURI() {

@@ -87,7 +87,7 @@ Statuts : `OPEN` → `INVESTIGATING` → `FIXED` (commit hash) → `CLOSED`.
 ## BUG-20261008-02 — a filter mapped by URL pattern and by servlet name runs twice for one request
 
 - **Date** : 2026-10-08
-- **Statut** : FIXED (2026-10-09, Phase 4 Task 4.4)
+- **Statut** : FIXED (4393baf, 2026-10-09, Phase 4 Task 4.4)
 - **Module touché** : `foy-core` (`WebAppDeployer.buildFilterMappings`, `FilterRegistry` chain building)
 - **Symptôme** : a filter with a `<url-pattern>` mapping and a `<servlet-name>` mapping that both
   match the same request is invoked twice in the chain. Tomcat invokes it once (§6.2.4: the chain
@@ -108,3 +108,22 @@ Statuts : `OPEN` → `INVESTIGATING` → `FIXED` (commit hash) → `CLOSED`.
   declaration order, then the servlet-name matches (`*` = every servlet), each filter at most once;
   a named dispatch passes no path, only the target's name. Tests: `FilterRegistryServletNameTest`,
   `WebAppDeployerEndToEndTest.filterMappedByUrlAndServletNameRunsOnce` and siblings.
+
+## BUG-20261009-01 — forward/include drop a non-HTTP application wrapper passed to the dispatcher
+
+- **Date** : 2026-10-09
+- **Statut** : OPEN
+- **Module touché** : `foy-core` (`RequestDispatcherImpl.unwrapHttp` / `unwrapHttpResponse`)
+- **Symptôme** : when a servlet or filter passes a plain `ServletRequestWrapper` (or
+  `ServletResponseWrapper`) that is not an `HttpServletRequest` to `forward`/`include`, the target
+  receives the inner HTTP request (wrapped by the container's dispatch wrapper), not the
+  application's wrapper. Section 9.1/6.2.2: the target must see the objects that were passed in.
+  HTTP wrappers (`HttpServletRequestWrapper`) are kept.
+- **Reproduction minimale** : servlet `C` calls
+  `getRequestDispatcher("/T").include(new ServletRequestWrapper(req) { getParameter -> "w" }, resp)`;
+  `T` reads `getParameter(...)` → the wrapper's override is not seen.
+- **Hypothèse de cause** : the dispatcher unwraps to the first `HttpServletRequest` to build the
+  `ForwardedRequest`/`IncludedRequest`; the dispatch wrapper should instead be inserted under the
+  application's wrapper chain (Tomcat `ApplicationDispatcher.wrapRequest`).
+- **Investigations** :
+  - 2026-10-09 : noted during the Task 4.4 fix round; no failing TCK test identified.

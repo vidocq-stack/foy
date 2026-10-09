@@ -96,10 +96,10 @@ public final class HttpServletResponseImpl implements HttpServletResponse {
 
     /**
      * Servlet 6.1 section 9.4: once a forward returns, the response is committed and closed; the
-     * buffered content stands and any later write is discarded. No-op when already committed.
+     * buffered content stands and any later write is discarded, also when the target had already
+     * committed (flushed) the response.
      */
     public void closeAfterForward() {
-        if (isCommitted()) return;
         drainWriter();
         committed = true;
         outputStream.setDiscarding(true);

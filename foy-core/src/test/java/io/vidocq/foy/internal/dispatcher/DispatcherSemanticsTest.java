@@ -236,6 +236,80 @@ class DispatcherSemanticsTest {
         assertEquals("FORWARD;ASYNC;", get("/C"));
     }
 
+    @Test
+    void responseStaysOpenUntilCompleteWhenTheForwardTargetStartsAsync() throws Exception {
+        start(map("/C", servlet((req, resp) -> req.getRequestDispatcher("/T").forward(req, resp)), "C"),
+                map("/T", servlet((req, resp) -> {
+                    resp.getWriter().write("early;");
+                    var ac = req.startAsync();
+                    ac.start(() -> {
+                        try {
+                            Thread.sleep(50);
+                            ac.getResponse().getWriter().write("late;");
+                        } catch (Exception e) {
+                            throw new IllegalStateException(e);
+                        } finally {
+                            ac.complete();
+                        }
+                    });
+                }), "T"));
+        assertEquals("early;late;", get("/C"));
+    }
+
+    /** A wrapper that only hands its content to the wrapped response when its writer is closed. */
+    static final class BufferingResponse extends jakarta.servlet.http.HttpServletResponseWrapper {
+        private final java.io.StringWriter buffer = new java.io.StringWriter();
+        private final java.io.PrintWriter writer = new java.io.PrintWriter(buffer) {
+            @Override public void close() {
+                super.flush();
+                try {
+                    BufferingResponse.super.getWriter().write(buffer.toString());
+                } catch (IOException e) {
+                    throw new java.io.UncheckedIOException(e);
+                }
+                super.close();
+            }
+        };
+        BufferingResponse(HttpServletResponse r) { super(r); }
+        @Override public java.io.PrintWriter getWriter() { return writer; }
+    }
+
+    @Test
+    void forwardClosesTheResponseObjectItWasGiven() throws Exception {
+        start(map("/C", servlet((req, resp) -> req.getRequestDispatcher("/T").forward(req, new BufferingResponse(resp))),
+                        "C"),
+                map("/T", servlet((req, resp) -> resp.getWriter().write("wrapped")), "T"));
+        assertEquals("wrapped", get("/C"));
+    }
+
+    @Test
+    void forwardInsideAnIncludeHidesTheIncludeAttributes() throws Exception {
+        start(map("/C", servlet((req, resp) -> {
+                    req.getRequestDispatcher("/I").include(req, resp);
+                    resp.getWriter().write("|after");
+                }), "C"),
+                map("/I", servlet((req, resp) -> req.getRequestDispatcher("/F").forward(req, resp)), "I"),
+                map("/F", servlet((req, resp) -> {
+                    boolean listed = java.util.Collections.list(req.getAttributeNames()).stream()
+                            .anyMatch(n -> n.startsWith("jakarta.servlet.include."));
+                    resp.getWriter().write(attrs(req, "include") + "|listed=" + listed
+                            + "|fwd=" + req.getAttribute("jakarta.servlet.forward.request_uri"));
+                }), "F"));
+        assertEquals(NO_ATTRS + "|listed=false|fwd=/C|after", get("/C"));
+    }
+
+    @Test
+    void forwardAttributesDoNotOutliveTheForward() throws Exception {
+        start(map("/C", servlet((req, resp) -> {
+                    req.getRequestDispatcher("/T").forward(req, resp);
+                    events.add(attrs(req, "forward"));
+                }), "C"),
+                map("/T", servlet((req, resp) -> resp.getWriter().write(
+                        String.valueOf(req.getAttribute("jakarta.servlet.forward.request_uri")))), "T"));
+        assertEquals("/C", get("/C"));
+        assertEquals(List.of(NO_ATTRS), events);
+    }
+
     // ---- Exceptions propagate unchanged ----
 
     @Test

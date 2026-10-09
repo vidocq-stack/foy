@@ -66,18 +66,13 @@ public final class DispatchResolver {
         };
     }
 
-    /** Resolution by servlet name (Servlet 6.1 §9.1 getNamedDispatcher). */
+    /**
+     * Resolution by servlet name (Servlet 6.1 section 9.1.2 {@code getNamedDispatcher}), including
+     * servlets without a URL mapping. A named target has no path and no mapping: the request keeps
+     * the caller's paths (sections 9.3.1, 9.4.2).
+     */
     public Optional<DispatchTarget> resolveByName(String servletName) {
-        if (servletName == null) return Optional.empty();
-        for (ServletDispatcher.Mapping m : dispatcher.mappings()) {
-            if (servletName.equals(m.servletName())) {
-                // Pas de path associé — servletPath/pathInfo/query laissés vides pour un
-                // dispatcher nommé (§9.3 : ne reflète pas l'URL d'origine).
-                return Optional.of(new DispatchTarget(m.servlet(), m.servletName(),
-                        "/", "", null, null, m.asyncSupported(), null));
-            }
-        }
-        return Optional.empty();
+        return dispatcher.byName(servletName).map(n -> DispatchTarget.named(n.servlet(), n.name(), n.asyncSupported()));
     }
 
     /** Builds the {@link jakarta.servlet.http.HttpServletMapping} of a match (Servlet 6.1 section 12.2). */

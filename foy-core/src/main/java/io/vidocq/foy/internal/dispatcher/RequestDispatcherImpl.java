@@ -94,30 +94,35 @@ public final class RequestDispatcherImpl implements RequestDispatcher {
         }
         res.resetBuffer();
 
-        // Section 9.4.2: a named forward sets no attribute; a nested forward keeps the values of the
-        // original request, so the attributes are only set when a previous forward has not.
-        if (!target.named() && req.getAttribute(RequestDispatcher.FORWARD_REQUEST_URI) == null) {
-            req.setAttribute(RequestDispatcher.FORWARD_REQUEST_URI, req.getRequestURI());
-            req.setAttribute(RequestDispatcher.FORWARD_CONTEXT_PATH, req.getContextPath());
-            req.setAttribute(RequestDispatcher.FORWARD_SERVLET_PATH, req.getServletPath());
-            req.setAttribute(RequestDispatcher.FORWARD_PATH_INFO, req.getPathInfo());
-            req.setAttribute(RequestDispatcher.FORWARD_QUERY_STRING, req.getQueryString());
-            if (req.getAttribute(RequestDispatcher.FORWARD_MAPPING) == null) {
-                req.setAttribute(RequestDispatcher.FORWARD_MAPPING, req.getHttpServletMapping());
-            }
-        }
-
-        // Exceptions of the target reach the caller unchanged (no wrapping).
+        // Exceptions of the target reach the caller unchanged (no wrapping). The forward.* attributes
+        // (section 9.4.2) live in the ForwardedRequest, so they last for the forward only.
         invoker.invoke(target, new ForwardedRequest(req, target), res, DispatcherType.FORWARD);
 
         // Section 9.4: the response is committed and closed once the forward returns, unless the
         // target started async processing or the forward happens inside an include (the including
         // servlet still owns the response).
-        if (!asyncEntered(req) && !insideInclude(response)) {
-            HttpServletResponseImpl impl = unwrapImpl(response);
-            if (impl != null) impl.closeAfterForward();
-            else if (!res.isCommitted()) res.flushBuffer();
+        if (!asyncEntered(req) && !insideInclude(response)) close(response);
+    }
+
+    /**
+     * Closes the response handed to {@code forward}, application wrappers included, so their own
+     * buffers reach the container (as Tomcat does), then commits and closes the container response.
+     * A response whose error was triggered is left alone: the error page still has to write it.
+     */
+    private static void close(ServletResponse response) throws IOException {
+        HttpServletResponseImpl impl = unwrapImpl(response);
+        if (impl != null && impl.isErrorTriggered()) return;
+        try {
+            response.getWriter().close();
+        } catch (IllegalStateException streamInUse) {
+            try {
+                response.getOutputStream().close();
+            } catch (IllegalStateException ignored) {
+                // neither can be obtained: nothing buffered by a wrapper to flush
+            }
         }
+        if (impl != null) impl.closeAfterForward();
+        else if (!response.isCommitted()) response.flushBuffer();
     }
 
     @Override

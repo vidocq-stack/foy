@@ -24,7 +24,9 @@ import jakarta.servlet.ServletSecurityElement;
 
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 
@@ -54,12 +56,42 @@ public final class ServletDispatcher {
         }
     }
 
-    private final List<Mapping> mappings;
+    /** A servlet reachable by name (section 9.1.2), whether or not it has a URL mapping. */
+    public record NamedServlet(String name, Servlet servlet, boolean asyncSupported) {
+        public NamedServlet {
+            Objects.requireNonNull(name);
+            Objects.requireNonNull(servlet);
+        }
+    }
 
+    private final List<Mapping> mappings;
+    private final Map<String, NamedServlet> byName;
+
+    /** Dispatcher whose named servlets are exactly the mapped ones. */
     public ServletDispatcher(List<Mapping> mappings) {
+        this(mappings, List.of());
+    }
+
+    /**
+     * @param mappings URL mappings
+     * @param named    every initialised servlet, mapped or not; mapped servlets missing from it are
+     *                 indexed from {@code mappings}
+     */
+    public ServletDispatcher(List<Mapping> mappings, List<NamedServlet> named) {
         List<Mapping> sorted = new ArrayList<>(mappings);
         sorted.sort(Comparator.comparingInt(m -> m.matcher().precedence()));
         this.mappings = List.copyOf(sorted);
+        var index = new LinkedHashMap<String, NamedServlet>();
+        for (NamedServlet n : named) index.putIfAbsent(n.name(), n);
+        for (Mapping m : mappings) {
+            index.putIfAbsent(m.servletName(), new NamedServlet(m.servletName(), m.servlet(), m.asyncSupported()));
+        }
+        this.byName = Map.copyOf(index);
+    }
+
+    /** The servlet registered under {@code name}, mapped or not (section 9.1.2). */
+    public Optional<NamedServlet> byName(String name) {
+        return name == null ? Optional.empty() : Optional.ofNullable(byName.get(name));
     }
 
     /** Finds the servlet that should respond for the given path. */
