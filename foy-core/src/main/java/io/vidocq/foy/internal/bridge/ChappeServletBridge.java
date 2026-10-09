@@ -243,6 +243,7 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
                     var target = resolver.resolve(relative).orElse(null);
                     if (target == null) break;
                     if (qs != null) target = target.withQueryString(qs);
+                    req.setAttribute("jakarta.servlet.async.mapping", req.getHttpServletMapping());
                     var wrapped = new AsyncDispatchRequest(req, target, vctx, tgtCtxPath);
                     req.clearAsyncContext();
                     req.setAsyncSupported(true); // §2.3.3.3: an async dispatch starts a new cycle
@@ -256,6 +257,7 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
                     var target = new DispatchResolver(dispatcher).resolve(relative).orElse(null);
                     if (target == null) break;
                     if (qs != null) target = target.withQueryString(qs);
+                    req.setAttribute("jakarta.servlet.async.mapping", req.getHttpServletMapping());
                     var wrapped = new AsyncDispatchRequest(req, target);
                     req.clearAsyncContext();
                     req.setAsyncSupported(true); // §2.3.3.3: an async dispatch starts a new cycle

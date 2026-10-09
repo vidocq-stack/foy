@@ -177,7 +177,8 @@ class HttpServletMappingTest {
     void asyncDispatchExposesTargetMapping() throws Exception {
         start(map("/A", dispatcher("async", "/TestServlet"), "A"), map("/TestServlet", reporter(), "TestServlet"));
         assertEquals("matchValue=TestServlet, pattern=/TestServlet, servletName=TestServlet, mappingMatch=EXACT"
-                + "|sp=/TestServlet|pi=null|fwd=null|inc=null|async=null", get("/A"));
+                + "|sp=/TestServlet|pi=null|fwd=null|inc=null|async=matchValue=A, pattern=/A, servletName=A, mappingMatch=EXACT",
+                get("/A"));
     }
 
     @Test
