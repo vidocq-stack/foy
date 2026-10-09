@@ -75,16 +75,32 @@ public final class CookieCodec {
 
     /** Serializes a complete {@link Cookie} into line {@code Set-Cookie}. */
     public static String serializeSetCookie(Cookie c) {
+        return serializeSetCookie(c, java.time.Clock.systemUTC());
+    }
+
+    /** RFC 7231 §7.1.1.1 IMF-fixdate, e.g. {@code Sun, 06 Nov 1994 08:49:37 GMT}. */
+    public static String formatImfFixdate(java.time.Instant instant) {
+        return IMF_FIXDATE.format(instant);
+    }
+
+    private static final java.time.format.DateTimeFormatter IMF_FIXDATE =
+            java.time.format.DateTimeFormatter.ofPattern("EEE, dd MMM yyyy HH:mm:ss 'GMT'", java.util.Locale.US)
+                    .withZone(java.time.ZoneOffset.UTC);
+
+    /** Package-private seam: the clock drives {@code Expires} so tests can pin it. */
+    static String serializeSetCookie(Cookie c, java.time.Clock clock) {
         StringBuilder sb = new StringBuilder();
         sb.append(c.getName()).append('=').append(c.getValue() == null ? "" : c.getValue());
         if (c.getPath() != null) sb.append("; Path=").append(c.getPath());
         if (c.getDomain() != null) sb.append("; Domain=").append(c.getDomain());
         int age = c.getMaxAge();
         if (age == 0) {
-            // Servlet 6.1 §7 / RFC 6265 : Max-Age=0 → le cookie expire immédiatement.
-            // On émet un Expires dans le passé (compat clients qui ne suivent pas Max-Age).
+            // RFC 6265: Max-Age=0 expires the cookie immediately; Expires in the past
+            // keeps clients that ignore Max-Age working. The TCK requires
+            // that no Max-Age attribute accompanies it.
             sb.append("; Expires=Thu, 01 Jan 1970 00:00:00 GMT");
         } else if (age > 0) {
+            sb.append("; Expires=").append(formatImfFixdate(clock.instant().plusSeconds(age)));
             sb.append("; Max-Age=").append(age);
         }
         if (c.getSecure()) sb.append("; Secure");

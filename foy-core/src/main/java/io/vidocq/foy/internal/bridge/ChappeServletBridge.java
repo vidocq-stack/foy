@@ -396,7 +396,7 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
             c.setSecure(cfg.isSecure());
             c.setHttpOnly(cfg.isHttpOnly());
             cfg.getAttributes().forEach(c::setAttribute);
-            res.addHeader("Set-Cookie", CookieCodec.serializeSetCookie(c));
+            res.addHeaderInternal("Set-Cookie", CookieCodec.serializeSetCookie(c));
         }
     }
 

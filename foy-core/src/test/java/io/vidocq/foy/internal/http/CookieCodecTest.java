@@ -73,6 +73,25 @@ class CookieCodecTest {
     }
 
     @Test
+    void maxAgeAlsoEmitsExpires() {
+        var clock = java.time.Clock.fixed(java.time.Instant.parse("1994-11-06T08:49:37Z"), java.time.ZoneOffset.UTC);
+        Cookie c = new Cookie("a", "b");
+        c.setMaxAge(50000);
+        String s = CookieCodec.serializeSetCookie(c, clock);
+        assertTrue(s.contains("Max-Age=50000"), s);
+        assertTrue(s.contains("Expires=Sun, 06 Nov 1994 22:42:57 GMT"), s);
+    }
+
+    @Test
+    void zeroMaxAgeExpiresInThePast() {
+        Cookie c = new Cookie("a", "b");
+        c.setMaxAge(0);
+        String s = CookieCodec.serializeSetCookie(c);
+        assertTrue(s.contains("Expires=Thu, 01 Jan 1970 00:00:00 GMT"), s);
+        assertFalse(s.contains("Max-Age"), s);
+    }
+
+    @Test
     void serializesFullCookie() {
         Cookie c = new Cookie("JSESSIONID", "xyz");
         c.setPath("/app");

@@ -52,7 +52,9 @@ public final class HttpServletResponseImpl implements HttpServletResponse {
     private String defaultCharacterEncoding;
     private Locale locale = Locale.getDefault();
     private final ServletOutputStreamImpl outputStream = new ServletOutputStreamImpl();
-    { outputStream.setFlushListener(() -> committed = true); }
+    /** True while the response itself drains the writer into the buffer: that is not a commit. */
+    private boolean internalFlush;
+    { outputStream.setFlushListener(() -> { if (!internalFlush) committed = true; }); }
     private PrintWriter writer;
     private boolean streamAcquired;
     private boolean committed;
@@ -62,7 +64,10 @@ public final class HttpServletResponseImpl implements HttpServletResponse {
     // ---- Status ----
 
     @Override public int getStatus() { return status; }
-    @Override public void setStatus(int sc) { this.status = sc; }
+    @Override public void setStatus(int sc) {
+        if (committed) return;
+        this.status = sc;
+    }
     @Override public void sendError(int sc, String msg) throws IOException {
         if (committed) throw new IllegalStateException("response already committed");
         setStatus(sc);
@@ -83,6 +88,7 @@ public final class HttpServletResponseImpl implements HttpServletResponse {
                 + "<h1>HTTP Status " + sc + " - " + safeMsg + "</h1></body></html>";
         outputStream.write(body.getBytes(charset()));
         committed = true;
+        outputStream.setDiscarding(true);
     }
     @Override public void sendError(int sc) throws IOException { sendError(sc, null); }
 
@@ -92,18 +98,23 @@ public final class HttpServletResponseImpl implements HttpServletResponse {
         this.errorTriggered = false;
         this.errorMessage = null;
         this.committed = false;
+        outputStream.setDiscarding(false);
     }
     @Override public void sendRedirect(String location) throws IOException {
-        if (committed) throw new IllegalStateException("response already committed");
-        setStatus(SC_FOUND);
-        setHeader("Location", toAbsoluteRedirectUrl(location));
-        committed = true;
+        sendRedirect(location, SC_FOUND, true);
     }
     @Override public void sendRedirect(String location, int sc, boolean clearBuffer) throws IOException {
-        if (clearBuffer) resetBuffer();
+        if (committed) throw new IllegalStateException("response already committed");
+        if (clearBuffer) {
+            resetBuffer();
+        } else {
+            drainWriter();
+        }
         setStatus(sc);
         setHeader("Location", toAbsoluteRedirectUrl(location));
+        // The response is closed: the redirect is committed and any later write is discarded.
         committed = true;
+        outputStream.setDiscarding(true);
     }
 
     /** Servlet 6.1 §5.8.2 — sendRedirect must produce an absolute URL. */
@@ -137,12 +148,24 @@ public final class HttpServletResponseImpl implements HttpServletResponse {
     // ---- Headers ----
 
     @Override public void setHeader(String name, String value) {
+        if (committed) return;
+        putHeader(name, value);
+    }
+    @Override public void addHeader(String name, String value) {
+        if (committed) return;
+        appendHeader(name, value);
+    }
+
+    /** Bridge-internal header append which, unlike the public API, is not blocked by commit. */
+    void addHeaderInternal(String name, String value) { appendHeader(name, value); }
+
+    private void putHeader(String name, String value) {
         List<String> list = new ArrayList<>();
         list.add(value);
         headers.put(name, list);
         interceptSpecialHeader(name, value);
     }
-    @Override public void addHeader(String name, String value) {
+    private void appendHeader(String name, String value) {
         headers.computeIfAbsent(name, _ -> new ArrayList<>()).add(value);
         interceptSpecialHeader(name, value);
     }
@@ -157,9 +180,7 @@ public final class HttpServletResponseImpl implements HttpServletResponse {
 
     /** RFC 7231 §7.1.1.1 — IMF-fixdate: "Sun, 06 Nov 1994 08:49:37 GMT". */
     private static String formatHttpDate(long dateMillis) {
-        return java.time.format.DateTimeFormatter.RFC_1123_DATE_TIME
-                .withZone(java.time.ZoneOffset.UTC)
-                .format(java.time.Instant.ofEpochMilli(dateMillis));
+        return io.vidocq.foy.internal.http.CookieCodec.formatImfFixdate(java.time.Instant.ofEpochMilli(dateMillis));
     }
     @Override public boolean containsHeader(String name) { return headers.containsKey(name); }
     @Override public String getHeader(String name) {
@@ -168,7 +189,7 @@ public final class HttpServletResponseImpl implements HttpServletResponse {
     }
     @Override public Collection<String> getHeaders(String name) {
         List<String> list = headers.get(name);
-        return list == null ? List.of() : List.copyOf(list);
+        return list == null ? new ArrayList<>() : new ArrayList<>(list);
     }
     @Override public Collection<String> getHeaderNames() { return new HashSet<>(headers.keySet()); }
 
@@ -184,7 +205,10 @@ public final class HttpServletResponseImpl implements HttpServletResponse {
 
     // ---- Cookies ----
 
-    @Override public void addCookie(Cookie cookie) { cookies.add(cookie); }
+    @Override public void addCookie(Cookie cookie) {
+        if (committed) return;
+        cookies.add(cookie);
+    }
     public List<Cookie> cookies() { return cookies; }
 
     // ---- Content-Type / charset ----
@@ -197,10 +221,11 @@ public final class HttpServletResponseImpl implements HttpServletResponse {
 
     @Override public String getContentType() {
         if (contentType == null) return null;
-        if (contentType.toLowerCase(Locale.ROOT).contains("charset=") || getCharacterEncoding() == null) {
+        String enc = configuredEncoding();
+        if (contentType.toLowerCase(Locale.ROOT).contains("charset=") || enc == null) {
             return contentType;
         }
-        return mediaType + ";charset=" + getCharacterEncoding();
+        return mediaType + ";charset=" + enc;
     }
     @Override public void setContentType(String type) {
         // Servlet 6.1 §5.4 : si la réponse est déjà committed, setContentType est silencieusement ignoré.
@@ -222,9 +247,16 @@ public final class HttpServletResponseImpl implements HttpServletResponse {
     }
     public void setDefaultCharacterEncoding(String encoding) { this.defaultCharacterEncoding = encoding; }
 
-    @Override public String getCharacterEncoding() {
-        // Servlet 6.1 §5.4 : null si aucun encoding n'a été explicitement setté ni configuré pour le contexte.
+    /** The encoding set by the application or configured for the context, or {@code null} when neither. */
+    private String configuredEncoding() {
         return characterEncoding != null ? characterEncoding : defaultCharacterEncoding;
+    }
+
+    @Override public String getCharacterEncoding() {
+        // ServletResponse#getCharacterEncoding: ISO-8859-1 when nothing was assigned. The emitted
+        // Content-Type header only carries a charset that was actually set (see configuredEncoding()).
+        String enc = configuredEncoding();
+        return enc != null ? enc : "ISO-8859-1";
     }
     @Override public void setCharacterEncoding(String charset) {
         if (committed || charsetLocked) return;
@@ -246,7 +278,7 @@ public final class HttpServletResponseImpl implements HttpServletResponse {
         // "ISO-8859-1", cf. Servlet 6.1 §5.4) afin que le header Content-Type final
         // reflète l'encodage réellement utilisé par getWriter().
         boolean isText = mediaType.toLowerCase(Locale.ROOT).startsWith("text/");
-        String enc = getCharacterEncoding() != null ? getCharacterEncoding()
+        String enc = configuredEncoding() != null ? configuredEncoding()
                 : (isText ? "ISO-8859-1" : null);
         String composed = enc != null ? mediaType + ";charset=" + enc : mediaType;
         List<String> list = new ArrayList<>();
@@ -286,7 +318,6 @@ public final class HttpServletResponseImpl implements HttpServletResponse {
 
     private Charset charset() {
         String enc = getCharacterEncoding();
-        if (enc == null) return StandardCharsets.ISO_8859_1;
         try { return Charset.forName(enc); }
         catch (RuntimeException e) { return StandardCharsets.ISO_8859_1; }
     }
@@ -328,12 +359,12 @@ public final class HttpServletResponseImpl implements HttpServletResponse {
         streamAcquired = false;
     }
     @Override public void setLocale(Locale loc) {
-        if (committed || loc == null) { this.locale = loc; return; }
+        if (committed || loc == null) return;
         this.locale = loc;
         // Servlet 6.1 §5.4 : setLocale définit Content-Language (tag BCP 47).
         setHeader("Content-Language", loc.toLanguageTag());
         // Si le charset n'est pas explicite, résout via locale-encoding-mapping-list du web.xml.
-        if (!charsetExplicit && boundRequest != null
+        if (!charsetExplicit && !charsetLocked && boundRequest != null
                 && boundRequest.getServletContext() instanceof
                 io.vidocq.foy.internal.container.VidocqServletContext vctx) {
             String enc = vctx.encodingForLocale(loc);
@@ -352,8 +383,14 @@ public final class HttpServletResponseImpl implements HttpServletResponse {
 
     // ---- Accès interne pour le bridge Chappe ----
 
+    private void drainWriter() {
+        if (writer == null) return;
+        internalFlush = true;
+        try { writer.flush(); } finally { internalFlush = false; }
+    }
+
     public byte[] bodyBytes() {
-        if (writer != null) writer.flush();
+        drainWriter();
         return outputStream.toByteArray();
     }
 

@@ -1,0 +1,170 @@
+/*
+ * Copyright (c) 2026 Yann Blazart, Antoine Sabot-Durand and the Vidocq contributors
+ *
+ * This program and the accompanying materials are made available under the
+ * terms of the Eclipse Public License 2.0 which is available at
+ * https://www.eclipse.org/legal/epl-2.0/
+ *
+ * This Source Code may also be made available under the following Secondary
+ * Licenses when the conditions for such availability set forth in the Eclipse
+ * Public License, v. 2.0 are satisfied: GNU General Public License, version 2
+ * or any later version, which is available at
+ * https://www.gnu.org/licenses/old-licenses/gpl-2.0.html
+ *
+ * It is also made available under the European Union Public Licence v. 1.2,
+ * which is available at
+ * https://joinup.ec.europa.eu/collection/eupl/eupl-text-eupl-12
+ *
+ * SPDX-License-Identifier: EPL-2.0 OR EUPL-1.2 OR GPL-2.0-or-later
+ */
+package io.vidocq.foy.internal.bridge;
+
+import jakarta.servlet.http.HttpServletResponse;
+import org.junit.jupiter.api.Test;
+
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.util.Collection;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Locale;
+import java.util.Set;
+
+import static org.junit.jupiter.api.Assertions.*;
+
+class HttpServletResponseImplTest {
+
+    private static String body(HttpServletResponseImpl res) {
+        return new String(res.bodyBytes(), StandardCharsets.ISO_8859_1);
+    }
+
+    @Test
+    void getHeadersIsAMutableCopy() {
+        var res = new HttpServletResponseImpl();
+        res.addHeader("X-A", "1");
+        res.addHeader("X-A", "2");
+        Collection<String> copy = res.getHeaders("X-A");
+        copy.remove("1");
+        copy.add("3");
+        assertEquals(List.of("1", "2"), List.copyOf(res.getHeaders("X-A")));
+        assertTrue(res.getHeaders("X-None").isEmpty());
+    }
+
+    @Test
+    void headersIgnoredAfterFlushBuffer() {
+        var res = new HttpServletResponseImpl();
+        res.setHeader("h0", "0");
+        res.flushBuffer();
+        res.setHeader("h1", "1");
+        res.addHeader("h2", "2");
+        res.setIntHeader("h3", 3);
+        res.addIntHeader("h4", 4);
+        res.setDateHeader("h5", 0L);
+        res.addDateHeader("h6", 0L);
+        res.setStatus(404);
+        res.setContentType("text/plain");
+        res.setContentLength(10);
+        res.setContentLengthLong(10L);
+        res.setCharacterEncoding("UTF-8");
+        res.setLocale(Locale.FRANCE);
+        assertEquals(200, res.getStatus());
+        assertEquals(Set.of("h0"), new HashSet<>(res.getHeaderNames()));
+        assertNull(res.getContentType());
+    }
+
+    @Test
+    void sendErrorAfterCommitThrows() {
+        var res = new HttpServletResponseImpl();
+        res.flushBuffer();
+        assertThrows(IllegalStateException.class, () -> res.sendError(500));
+        assertThrows(IllegalStateException.class, () -> res.sendError(500, "x"));
+    }
+
+    @Test
+    void resetAfterCommitThrows() {
+        var res = new HttpServletResponseImpl();
+        res.flushBuffer();
+        assertThrows(IllegalStateException.class, res::reset);
+        assertThrows(IllegalStateException.class, res::resetBuffer);
+        assertThrows(IllegalStateException.class, () -> res.sendRedirect("/x"));
+        assertThrows(IllegalStateException.class, () -> res.sendRedirect("/x", 301, true));
+    }
+
+    @Test
+    void sendRedirectClearsTheBufferAndClosesTheResponse() throws IOException {
+        var res = new HttpServletResponseImpl();
+        res.getWriter().write("Test FAILED");
+        res.sendRedirect("http://example.com/next");
+        res.getWriter().write("more FAILED");
+        res.getWriter().flush();
+        assertEquals(302, res.getStatus());
+        assertEquals("http://example.com/next", res.getHeader("Location"));
+        assertTrue(res.isCommitted());
+        assertFalse(body(res).contains("FAILED"));
+        res.setHeader("late", "x");
+        assertFalse(res.containsHeader("late"));
+    }
+
+    @Test
+    void sendRedirectKeepsTheBufferWhenAskedTo() throws IOException {
+        var res = new HttpServletResponseImpl();
+        res.getWriter().write("kept");
+        res.sendRedirect("http://example.com/n", 301, false);
+        res.getWriter().write("dropped");
+        assertEquals(301, res.getStatus());
+        assertEquals("kept", body(res));
+    }
+
+    @Test
+    void writesAfterSendErrorAreDiscarded() throws IOException {
+        var res = new HttpServletResponseImpl();
+        res.sendError(HttpServletResponse.SC_NOT_FOUND, "nope");
+        String before = body(res);
+        res.getWriter().write("after");
+        assertEquals(before, body(res));
+        assertTrue(res.isCommitted());
+    }
+
+    @Test
+    void defaultCharacterEncodingIsIso88591() {
+        var res = new HttpServletResponseImpl();
+        assertEquals("ISO-8859-1", res.getCharacterEncoding());
+        res.setContentType("text/html");
+        assertEquals("ISO-8859-1", res.getCharacterEncoding());
+        var json = new HttpServletResponseImpl();
+        json.setContentType("application/json");
+        assertEquals("ISO-8859-1", json.getCharacterEncoding());
+        // The wire Content-Type must not gain a charset that was never set.
+        assertEquals("application/json", json.getHeader("Content-Type"));
+        assertEquals("application/json", json.getContentType());
+    }
+
+    @Test
+    void explicitCharsetStillWins() {
+        var res = new HttpServletResponseImpl();
+        res.setCharacterEncoding("UTF-8");
+        assertEquals("UTF-8", res.getCharacterEncoding());
+        var ctx = new HttpServletResponseImpl();
+        ctx.setDefaultCharacterEncoding("UTF-16");
+        assertEquals("UTF-16", ctx.getCharacterEncoding());
+    }
+
+    @Test
+    void setLocaleAfterGetWriterKeepsTheCharset() throws IOException {
+        var res = new HttpServletResponseImpl();
+        res.getWriter();
+        String enc = res.getCharacterEncoding();
+        res.setLocale(Locale.JAPAN);
+        assertEquals(enc, res.getCharacterEncoding());
+    }
+
+    @Test
+    void setLocaleAfterCommitDoesNothing() {
+        var res = new HttpServletResponseImpl();
+        res.setLocale(Locale.FRANCE);
+        res.flushBuffer();
+        res.setLocale(Locale.GERMANY);
+        assertEquals(Locale.FRANCE, res.getLocale());
+        assertEquals("fr-FR", res.getHeader("Content-Language"));
+    }
+}

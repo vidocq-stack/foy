@@ -35,9 +35,13 @@ public final class ServletOutputStreamImpl extends ServletOutputStream {
 
     private final ByteArrayOutputStream buffer = new ByteArrayOutputStream();
     private boolean closed;
+    private boolean discarding;
     private Runnable onFlush = () -> {};
 
     /** Hook executed every flush() — typically marks the committed response. */
+    /** While discarding, writes are silently dropped (response closed by sendError/sendRedirect). */
+    void setDiscarding(boolean discarding) { this.discarding = discarding; }
+
     public void setFlushListener(Runnable onFlush) {
         this.onFlush = onFlush == null ? () -> {} : onFlush;
     }
@@ -54,12 +58,14 @@ public final class ServletOutputStreamImpl extends ServletOutputStream {
 
     @Override
     public void write(int b) throws IOException {
+        if (discarding) return;
         if (closed) throw new IOException("stream closed");
         buffer.write(b);
     }
 
     @Override
     public void write(byte[] b, int off, int len) throws IOException {
+        if (discarding) return;
         if (closed) throw new IOException("stream closed");
         buffer.write(b, off, len);
     }
