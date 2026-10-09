@@ -24,6 +24,7 @@ import io.vidocq.foy.internal.boot.WebAppModel.FilterMappingDecl;
 import io.vidocq.foy.internal.boot.WebAppModel.ServletDecl;
 import io.vidocq.foy.internal.bridge.ChappeServletBridge;
 import io.vidocq.foy.internal.container.CrossContextRegistry;
+import io.vidocq.foy.internal.container.DefaultServlet;
 import io.vidocq.foy.internal.container.FilterConfigImpl;
 import io.vidocq.foy.internal.container.ServletConfigImpl;
 import io.vidocq.foy.internal.container.VidocqServletContext;
@@ -398,7 +399,25 @@ public final class WebAppDeployer {
                                 s.asyncSupported(), s.security()));
             }
         }
+        appendContainerDefault(ctx, live);
         return new ServletDispatcher(live, named);
+    }
+
+    /**
+     * Servlet 6.1 section 12.2: when no application servlet maps {@code /}, the container default
+     * servlet serves the static resources under that mapping. It is not an application servlet:
+     * absent from {@code getServletRegistrations} and from the deployment's initialised servlets
+     * (it holds no resource, so it needs no {@code destroy}).
+     */
+    private static void appendContainerDefault(VidocqServletContext ctx, List<ServletDispatcher.Mapping> live) {
+        if (live.stream().anyMatch(m -> m.matcher().kind() == UrlPatternMatcher.Kind.DEFAULT)) return;
+        var servlet = new DefaultServlet();
+        try {
+            servlet.init(new ServletConfigImpl(DefaultServlet.NAME, ctx, Map.of()));
+        } catch (ServletException e) {
+            throw new IllegalStateException("container default servlet failed to initialise", e);
+        }
+        live.add(new ServletDispatcher.Mapping(UrlPatternMatcher.of("/"), servlet, DefaultServlet.NAME, true));
     }
 
     /** init() filters in declaration order; a failing filter is logged and left out of the chain. */

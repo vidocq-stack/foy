@@ -435,6 +435,17 @@ public final class HttpServletResponseImpl implements HttpServletResponse {
         try { writer.flush(); } finally { internalFlush = false; }
     }
 
+    /**
+     * Whether the body is already started: content buffered, or the writer obtained. The default
+     * servlet declares a Content-Length only on a response whose body it writes alone, as bytes;
+     * otherwise the declared length would truncate what a filter wrote first, or miscount a body
+     * re-encoded through the writer.
+     */
+    public boolean bodyStarted() {
+        drainWriter();
+        return writer != null || outputStream.size() > 0;
+    }
+
     public byte[] bodyBytes() {
         drainWriter();
         byte[] all = outputStream.toByteArray();

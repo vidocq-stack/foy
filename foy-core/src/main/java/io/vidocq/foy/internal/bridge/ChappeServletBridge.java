@@ -130,6 +130,8 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
         res.setDefaultCharacterEncoding(servletContext.configuredResponseCharacterEncoding());
 
         if (match.isEmpty()) {
+            // Last-resort fallback: a deployed application always matches (its own "/" servlet or
+            // the container default servlet); only a bridge built without one reaches this branch.
             req = new HttpServletRequestImpl(request, servletContext, contextPath, path, null,
                     sessionManager);
             req.bindResponse(res);
@@ -152,12 +154,6 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
                 return error(e);
             }
             registry.fireRequestDestroyed(servletContext, req);
-            if (res.getStatus() == 200 && res.bodyBytes().length == 0) {
-                try { res.sendError(404); } catch (IOException ignored) {}
-                try { maybeHandleError(req, res, null, null); }
-                catch (ServletException e) { return error(e); }
-                if (!errorPageHandled(req)) return notFound();
-            }
             maybeAttachSessionCookie(req, res);
             return toChappeResponse(res);
         }
@@ -203,6 +199,19 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
         }
         maybeAttachSessionCookie(req, res);
         return toChappeResponse(res);
+    }
+
+    /**
+     * The request an error dispatch hands its target. The container default servlet finds the
+     * resource from the servlet path, so a static error page (for example {@code /error.html})
+     * sees the location's paths; other targets keep the original request (unchanged behaviour).
+     */
+    private static HttpServletRequest errorTargetRequest(HttpServletRequestImpl req, DispatchTarget target) {
+        if (!(target.servlet() instanceof io.vidocq.foy.internal.container.DefaultServlet)) return req;
+        return new jakarta.servlet.http.HttpServletRequestWrapper(req) {
+            @Override public String getServletPath() { return target.servletPath(); }
+            @Override public String getPathInfo() { return target.pathInfo(); }
+        };
     }
 
     private boolean errorPageHandled(HttpServletRequestImpl req) {
@@ -359,7 +368,7 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
             // §10.9.2 : la request du servlet d'erreur doit retourner DispatcherType.ERROR.
             DispatcherType previous = req.getDispatcherType();
             req.setDispatcherType(DispatcherType.ERROR);
-            try { invoke(target, req, res, DispatcherType.ERROR); }
+            try { invoke(target, errorTargetRequest(req, target), res, DispatcherType.ERROR); }
             finally { req.setDispatcherType(previous); }
         } catch (IOException | ServletException | RuntimeException e) {
             // The error page itself failed: log and fall through to a plain 500, never recurse.

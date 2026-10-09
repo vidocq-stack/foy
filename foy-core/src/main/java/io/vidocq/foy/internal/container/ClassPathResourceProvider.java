@@ -71,7 +71,7 @@ import java.util.stream.Stream;
  * an encoded {@code %2e%2e} or {@code %5c} would turn into a path this class then rejects or,
  * worse, a different resource than the one the client named.
  * {@code getResource} may reach the {@code WEB-INF/} and {@code META-INF/} subtrees of the
- * resource root; the default servlet must additionally check {@link #isServable}.</p>
+ * resource root; the default servlet additionally checks {@link ResourcePaths#isServable}.</p>
  *
  * <p>The {@code jar:} URLs returned by {@link #toUrl} use the JDK's default URL connection
  * caching when opened with {@code URL.openStream()} (the jar stays open in the JDK cache);
@@ -121,14 +121,11 @@ public final class ClassPathResourceProvider implements ResourceProvider {
     }
 
     /**
-     * Whether the default servlet may serve {@code path}: a safe path outside the
-     * {@code WEB-INF/} and {@code META-INF/} trees (compared case-insensitively).
+     * Whether the default servlet may serve {@code path}; see {@link ResourcePaths#isServable},
+     * which applies the same rules to every resource provider.
      */
     public static boolean isServable(String path) {
-        if (!safe(path)) return false;
-        int slash = path.indexOf('/', 1);
-        String first = (slash < 0 ? path.substring(1) : path.substring(1, slash)).toUpperCase(Locale.ROOT);
-        return !first.equals("WEB-INF") && !first.equals("META-INF");
+        return ResourcePaths.isServable(path);
     }
 
     @Override public Set<String> listPaths(String path) {
@@ -161,15 +158,7 @@ public final class ClassPathResourceProvider implements ResourceProvider {
     }
 
     private static boolean safe(String path) {
-        if (path == null || !path.startsWith("/")) return false;
-        if (path.indexOf('\\') >= 0 || path.indexOf('\0') >= 0) return false;
-        String[] segments = path.split("/", -1);
-        for (int i = 1; i < segments.length; i++) {
-            String segment = segments[i];
-            if (segment.equals("..") || segment.equals(".")) return false;
-            if (segment.isEmpty() && i != segments.length - 1) return false;
-        }
-        return true;
+        return ResourcePaths.isSafe(path);
     }
 
     /** Every location holding {@code rel} (no leading slash), in priority order. */

@@ -384,9 +384,9 @@ public final class VidocqServletContext implements ServletContext {
         return resourceProvider.openStream(path);
     }
     @Override public RequestDispatcher getRequestDispatcher(String path) {
-        // Servlet 6.1 §9.1 : retourne un dispatcher non-null pour tout chemin relatif au
-        // contexte, même si aucun servlet n'est mappé (un forward/include sur ce path
-        // renverra 404 si aucune ressource correspond).
+        // Servlet 6.1 section 9.1: a dispatcher for every context-relative path. A deployed
+        // application always resolves (its "/" servlet or the container default servlet, which
+        // answers 404 for a missing resource); notFound only serves a bridge built without one.
         if (path == null) return null;
         if (!path.startsWith("/")) return null; // doit être absolu dans le contexte
         if (dispatchResolver == null || dispatchInvoker == null) return null;
