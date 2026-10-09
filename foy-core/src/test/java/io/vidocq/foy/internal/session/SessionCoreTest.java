@@ -273,6 +273,22 @@ class SessionCoreTest {
                         + ", " + after + "]");
     }
 
+    @Test
+    void anUnknownSessionIdOnARequestNotCallingGetSessionCreatesNoSession() throws Exception {
+        deploy(WebAppModel.builder("/ctx").servlet(ops()));
+        int before = sessionCount();
+        var r = get("/ctx/s/untouched", "JSESSIONID=0123456789abcdef0123456789abcdef");
+        assertEquals("UNTOUCHED", r.body());
+        assertEquals(List.of(), r.headers("Set-Cookie"), r.head());
+        assertEquals(before, sessionCount(), "no session created");
+    }
+
+    private int sessionCount() {
+        int n = 0;
+        for (var ignored : deployment.sessionManager().store().sessions()) n++;
+        return n;
+    }
+
     // ---- expiry ----
 
     /** Records destruction with the attribute still readable, and the unbinding. */

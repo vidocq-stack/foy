@@ -24,6 +24,8 @@ import jakarta.servlet.DispatcherType;
 import jakarta.servlet.Filter;
 import jakarta.servlet.http.HttpServlet;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 import java.util.ArrayList;
 import java.util.EnumSet;
@@ -92,14 +94,20 @@ class WebAppModelTest {
         assertNotNull(m.errorPages());
     }
 
-    @org.junit.jupiter.params.ParameterizedTest
-    @org.junit.jupiter.params.provider.ValueSource(strings = {"", "/", "/ctx", "/a/b", "/my-app_1.0", "/caf\u00e9"})
+    @ParameterizedTest
+    @ValueSource(strings = {"", "/", "/ctx", "/a/b", "/my-app_1.0", "/caf\u00e9"})
     void validContextPathsAreAccepted(String path) {
-        assertEquals(path, WebAppModel.builder(path).build().contextPath());
+        assertEquals("/".equals(path) ? "" : path, WebAppModel.builder(path).build().contextPath());
     }
 
-    @org.junit.jupiter.params.ParameterizedTest
-    @org.junit.jupiter.params.provider.ValueSource(strings = {"ctx", "/ctx/", "//", "/a\\b", "/a\u0000b", "/a\tb",
+    @Test
+    void rootAliasIsStoredAsTheEmptyContextPath() {
+        assertEquals("", WebAppModel.builder("/").build().contextPath());
+        assertEquals("", WebAppModel.builder("").build().contextPath());
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"ctx", "/ctx/", "//", "/a\\b", "/a\u0000b", "/a\tb",
             "/a\u007fb", "/a%2Fb", "/a;b", "/a?b", "/a#b", "/.", "/..", "/a/../b", "/a/./b", "/a//b"})
     void invalidContextPathsAreRejectedAtBuild(String path) {
         var ex = assertThrows(IllegalArgumentException.class, () -> WebAppModel.builder(path).build());

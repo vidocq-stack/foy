@@ -47,7 +47,8 @@ import java.util.function.Supplier;
  * Immutable description of a web application to deploy: everything a deployer needs,
  * independent of where it came from (annotations, {@code web.xml}, programmatic API).
  *
- * @param contextPath            context path of the application
+ * @param contextPath            context path of the application; {@code ""} for the root context ({@code "/"} is
+ *                              accepted as its alias and stored as {@code ""})
  * @param displayName            display name, may be {@code null}
  * @param contextParams          context initialisation parameters
  * @param servlets               servlet declarations
@@ -99,6 +100,8 @@ public record WebAppModel(String contextPath,
 
     public WebAppModel {
         validateContextPath(contextPath);
+        // "/" is accepted as an alias of the root context, whose context path is "" (ServletContext Javadoc).
+        if ("/".equals(contextPath)) contextPath = "";
         Objects.requireNonNull(errorPages, "errorPages");
         contextParams = copyOf(contextParams);
         servlets = List.copyOf(servlets);
@@ -201,11 +204,17 @@ public record WebAppModel(String contextPath,
 
     /**
      * Checks a configured context path: {@code ""} or {@code "/"} (the root context), or
-     * {@code '/'} followed by non-empty segments, without a trailing {@code '/'}. A segment is
-     * never {@code "."} or {@code ".."}, and the path holds no backslash, no control character and
-     * none of {@code % ; ? #}: the container matches request URIs against the context path as a
-     * literal prefix, so a character that a client would send encoded, or that ends or splits a
-     * path, would make the application unreachable or ambiguous.
+     * {@code '/'} followed by non-empty segments, without a trailing {@code '/'}, and refuses
+     * the paths that no request could reach as written.
+     *
+     * <p>The bridge strips the context path from the <em>raw</em> request path, by literal prefix on
+     * a segment boundary ({@code RequestPaths.stripContextPath}), before any decoding: a {@code '%'}
+     * would make the match depend on how the client encodes it, {@code ';'} starts path parameters,
+     * which the bridge accepts after the context path, and {@code '?'} and {@code '#'} end the
+     * path of a URI. A backslash and the control characters are not allowed in a URI path
+     * (RFC 3986 section 3.3). Clients remove {@code "."} and {@code ".."} segments before sending
+     * (section 5.2.4), and an empty segment or a trailing {@code '/'} would make the boundary
+     * between the context path and the servlet path ambiguous.</p>
      *
      * @throws IllegalArgumentException with the reason, for an invalid path
      * @throws NullPointerException     for {@code null}

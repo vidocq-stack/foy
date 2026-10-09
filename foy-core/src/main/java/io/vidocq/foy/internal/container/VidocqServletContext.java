@@ -32,7 +32,13 @@ import jakarta.servlet.SessionCookieConfig;
 import jakarta.servlet.SessionTrackingMode;
 import jakarta.servlet.descriptor.JspConfigDescriptor;
 
+import java.net.URISyntaxException;
+import java.net.URL;
 import java.nio.charset.Charset;
+import java.nio.file.FileSystemNotFoundException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.ArrayDeque;
 import java.util.Collections;
 import java.util.EnumSet;
 import java.util.Enumeration;
@@ -210,8 +216,9 @@ public final class VidocqServletContext implements ServletContext {
             Map.entry("zh", "GB2312"),
             Map.entry("zh_TW", "Big5"));
 
+    /** {@code contextPath} {@code "/"} is taken as the root context, whose context path is {@code ""}. */
     public VidocqServletContext(String contextPath) {
-        this.contextPath = contextPath;
+        this.contextPath = "/".equals(contextPath) ? "" : contextPath;
         this.serverInfo = "Vidocq Servlet/Chappe";
     }
 
@@ -437,21 +444,46 @@ public final class VidocqServletContext implements ServletContext {
      * The file-system path of {@code path} when the resource provider serves it from a directory
      * ({@code file:} URL) and it exists; {@code null} otherwise (no provider, a resource inside an
      * archive, a missing resource). A path without a leading {@code '/'} is taken as relative to
-     * the context root.
+     * the context root. The path is canonicalised first: {@code "."} and {@code ".."} segments are
+     * resolved ({@code /css/../css/site.css} is {@code /css/site.css}), and a path climbing above
+     * the root, or holding a backslash, has no real path.
      */
     @Override public String getRealPath(String path) {
         if (path == null || resourceProvider == null) return null;
-        String absolute = path.startsWith("/") ? path : "/" + path;
-        // Never resolve a path that climbs out of the application root.
-        for (String segment : absolute.split("[/\\\\]")) if ("..".equals(segment)) return null;
-        java.net.URL url = resourceProvider.toUrl(absolute);
+        String canonical = canonicalResourcePath(path.startsWith("/") ? path : "/" + path);
+        if (canonical == null) return null;
+        URL url = resourceProvider.toUrl(canonical);
         if (url == null || !"file".equalsIgnoreCase(url.getProtocol())) return null;
         try {
-            java.nio.file.Path file = java.nio.file.Path.of(url.toURI());
-            return java.nio.file.Files.exists(file) ? file.toAbsolutePath().toString() : null;
-        } catch (java.net.URISyntaxException | IllegalArgumentException | java.nio.file.FileSystemNotFoundException e) {
+            Path file = Path.of(url.toURI());
+            return Files.exists(file) ? file.toAbsolutePath().toString() : null;
+        } catch (URISyntaxException | IllegalArgumentException | FileSystemNotFoundException e) {
             return null;
         }
+    }
+
+    /**
+     * {@code path} (starting with {@code '/'}) with its {@code "."} and {@code ".."} segments
+     * resolved and a trailing {@code '/'} kept; {@code null} when it climbs above the root or
+     * holds a backslash.
+     */
+    static String canonicalResourcePath(String path) {
+        if (path.indexOf('\\') >= 0) return null;
+        var segments = new ArrayDeque<String>();
+        String[] parts = path.substring(1).split("/", -1);
+        for (String part : parts) {
+            if (part.isEmpty() || ".".equals(part)) continue;
+            if ("..".equals(part)) {
+                if (segments.isEmpty()) return null;
+                segments.removeLast();
+            } else {
+                segments.addLast(part);
+            }
+        }
+        String last = parts[parts.length - 1];
+        boolean directory = last.isEmpty() || ".".equals(last) || "..".equals(last);
+        String joined = "/" + String.join("/", segments);
+        return directory && !segments.isEmpty() ? joined + "/" : joined;
     }
     @Override public String getServerInfo() { return serverInfo; }
     @Override public String getInitParameter(String name) {

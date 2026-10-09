@@ -28,12 +28,15 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 import java.io.IOException;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.*;
 import java.util.concurrent.CopyOnWriteArrayList;
 
@@ -392,7 +395,7 @@ class WebAppDeployerEndToEndTest {
     }
 
     @Test
-    void failingComponentSupplierLeaksNothing(@org.junit.jupiter.api.io.TempDir java.nio.file.Path tempRoot)
+    void failingComponentSupplierLeaksNothing(@TempDir Path tempRoot)
             throws Exception {
         var model = WebAppModel.builder("/failing-supplier")
                 .servlet(decl("ok", 1, "/ok"))
@@ -404,17 +407,32 @@ class WebAppDeployerEndToEndTest {
                 DeployOptions.defaults(getClass().getClassLoader()).withTempDirRoot(tempRoot)));
         assertEquals(List.of(), EVENTS, "nothing initialised, nothing destroyed");
         assertNull(io.vidocq.foy.internal.container.CrossContextRegistry.lookup("/failing-supplier"));
-        try (var entries = java.nio.file.Files.list(tempRoot)) {
+        try (var entries = Files.list(tempRoot)) {
             assertEquals(List.of(), entries.toList(), "no temp dir leaked");
         }
     }
 
     @Test
-    void tempDirIsCreatedUnderTheConfiguredRoot(@org.junit.jupiter.api.io.TempDir java.nio.file.Path tempRoot) {
+    void tempDirIsCreatedUnderTheConfiguredRoot(@TempDir Path tempRoot) {
         deploy(WebAppModel.builder("/").build(),
                 DeployOptions.defaults(getClass().getClassLoader()).withTempDirRoot(tempRoot));
         var dir = (java.io.File) deployment.servletContext().getAttribute(ServletContext.TEMPDIR);
         assertEquals(tempRoot, dir.toPath().getParent());
+    }
+
+    /** Writes the request's context path. */
+    public static class ContextPathServlet extends HttpServlet {
+        @Override protected void doGet(HttpServletRequest req, HttpServletResponse resp) throws IOException {
+            resp.getWriter().write("[" + req.getContextPath() + "|" + req.getServletContext().getContextPath() + "]");
+        }
+    }
+
+    @Test
+    void rootContextPathIsEmptyForTheContextAndTheRequest() throws Exception {
+        deploy(WebAppModel.builder("/").servlet(new ServletDecl("cp", ContextPathServlet.class,
+                ContextPathServlet::new, List.of("/cp"), Map.of(), -1, false)).build());
+        assertEquals("", deployment.servletContext().getContextPath());
+        assertEquals("[|]", get("/cp").body());
     }
 
     @Test
@@ -432,8 +450,8 @@ class WebAppDeployerEndToEndTest {
     void closeRemovesTempDir() throws Exception {
         deploy(WebAppModel.builder("/").build());
         var dir = (java.io.File) deployment.servletContext().getAttribute(ServletContext.TEMPDIR);
-        var sub = java.nio.file.Files.createDirectories(dir.toPath().resolve("sub"));
-        java.nio.file.Files.writeString(sub.resolve("file.txt"), "x");
+        var sub = Files.createDirectories(dir.toPath().resolve("sub"));
+        Files.writeString(sub.resolve("file.txt"), "x");
         deployment.close();
         assertFalse(dir.exists(), "temp dir must be removed on close");
     }

@@ -62,7 +62,20 @@ class RealPathTest {
                 Path.of(ctx.getRealPath("/css/")).toString(), "a directory has a real path too");
         assertNull(ctx.getRealPath("/missing.txt"));
         assertNull(ctx.getRealPath(null));
-        assertNull(ctx.getRealPath("/css/../css/site.css"), "no '..' segment is resolved");
+        assertEquals(file.toAbsolutePath().toString(), ctx.getRealPath("/css/../css/./site.css"),
+                "'.' and '..' inside the root are resolved");
+        assertNull(ctx.getRealPath("/../site.css"), "above the root");
+        assertNull(ctx.getRealPath("/css/../../site.css"), "above the root");
+        assertNull(ctx.getRealPath("/css\\site.css"), "backslash");
+    }
+
+    @Test
+    void canonicalResourcePathResolvesDotSegments() {
+        assertEquals("/a/b", VidocqServletContext.canonicalResourcePath("/a/./b"));
+        assertEquals("/b", VidocqServletContext.canonicalResourcePath("/a/../b"));
+        assertEquals("/a/", VidocqServletContext.canonicalResourcePath("/a/b/.."));
+        assertEquals("/", VidocqServletContext.canonicalResourcePath("/a/.."));
+        assertNull(VidocqServletContext.canonicalResourcePath("/.."));
     }
 
     @Test
@@ -71,10 +84,5 @@ class RealPathTest {
         assertNull(ctx.getRealPath("/index.html"), "no provider");
         ctx.setResourceProvider(new Provider(null, true));
         assertNull(ctx.getRealPath("/index.html"), "inside a jar");
-    }
-
-    @Test
-    void virtualServerNameDefaultsToVidocq() {
-        assertEquals("vidocq", new VidocqServletContext("/").getVirtualServerName());
     }
 }

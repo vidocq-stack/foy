@@ -584,7 +584,8 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
             VidocqSessionCookieConfig cfg = servletContext.sessionCookieConfigInternal();
             Cookie c = new Cookie(cfg.getName(), session.getId());
             String path = cfg.getPath();
-            c.setPath(path != null && !path.isEmpty() ? path : "/".equals(contextPath) ? "/" : contextPath);
+            boolean root = contextPath.isEmpty() || "/".equals(contextPath);
+            c.setPath(path != null && !path.isEmpty() ? path : root ? "/" : contextPath);
             if (cfg.getDomain() != null) c.setDomain(cfg.getDomain());
             if (cfg.getMaxAge() >= 0) c.setMaxAge(cfg.getMaxAge());
             c.setSecure(cfg.isSecureExplicit() ? cfg.isSecure() : req.isSecure());

@@ -189,7 +189,7 @@ public final class HttpServletRequestImpl implements HttpServletRequest {
 
     /**
      * {@code ""}: HTTP/1.x has no request identifier, and Chappe does not expose the HTTP/2
-     * stream id to the request API.
+     * stream id to the request API (BUG-20261009-09).
      */
     @Override public String getProtocolRequestId() { return ""; }
 
@@ -789,7 +789,7 @@ public final class HttpServletRequestImpl implements HttpServletRequest {
      * The connection as Chappe describes it. Chappe exposes no connection object, so the
      * connection id is the pair of socket addresses: the same for every request of one connection
      * and distinct between open connections; a later connection may reuse a closed one's ephemeral
-     * port, hence its id. The protocol is the ALPN identifier ({@code http/1.0}, {@code http/1.1},
+     * port, hence its id (BUG-20261009-09). The protocol is the ALPN identifier ({@code http/1.0}, {@code http/1.1},
      * {@code h2} over TLS, {@code h2c} in clear text); no HTTP/1.x or HTTP/2 connection id is
      * exposed ({@code getProtocolConnectionId()} is {@code ""}).
      */
@@ -799,8 +799,8 @@ public final class HttpServletRequestImpl implements HttpServletRequest {
         String id = endpoint(remote) + "-" + endpoint(local);
         String protocol = switch (chappe.version()) {
             case HTTP_1_0 -> "http/1.0";
+            case HTTP_1_1 -> "http/1.1";
             case HTTP_2 -> chappe.isSecure() ? "h2" : "h2c";
-            default -> "http/1.1";
         };
         return new Connection(id, protocol, chappe.isSecure());
     }

@@ -290,3 +290,24 @@ Statuts : `OPEN` → `INVESTIGATING` → `FIXED` (commit hash) → `CLOSED`.
     `ALWAYS_ACCESS_SESSION`) so that every request carrying a valid id begins and ends an access
     (and keeps the session from expiring while it runs). 5 consecutive isolated TCK runs of
     `HttpSessionTests`: 25/25 each.
+
+## BUG-20261009-09 — getServletConnection id not unique for the JVM lifetime; no HTTP/2 protocol request id
+
+- **Date** : 2026-10-09
+- **Statut** : OPEN (chappe follow-up)
+- **Module touché** : `foy-core` (`HttpServletRequestImpl.getServletConnection`, `getProtocolRequestId`); needs `chappe-api` `Request`
+- **Symptôme** : `getServletConnection().getConnectionId()` is the socket address pair
+  (`remote-ip:port-local-ip:port`, `?-?` when Chappe gives no address): two connections that
+  reuse the same ephemeral port get the same id, whereas the Javadoc requires an id unique for
+  the lifetime of the JVM. `getProtocolRequestId()` is `""` for HTTP/2 instead of the stream id.
+- **Reproduction minimale** : two sequential `Connection: close` requests from a client bound to
+  the same local port → equal `getConnectionId()`; any HTTP/2 request → `getProtocolRequestId()`
+  is `""`.
+- **Hypothèse de cause** : Chappe's `Request` API exposes neither a connection identity nor the
+  HTTP/2 stream id (`Http2Stream` keeps it internal), so Foy cannot report them.
+- **Investigations** :
+  - 2026-10-09 (Phase 4 Task 4.10) : interim behaviour documented in the Javadoc. Chappe
+    follow-up: add a per-connection id (e.g. a JVM-wide counter assigned on accept) and the HTTP/2
+    stream id to `io.vidocq.chappe.api.Request`; Foy then maps them to `getConnectionId()`,
+    `getProtocolConnectionId()` (HTTP/2: `""`, HTTP/3: the QUIC connection id) and
+    `getProtocolRequestId()`. The chappe repository is not modified here.

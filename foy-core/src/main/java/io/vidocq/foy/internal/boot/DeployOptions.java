@@ -22,6 +22,7 @@ package io.vidocq.foy.internal.boot;
 import io.vidocq.foy.internal.container.VidocqServletContext;
 import io.vidocq.foy.spi.security.SecurityProvider;
 
+import java.nio.file.Path;
 import java.util.Objects;
 import java.util.Set;
 
@@ -50,7 +51,7 @@ public record DeployOptions(SecurityProvider securityProvider,
                             ComponentFactory componentFactory,
                             HandlesTypesResolver handlesTypes,
                             String virtualServerName,
-                            java.nio.file.Path tempDirRoot) {
+                            Path tempDirRoot) {
 
     public DeployOptions {
         reservedServletNames = Set.copyOf(reservedServletNames);
@@ -155,7 +156,7 @@ public record DeployOptions(SecurityProvider securityProvider,
                 reservedFilterNames, reservedUrlPatterns, componentFactory, handlesTypes, name, tempDirRoot);
     }
 
-    public DeployOptions withTempDirRoot(java.nio.file.Path root) {
+    public DeployOptions withTempDirRoot(Path root) {
         return new DeployOptions(securityProvider, resourceProvider, servletContextName, reservedServletNames,
                 reservedFilterNames, reservedUrlPatterns, componentFactory, handlesTypes, virtualServerName, root);
     }
