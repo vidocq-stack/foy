@@ -95,6 +95,19 @@ sequenceDiagram
     Chappe-->>Client: HTTP/2 frames (HEADERS + DATA)
 ....
 
+== Dispatch pipeline
+
+For one request, `ChappeServletBridge` runs these steps in order (Servlet 6.1 §3.5.2, §10.10, §12.2):
+
+. *Canonical path.* The context path is stripped on a segment boundary (404 outside the context), then `RequestPaths.canonicalize` removes path parameters, decodes once and normalises; a refused path is a 400 before anything else. The `;jsessionid=` parameter is extracted first for the session lookup. The result drives every decision below; `getRequestURI` stays raw.
+. *Mapping.* `ServletDispatcher.find` picks the servlet: exact, then longest prefix, then extension, then the application `/` servlet, then the container default servlet `foy.default`, which the deployer adds (as a non-application mapping) only when `/` is free.
+. *Welcome files.* Only when the container default servlet matched: a directory without trailing slash is redirected (302, `Location` from the re-encoded canonical path), a directory path ending with `/` is replaced by the first welcome file that a static resource or a servlet serves, and the mapping is looked up again.
+. *Filter chain.* `FilterRegistry.chainFor(path, dispatcherType, servletName)` collects the filters whose URL pattern matches, then those mapped by servlet name (a filter matching both runs once), each in registration order, filtered by the dispatcher type.
+. *Servlet.* The servlet (or the default servlet) runs; a forward, include, async or error dispatch goes through `RequestDispatcherImpl` and `DispatchResolver`, which produce a `DispatchTarget` (servlet, mapping, paths) and rebuild a chain for that dispatcher type with the same URL-then-name rule. Named dispatch looks the servlet up in an index of every registration, mapped or not.
+. *Error.* An exception or `sendError` goes to `ErrorPageRegistry` (class hierarchy, then `ServletException` root cause, then status code); a committed response is never replaced, the exception is logged instead.
+
+The session is touched in step 1 (`accessRequestedSession`) for every request carrying a session id, not only when the servlet calls `getSession`, so a busy session does not expire and `getLastAccessedTime()` stays correct.
+
 No body copy: `ServletOutputStreamImpl` writes straight into the Chappe `Body`. The `ServletInputStream` reads straight from the Chappe frame parser.
 
 == Threading model
@@ -218,7 +231,10 @@ The guard covers `foy-core` only: `foy-cdi-vauban`'s `CdiWebComponentsCreator` a
 
 == Known limits
 
-* No default servlet yet (welcome files, static content over HTTP); security constraints are parsed, not enforced; `WEB-INF/lib` nested jars of a WAR are not opened; see xref:tck.adoc[].
+* Security constraints are parsed, not enforced; `WEB-INF/lib` nested jars of a WAR are not opened; see xref:tck.adoc[].
+* The response is buffered whole until the handler returns (no commit on buffer overflow or `flushBuffer` toward the connection), the non-blocking I/O listeners are incomplete, and HTTP/2 server push and HTTP Upgrade are missing: streaming, async and non-blocking I/O are the next phase.
+* Chappe exposes no connection identity and no HTTP/2 stream id: `getServletConnection().getConnectionId()` can repeat and `getProtocolRequestId()` is empty on HTTP/2 (BUG-20261009-09).
+* `getRequestDispatcher` and cross-context lookup compare the context path with a plain prefix test (no segment boundary), so `/app` also matches `/application/x`.
 * Cross-context dispatch (`ServletContext.getContext`): **implemented** via `CrossContextRegistry` (strict contextPath match on the contexts deployed in the same JVM).
 * Multipart: fully buffered in memory, no streaming parse.
 * WebSocket Servlet 6.1: not implemented (planned, no date).

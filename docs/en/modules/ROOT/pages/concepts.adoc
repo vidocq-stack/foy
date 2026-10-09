@@ -28,6 +28,9 @@ Before diving into internals, let's pin down the vocabulary. The terms below com
 | **`RequestDispatcher`**
 | `forward` / `include` mechanism. Implemented by `RequestDispatcherImpl`, reuses Chappe routing.
 
+| **Default servlet**
+| The container servlet `foy.default`, mapped to `/` when the application maps nothing there. Serves static resources and resolves welcome files; see xref:usage.adoc#default-servlet-and-static-content[Usage].
+
 | **Async**
 | `request.startAsync()` returns an `AsyncContext`. No platform pool to protect: each request runs on a *virtual thread*; async only decouples response from request on the program side.
 

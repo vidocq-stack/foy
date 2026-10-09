@@ -100,7 +100,8 @@ No real-world migration has been documented yet — the Tomcat and Jetty tables 
 
 == Known gaps
 
-* **Default servlet** — welcome files and static content over HTTP are not served yet (static resources are reachable through `ServletContext.getResource*`).
+* **Streaming and non-blocking I/O** — the response is buffered whole before it is sent; `ReadListener`/`WriteListener`, HTTP/2 server push and HTTP Upgrade are incomplete or missing.
+* **Directory listings and `multipart/byteranges`** — the default servlet serves single files only (404 for a directory) and answers several ranges with the whole body.
 * **Security enforcement** — `<security-constraint>` and `<login-config>` are parsed but not enforced yet.
 * **WebSocket Servlet 6.1 / Jakarta WebSocket 2.2** — not implemented (planned, no date).
 * **JSP** — not supported, not planned. For dynamic pages use xref:cassini::index.adoc[Cassini] (REST) or HTML-emitting Servlets.

@@ -237,3 +237,32 @@ Phase 3 shipped `web-fragment.xml` parsing, the §8.2.2 `FragmentOrderer`, the �
 - The async flag is computed twice on some dispatch paths (duplicate computation to factor out).
 - The `Secure` cookie flag is not set for secure requests by the session cookie.
 - `WEB-INF/lib` nested-jar URLs (fragments inside jars of a WAR) belong to Phase 3b.
+
+## Phase 4 exit / follow-ups (2026-10-09)
+
+Phase 4 shipped response commit/redirect/charset/cookie `Expires` semantics; error pages (message, root cause, `error.query_string`, committed-response guard); `HttpServletMapping` with `DEFAULT`/`CONTEXT_ROOT`; dispatcher semantics (parameter merge, named dispatch of unmapped servlets, nested forward keeping the originals, `forward.*`/`include.*` scoping, response closed after a forward); servlet-name filter mappings (§6.2.4, BUG-20261008-02 fixed); the container default servlet `foy.default` (static content, MIME, conditional GET, ranges, HEAD/OPTIONS/405, `WEB-INF`/`META-INF` refused for client requests only, provider metadata); request path canonicalisation (§3.5.2); welcome files; sessions (`changeSessionId`, virtual-thread expiry reaper, access on every request, tracking modes enforced on input, URL rewriting, `Secure` cookie, `setSessionTimeout` from an initializer); legacy DTD 2.2/2.3 descriptors (XXE-safe); the TCK harness serving every deployment of a container from one host; request ids, `ServletConnection`, `getRealPath`, the virtual server name, context-path validation and the root context `""`. Tracked here, no external issue or PR opened.
+
+**Full TCK:** 1649/1714 (Phase 3: 1587), zero per-class regression, 25 classes improved, every `tiers=Stats` line `reflection=0`. Per family: `api.*` 840/859, `pluggability.*` 646/646, `spec.*` 161/207, `compat.*` 2/2.
+
+**Remaining 65 failures, by phase:**
+- Phase 6 (security), 37: `secform` 17, `secbasic` 8, `denyUncovered` 4, `metadatacomplete` 4, `annotations` 2, `clientcert` 1, `clientcertanno` 1.
+- Phase 5 (streaming, async and non-blocking I/O), 10: `ReadListener` 3, `WriteListener` 1, `HttpUpgradeHandler` 1, response trailers 3 (`HttpServletResponse40Tests`), `flushBuffer` 2 (`servletResponseTests`); plus HTTP/2 server push, 7 (`ServerPushTests`).
+- Phase 7 (multipart), 8: `PartTests` 4, `Part1Tests` 4.
+- JSP (accepted gap), 3: `ServletContext40Tests` (`addJsp`, two TLD listener tests).
+
+**Open bugs:** BUG-20261009-01 (forward/include drop a non-HTTP application wrapper), -03 (error dispatch paths shown to the default servlet only), -04 (decoded paths leak into dispatch URIs, low), -09 (connection id and HTTP/2 stream id, chappe follow-up).
+
+**Chappe follow-up:** add a per-connection id (JVM-wide counter assigned on accept) and the HTTP/2 stream id to `io.vidocq.chappe.api.Request`; Foy then maps them to `getConnectionId()` and `getProtocolRequestId()` (BUG-20261009-09).
+
+**Deferred minors worth tracking:**
+- `getRequestDispatcher` and the cross-context lookup test `startsWith(contextPath)` without a segment boundary (`/app` matches `/application/x`; pre-existing); dead `"/".equals` guards; the root-context cookie path is untested.
+- `isCommitted()` drains the writer (side effect); `setContentLength(0)` commits only on the first write.
+- The `UnavailableException` path still walks `getCause()`; the commit-guard test does not assert the log line.
+- Empty `ServletMappingImpl` allocated per call (use a constant); duplicated `async.mapping` `setAttribute`.
+- `close()` getWriter edge for exotic wrappers; dispatch query decoding hard-coded to UTF-8.
+- Path parameters other than `jsessionid` are not stripped before `isServable`; `metadata`/`openStream` may pick different roots when the first copy is unreadable.
+- `startAsync(req, res)` with an app wrapper overriding `getRequestURI`: the override is ignored by the zero-argument dispatch.
+- `sessionIdChanged`/`sessionCreated` listeners run under locks (a listener blocking forever stalls undeploy; one calling `close()` deadlocks); cookie-wins with an invalid cookie is untested.
+- Descriptor parsing: no `&#65;` test; `isPre25` duplicates version parsing; the pre-2.3 lenient pattern differs slightly from Tomcat.
+- Welcome files: an empty directory is not redirected; `;` is left raw in the `Location`.
+- The default servlet answers several ranges with the whole body (no `multipart/byteranges`); the response is still buffered whole (Phase 5).

@@ -5,7 +5,43 @@ First full-suite measurement run. Unlike cassini/champollion/vauban, this is a
 Vidocq runtime to serve Cassini-style stacks, and several spec chapters are not
 implemented yet. This report quantifies exactly which ones.
 
-## 0. Phase 3 exit: descriptors and pluggability (2026-10-09)
+## 0. Phase 4 exit: request, response and session core (2026-10-09)
+
+`pr/ybl/servlet-completion-phase4` @ `8cc03fd`, `./run-official-tck-servlet6.1.sh --all`:
+1714 run, **1649 pass**, 65 errors, 13 min 32 s (Phase 3: 1587, +62). Per family:
+`api.*` 840/859 (was 821), `pluggability.*` 646/646 (was 639), `spec.*` 161/207
+(was 127), `compat.*` 2/2 (was 0). The per-class tally (`foy-tck/tck-tally.sh`) was
+diffed with `LC_ALL=C join` against the previous `foy-tck/tck-baseline.txt` (both
+sides sorted with `LC_ALL=C`): zero class regression (no class with more failures
+or a different run count), 25 classes improved, `join -v` empty on both sides (no
+class added or removed). `foy-tck/tck-baseline.txt` is refreshed to this tally.
+Family runs (`--family`) also count `GetServletRegistrationsTest`: `api.*` 841/860.
+
+All 207 `tiers=Stats` lines show `reflection=0`.
+
+Improved classes: `spec.requestdispatcher` (13), `spec.httpservletresponse` (5),
+`spec.srlistener` (5), `spec.errorpage` (4), `spec.multifiltermapping` (3, BUG-20261008-02),
+`spec.welcomefiles` (2), `spec.i18n.encoding` (2), `HttpServletRequest40Tests` (9, mapping),
+`FilterRequestDispatcherTests` (2, in `api.*` and `pluggability.*`), the three
+`httpservletresponse*` classes and `sessioncookieconfig` (`api.*` and `pluggability.*`), the
+session classes (`HttpSessionTests`, `HttpSessionIdListenerTests`, `HttpSessionxTests`),
+`HttpServletRequestWrapperTests`, `pluggability.fragment.FragmentTests` and both
+`compat.LeadingSlash` classes.
+
+Remaining 65 errors, by class and by phase:
+
+| Count | Classes | Phase |
+|---|---|---|
+| 37 | `spec.security.*`: `secform` 17, `secbasic` 8, `denyUncovered` 4, `metadatacomplete` 4, `annotations` 2, `clientcert` 1, `clientcertanno` 1 | 6 (security) |
+| 10 | streaming and non-blocking I/O: `ReadListenerTests` 1, `ReadListener1Tests` 2, `WriteListenerTests` 1, `HttpUpgradeHandlerTests` 1, `HttpServletResponse40Tests` 3 (trailers need a streamed response), `servletResponseTests` 2 (`flushBuffer`) | 5 |
+| 8 | multipart: `PartTests` 4, `Part1Tests` 4 | 7 |
+| 7 | `spec.serverpush.ServerPushTests` (HTTP/2 push) | 5 |
+| 3 | `ServletContext40Tests` (JSP and TLD: `addJsp`, `addJspContextListenerInTLD`, `setSessionTimeoutContextListenerInTLD`) | accepted gap (no JSP) |
+
+Open bugs: BUG-20261009-01 (dispatch drops a non-HTTP wrapper), -03 (error dispatch paths),
+-04 (decoded paths in dispatch URIs), -09 (connection and HTTP/2 stream ids, chappe follow-up).
+
+## 0.0 Phase 3 exit: descriptors and pluggability (2026-10-09)
 
 `pr/ybl/servlet-completion-phase3`, `./run-official-tck-servlet6.1.sh --all`:
 1714 run, **1587 pass**, 127 errors, 13 min 52 s (Phase 2: 928). Per family:

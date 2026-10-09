@@ -6,11 +6,11 @@ This page consolidates the status of the official Jakarta Servlet 6.1 TCK runs a
 
 == Summary
 
-This is a **measurement**, not a conformance claim. At the latest full run (`jakarta.tck:servlet-tck-runtime:6.1.0`, Phase 3 exit, 2026-10-09):
+This is a **measurement**, not a conformance claim. At the latest full run (`jakarta.tck:servlet-tck-runtime:6.1.0`, Phase 4 exit, 2026-10-09):
 
-* **1714** tests run, **1587** passed, 0 failures / 127 errors — **92.6 %** raw (Phase 2 exit: 928);
-* web-fragment scanning, fragment ordering and `ServletContainerInitializer` discovery are implemented, which took `pluggability.*` from 5 to 639 of 646;
-* the 127 remaining errors are security (FORM/BASIC, client certificate, deny-uncovered), request dispatching, server push, the default servlet (welcome files), and a filter that runs twice when mapped by pattern and by servlet name.
+* **1714** tests run, **1649** passed, 0 failures / 65 errors — **96.2 %** raw (Phase 3 exit: 1587; Phase 2 exit: 928);
+* Phase 4 added the container default servlet and welcome files, `HttpServletMapping`, the dispatcher semantics, servlet-name filter mappings, request path canonicalisation, sessions and legacy descriptors; no class regressed and 25 improved;
+* the 65 remaining errors are security (37: FORM, BASIC, client certificate, deny-uncovered), streaming and non-blocking I/O (10: `ReadListener`, `WriteListener`, HTTP Upgrade, response trailers, `flushBuffer`), multipart (8), HTTP/2 server push (7) and JSP-dependent tests (3).
 
 Per-family breakdown:
 
@@ -20,27 +20,27 @@ Per-family breakdown:
 
 | `api.*` (core engine)
 | 859
-| 821
-| 95.6 %
-| ✅ The Servlet engine itself is solid
+| 840
+| 97.8 %
+| ✅ The Servlet engine itself is solid; the rest is streaming, multipart and JSP
 
 | `pluggability.*`
 | 646
-| 639
-| 98.9 %
-| ✅ Fragments, ordering and initializers; the 7 residual errors mirror `api.*` failures
+| 646
+| 100 %
+| ✅ Fragments, ordering and initializers
 
 | `spec.*` (behavioral, including security)
 | 207
-| 127
-| 61.4 %
-| ⚠️ Security enforcement, request dispatching, server push, welcome files
+| 161
+| 77.8 %
+| ⚠️ Security enforcement (37) and server push (7)
 
 | `compat.*`
 | 2
-| 0
-| 0 %
-| ❌ Leading-slash dispatch compat
+| 2
+| 100 %
+| ✅ Leading-slash dispatch compat (legacy 2.2/2.3 descriptors)
 |===
 
 [NOTE]

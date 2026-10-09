@@ -203,7 +203,7 @@ The `io.vidocq.foy.internal.*` packages are exported to allow advanced integrati
 
 | `<session-config>` (`session-timeout`, `cookie-config`, `tracking-mode`)
 | applied
-| the session cookie follows `SessionCookieConfig`; tracking modes reach `getEffectiveSessionTrackingModes()`
+| the session cookie follows `SessionCookieConfig`; tracking modes reach `getEffectiveSessionTrackingModes()` and govern input as well as output; a `session-timeout` of zero or less never expires
 
 | `<mime-mapping>`
 | applied
@@ -218,8 +218,8 @@ The `io.vidocq.foy.internal.*` packages are exported to allow advanced integrati
 | used when the builder sets no context path; web.xml only — a fragment's is ignored with a warning
 
 | `<welcome-file-list>`
-| parsed
-| exposed on the model; consumed by the default servlet (not implemented yet)
+| applied
+| consumed by the container default servlet: static file first, then servlet; see xref:usage.adoc#welcome-files[Welcome files]
 
 | `<deny-uncovered-http-methods>`
 | parsed
@@ -237,7 +237,96 @@ The `io.vidocq.foy.internal.*` packages are exported to allow advanced integrati
 | ignored
 |===
 
-The `version` and `metadata-complete` attributes of `<web-app>` and `<web-fragment>` are honoured.
+The `version` and `metadata-complete` attributes of `<web-app>` and `<web-fragment>` are honoured. A DOCTYPE (Servlet 2.2 and 2.3 descriptors) is accepted without being resolved: the public id sets the version, a version before 2.5 implies `metadata-complete`, and an entity reference is rejected (see xref:usage.adoc#legacy-deployment-descriptors[Legacy deployment descriptors]).
+
+== `HttpServletMapping`
+
+`HttpServletRequest.getHttpServletMapping()` is implemented for every dispatch type; `getMatchValue()`, `getPattern()`, `getServletName()` and `getMappingMatch()` follow Servlet 6.1 §12.2:
+
+[cols="2,2,2,3",options="header"]
+|===
+| Request | `MappingMatch` | `getPattern()` | `getMatchValue()`
+
+| `/a/b` with servlet `/a/b`
+| `EXACT`
+| `/a/b`
+| `a/b`
+
+| `/a/b/c` with servlet `/a/*`
+| `PATH`
+| `/a/*`
+| `b/c`
+
+| `/x/y.ts` with servlet `*.ts`
+| `EXTENSION`
+| `*.ts`
+| `x/y`
+
+| `/` with servlet `""`
+| `CONTEXT_ROOT`
+| `""`
+| `""`
+
+| any other path, container default servlet or application `/`
+| `DEFAULT`
+| `/`
+| `""`
+|===
+
+On a forward the mapping is that of the target; `jakarta.servlet.forward.mapping` keeps the mapping of the original request, and `jakarta.servlet.include.mapping` the one of the included target. The mapping of a nested forward stays the original one. A named dispatch sets no mapping attribute.
+
+== Dispatcher attributes
+
+[cols="2,3",options="header"]
+|===
+| Dispatch | Attributes set on the target request
+
+| `FORWARD`
+| `jakarta.servlet.forward.{request_uri,context_path,servlet_path,path_info,query_string,mapping}` from the original request, kept unchanged by nested forwards. Hidden from an included target.
+
+| `INCLUDE`
+| `jakarta.servlet.include.{request_uri,context_path,servlet_path,path_info,query_string,mapping}` of the included resource, removed when the include returns. A forward from inside an include hides them.
+
+| `ERROR`
+| `jakarta.servlet.error.{status_code,message,exception_type,exception,request_uri,servlet_name,query_string}`; `getDispatcherType()` is `ERROR`.
+
+| `ASYNC`
+| `jakarta.servlet.async.{request_uri,context_path,servlet_path,path_info,query_string,mapping}`.
+|===
+
+== Session configuration
+
+[cols="2,3",options="header"]
+|===
+| Setting | Behaviour
+
+| Timeout
+| `<session-timeout>` (minutes), `ServletContext.setSessionTimeout` (also from a `ServletContainerInitializer`) or `FoyChappeBoot.Builder.sessionTimeoutSeconds`; zero or less never expires. A virtual-thread reaper runs every `min(60 s, max(1 s, timeout / 2))` and fires `sessionDestroyed`; any request carrying a session id accesses (and so extends) the session.
+
+| `getLastAccessedTime()`
+| Time of the previous request.
+
+| Tracking modes
+| Default `{COOKIE, URL}`; `SSL` only when configured. Enforced on input: the cookie is read only with `COOKIE`, `;jsessionid` only with `URL` and when no cookie is sent; the cookie wins when both are present.
+
+| `changeSessionId()`
+| Keeps the attributes, fires `HttpSessionIdListener.sessionIdChanged`, sends the new cookie; the requested id is updated.
+
+| Cookie
+| Built from `SessionCookieConfig` (name, path, domain, `HttpOnly`, `Secure`, `Max-Age`, attributes). On a secure request the cookie is `Secure` unless `setSecure` or `<secure>` was set. For the root context the cookie path is `/`.
+
+| URL rewriting
+| `encodeURL`, `encodeRedirectURL` append `;jsessionid=<id>` to application URLs while the client sends no cookie and `URL` is a tracking mode.
+|===
+
+== Request identity and connection
+
+`getRequestId()` is unique per request (a JVM-wide counter). `getServletConnection()` reports the protocol, the `isSecure()` flag, and a connection id derived from the socket address pair (`remote-ip:port-local-ip:port`, `?-?` when Chappe gives no address). Two limits come from the Chappe `Request` API, which exposes neither a connection identity nor the HTTP/2 stream id (BUG-20261009-09, open, a Chappe follow-up):
+
+* the connection id is not unique for the lifetime of the JVM: two connections reusing the same ephemeral port get the same id;
+* `getProtocolRequestId()` is `""` for HTTP/2 instead of the stream id, and `getProtocolConnectionId()` is `""` on every protocol.
+
+`ServletContext.getVirtualServerName()` returns `vidocq` unless `FoyChappeBoot.Builder.virtualServerName(...)` sets it. `getRealPath(path)` answers the file-system path of a resource held in a directory (canonicalised first), and `null` for a resource inside a jar or a missing one.
 
 == Servlet 6.1 API comparison
 
@@ -249,9 +338,13 @@ The `version` and `metadata-complete` attributes of `<web-app>` and `<web-fragme
 | ✅
 | Near-complete coverage in the official TCK.
 
-| `RequestDispatcher` (forward / include)
+| `RequestDispatcher` (forward / include / named / error / async)
 | ✅
-| Cross-context (`getContext`) **implemented** via `CrossContextRegistry` (strict contextPath match on contexts deployed in the same JVM).
+| Parameter merge, named dispatch of unmapped servlets, nested forward keeping the originals, response closed after a forward. Cross-context (`getContext`) **implemented** via `CrossContextRegistry` (contextPath match on contexts deployed in the same JVM).
+
+| Default servlet, welcome files, `HttpServletMapping`
+| ✅
+| Static content with conditional GET and ranges, welcome files, `MappingMatch` for every dispatch; see xref:usage.adoc#default-servlet-and-static-content[Usage].
 
 | Web fragments (`web-fragment.xml`)
 | ✅
@@ -267,7 +360,7 @@ The `version` and `metadata-complete` attributes of `<web-app>` and `<web-fragme
 
 | Sessions
 | ✅
-| `InMemorySessionStore`; SPI `SessionStore` for distribution.
+| `InMemorySessionStore`; SPI `SessionStore` for distribution; `changeSessionId`, expiry reaper, tracking modes, URL rewriting.
 
 | Security (Basic)
 | ⚠️

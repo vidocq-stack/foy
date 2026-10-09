@@ -1,5 +1,5 @@
 = Usage recipes
-:description: Filters, listeners, async, multipart, sessions, dispatchers, virtual hosts, Vauban CDI integration.
+:description: Filters, listeners, async, multipart, sessions, dispatchers, default servlet, welcome files, legacy descriptors, virtual hosts, Vauban CDI integration.
 
 [.lead]
 This page collects recipes for using Foy beyond "hello world". It follows the canonical chapters of Jakarta Servlet 6.1.
@@ -130,7 +130,69 @@ public class Router extends HttpServlet {
 }
 ----
 
-`ForwardedRequest` and `IncludedRequest` inject the standard attributes (`jakarta.servlet.forward.*`, `jakarta.servlet.include.*`) and reuse the Chappe routing.
+`ForwardedRequest` and `IncludedRequest` inject the standard attributes (`jakarta.servlet.forward.*`, `jakarta.servlet.include.*`) and reuse the Chappe routing. The semantics, all covered by the TCK `requestdispatcher` and `srlistener` suites:
+
+* The query string of the target is merged with the original parameters: the target's values come first, the original ones follow.
+* `getNamedDispatcher(name)` reaches every registered servlet, mapped or not, and sets no `forward.*` attribute.
+* A nested forward keeps the attributes of the first forward (the original request), and the `forward.*` attributes are visible only to the forwarded target, the `include.*` ones only to the included target.
+* An exception thrown by the target propagates unchanged to the caller. After a forward returns, the response is closed: whatever the forwarding servlet writes afterwards is dropped.
+* `forward` and `include` may reach resources under `WEB-INF/` and `META-INF/`, which a client request cannot.
+* `getRequestDispatcher` with a path above the context root returns `null`.
+
+== Filter mappings
+
+A filter is chained by URL pattern first, then by servlet name (`<filter-mapping><servlet-name>`, `addMappingForServletNames`), each group in registration order (Servlet 6.1 §6.2.4). A filter matched both ways runs once. The servlet name of the container default servlet is `foy.default`, so a filter can be mapped to static content by name.
+
+== Default servlet and static content
+
+Foy deploys a container default servlet, named `foy.default`, mapped to `/` unless the application maps something to `/` itself. It is not an application registration: `ServletContext.getServletRegistrations()` does not list it. It serves the static resources of the application, the ones `ServletContext.getResource` reaches (`META-INF/resources/` of the application roots and fragment jars, or the `ResourceProvider` set on the builder):
+
+* `GET` and `HEAD` (same headers, no body) are served, `OPTIONS` answers an `Allow: GET, HEAD, OPTIONS` header, any other method answers 405. A directory is 404: there is no listing.
+* `Content-Type` comes from `mime-mapping` and the built-in table, `Last-Modified` from the file time (or the jar entry time) and a weak `ETag` from length and time. `If-None-Match` wins over `If-Modified-Since`; both answer 304.
+* A single `Range` (`bytes=a-b`, `a-`, `-n`) answers 206, an unsatisfiable one 416. Several ranges answer 200 with the whole body (no `multipart/byteranges`). `If-Range` is honoured by date.
+* A client request cannot reach `WEB-INF/` or `META-INF/` (404). A forward, include, async or error dispatch can, for instance an error page kept under `WEB-INF/`.
+* A custom `ResourceProvider` may implement `metadata(path)` to give the length and the modification time without opening the resource. `ClassPathResourceProvider` does, and never opens a jar connection per request.
+
+[source,java]
+----
+// META-INF/resources/index.html is served at /index.html
+// map a servlet to "/" and it replaces the default servlet.
+@WebServlet("/")
+public class Fallback extends HttpServlet { /* ... */ }
+----
+
+The response is still buffered whole before it is sent: streaming is the next phase (see xref:tck.adoc[TCK status]).
+
+== Welcome files
+
+`<welcome-file-list>` is applied by the default servlet only. For a request to a directory path ending with `/` (the context root included), Foy tries each welcome file in declaration order: first as a static resource, then as a servlet mapping (`/dir/index.jsp` can be a servlet mapped to `*.jsp`). The first match wins, and `getRequestURI` keeps the original URI while `getServletPath`, `getPathInfo` and `getHttpServletMapping` describe the target.
+
+A directory request without a trailing slash that has a welcome file is redirected (302) to the slash form. The `Location` is built from the re-encoded canonical path, never from the raw one, so `//evil.example/` cannot become a protocol-relative redirect. An application servlet mapped to `/`, or an exact, prefix or extension servlet, handles the path itself and no welcome file is looked up.
+
+== Request path canonicalisation
+
+Before any mapping (servlet, filter, welcome file, default servlet), Foy canonicalises the request path as Servlet 6.1 §3.5.2 requires: path parameters are removed from each segment (`;jsessionid=` included), the path is percent-decoded exactly once as UTF-8, then normalised (repeated slashes collapsed, `.` and `..` resolved). `getRequestURI` stays raw and encoded, `getServletPath` and `getPathInfo` are decoded.
+
+A request answers `400 Bad Request` before any filter or servlet runs when the path:
+
+* has an encoded separator or NUL (`%2F`, `%5C`, `%00`, any case);
+* has a malformed percent escape or invalid UTF-8;
+* holds a raw backslash, a control character or a non-ASCII character (a stricter choice than the grammar requires: send non-ASCII names percent-encoded);
+* has a segment made only of dots and spaces (`...`, `..%20`), or a `..` climbing above the context root.
+
+A path outside the context path (`/app2/x` for context `/app`) is 404; the context path is stripped on a segment boundary. `OPTIONS *` is passed unchanged to the default servlet. The context path configured on the builder is validated at deployment; the root context is the empty string everywhere (`ServletContext.getContextPath()`, `HttpServletRequest.getContextPath()`, the session cookie path is `/`).
+
+== Error pages
+
+`<error-page>` entries match an exception type (the class hierarchy is walked first, then, for a `ServletException`, its root cause) or a status code. The error attributes `jakarta.servlet.error.status_code`, `message`, `exception`, `exception_type`, `request_uri`, `servlet_name` and, new in 6.1, `error.query_string` are set on the error dispatch, which uses `DispatcherType.ERROR`. If the response is already committed when an exception escapes, no error page is dispatched, the committed content stands and the exception is logged at `ERROR`.
+
+== Response semantics
+
+`sendError` and `sendRedirect` reset the buffer and the declared `Content-Length` and commit the response. `setStatus`, headers, `setLocale`, `setContentType` and charset changes are ignored once the response is committed (`flushBuffer`, `isCommitted`, buffer overflow). A cookie with a `Max-Age` also carries an `Expires` attribute (RFC 6265). The default character encoding follows `<response-character-encoding>`, then the `ISO-8859-1` default, and a `Content-Type` charset or locale-encoding mapping overrides it until `getWriter` is called.
+
+== Legacy deployment descriptors
+
+`web.xml` files written for Servlet 2.2 and 2.3 (with a `<!DOCTYPE web-app PUBLIC "-//Sun Microsystems, Inc.//DTD Web Application 2.3//EN" ...>`) are accepted. The DOCTYPE is parsed but never resolved: no external DTD is fetched, no external entity is read and an entity reference in the content is rejected, so the descriptor cannot be used for XXE or entity-expansion attacks. The DOCTYPE implies the version: a descriptor older than 2.5 is `metadata-complete` (annotations and fragments are ignored), and for versions before 2.4 a `url-pattern` without a leading slash is accepted and given one.
 
 == Native layout: descriptors, fragments and resources
 
@@ -164,13 +226,14 @@ Discovery is on by default and is driven by `FoyChappeBoot.builder()`:
 * `discoverPluggability(false)` turns off the discovery of both the fragments and the initializers, for embedders that assemble the application themselves.
 * `applicationRoot(URL...)` declares jars or directories as the application itself: their initializers always run, whatever the absolute ordering. A root holding a `web.xml` without a fragment, and the roots of the CDI-discovered annotated components, are application roots without being declared.
 * `contextPath(...)` wins; otherwise web.xml's `<default-context-path>` applies, else `/`. The element is web.xml-only: a fragment's is ignored with a warning.
-* `resourceProvider(...)` replaces the default `ClassPathResourceProvider`, which serves `META-INF/resources/` of the application roots, then of the ordered fragments' jars, then of any other root. It rejects empty and dot segments and never follows a symbolic link out of the root. `getResource*` does reach the `WEB-INF/` and `META-INF/` subtrees of the resource root, as the spec allows; `ClassPathResourceProvider.isServable`, the check the future default servlet applies, refuses them.
+* `resourceProvider(...)` replaces the default `ClassPathResourceProvider`, which serves `META-INF/resources/` of the application roots, then of the ordered fragments' jars, then of any other root. It rejects empty and dot segments and never follows a symbolic link out of the root. `getResource*` does reach the `WEB-INF/` and `META-INF/` subtrees of the resource root, as the spec allows; the default servlet refuses them for a client request (see <<default-servlet-and-static-content>>).
+* `virtualServerName(...)` sets `ServletContext.getVirtualServerName()` (default `vidocq`).
 
 Fragments are ordered per Servlet 6.1 §8.2.2: an `<absolute-ordering>` in `web.xml` replaces any `<ordering>` in the fragments; without it, `<before>`/`<after>` constraints and `<others/>` apply. Initializers run in `ServiceLoader` order, restricted to the roots the ordering retains (§8.2.4). A jar excluded by an absolute ordering contributes neither its fragment, nor its annotations, nor its initializers, nor its `META-INF/resources/` (in no lookup tier, the "any other root" fallback included), nor its classes to a `@HandlesTypes` initializer (its class index is not read and it is not scanned).
 
 [NOTE]
 ====
-Static content is exposed through `ServletContext.getResource*` only. There is no default servlet yet, so welcome files and plain static serving over HTTP arrive with the request/response phase of the roadmap. Security constraints are parsed but not enforced yet.
+Static content is served over HTTP by the container default servlet (see <<default-servlet-and-static-content>>) and is also reachable through `ServletContext.getResource*` and `getRealPath` (which answers a path only for a resource held in a directory). Security constraints are parsed but not enforced yet.
 ====
 
 == Virtual hosts and WAR deployment

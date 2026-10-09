@@ -43,12 +43,14 @@ module to become an independent project usable outside the Vidocq Runtime ecosys
 The reactor (`foy-api`, `foy-core`, `foy-cdi-vauban`, `foy-chappe`) compiles without
 blocking warnings.
 
-**TCK at the Phase 3 exit (2026-10-09)** — full official Jakarta Servlet 6.1 suite:
-**1587/1714 (92.6 %)**: `api.*` 821/859, `pluggability.*` 639/646, `spec.*` 127/207,
-`compat.*` 0/2. The main remaining gaps are security enforcement, the default
-servlet (welcome files), request dispatching, server push and a filter that runs
-twice when mapped by pattern and by servlet name. Per-family breakdown, root
-causes and roadmap in [`TCK.md`](TCK.md).
+**TCK at the Phase 4 exit (2026-10-09)** — full official Jakarta Servlet 6.1 suite:
+**1649/1714 (96.2 %)**: `api.*` 840/859, `pluggability.*` 646/646, `spec.*` 161/207,
+`compat.*` 2/2. Foy now has a container default servlet (static content,
+conditional GET, ranges), welcome files, `HttpServletMapping`, the full dispatcher
+semantics, sessions (`changeSessionId`, expiry reaper, tracking modes, URL rewriting)
+and legacy 2.2/2.3 descriptors. The remaining gaps are security enforcement (37),
+streaming and non-blocking I/O (10), multipart (8), HTTP/2 server push (7) and JSP (3).
+Per-family breakdown, root causes and roadmap in [`TCK.md`](TCK.md).
 
 **TODO M2 — transport decoupling**:
 
