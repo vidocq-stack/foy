@@ -311,3 +311,85 @@ Statuts : `OPEN` → `INVESTIGATING` → `FIXED` (commit hash) → `CLOSED`.
     stream id to `io.vidocq.chappe.api.Request`; Foy then maps them to `getConnectionId()`,
     `getProtocolConnectionId()` (HTTP/2: `""`, HTTP/3: the QUIC connection id) and
     `getProtocolRequestId()`. The chappe repository is not modified here.
+
+## BUG-20261009-10 — dispatch paths stripped of a context-path prefix they never carried
+
+- **Date** : 2026-10-09
+- **Statut** : FIXED (2f7fcf0)
+- **Module touché** : `foy-core` (`VidocqServletContext.getRequestDispatcher`, `ChappeServletBridge` async dispatch, `HttpServletRequestImpl.getRequestDispatcher`, `AsyncContextImpl.dispatch()`)
+- **Symptôme** : paths that are already context-relative were stripped of a leading copy of the
+  context path with `startsWith`: in context `/app`, `getServletContext().getRequestDispatcher("/apple.jsp")`
+  returned `null` (`"le.jsp"`); in context `/views`, a dispatcher for `/views/x.jsp` served `/x.jsp`;
+  `AsyncContext.dispatch("/application/x")` answered an empty 200.
+- **Reproduction minimale** : `ContainerGuardsEndToEndTest#aDispatchPathStartingLikeTheContextPathIsNotStripped`,
+  `#aDispatchPathEqualToTheContextPathPrefixIsKept`, `#anAsyncDispatchPathIsContextRelative`.
+- **Hypothèse de cause** : `ServletRequest.getRequestDispatcher` prepended the context path and the
+  servlet context stripped it again, a round trip that misfired on any path starting with the
+  context path's characters.
+- **Investigations** :
+  - 2026-10-09 (Phase 4 final review) : every internal dispatch path is now context-relative; the
+    request no longer prepends the context path, the strips and the dead `"/".equals` guards are
+    removed, and the zero-argument `dispatch()` takes the canonical context-relative path.
+
+## BUG-20261009-11 — chappe HTTP/1.1 writer truncates header chars to one byte (header injection)
+
+- **Date** : 2026-10-09
+- **Statut** : OPEN (chappe follow-up; mitigated in foy by 2f7fcf0)
+- **Module touché** : chappe `chappe-http` (`HttpResponseWriter.putAsciiString`)
+- **Symptôme** : `putAsciiString` casts each `char` of a header name or value to a `byte`, so a
+  character above U+00FF loses its high byte: U+010D U+010A become CR LF on the wire, which lets
+  a value such as `"/xčĊSet-Cookie: a=b"` inject a header line.
+- **Reproduction minimale** : a Chappe handler answering `Response.builder().header("X", "ačĊSet-Cookie: a=b")`
+  → the client receives a separate `Set-Cookie` header.
+- **Hypothèse de cause** : the writer assumes ASCII header text and never validates it.
+- **Investigations** :
+  - 2026-10-09 (Phase 4 final review) : foy now rejects CR, LF, NUL and chars above U+00FF at
+    every header entry point (`IllegalArgumentException`) and percent-encodes redirect locations.
+    Chappe follow-up: reject (or encode) non-Latin-1 and CR/LF/NUL characters in
+    `HttpResponseWriter` itself. The chappe repository is not modified here.
+
+## BUG-20261009-12 — dispatch query string decoded as UTF-8 regardless of the request encoding
+
+- **Date** : 2026-10-09
+- **Statut** : OPEN (low)
+- **Module touché** : `foy-core` (`ForwardedRequest`, `AsyncDispatchRequest` parameter merging)
+- **Symptôme** : the parameters of a dispatch query string (`getRequestDispatcher("/x?a=%E9")`,
+  `AsyncContext.dispatch("/x?a=...")`) are always decoded as UTF-8, even when the request
+  character encoding (`setCharacterEncoding`, `<request-character-encoding>`) is another charset.
+- **Reproduction minimale** : request encoding `ISO-8859-1`, forward to `/x?a=%E9` → `getParameter("a")`
+  is U+FFFD instead of `é`.
+- **Hypothèse de cause** : `ForwardedRequest` and `AsyncDispatchRequest` pass
+  `StandardCharsets.UTF_8` to the decoder instead of the request's effective encoding.
+- **Investigations** :
+  - 2026-10-09 (Phase 4 final review) : found in review; not exercised by the TCK.
+
+## BUG-20261009-13 — resource metadata and openStream may describe different roots
+
+- **Date** : 2026-10-09
+- **Statut** : OPEN (low)
+- **Module touché** : `foy-core` (`ClassPathResourceProvider.metadata` / `openStream`)
+- **Symptôme** : `metadata(path)` reports the first root holding a file at `path`, while
+  `openStream(path)` falls through to the next root when opening the first one fails: the default
+  servlet can then announce the length and last-modified time of one file and stream another.
+- **Reproduction minimale** : two roots with `META-INF/resources/x.txt`, the first unreadable →
+  `Content-Length` from the first, body from the second.
+- **Hypothèse de cause** : the two lookups iterate the roots independently.
+- **Investigations** :
+  - 2026-10-09 (Phase 4 final review) : found in review. Fix direction: one lookup returning the
+    opened stream with its metadata.
+
+## BUG-20261009-14 — session listeners invoked while session or manager locks are held
+
+- **Date** : 2026-10-09
+- **Statut** : OPEN (low)
+- **Module touché** : `foy-core` (`SessionManager.createNew`, `SessionManager.changeSessionId`, `HttpSessionImpl` invalidation)
+- **Symptôme** : `sessionCreated` runs under the manager's close read lock and `sessionIdChanged`
+  under the session monitor; a listener that blocks or calls back into another session (or waits
+  for another request on the same session) can stall undeploy or deadlock.
+- **Reproduction minimale** : an `HttpSessionIdListener` that waits for another thread which calls
+  `invalidate()` on the same session → both threads block.
+- **Hypothèse de cause** : the locks guarantee that a listener never sees a destroyed session and
+  that no session is created after close, at the price of running application code under them.
+- **Investigations** :
+  - 2026-10-09 (Phase 4 final review) : found in review. Fix direction: claim the state change
+    under the lock, fire the listener after releasing it, with a state flag replacing the lock.

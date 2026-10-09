@@ -150,7 +150,7 @@ Foy deploys a container default servlet, named `foy.default`, mapped to `/` unle
 * `GET` and `HEAD` (same headers, no body) are served, `OPTIONS` answers an `Allow: GET, HEAD, OPTIONS` header, any other method answers 405. A directory is 404: there is no listing.
 * `Content-Type` comes from `mime-mapping` and the built-in table, `Last-Modified` from the file time (or the jar entry time) and a weak `ETag` from length and time. `If-None-Match` wins over `If-Modified-Since`; both answer 304.
 * A single `Range` (`bytes=a-b`, `a-`, `-n`) answers 206, an unsatisfiable one 416. Several ranges answer 200 with the whole body (no `multipart/byteranges`). `If-Range` is honoured by date.
-* A client request cannot reach `WEB-INF/` or `META-INF/` (404). A forward, include, async or error dispatch can, for instance an error page kept under `WEB-INF/`.
+* A client request cannot reach `WEB-INF/` or `META-INF/` (404, in any case and with trailing dots or spaces), whichever servlet the path would map to: the request bridge refuses it before mapping, and `/WEB-INF` without a slash is not redirected. A forward, include, async or error dispatch can, for instance an error page kept under `WEB-INF/`.
 * A custom `ResourceProvider` may implement `metadata(path)` to give the length and the modification time without opening the resource. `ClassPathResourceProvider` does, and never opens a jar connection per request.
 
 [source,java]
@@ -165,9 +165,9 @@ The response is still buffered whole before it is sent: streaming is the next ph
 
 == Welcome files
 
-`<welcome-file-list>` is applied by the default servlet only. For a request to a directory path ending with `/` (the context root included), Foy tries each welcome file in declaration order: first as a static resource, then as a servlet mapping (`/dir/index.jsp` can be a servlet mapped to `*.jsp`). The first match wins, and `getRequestURI` keeps the original URI while `getServletPath`, `getPathInfo` and `getHttpServletMapping` describe the target.
+`<welcome-file-list>` is applied by the default servlet only. For a request to a directory path ending with `/` (the context root included), Foy tries each welcome file in declaration order: first as a static resource, then as a servlet mapping (`/dir/index.jsp` can be a servlet mapped to `*.jsp`). A welcome file under `WEB-INF/` or `META-INF/` is never resolved, since the welcome re-entry is a client request. The first match wins, and `getRequestURI` keeps the original URI while `getServletPath`, `getPathInfo` and `getHttpServletMapping` describe the target.
 
-A directory request without a trailing slash that has a welcome file is redirected (302) to the slash form. The `Location` is built from the re-encoded canonical path, never from the raw one, so `//evil.example/` cannot become a protocol-relative redirect. An application servlet mapped to `/`, or an exact, prefix or extension servlet, handles the path itself and no welcome file is looked up.
+A directory request without a trailing slash that has a welcome file is redirected (302) to the slash form. The `Location` is built from the re-encoded canonical path, never from the raw one, so `//evil.example/` cannot become a protocol-relative redirect; it goes through `encodeRedirectURL`, so a session tracked by URL is kept. An application servlet mapped to `/`, or an exact, prefix or extension servlet, handles the path itself and no welcome file is looked up.
 
 == Request path canonicalisation
 

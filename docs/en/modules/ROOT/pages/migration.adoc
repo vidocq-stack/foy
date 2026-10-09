@@ -120,6 +120,21 @@ Applications that already embedded Foy through `FoyChappeBoot.builder()` before 
 * **`discoverPluggability(false)`** opts out of the fragment and initializer discovery, for embedders that assemble the application themselves.
 * **New builder methods:** `resourceProvider(...)` replaces the source behind `ServletContext.getResource*`; `applicationRoot(URL...)` declares the roots whose initializers always run, whatever the absolute ordering.
 
+=== Request, response and session semantics
+
+The request, response and session work (Servlet 6.1 sections 3, 5, 7, 9 and 10) changes these behaviours for embedders:
+
+* **The root context path is `""`, not `"/"`.** `getContextPath()` and `ServletContext.getContextPath()` return the empty string for an application mounted at the root (section 3.5); `contextPath("/")` is still accepted as its alias.
+* **Context paths are validated at deploy.** A context path must be empty or start with `/`, must not end with `/`, and must not contain an empty, `.` or `..` segment, a control character, a backslash, `%`, `;`, `?` or `#`; an invalid one fails the deployment with an `IllegalArgumentException`.
+* **Default session tracking modes are `{COOKIE, URL}`.** `encodeURL` and `encodeRedirectURL` now append `;jsessionid=<id>` when a session exists and the client did not send its id in a cookie. Restrict the modes with `<tracking-mode>` or `SessionCookieConfig`/`setSessionTrackingModes` if you do not want URL rewriting.
+* **The session store is consulted on every request carrying a session id** (cookie or `;jsessionid`), even when the application never calls `getSession`, so that the session's last-accessed time moves (section 7.6). A custom `SessionStore` sees a lookup per such request.
+* **A container default servlet (`foy.default`) is installed when no application servlet maps `/`.** It serves the static resources of the resource provider; with the default `ClassPathResourceProvider` that is the `META-INF/resources/` tree of **every root of the class loader** (application roots, fragment jars, then any other jar), over HTTP. To opt out, map a servlet of your own to `/`, or pass a `resourceProvider(...)` that does not expose those roots.
+* **Non-canonical request paths are answered 400.** A path that holds a raw backslash or control character, a malformed or encoded separator or NUL escape, a dot-only segment once decoded, or climbs above the context root with `..` is refused before any filter or servlet runs (section 3.5.2); a path outside the context path is answered 404.
+* **`WEB-INF/` and `META-INF/` are refused to every client request (404)**, whichever servlet the path maps to (a `*.jsp` mapping included), in any case and with trailing dots or spaces; `/WEB-INF` without a slash is a 404, not a redirect. A welcome file under these trees is never resolved. Forward, include, error and async dispatches may still target them.
+* **Dispatch paths are context-relative.** `ServletContext.getRequestDispatcher`, `ServletRequest.getRequestDispatcher` and `AsyncContext.dispatch(String)` no longer strip a leading copy of the context path: in context `/app`, `getRequestDispatcher("/app/x")` targets `/app/x` inside the application.
+* **Header values are validated.** `setHeader`, `addHeader` (and the int/date variants), `setContentType`, `setCharacterEncoding` and `addCookie` throw `IllegalArgumentException` for a name or value containing CR, LF, NUL or a character above U+00FF. `sendRedirect` percent-encodes (UTF-8) non-ASCII characters, spaces and controls of the location, so a `Location` header never carries a line break.
+* **An unhandled exception answers a generic `500` body** (`Internal Server Error`); the exception and its message are logged, never echoed to the client.
+
 == Common pitfalls
 
 * **`ServletContainerInitializer`s and fragments are discovered at boot.** `ApplicationSources` loads the initializers through `ServiceLoader` (`META-INF/services` or `provides`) and the `META-INF/web-fragment.xml` of every root, then orders them per §8.2.2 and §8.2.4. Component classes themselves are still never scanned.
