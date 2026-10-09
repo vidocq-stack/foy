@@ -135,6 +135,23 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
         }
 
         Optional<ServletDispatcher.Mapping> match = dispatcher.find(path);
+        if (!"*".equals(rawPath) && isContainerDefault(match)) {
+            // Section 10.10: only the container default servlet resolves welcome files; an exact,
+            // prefix or extension servlet, or an application "/" servlet, handles the path itself.
+            String redirect = welcomeRedirect(rawPath, path, request.query());
+            if (redirect != null) {
+                var redirected = new HttpServletRequestImpl(request, servletContext, contextPath, "", null,
+                        sessionManager);
+                redirected.bindResponse(res);
+                try { res.sendRedirect(redirect); } catch (IOException ignored) {}
+                return toChappeResponse(res);
+            }
+            String welcome = path.endsWith("/") ? welcomeTarget(path) : null;
+            if (welcome != null) {
+                path = welcome;
+                match = dispatcher.find(path);
+            }
+        }
         ListenerRegistry registry = servletContext.listenerRegistry();
 
         HttpServletRequestImpl req;
@@ -211,6 +228,57 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
         }
         maybeAttachSessionCookie(req, res);
         return toChappeResponse(res);
+    }
+
+    private static boolean isContainerDefault(Optional<ServletDispatcher.Mapping> match) {
+        return match.isPresent()
+                && match.get().servlet() instanceof io.vidocq.foy.internal.container.DefaultServlet;
+    }
+
+    /**
+     * The redirect location when the request names a directory without its trailing slash
+     * (section 10.10), keeping the query string; {@code null} otherwise. The context root requested
+     * as {@code /ctx} is such a directory. The location is the raw request path plus a slash, so
+     * that its encoding is the client's own.
+     */
+    private String welcomeRedirect(String rawPath, String path, String query) {
+        boolean contextRoot = !contextPath.isEmpty() && !"/".equals(contextPath) && rawPath.equals(contextPath);
+        if (!contextRoot && (path.endsWith("/") || servletContext.getResourcePaths(path + "/") == null)) {
+            return null;
+        }
+        String location = rawPath + "/";
+        return query == null || query.isEmpty() ? location : location + "?" + query;
+    }
+
+    /**
+     * The first welcome-file path for the directory {@code dir} (ending with a slash) that a
+     * static resource or a servlet serves, or {@code null}. Per welcome file in declaration order a
+     * static resource wins over a servlet mapping (exact, prefix, extension) for the same name.
+     * The caller re-dispatches the request to that path as a REQUEST (not a FORWARD): the servlet
+     * path, path info and mapping describe the welcome target, {@code getRequestURI} stays the
+     * client's, and the REQUEST filters of the new path apply. No {@code forward.*} attributes are
+     * set (Tomcat's internal forward behaves the same).
+     */
+    private String welcomeTarget(String dir) {
+        if (!"/".equals(dir) && servletContext.getResourcePaths(dir) == null) return null;
+        for (String wf : servletContext.getWelcomeFiles()) {
+            String name = wf.startsWith("/") ? wf.substring(1) : wf;
+            if (name.isEmpty()) continue;
+            String candidate = dir + name;
+            if (io.vidocq.foy.internal.container.ResourcePaths.isServable(candidate)
+                    && servletContext.getResourcePaths(candidate + "/") == null) {
+                try (var in = servletContext.getResourceAsStream(candidate)) {
+                    if (in != null) return candidate;
+                } catch (IOException ignored) {
+                    // unreadable: not a welcome file
+                }
+            }
+            var m = dispatcher.find(candidate);
+            if (m.isPresent() && !(m.get().servlet() instanceof io.vidocq.foy.internal.container.DefaultServlet)) {
+                return candidate;
+            }
+        }
+        return null;
     }
 
     /**

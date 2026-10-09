@@ -107,7 +107,15 @@ class RequestPathCanonicalisationTest {
         }
     }
 
-    record Reply(int status, String body) {}
+    record Reply(int status, String body, String head) {
+        String header(String name) {
+            for (String line : head.split("\r\n")) {
+                int c = line.indexOf(':');
+                if (c > 0 && line.substring(0, c).equalsIgnoreCase(name)) return line.substring(c + 1).trim();
+            }
+            return null;
+        }
+    }
 
     @TempDir Path root;
     private Server server;
@@ -167,7 +175,8 @@ class RequestPathCanonicalisationTest {
             int sp = raw.indexOf(' ');
             int status = Integer.parseInt(raw.substring(sp + 1, sp + 4));
             int bodyAt = raw.indexOf("\r\n\r\n");
-            return new Reply(status, bodyAt < 0 ? "" : raw.substring(bodyAt + 4));
+            return new Reply(status, bodyAt < 0 ? "" : raw.substring(bodyAt + 4),
+                    bodyAt < 0 ? raw : raw.substring(0, bodyAt));
         }
     }
 
@@ -277,6 +286,7 @@ class RequestPathCanonicalisationTest {
     void optionsAsteriskIsNotRefused() throws Exception {
         deploy(null);
         var r = send("OPTIONS", "*");
-        assertNotEquals(400, r.status(), r.body());
+        assertEquals(200, r.status(), r.body());
+        assertEquals("GET, HEAD, OPTIONS", r.header("Allow"));
     }
 }
