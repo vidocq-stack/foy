@@ -399,7 +399,7 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
                     var target = resolver.resolve(relative).orElse(null);
                     if (target == null) break;
                     if (qs != null) target = target.withQueryString(qs);
-                    req.setAttribute("jakarta.servlet.async.mapping", req.getHttpServletMapping());
+                    setAsyncAttributes(req);
                     var wrapped = new AsyncDispatchRequest(req, target, vctx, tgtCtxPath);
                     req.clearAsyncContext();
                     req.setAsyncSupported(true); // §2.3.3.3: an async dispatch starts a new cycle
@@ -413,7 +413,7 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
                     var target = new DispatchResolver(dispatcher).resolve(relative).orElse(null);
                     if (target == null) break;
                     if (qs != null) target = target.withQueryString(qs);
-                    req.setAttribute("jakarta.servlet.async.mapping", req.getHttpServletMapping());
+                    setAsyncAttributes(req);
                     var wrapped = new AsyncDispatchRequest(req, target);
                     req.clearAsyncContext();
                     req.setAsyncSupported(true); // §2.3.3.3: an async dispatch starts a new cycle
@@ -431,6 +431,22 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
             catch (IOException ignored) {}
         }
         return null;
+    }
+
+    /**
+     * Servlet 6.1 section 9.4 / {@code AsyncContext.ASYNC_*}: before an async dispatch, the
+     * original request's URI, context path, servlet path, path info, query string and mapping are
+     * published as {@code jakarta.servlet.async.*}. {@code req} is always the original request, so
+     * repeated dispatches keep exposing the first request's values. A {@code null} value (no path
+     * info, no query string) leaves its attribute unset.
+     */
+    private static void setAsyncAttributes(HttpServletRequestImpl req) {
+        req.setAttribute(jakarta.servlet.AsyncContext.ASYNC_REQUEST_URI, req.getRequestURI());
+        req.setAttribute(jakarta.servlet.AsyncContext.ASYNC_CONTEXT_PATH, req.getContextPath());
+        req.setAttribute(jakarta.servlet.AsyncContext.ASYNC_SERVLET_PATH, req.getServletPath());
+        if (req.getPathInfo() != null) req.setAttribute(jakarta.servlet.AsyncContext.ASYNC_PATH_INFO, req.getPathInfo());
+        if (req.getQueryString() != null) req.setAttribute(jakarta.servlet.AsyncContext.ASYNC_QUERY_STRING, req.getQueryString());
+        req.setAttribute(jakarta.servlet.AsyncContext.ASYNC_MAPPING, req.getHttpServletMapping());
     }
 
     private void maybeHandleError(HttpServletRequestImpl req, HttpServletResponseImpl res,

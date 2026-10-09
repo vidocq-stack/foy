@@ -182,6 +182,27 @@ class HttpServletMappingTest {
     }
 
     @Test
+    void asyncDispatchExposesTheOriginalRequestAttributes() throws Exception {
+        var report = new HttpServlet() {
+            @Override protected void service(HttpServletRequest req, HttpServletResponse resp) throws IOException {
+                resp.getWriter().write("uri=" + req.getAttribute("jakarta.servlet.async.request_uri")
+                        + "|ctx=" + req.getAttribute("jakarta.servlet.async.context_path")
+                        + "|sp=" + req.getAttribute("jakarta.servlet.async.servlet_path")
+                        + "|pi=" + req.getAttribute("jakarta.servlet.async.path_info")
+                        + "|qs=" + req.getAttribute("jakarta.servlet.async.query_string")
+                        + "|now=" + req.getServletPath());
+            }
+        };
+        // /A/x?k=v -> async dispatch /B -> async dispatch /T: both hops keep reporting the first request.
+        start(map("/A/*", dispatcher("async", "/B"), "A"), map("/B", dispatcher("async", "/T"), "B"),
+                map("/T", report, "T"));
+        assertEquals("uri=/A/x|ctx=|sp=/A|pi=/x|qs=k=v|now=/T", get("/A/x?k=v"));
+        server.stop();
+        start(map("/A", dispatcher("async", "/T"), "A"), map("/T", report, "T"));
+        assertEquals("uri=/A|ctx=|sp=/A|pi=null|qs=null|now=/T", get("/A"));
+    }
+
+    @Test
     void servletPathAndPrecedenceUnits() {
         var def = new ServletDispatcher.Mapping(UrlPatternMatcher.of("/"), reporter(), "d");
         var root = new ServletDispatcher.Mapping(UrlPatternMatcher.of(""), reporter(), "r");
