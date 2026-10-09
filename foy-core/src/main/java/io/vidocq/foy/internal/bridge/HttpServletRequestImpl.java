@@ -110,26 +110,34 @@ public final class HttpServletRequestImpl implements HttpServletRequest {
     public String canonicalPath() { return canonicalPath; }
 
     /**
-     * The decoded, canonical URI ({@code contextPath + path}) a zero-argument
-     * {@code AsyncContext.dispatch()} targets (section 2.3.3.3): the URI of the innermost
-     * container forward or async dispatch in the wrapper chain (already built from a decoded path),
-     * else the canonical path of the container request. Application wrappers are looked through, so
-     * a wrapped request never falls back to the raw, encoded {@code getRequestURI()}. Returns
+     * The decoded, canonical, context-relative path a zero-argument {@code AsyncContext.dispatch()}
+     * targets (section 2.3.3.3): the URI of the innermost container forward or async dispatch in
+     * the wrapper chain (already built from a decoded path) without its context path, else the
+     * canonical path of the container request. Application wrappers are looked through, so a
+     * wrapped request never falls back to the raw, encoded {@code getRequestURI()}. Returns
      * {@code null} when {@code request} wraps no HTTP request.
      */
-    public static String canonicalDispatchUri(jakarta.servlet.ServletRequest request) {
+    public static String canonicalDispatchPath(jakarta.servlet.ServletRequest request) {
         jakarta.servlet.ServletRequest r = request;
         while (r != null) {
             if (r instanceof HttpServletRequestImpl impl) {
-                return impl.canonicalPath == null ? impl.getRequestURI()
-                        : impl.getContextPath() + impl.canonicalPath;
+                return impl.canonicalPath == null ? withoutContextPath(impl) : impl.canonicalPath;
             }
-            if (r instanceof ForwardedRequest f && !f.isNamed()) return f.getRequestURI();
-            if (r instanceof AsyncDispatchRequest a) return a.getRequestURI();
+            if (r instanceof ForwardedRequest f && !f.isNamed()) return withoutContextPath(f);
+            if (r instanceof AsyncDispatchRequest a) return withoutContextPath(a);
             if (r instanceof jakarta.servlet.ServletRequestWrapper w) r = w.getRequest();
-            else return r instanceof HttpServletRequest h ? h.getRequestURI() : null;
+            else return r instanceof HttpServletRequest h ? withoutContextPath(h) : null;
         }
         return null;
+    }
+
+    /** {@code getRequestURI()} without the leading {@code getContextPath()} it is built from. */
+    private static String withoutContextPath(HttpServletRequest h) {
+        String uri = h.getRequestURI();
+        String cp = h.getContextPath();
+        if (uri == null || cp == null || cp.isEmpty() || !uri.startsWith(cp)) return uri;
+        String rest = uri.substring(cp.length());
+        return rest.isEmpty() ? "/" : rest;
     }
 
     public void bindAuthenticated(io.vidocq.foy.spi.security.AuthenticatedUser user,
@@ -535,18 +543,17 @@ public final class HttpServletRequestImpl implements HttpServletRequest {
     @Override public ServletContext getServletContext() { return servletContext; }
     @Override public RequestDispatcher getRequestDispatcher(String path) {
         if (path == null) return null;
-        String absolute;
-        if (path.startsWith("/")) {
-            absolute = contextPath.equals("/") ? path : contextPath + path;
-        } else {
-            // résolution relative au path courant (parent du servletPath+pathInfo)
+        // Section 9.1: the dispatcher path is context-relative; a relative path is resolved
+        // against the parent of the current servlet path + path info. The context path is
+        // never prepended (ServletContext#getRequestDispatcher takes a context-relative path).
+        String relative = path;
+        if (!path.startsWith("/")) {
             String current = servletPath + (pathInfo == null ? "" : pathInfo);
             int slash = current.lastIndexOf('/');
             String parent = slash <= 0 ? "/" : current.substring(0, slash + 1);
-            String full = contextPath.equals("/") ? parent + path : contextPath + parent + path;
-            absolute = full;
+            relative = parent + path;
         }
-        return servletContext.getRequestDispatcher(absolute);
+        return servletContext.getRequestDispatcher(relative);
     }
     @Override public HttpServletMapping getHttpServletMapping() {
         HttpServletMapping m = mapping;

@@ -94,8 +94,9 @@ public final class AsyncContextImpl implements AsyncContext {
         String uri = null;
         if (h != null) {
             // The container request's URI is raw (encoded, path parameters kept); the dispatch path
-            // must be its canonical form (section 3.5.2), found through any application wrapper.
-            uri = io.vidocq.foy.internal.bridge.HttpServletRequestImpl.canonicalDispatchUri(request);
+            // must be its canonical, context-relative form (section 3.5.2), found through any
+            // application wrapper.
+            uri = io.vidocq.foy.internal.bridge.HttpServletRequestImpl.canonicalDispatchPath(request);
             String qs = h.getQueryString();
             if (qs != null && !qs.isEmpty()) uri = uri + "?" + qs;
         }

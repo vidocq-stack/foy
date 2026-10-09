@@ -84,7 +84,8 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
         this.filterRegistry = filterRegistry;
         this.servletContext = servletContext;
         this.sessionManager = sessionManager;
-        this.contextPath = contextPath;
+        // The root context path is "" (section 3.5); "/" is accepted as its alias.
+        this.contextPath = contextPath == null || "/".equals(contextPath) ? "" : contextPath;
         servletContext.setDispatchInfrastructure(new DispatchResolver(dispatcher), this);
     }
 
@@ -147,6 +148,10 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
             // Section 3.5.2: the canonical (decoded, normalised) path drives every mapping decision.
             path = RequestPaths.canonicalize(relative);
             if (path == null) return rejected(request, requests, res, 400);
+            // Section 10.5: WEB-INF/ and META-INF/ are never exposed to a client request, whichever
+            // servlet the path would map to (a "*.jsp" servlet included) and without the directory
+            // redirect; forward, include, error and async dispatches may still target them.
+            if (ResourcePaths.isProtected(path)) return rejected(request, requests, res, 404);
         }
 
         Optional<ServletDispatcher.Mapping> match = dispatcher.find(path);
@@ -159,7 +164,11 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
                         sessionManager);
                 requests.add(redirected);
                 redirected.bindResponse(res);
-                try { res.sendRedirect(redirect); } catch (IOException ignored) {}
+                // A client tracked by URL keeps its session across the redirect.
+                redirected.setUrlSessionId(finalUrlSessionId);
+                redirected.accessRequestedSession();
+                try { res.sendRedirect(res.encodeRedirectURL(redirect)); } catch (IOException ignored) {}
+                maybeAttachSessionCookie(redirected, res);
                 return toChappeResponse(res);
             }
             String welcome = path.endsWith("/") ? welcomeTarget(path) : null;
@@ -187,7 +196,7 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
                 // Pas de mapping ni de filtre : 404 + error-page si mappée (§9.9.1).
                 try { res.sendError(404); } catch (IOException ignored) {}
                 try { maybeHandleError(req, res, null, null); }
-                catch (ServletException e) { return error(e); }
+                catch (ServletException e) { return error(req, e); }
                 if (!errorPageHandled(req)) return notFound();
                 return toChappeResponse(res);
             }
@@ -197,7 +206,7 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
                 new VidocqFilterChain(filters, null).doFilter(req, res);
             } catch (ServletException e) {
                 registry.fireRequestDestroyed(servletContext, req);
-                return error(e);
+                return error(req, e);
             }
             registry.fireRequestDestroyed(servletContext, req);
             maybeAttachSessionCookie(req, res);
@@ -216,9 +225,10 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
         req.setCanonicalPath(path);
         req.setHttpServletMapping(target.mapping());
         req.bindResponse(res);
-        // §2.3.3.3: async only when the servlet and every filter of the chain support it.
-        req.setAsyncSupported(m.asyncSupported()
-                && filterRegistry.asyncSupported(path, DispatcherType.REQUEST, m.servletName()));
+        // §2.3.3.3: async only when the servlet and every filter of the chain support it. The REQUEST
+        // chain is computed once and shared with the invocation.
+        FilterRegistry.Chain requestChain = filterRegistry.chain(path, DispatcherType.REQUEST, m.servletName());
+        req.setAsyncSupported(m.asyncSupported() && requestChain.asyncSupported());
         req.setUrlSessionId(finalUrlSessionId);
         req.accessRequestedSession();
 
@@ -229,9 +239,10 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
                     servletContext.securityProvider());
             if (!enforcer.enforce(m.security(), req, res)) {
                 registry.fireRequestDestroyed(servletContext, req);
+                maybeAttachSessionCookie(req, res);
                 return toChappeResponse(res);
             }
-            invoke(target, req, res, DispatcherType.REQUEST);
+            invoke(target, req, res, DispatcherType.REQUEST, requestChain);
             thrown = awaitAsyncIfStarted(req, res);
         } catch (ServletException | IOException | RuntimeException e) {
             thrown = e;
@@ -241,10 +252,10 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
         try {
             maybeHandleError(req, res, thrown, target.servletName());
         } catch (ServletException e) {
-            return error(e);
+            return error(req, e);
         }
         if (thrown != null && !errorPageHandled(req)) {
-            return error(thrown);
+            return error(req, thrown);
         }
         maybeAttachSessionCookie(req, res);
         return toChappeResponse(res);
@@ -262,30 +273,31 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
      *
      * <p>The location is the context path plus the CANONICAL path re-encoded segment by segment
      * (RFC 3986), so it always starts with a single {@code '/'}: {@code //dir} in a root context
-     * must not become the protocol-relative {@code //dir/}. A {@code ;jsessionid} path parameter of
-     * the request is not carried over (the redirect target is a fresh navigation; a session tracked
-     * by cookie is unaffected).</p>
+     * must not become the protocol-relative {@code //dir/}. The caller passes it through
+     * {@code encodeRedirectURL}, so a session tracked by URL is carried over.</p>
      *
      * <p>Directory detection uses {@code ServletContext#getResourcePaths}, the only directory probe
      * the resource-provider SPI offers; it is asked only for a path the default servlet would
      * otherwise answer 404 or serve as a file, and answers {@code null} at once for a file.</p>
      */
     private String welcomeRedirect(String rawPath, String path, String query) {
-        boolean contextRoot = !contextPath.isEmpty() && !"/".equals(contextPath) && rawPath.equals(contextPath);
+        boolean contextRoot = !contextPath.isEmpty() && rawPath.equals(contextPath);
         if (!contextRoot && (path.endsWith("/") || servletContext.getResourcePaths(path + "/") == null)) {
             return null;
         }
-        String base = contextPath.isEmpty() || "/".equals(contextPath) ? "" : contextPath;
-        String location = contextRoot ? base + "/" : base + encodePath(path) + "/";
+        String location = contextRoot ? contextPath + "/" : contextPath + encodePath(path) + "/";
         return query == null || query.isEmpty() ? location : location + "?" + query;
     }
 
-    /** Percent-encodes (UTF-8) every character of a decoded path other than an RFC 3986 pchar or '/'. */
+    /**
+     * Percent-encodes (UTF-8) every character of a decoded path other than an RFC 3986 pchar or '/';
+     * {@code ';'} is encoded too, since a literal one would start a path parameter.
+     */
     private static String encodePath(String decoded) {
         var out = new StringBuilder(decoded.length() + 8);
         for (byte b : decoded.getBytes(java.nio.charset.StandardCharsets.UTF_8)) {
             int c = b & 0xff;
-            boolean plain = c < 0x80 && (Character.isLetterOrDigit(c) || "-._~!$&'()*+,;=:@/".indexOf(c) >= 0);
+            boolean plain = c < 0x80 && (Character.isLetterOrDigit(c) || "-._~!$&'()*+,=:@/".indexOf(c) >= 0);
             if (plain) out.append((char) c);
             else out.append('%').append("0123456789ABCDEF".charAt(c >> 4)).append("0123456789ABCDEF".charAt(c & 15));
         }
@@ -308,9 +320,10 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
             String candidate = dir + name;
             // Both branches: no dot or empty segment, backslash, NUL or encoded separator, so a
             // welcome file such as "../x.ts" can never leave the directory.
-            if (!ResourcePaths.isDispatchable(candidate)) continue;
-            // Static branch only: a client may not reach WEB-INF/ or META-INF/ (a welcome servlet may, section 10.10).
-            if (ResourcePaths.isServable(candidate) && servletContext.getResourcePaths(candidate + "/") == null) {
+            // The welcome re-entry is a client REQUEST: a candidate under WEB-INF/ or META-INF/ is
+            // never resolved, neither as a static resource nor through a servlet (section 10.5).
+            if (!ResourcePaths.isServable(candidate)) continue;
+            if (servletContext.getResourcePaths(candidate + "/") == null) {
                 try (var in = servletContext.getResourceAsStream(candidate)) {
                     if (in != null) return candidate;
                 } catch (IOException ignored) {
@@ -336,7 +349,7 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
         req.bindResponse(res);
         try { res.sendError(status); } catch (IOException ignored) {}
         try { maybeHandleError(req, res, null, null); }
-        catch (ServletException e) { return error(e); }
+        catch (ServletException e) { return error(null, e); }
         if (errorPageHandled(req)) return toChappeResponse(res);
         if (status == 404) return notFound();
         return Response.builder()
@@ -384,12 +397,9 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
                         && vctx != servletContext) {
                     // §2.3.3.3 + §9.4 : cross-context async dispatch — route vers le bridge
                     // cible en utilisant son resolver/invoker.
+                    // AsyncContext#dispatch(ServletContext, String): the path is relative to the target context.
                     String tgtCtxPath = vctx.getContextPath();
                     String relative = dispatchPath;
-                    if (!tgtCtxPath.equals("/") && relative.startsWith(tgtCtxPath)) {
-                        relative = relative.substring(tgtCtxPath.length());
-                        if (relative.isEmpty()) relative = "/";
-                    }
                     String qs = null;
                     int q = relative.indexOf('?');
                     if (q >= 0) { qs = relative.substring(q + 1); relative = relative.substring(0, q); }
@@ -405,8 +415,8 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
                     req.setAsyncSupported(true); // §2.3.3.3: an async dispatch starts a new cycle
                     invoker.invoke(target, wrapped, res, DispatcherType.ASYNC);
                 } else {
-                    String relative = dispatchPath.startsWith(contextPath) && !contextPath.equals("/")
-                            ? dispatchPath.substring(contextPath.length()) : dispatchPath;
+                    // AsyncContext#dispatch(String): the path is relative to this context.
+                    String relative = dispatchPath;
                     String qs = null;
                     int q = relative.indexOf('?');
                     if (q >= 0) { qs = relative.substring(q + 1); relative = relative.substring(0, q); }
@@ -549,7 +559,11 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
                        DispatcherType type) throws IOException, ServletException {
         // Section 6.2.5: a named dispatch matches no URL pattern, only the target's servlet-name mappings.
         String filterPath = target.named() ? null : target.path();
-        FilterRegistry.Chain chain = filterRegistry.chain(filterPath, type, target.servletName());
+        invoke(target, req, res, type, filterRegistry.chain(filterPath, type, target.servletName()));
+    }
+
+    private void invoke(DispatchTarget target, HttpServletRequest req, HttpServletResponse res,
+                        DispatcherType type, FilterRegistry.Chain chain) throws IOException, ServletException {
         List<Filter> filters = chain.filters();
         // §2.3.3.3 / ServletRequest#isAsyncSupported: async stays enabled only while the request is
         // within the scope of servlets and filters that support it. Recompute for this dispatch
@@ -592,23 +606,27 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
      * ({@link SessionCookieConfig#setSecure}, {@code <secure>} in the descriptor).
      */
     private void maybeAttachSessionCookie(HttpServletRequestImpl req, HttpServletResponseImpl res) {
+        String cookie = sessionCookieHeader(req);
+        if (cookie != null) res.addHeaderInternal("Set-Cookie", cookie);
+    }
+
+    /** The {@code Set-Cookie} value {@link #maybeAttachSessionCookie} emits, or {@code null}. */
+    private String sessionCookieHeader(HttpServletRequestImpl req) {
         HttpSessionImpl session = req.boundSession();
-        if (session == null || session.isInvalidated()) return;
-        if (!servletContext.getEffectiveSessionTrackingModes().contains(SessionTrackingMode.COOKIE)) return;
+        if (session == null || session.isInvalidated()) return null;
+        if (!servletContext.getEffectiveSessionTrackingModes().contains(SessionTrackingMode.COOKIE)) return null;
         String requested = req.getRequestedSessionId();
-        if (!session.getId().equals(requested)) {
-            VidocqSessionCookieConfig cfg = servletContext.sessionCookieConfigInternal();
-            Cookie c = new Cookie(cfg.getName(), session.getId());
-            String path = cfg.getPath();
-            boolean root = contextPath.isEmpty() || "/".equals(contextPath);
-            c.setPath(path != null && !path.isEmpty() ? path : root ? "/" : contextPath);
-            if (cfg.getDomain() != null) c.setDomain(cfg.getDomain());
-            if (cfg.getMaxAge() >= 0) c.setMaxAge(cfg.getMaxAge());
-            c.setSecure(cfg.isSecureExplicit() ? cfg.isSecure() : req.isSecure());
-            c.setHttpOnly(cfg.isHttpOnly());
-            cfg.getAttributes().forEach(c::setAttribute);
-            res.addHeaderInternal("Set-Cookie", CookieCodec.serializeSetCookie(c));
-        }
+        if (session.getId().equals(requested)) return null;
+        VidocqSessionCookieConfig cfg = servletContext.sessionCookieConfigInternal();
+        Cookie c = new Cookie(cfg.getName(), session.getId());
+        String path = cfg.getPath();
+        c.setPath(path != null && !path.isEmpty() ? path : contextPath.isEmpty() ? "/" : contextPath);
+        if (cfg.getDomain() != null) c.setDomain(cfg.getDomain());
+        if (cfg.getMaxAge() >= 0) c.setMaxAge(cfg.getMaxAge());
+        c.setSecure(cfg.isSecureExplicit() ? cfg.isSecure() : req.isSecure());
+        c.setHttpOnly(cfg.isHttpOnly());
+        cfg.getAttributes().forEach(c::setAttribute);
+        return CookieCodec.serializeSetCookie(c);
     }
 
     static Response toChappeResponse(HttpServletResponseImpl res) {
@@ -631,15 +649,19 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
                 .build();
     }
 
-    private static Response error(Throwable e) {
-        // Log full stack for debugging — silent if DEBUG not set.
-        if (Boolean.getBoolean("vidocq.servlet.debug")) {
-            e.printStackTrace(System.err);
-        }
-        return Response.builder()
+    /**
+     * The plain 500 answered when no error page handled {@code e}. The body is generic: the
+     * exception and its message are logged, never echoed to the client. The session cookie the
+     * request would have emitted is kept.
+     */
+    private Response error(HttpServletRequestImpl req, Throwable e) {
+        LOG.log(System.Logger.Level.ERROR, "unhandled exception while serving the request", e);
+        var builder = Response.builder()
                 .status(StatusCode.INTERNAL_SERVER_ERROR)
-                .header("Content-Type", "text/plain")
-                .body(Body.of(("Servlet error: " + e.getMessage()).getBytes()))
+                .header("Content-Type", "text/plain");
+        String cookie = req == null ? null : sessionCookieHeader(req);
+        if (cookie != null) builder.header("Set-Cookie", cookie);
+        return builder.body(Body.of("Internal Server Error".getBytes(java.nio.charset.StandardCharsets.US_ASCII)))
                 .build();
     }
 }

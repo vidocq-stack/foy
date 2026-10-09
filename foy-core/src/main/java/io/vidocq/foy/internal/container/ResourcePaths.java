@@ -73,13 +73,23 @@ public final class ResourcePaths {
      * outside the {@code WEB-INF/} and {@code META-INF/} trees.
      */
     public static boolean isServable(String path) {
-        if (!isDispatchable(path)) return false;
+        return isDispatchable(path) && !isProtected(path);
+    }
+
+    /**
+     * Whether the first segment of the absolute {@code path} names the {@code WEB-INF} or
+     * {@code META-INF} tree (any case, trailing dots or spaces ignored), with or without anything
+     * below it. The request bridge refuses such a path to every client request (404), whichever
+     * servlet it would map to; a forward, include, error or async dispatch may still reach it.
+     */
+    public static boolean isProtected(String path) {
+        if (path == null || !path.startsWith("/")) return false;
         int slash = path.indexOf('/', 1);
         String first = slash < 0 ? path.substring(1) : path.substring(1, slash);
         int end = first.length();
         while (end > 0 && (first.charAt(end - 1) == '.' || first.charAt(end - 1) == ' ')) end--;
         String name = first.substring(0, end).toUpperCase(Locale.ROOT);
-        return !name.equals("WEB-INF") && !name.equals("META-INF");
+        return name.equals("WEB-INF") || name.equals("META-INF");
     }
 
     private static boolean hasEncodedSeparator(String path) {

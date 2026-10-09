@@ -86,6 +86,20 @@ class ServletSessionEndToEndTest {
     }
 
     @Test
+    void theRootContextSessionCookieHasTheRootPath() throws Exception {
+        HttpServlet s = new HttpServlet() {
+            @Override
+            protected void doGet(HttpServletRequest req, HttpServletResponse resp) {
+                req.getSession();
+            }
+        };
+        startServer(s, "/session");
+        String setCookie = get("http://127.0.0.1:" + port + "/session", null)
+                .headers().firstValue("set-cookie").orElseThrow();
+        assertTrue(setCookie.contains("; Path=/;") || setCookie.endsWith("; Path=/"), setCookie);
+    }
+
+    @Test
     void sessionCookieIsEmittedEvenWhenTheResponseWasFlushed() throws Exception {
         HttpServlet s = new HttpServlet() {
             @Override

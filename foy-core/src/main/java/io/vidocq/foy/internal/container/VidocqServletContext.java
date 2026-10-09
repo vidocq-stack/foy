@@ -413,11 +413,8 @@ public final class VidocqServletContext implements ServletContext {
         if (path == null) return null;
         if (!path.startsWith("/")) return null; // doit être absolu dans le contexte
         if (dispatchResolver == null || dispatchInvoker == null) return null;
+        // The path is context-relative: it is never stripped of a context-path prefix.
         String tmp = path;
-        if (!contextPath.equals("/") && path.startsWith(contextPath)) {
-            tmp = path.substring(contextPath.length());
-            if (tmp.isEmpty()) tmp = "/";
-        }
         // Section 9.1.1: the dispatch path is already decoded; only its dot segments are normalised
         // (query string split off first). A path climbing above the context root has no dispatcher.
         String query = "";

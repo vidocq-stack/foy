@@ -257,4 +257,76 @@ class HttpServletResponseImplTest {
         assertEquals(Locale.FRANCE, res.getLocale());
         assertEquals("fr-FR", res.getHeader("Content-Language"));
     }
+
+    // ---- Header injection (CR, LF, NUL, non-Latin-1) ----
+
+    private static void assertNoInjectedLine(HttpServletResponseImpl res) {
+        for (var e : res.allHeaders().entrySet()) {
+            assertFalse(e.getKey().equalsIgnoreCase("Set-Cookie"), "injected header " + e);
+            for (String v : e.getValue()) {
+                for (char c : v.toCharArray()) {
+                    assertTrue(c != '\r' && c != '\n' && c != 0 && c <= 0xff, "unsafe char in " + e.getKey() + ": " + v);
+                }
+            }
+        }
+    }
+
+    @Test
+    void redirectLocationNeverCarriesCrLf() throws IOException {
+        var res = new HttpServletResponseImpl();
+        res.bindRequest(request("/app/a"));
+        res.sendRedirect("/x\r\nSet-Cookie: a=b");
+        assertEquals("http://example.com:8080/x%0D%0ASet-Cookie:%20a=b", res.getHeader("Location"));
+        assertNoInjectedLine(res);
+    }
+
+    @Test
+    void redirectLocationPercentEncodesNonAscii() throws IOException {
+        // U+010D U+010A: a byte cast of each char would yield CR LF on the wire.
+        var res = new HttpServletResponseImpl();
+        res.bindRequest(request("/app/a"));
+        res.sendRedirect("/xčĊSet-Cookie");
+        assertEquals("http://example.com:8080/x%C4%8D%C4%8ASet-Cookie", res.getHeader("Location"));
+        assertNoInjectedLine(res);
+        assertEquals("http://example.com:8080/caf%C3%A9", redirectLocation("/app/a", "/café"));
+        assertEquals("http://example.com:8080/a%20b?q=%25x", redirectLocation("/app/a", "/a b?q=%25x"));
+    }
+
+    @Test
+    void unboundRedirectIsSanitisedToo() throws IOException {
+        var res = new HttpServletResponseImpl();
+        res.sendRedirect("/x\r\nSet-Cookie: a=b");
+        assertEquals("/x%0D%0ASet-Cookie:%20a=b", res.getHeader("Location"));
+    }
+
+    @Test
+    void setHeaderAndAddHeaderRejectCrLfNulAndNonLatin1() {
+        var res = new HttpServletResponseImpl();
+        assertThrows(IllegalArgumentException.class, () -> res.setHeader("X", "a\r\nSet-Cookie: a=b"));
+        assertThrows(IllegalArgumentException.class, () -> res.addHeader("X", "a\nb"));
+        assertThrows(IllegalArgumentException.class, () -> res.addHeader("X", "a\u0000b"));
+        assertThrows(IllegalArgumentException.class, () -> res.setHeader("X", "ačĊb"));
+        assertThrows(IllegalArgumentException.class, () -> res.setHeader("X\r\nY", "v"));
+        assertThrows(IllegalArgumentException.class, () -> res.setContentType("text/html\r\nSet-Cookie: a=b"));
+        assertThrows(IllegalArgumentException.class, () -> res.setCharacterEncoding("utf-8\r\nX: y"));
+        assertFalse(res.containsHeader("X"));
+        // Latin-1 stays legal.
+        res.setHeader("X", "café");
+        assertEquals("café", res.getHeader("X"));
+        assertNoInjectedLine(res);
+    }
+
+    @Test
+    void cookiesWithCrLfOrNonLatin1AreRejected() {
+        var res = new HttpServletResponseImpl();
+        var path = new jakarta.servlet.http.Cookie("a", "b");
+        path.setPath("/x\r\nSet-Cookie: c=d");
+        assertThrows(IllegalArgumentException.class, () -> res.addCookie(path));
+        var domain = new jakarta.servlet.http.Cookie("a", "b");
+        domain.setDomain("xčĊ.org");
+        assertThrows(IllegalArgumentException.class, () -> res.addCookie(domain));
+        var value = new jakarta.servlet.http.Cookie("a", "b\nc");
+        assertThrows(IllegalArgumentException.class, () -> res.addCookie(value));
+        assertTrue(res.cookies().isEmpty());
+    }
 }

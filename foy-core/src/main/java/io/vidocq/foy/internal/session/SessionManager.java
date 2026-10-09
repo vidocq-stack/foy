@@ -60,6 +60,7 @@ public final class SessionManager implements AutoCloseable {
     /** Serialises the store re-keying of id changes with the removal of invalidated sessions. */
     private final Object renameLock = new Object();
     private ScheduledExecutorService reaper;
+    private final ClassLoader applicationLoader;
     /** Set by {@link #close()}: no session is created afterwards. */
     private volatile boolean closed;
     /**
@@ -76,6 +77,9 @@ public final class SessionManager implements AutoCloseable {
         this.store = store;
         this.servletContext = servletContext;
         this.defaultMaxInactiveSeconds = defaultMaxInactiveSeconds;
+        // Built during deployment: the application's class loader, set as the context class loader
+        // of the reaper while it fires listeners.
+        this.applicationLoader = servletContext == null ? null : servletContext.getClassLoader();
     }
 
     public void setListenerRegistry(ListenerRegistry registry) {
@@ -215,11 +219,17 @@ public final class SessionManager implements AutoCloseable {
     }
 
     private void reapSafely() {
+        Thread current = Thread.currentThread();
+        ClassLoader previous = current.getContextClassLoader();
+        // Listeners fired by the reaper run with the application's class loader, as on a request.
+        if (applicationLoader != null) current.setContextClassLoader(applicationLoader);
         try {
             reap();
         } catch (RuntimeException e) {
             // A failing scan must not cancel the periodic task.
             LOG.log(System.Logger.Level.WARNING, "session expiry scan failed", e);
+        } finally {
+            current.setContextClassLoader(previous);
         }
     }
 

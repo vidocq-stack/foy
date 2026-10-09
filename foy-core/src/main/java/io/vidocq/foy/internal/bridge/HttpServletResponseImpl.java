@@ -125,10 +125,60 @@ public final class HttpServletResponseImpl implements HttpServletResponse {
             drainWriter();
         }
         setStatus(sc);
-        setHeader("Location", toAbsoluteRedirectUrl(location));
+        setHeader("Location", toAbsoluteRedirectUrl(location == null ? null : encodeLocation(location)));
         // The response is closed: the redirect is committed and any later write is discarded.
         committed = true;
         outputStream.setDiscarding(true);
+    }
+
+    /** The characters a Location URI reference keeps as they are: RFC 3986 unreserved, reserved and '%'. */
+    private static final String LOCATION_PLAIN = "-._~:/?#[]@!$&'()*+,;=%";
+
+    /**
+     * Percent-encodes (UTF-8) every character of a redirect location that is not an RFC 3986
+     * unreserved or reserved character or {@code '%'}: non-ASCII characters, spaces and controls,
+     * CR and LF included. The location therefore never carries a line break, nor a character that a
+     * byte-per-char header writer would turn into one (U+010D U+010A become CR LF once truncated).
+     * Existing percent escapes are kept.
+     */
+    static String encodeLocation(String location) {
+        StringBuilder out = null;
+        for (int i = 0; i < location.length(); i++) {
+            char c = location.charAt(i);
+            boolean plain = c < 0x80 && ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
+                    || (c >= '0' && c <= '9') || LOCATION_PLAIN.indexOf(c) >= 0);
+            if (plain) {
+                if (out != null) out.append(c);
+                continue;
+            }
+            if (out == null) out = new StringBuilder(location.length() + 16).append(location, 0, i);
+            int end = Character.isHighSurrogate(c) && i + 1 < location.length()
+                    && Character.isLowSurrogate(location.charAt(i + 1)) ? i + 2 : i + 1;
+            for (byte b : location.substring(i, end).getBytes(StandardCharsets.UTF_8)) {
+                out.append('%').append(HEX.charAt((b >> 4) & 15)).append(HEX.charAt(b & 15));
+            }
+            i = end - 1;
+        }
+        return out == null ? location : out.toString();
+    }
+
+    private static final String HEX = "0123456789ABCDEF";
+
+    /**
+     * Rejects a header name or value that could split the header block or be mangled on the wire:
+     * CR, LF, NUL, or any character above U+00FF (the HTTP/1.1 writer emits one byte per char, so
+     * U+010D U+010A would become CR LF). Common container practice is an
+     * {@link IllegalArgumentException}, which Foy follows for every header entry point.
+     */
+    static void checkHeaderText(String what, String text) {
+        if (text == null) return;
+        for (int i = 0; i < text.length(); i++) {
+            char c = text.charAt(i);
+            if (c == '\r' || c == '\n' || c == 0 || c > 0xff) {
+                throw new IllegalArgumentException("illegal character U+" + String.format("%04X", (int) c)
+                        + " in header " + what);
+            }
+        }
     }
 
     /** Servlet 6.1 §5.8.2 — sendRedirect must produce an absolute URL. */
@@ -187,14 +237,20 @@ public final class HttpServletResponseImpl implements HttpServletResponse {
     void addHeaderInternal(String name, String value) { appendHeader(name, value); }
 
     private void putHeader(String name, String value) {
+        checkHeader(name, value);
         List<String> list = new ArrayList<>();
         list.add(value);
         headers.put(name, list);
         interceptSpecialHeader(name, value);
     }
     private void appendHeader(String name, String value) {
+        checkHeader(name, value);
         headers.computeIfAbsent(name, _ -> new ArrayList<>()).add(value);
         interceptSpecialHeader(name, value);
+    }
+    private static void checkHeader(String name, String value) {
+        checkHeaderText("name", name);
+        checkHeaderText(name, value);
     }
     @Override public void setIntHeader(String name, int value) { setHeader(name, Integer.toString(value)); }
     @Override public void addIntHeader(String name, int value) { addHeader(name, Integer.toString(value)); }
@@ -238,6 +294,7 @@ public final class HttpServletResponseImpl implements HttpServletResponse {
 
     @Override public void addCookie(Cookie cookie) {
         if (isCommitted()) return;
+        io.vidocq.foy.internal.http.CookieCodec.checkSerializable(cookie);
         cookies.add(cookie);
     }
     public List<Cookie> cookies() { return cookies; }
@@ -261,6 +318,7 @@ public final class HttpServletResponseImpl implements HttpServletResponse {
     @Override public void setContentType(String type) {
         // Servlet 6.1 §5.4: setContentType is silently ignored once the response is committed.
         if (isCommitted()) return;
+        checkHeaderText("Content-Type", type);
         this.contentType = type;
         if (type == null) return;
         int idx = type.toLowerCase(Locale.ROOT).indexOf("charset=");
@@ -291,6 +349,7 @@ public final class HttpServletResponseImpl implements HttpServletResponse {
     }
     @Override public void setCharacterEncoding(String charset) {
         if (isCommitted() || charsetLocked) return;
+        checkHeaderText("Content-Type", charset);
         this.characterEncoding = charset;
         this.charsetExplicit = (charset != null);
         refreshContentTypeHeader();

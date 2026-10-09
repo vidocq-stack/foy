@@ -328,6 +328,41 @@ class SessionCoreTest {
     }
 
     @Test
+    void reaperFiresListenersWithTheApplicationClassLoader() throws Exception {
+        ClassLoader original = Thread.currentThread().getContextClassLoader();
+        var appLoader = new ClassLoader(original) {};
+        var otherLoader = new ClassLoader(original) {};
+        var seen = new java.util.concurrent.atomic.AtomicReference<ClassLoader>();
+        var destroyed = new java.util.concurrent.CountDownLatch(1);
+        var registry = new ListenerRegistry();
+        registry.register(new jakarta.servlet.http.HttpSessionListener() {
+            @Override public void sessionDestroyed(jakarta.servlet.http.HttpSessionEvent se) {
+                seen.set(Thread.currentThread().getContextClassLoader());
+                destroyed.countDown();
+            }
+        });
+        SessionManager m;
+        Thread.currentThread().setContextClassLoader(appLoader);
+        try {
+            // Deployment: the application's class loader is the context class loader.
+            m = new SessionManager(new InMemorySessionStore(), new VidocqServletContext("/"), 1);
+        } finally {
+            Thread.currentThread().setContextClassLoader(original);
+        }
+        manager = m;
+        m.setListenerRegistry(registry);
+        m.createNew();
+        Thread.currentThread().setContextClassLoader(otherLoader);
+        try {
+            m.startReaper(Duration.ofMillis(100));
+        } finally {
+            Thread.currentThread().setContextClassLoader(original);
+        }
+        assertTrue(destroyed.await(5, TimeUnit.SECONDS), "sessionDestroyed not fired by the reaper");
+        assertSame(appLoader, seen.get());
+    }
+
+    @Test
     void lazyExpiryFiresSessionDestroyed() throws Exception {
         var probe = new Probe();
         var store = new InMemorySessionStore();

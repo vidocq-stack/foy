@@ -78,6 +78,34 @@ public final class CookieCodec {
         return serializeSetCookie(c, java.time.Clock.systemUTC());
     }
 
+    /**
+     * Rejects, with an {@link IllegalArgumentException}, a cookie whose name, value, path, domain
+     * or attributes hold CR, LF, NUL or a character above U+00FF: serialised into a
+     * {@code Set-Cookie} header, such a character could split the header block (the HTTP/1.1
+     * writer emits one byte per char).
+     */
+    public static void checkSerializable(Cookie c) {
+        check("cookie name", c.getName());
+        check("cookie value", c.getValue());
+        check("cookie path", c.getPath());
+        check("cookie domain", c.getDomain());
+        for (var e : c.getAttributes().entrySet()) {
+            check("cookie attribute", e.getKey());
+            check("cookie attribute", e.getValue());
+        }
+    }
+
+    private static void check(String what, String text) {
+        if (text == null) return;
+        for (int i = 0; i < text.length(); i++) {
+            char ch = text.charAt(i);
+            if (ch == '\r' || ch == '\n' || ch == 0 || ch > 0xff) {
+                throw new IllegalArgumentException("illegal character U+" + String.format("%04X", (int) ch)
+                        + " in " + what);
+            }
+        }
+    }
+
     /** RFC 7231 §7.1.1.1 IMF-fixdate, e.g. {@code Sun, 06 Nov 1994 08:49:37 GMT}. */
     public static String formatImfFixdate(java.time.Instant instant) {
         return IMF_FIXDATE.format(instant);
@@ -89,6 +117,7 @@ public final class CookieCodec {
 
     /** Package-private seam: the clock drives {@code Expires} so tests can pin it. */
     static String serializeSetCookie(Cookie c, java.time.Clock clock) {
+        checkSerializable(c);
         StringBuilder sb = new StringBuilder();
         sb.append(c.getName()).append('=').append(c.getValue() == null ? "" : c.getValue());
         if (c.getPath() != null) sb.append("; Path=").append(c.getPath());
