@@ -166,9 +166,11 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
         String servletPath = DispatchResolver.servletPathFor(m, path);
         String pathInfo = DispatchResolver.pathInfoFor(m, path, servletPath);
         DispatchTarget target = new DispatchTarget(m.servlet(), m.servletName(), path, servletPath,
-                pathInfo, request.query(), m.asyncSupported());
+                pathInfo, request.query(), m.asyncSupported(),
+                DispatchResolver.mappingFor(m, path, servletPath));
         req = new HttpServletRequestImpl(request, servletContext, contextPath, servletPath, pathInfo,
                 sessionManager);
+        req.setHttpServletMapping(target.mapping());
         req.bindResponse(res);
         // §2.3.3.3: async only when the servlet and every filter of the chain support it.
         req.setAsyncSupported(m.asyncSupported() && filterRegistry.asyncSupported(path, DispatcherType.REQUEST));

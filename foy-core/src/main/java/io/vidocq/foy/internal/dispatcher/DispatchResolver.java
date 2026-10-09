@@ -49,7 +49,8 @@ public final class DispatchResolver {
         String servletPath = servletPathFor(m, justPath);
         String pathInfo = pathInfoFor(m, justPath, servletPath);
         return Optional.of(new DispatchTarget(m.servlet(), m.servletName(),
-                justPath, servletPath, pathInfo, queryString, m.asyncSupported()));
+                justPath, servletPath, pathInfo, queryString, m.asyncSupported(),
+                mappingFor(m, justPath, servletPath)));
     }
 
     public static String servletPathFor(ServletDispatcher.Mapping m, String path) {
@@ -60,7 +61,8 @@ public final class DispatchResolver {
                 yield prefix.substring(0, prefix.length() - 2);
             }
             case EXTENSION -> path;
-            case DEFAULT, EMPTY -> "";
+            case DEFAULT -> path;
+            case EMPTY -> "";
         };
     }
 
@@ -72,10 +74,36 @@ public final class DispatchResolver {
                 // Pas de path associé — servletPath/pathInfo/query laissés vides pour un
                 // dispatcher nommé (§9.3 : ne reflète pas l'URL d'origine).
                 return Optional.of(new DispatchTarget(m.servlet(), m.servletName(),
-                        "/", "", null, null, m.asyncSupported()));
+                        "/", "", null, null, m.asyncSupported(), null));
             }
         }
         return Optional.empty();
+    }
+
+    /** Builds the {@link jakarta.servlet.http.HttpServletMapping} of a match (Servlet 6.1 section 12.2). */
+    public static jakarta.servlet.http.HttpServletMapping mappingFor(ServletDispatcher.Mapping m,
+                                                                    String path, String servletPath) {
+        String pattern = m.matcher().pattern();
+        var match = switch (m.matcher().kind()) {
+            case EXACT -> jakarta.servlet.http.MappingMatch.EXACT;
+            case PREFIX -> jakarta.servlet.http.MappingMatch.PATH;
+            case EXTENSION -> jakarta.servlet.http.MappingMatch.EXTENSION;
+            case DEFAULT -> jakarta.servlet.http.MappingMatch.DEFAULT;
+            case EMPTY -> jakarta.servlet.http.MappingMatch.CONTEXT_ROOT;
+        };
+        String value = switch (m.matcher().kind()) {
+            case EXACT -> pattern.substring(1);
+            case PREFIX -> {
+                String rest = path.substring(servletPath.length());
+                yield rest.startsWith("/") ? rest.substring(1) : rest;
+            }
+            case EXTENSION -> {
+                String p = path.startsWith("/") ? path.substring(1) : path;
+                yield p.substring(0, p.length() - (pattern.length() - 1));
+            }
+            case DEFAULT, EMPTY -> "";
+        };
+        return new ServletMappingImpl(value, pattern, m.servletName(), match);
     }
 
     public static String pathInfoFor(ServletDispatcher.Mapping m, String path, String servletPath) {
@@ -84,7 +112,8 @@ public final class DispatchResolver {
                 String rest = path.substring(servletPath.length());
                 yield rest.isEmpty() ? null : rest;
             }
-            case EXACT, EXTENSION, DEFAULT, EMPTY -> null;
+            case EXACT, EXTENSION, DEFAULT -> null;
+            case EMPTY -> "/";
         };
     }
 }

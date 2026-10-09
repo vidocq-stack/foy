@@ -500,8 +500,11 @@ public final class HttpServletRequestImpl implements HttpServletRequest {
         return servletContext.getRequestDispatcher(absolute);
     }
     @Override public HttpServletMapping getHttpServletMapping() {
-        throw new UnsupportedOperationException();
+        HttpServletMapping m = mapping;
+        return m != null ? m : new io.vidocq.foy.internal.dispatcher.ServletMappingImpl("", "", "", null);
     }
+    public void setHttpServletMapping(HttpServletMapping mapping) { this.mapping = mapping; }
+    private HttpServletMapping mapping;
 
     // ---- Unimplemented Servlet 6.1 features (future milestones) ----
 

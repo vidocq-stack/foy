@@ -97,6 +97,9 @@ public final class AsyncDispatchRequest extends HttpServletRequestWrapper {
     }
 
     @Override public DispatcherType getDispatcherType() { return DispatcherType.ASYNC; }
+    @Override public jakarta.servlet.http.HttpServletMapping getHttpServletMapping() {
+        return target.mapping() != null ? target.mapping() : super.getHttpServletMapping();
+    }
     @Override public String getServletPath() { return target.servletPath(); }
     @Override public String getPathInfo() { return target.pathInfo(); }
     @Override public String getQueryString() { return target.queryString(); }

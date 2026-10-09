@@ -20,10 +20,13 @@
 package io.vidocq.foy.internal.dispatcher;
 
 import jakarta.servlet.Servlet;
+import jakarta.servlet.http.HttpServletMapping;
 
 /**
  * Resolved target of a servlet dispatch: the servlet and contact details
  * URL it will see ({@code servletPath}, {@code pathInfo}, {@code queryString}).
+ * {@code mapping} is the {@link HttpServletMapping} of the match, or {@code null} for a
+ * named dispatch (which keeps the caller's mapping).
  */
 public record DispatchTarget(Servlet servlet,
                              String servletName,
@@ -31,9 +34,10 @@ public record DispatchTarget(Servlet servlet,
                              String servletPath,
                              String pathInfo,
                              String queryString,
-                             boolean asyncSupported) {
+                             boolean asyncSupported,
+                             HttpServletMapping mapping) {
     /** Clone with a new queryString (used for async dispatches). */
     public DispatchTarget withQueryString(String qs) {
-        return new DispatchTarget(servlet, servletName, path, servletPath, pathInfo, qs, asyncSupported);
+        return new DispatchTarget(servlet, servletName, path, servletPath, pathInfo, qs, asyncSupported, mapping);
     }
 }

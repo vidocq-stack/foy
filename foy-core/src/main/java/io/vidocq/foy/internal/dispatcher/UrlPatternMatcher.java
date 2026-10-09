@@ -32,7 +32,7 @@ import java.util.Objects;
  * </ol>
  *
  * <p>The order of precedence is strict: exact > prefix (descending length)
- * > extension > default.</p>
+ * > extension > default, the empty pattern being an exact match.</p>
  */
 public final class UrlPatternMatcher {
 
@@ -98,7 +98,7 @@ public final class UrlPatternMatcher {
 
     /**
      * Precedence to choose one match from several. Smaller = better.
-     * Exact = 0, prefix long = 1 (+ negative length), extension = 2, default = 3, empty = 4.
+     * Exact = 0, prefix long = 1 (+ negative length), extension = 2, default = 3; the empty (context-root) pattern is an exact match and ranks first.
      */
     public int precedence() {
         return switch (kind) {
@@ -106,7 +106,7 @@ public final class UrlPatternMatcher {
             case PREFIX -> 1_000 - pattern.length(); // plus long = meilleur
             case EXTENSION -> 10_000;
             case DEFAULT -> 100_000;
-            case EMPTY -> 1_000_000;
+            case EMPTY -> -1; // context-root exact match: above everything
         };
     }
 }

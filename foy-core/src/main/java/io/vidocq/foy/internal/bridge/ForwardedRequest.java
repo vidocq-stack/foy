@@ -71,6 +71,10 @@ public final class ForwardedRequest extends HttpServletRequestWrapper {
     @Override public String getPathInfo() { return target.pathInfo(); }
     @Override public String getQueryString() { return target.queryString(); }
     @Override public DispatcherType getDispatcherType() { return DispatcherType.FORWARD; }
+    /** The target's mapping; a named forward (no mapping) keeps the caller's. */
+    @Override public jakarta.servlet.http.HttpServletMapping getHttpServletMapping() {
+        return target.mapping() != null ? target.mapping() : super.getHttpServletMapping();
+    }
 
     // §9.4 : pendant un forward, les paramètres de la request doivent être
     // l'agrégation des paramètres originaux *et* de ceux de la nouvelle

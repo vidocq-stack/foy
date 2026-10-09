@@ -98,6 +98,10 @@ public final class RequestDispatcherImpl implements RequestDispatcher {
         req.setAttribute("jakarta.servlet.forward.path_info", req.getPathInfo());
         req.setAttribute("jakarta.servlet.forward.query_string", req.getQueryString());
 
+        if (target.mapping() != null) {
+            req.setAttribute("jakarta.servlet.forward.mapping", req.getHttpServletMapping());
+        }
+
         var wrappedReq = new ForwardedRequest(req, target);
         invoker.invoke(target, wrappedReq, res, DispatcherType.FORWARD);
         // Note : fullUri n'est pas exposé directement ; il est reconstituable via getRequestURI() du wrapper.
@@ -119,6 +123,10 @@ public final class RequestDispatcherImpl implements RequestDispatcher {
         req.setAttribute("jakarta.servlet.include.servlet_path", target.servletPath());
         req.setAttribute("jakarta.servlet.include.path_info", target.pathInfo());
         req.setAttribute("jakarta.servlet.include.query_string", target.queryString());
+
+        if (target.mapping() != null) {
+            req.setAttribute("jakarta.servlet.include.mapping", target.mapping());
+        }
 
         var wrappedReq = new IncludedRequest(req, target);
         var wrappedRes = new IncludedResponse(res);
