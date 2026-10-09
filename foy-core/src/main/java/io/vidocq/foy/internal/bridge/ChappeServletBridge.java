@@ -181,6 +181,7 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
             req.setCanonicalPath(path);
             req.bindResponse(res);
             req.setUrlSessionId(finalUrlSessionId);
+            req.accessRequestedSession();
             List<Filter> filters = filterRegistry.chainFor(path, DispatcherType.REQUEST);
             if (filters.isEmpty()) {
                 // Pas de mapping ni de filtre : 404 + error-page si mappée (§9.9.1).
@@ -219,6 +220,7 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
         req.setAsyncSupported(m.asyncSupported()
                 && filterRegistry.asyncSupported(path, DispatcherType.REQUEST, m.servletName()));
         req.setUrlSessionId(finalUrlSessionId);
+        req.accessRequestedSession();
 
         registry.fireRequestInitialized(servletContext, req);
         Throwable thrown = null;

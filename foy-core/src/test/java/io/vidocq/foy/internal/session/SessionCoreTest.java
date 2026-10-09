@@ -123,6 +123,7 @@ class SessionCoreTest {
                     HttpSession s = req.getSession(true);
                     out.write("LA=" + s.getLastAccessedTime() + "|CT=" + s.getCreationTime());
                 }
+                case "untouched" -> out.write("UNTOUCHED");
                 default -> out.write("?");
             }
         }
@@ -249,6 +250,27 @@ class SessionCoreTest {
         Thread.sleep(30);
         var third = get("/ctx/s/last", cookie);
         assertTrue(Long.parseLong(third.value("LA")) >= beforeSecond, "the second request is now the last access");
+    }
+
+    /**
+     * Section 7.6: a session is accessed when a request that is part of it is handled, whether or
+     * not the application calls {@code getSession} (the TCK's expireHttpSessionTest fetches a static
+     * page between two session requests and expects that page to be the last access).
+     */
+    @Test
+    void aRequestCarryingTheSessionIdAccessesTheSessionWithoutGetSession() throws Exception {
+        deploy(WebAppModel.builder("/ctx").servlet(ops()));
+        var first = get("/ctx/s/last", null);
+        String cookie = first.headers("Set-Cookie").getFirst().split(";")[0];
+        Thread.sleep(30);
+        long before = System.currentTimeMillis();
+        assertEquals("UNTOUCHED", get("/ctx/s/untouched", cookie).body());
+        long after = System.currentTimeMillis();
+        Thread.sleep(30);
+        long la = Long.parseLong(get("/ctx/s/last", cookie).value("LA"));
+        assertTrue(la >= before && la <= after,
+                "last accessed " + la + " must be the request that did not call getSession, in [" + before
+                        + ", " + after + "]");
     }
 
     // ---- expiry ----

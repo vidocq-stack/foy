@@ -261,3 +261,32 @@ Statuts : `OPEN` → `INVESTIGATING` → `FIXED` (commit hash) → `CLOSED`.
   - 2026-10-09 (fix round 2) : session fixation — with both a `;jsessionid=` and a session
     cookie, the URL id won; the cookie now wins when `COOKIE` is effective (Tomcat), the path
     parameter applies only without a session cookie.
+
+## BUG-20261009-08 — HttpSessionTests.expireHttpSessionTest flaky: a request not calling getSession does not access the session
+
+- **Date** : 2026-10-09
+- **Statut** : FIXED (Phase 4 Task 4.10, `fix(core): access the requested session on every request`)
+- **Module touché** : `foy-core` (`ChappeServletBridge.handle`, `HttpServletRequestImpl`)
+- **Symptôme** : api `HttpSessionTests.expireHttpSessionTest` passed in some TCK runs and failed
+  in others, in isolation too. The failure is in its `getLastAccessedTime` step, not the expiry:
+  `Session created before 1791573543421 ... last accessed at 1791573543420 which is before
+  creation` (`task49b-api.log`).
+- **Reproduction minimale** : `./run-official-tck-servlet6.1.sh --no-install
+  -Dtest=servlet.tck.api.jakarta_servlet_http.httpsession.HttpSessionTests` (intermittent);
+  deterministic: `SessionCoreTest.aRequestCarryingTheSessionIdAccessesTheSessionWithoutGetSession`.
+- **Hypothèse de cause** : the test sets the max interval (request 1), records `t1` on the
+  client, fetches the static `/index.html` with the session cookie, records `t2`, then asks for
+  `t1 <= getLastAccessedTime() <= t2`, i.e. it expects the static request to be the last access
+  (section 7.6: "accessed when a request that is part of the session is first handled"). Foy
+  began an access only when the application called `getSession`, which the default servlet
+  never does, so the last access stayed the end of request 1. That end is recorded before the
+  response is written, so it is `< t1` unless the client read the reply within the same
+  millisecond: pass or fail depended on timing.
+- **Investigations** :
+  - 2026-10-09 : javap of `HttpSessionTests`/`GetLastAccessedTime` (data only) confirmed the
+    three-request sequence; failure message reproduced from the TCK log. Fix: the bridge calls
+    `HttpServletRequestImpl.accessRequestedSession()` once the request is set up, before any
+    filter or servlet, which resolves the requested session (`getSession(false)`, as Tomcat's
+    `ALWAYS_ACCESS_SESSION`) so that every request carrying a valid id begins and ends an access
+    (and keeps the session from expiring while it runs). 5 consecutive isolated TCK runs of
+    `HttpSessionTests`: 25/25 each.

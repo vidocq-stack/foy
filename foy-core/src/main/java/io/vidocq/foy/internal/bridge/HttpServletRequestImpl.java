@@ -640,6 +640,19 @@ public final class HttpServletRequestImpl implements HttpServletRequest {
 
     public HttpSessionImpl boundSession() { return currentSession; }
 
+    /**
+     * Section 7.6: "the session is considered to be accessed when a request that is part of the
+     * session is first handled by the container". Called by the bridge once the request is set
+     * up, before any filter or servlet runs: the session the client named (if valid) begins an
+     * access now, whether or not the application calls {@code getSession}, so that the end of this
+     * request becomes its last-accessed time and it cannot expire while the request runs.
+     */
+    public void accessRequestedSession() {
+        if (sessionManager != null && currentSession == null && getRequestedSessionId() != null) {
+            getSession(false);
+        }
+    }
+
     /** Sessions this request began an access to; ended by {@link #endSessionAccess()}. */
     private final java.util.List<HttpSessionImpl> accessedSessions = new java.util.ArrayList<>(1);
 
