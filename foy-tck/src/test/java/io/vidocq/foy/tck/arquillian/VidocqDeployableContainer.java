@@ -35,6 +35,7 @@ import io.vidocq.foy.internal.webxml.FragmentMerger;
 import io.vidocq.foy.internal.webxml.FragmentOrderer;
 import io.vidocq.foy.internal.webxml.WebAppDescriptor;
 import io.vidocq.foy.tck.ServletTestHarness;
+import io.vidocq.foy.tck.ServletTestHost;
 import jakarta.servlet.ServletContainerInitializer;
 import jakarta.servlet.ServletException;
 import org.jboss.arquillian.container.spi.client.container.DeployableContainer;
@@ -78,7 +79,8 @@ import java.util.function.Supplier;
 public class VidocqDeployableContainer implements DeployableContainer<VidocqContainerConfiguration> {
 
     private VidocqContainerConfiguration config;
-    private ServletTestHarness harness;
+    /** The one server of this container, started by the first deployment, stopped by {@link #stop()}. */
+    private ServletTestHost host;
     /** Multi-deployment support (Arquillian can deploy several WARs for a test). */
     private final java.util.LinkedHashMap<String, ServletTestHarness> harnessesByArchive = new java.util.LinkedHashMap<>();
     /** The component registry of each deployed archive, for the undeploy tier statistics. */
@@ -101,7 +103,7 @@ public class VidocqDeployableContainer implements DeployableContainer<VidocqCont
 
     @Override
     public void start() throws LifecycleException {
-        // Harness déploiement-par-déploiement : démarré dans deploy(), arrêté dans undeploy().
+        // The shared host starts with the first deployment (deploy()) and stops in stop().
     }
 
     @Override
@@ -113,7 +115,7 @@ public class VidocqDeployableContainer implements DeployableContainer<VidocqCont
         registriesByArchive.forEach((name, registry) ->
                 System.err.println("[VidocqTCK] undeploy archive=" + name + " tiers=" + registry.stats()));
         registriesByArchive.clear();
-        if (harness != null) { harness.close(); harness = null; }
+        if (host != null) { host.close(); host = null; }
     }
 
     @Override
@@ -171,8 +173,11 @@ public class VidocqDeployableContainer implements DeployableContainer<VidocqCont
         // dynamic addMapping of it is refused and reported in the conflict set.
         for (var m : effective.servletMappings()) if (m.urlPattern() != null) reservedPatterns.add(m.urlPattern());
 
+        ServletTestHarness harness;
         try {
+            if (host == null) host = new ServletTestHost();
             harness = ServletTestHarness.builder()
+                .host(host)
                 .model(model)
                 .registry(registry)
                 .componentFactory(factory)
@@ -278,7 +283,6 @@ public class VidocqDeployableContainer implements DeployableContainer<VidocqCont
     public void undeploy(Archive<?> archive) {
         ServletTestHarness h = harnessesByArchive.remove(archive.getName());
         if (h != null) h.close();
-        if (harness == h) harness = null;
         WebComponentRegistry registry = registriesByArchive.remove(archive.getName());
         if (registry != null) {
             System.err.println("[VidocqTCK] undeploy archive=" + archive.getName() + " tiers=" + registry.stats());

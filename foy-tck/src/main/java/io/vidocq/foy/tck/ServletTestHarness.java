@@ -80,15 +80,18 @@ public final class ServletTestHarness implements AutoCloseable {
     private static final System.Logger LOG = System.getLogger(ServletTestHarness.class.getName());
 
     private final Server server;
+    /** The shared host this deployment is mounted on, or {@code null} when it owns its server. */
+    private final ServletTestHost host;
     private final int port;
     private final HttpClient client;
     private final String contextPath;
     private final Deployment deployment;
     private final WebAppModel model;
 
-    private ServletTestHarness(Server server, int port, String contextPath, Deployment deployment,
-                               WebAppModel model) {
+    private ServletTestHarness(Server server, ServletTestHost host, int port, String contextPath,
+                               Deployment deployment, WebAppModel model) {
         this.server = server;
+        this.host = host;
         this.model = model;
         this.port = port;
         this.contextPath = contextPath;
@@ -117,6 +120,7 @@ public final class ServletTestHarness implements AutoCloseable {
     }
 
     @Override public void close() {
+        if (host != null) host.unmount(contextPath);
         if (server != null) server.stop();
         deployment.close();
     }
@@ -272,6 +276,13 @@ public final class ServletTestHarness implements AutoCloseable {
             this.resourceProvider = provider; return this;
         }
 
+        private ServletTestHost host;
+        /**
+         * Mounts the deployment on a shared {@link ServletTestHost} (under its context path)
+         * instead of starting a server of its own; closing the harness then only unmounts it.
+         */
+        public Builder host(ServletTestHost h) { this.host = h; return this; }
+
         private WebComponentRegistry registry;
         /** The registry resolving every component of the deployment; a fresh one by default. */
         public Builder registry(WebComponentRegistry r) { this.registry = r; return this; }
@@ -294,8 +305,17 @@ public final class ServletTestHarness implements AutoCloseable {
                     .withReserved(reservedServletNames, reservedFilterNames, reservedUrlPatterns);
             if (handlesTypes != null) options = options.withHandlesTypes(handlesTypes);
             Deployment d = WebAppDeployer.deploy(built, options);
+            if (host != null) {
+                try {
+                    host.mount(built.contextPath(), d.handler());
+                } catch (RuntimeException e) {
+                    d.close();
+                    throw e;
+                }
+                return new ServletTestHarness(null, host, host.port(), built.contextPath(), d, built);
+            }
             int port = startServerWithRetry(d.handler());
-            return new ServletTestHarness(currentServer, port, built.contextPath(), d, built);
+            return new ServletTestHarness(currentServer, null, port, built.contextPath(), d, built);
         }
 
         /** Appends the pre-built instances registered on this builder (conformance tests). */

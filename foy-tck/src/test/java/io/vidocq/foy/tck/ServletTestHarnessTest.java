@@ -230,6 +230,34 @@ class ServletTestHarnessTest {
         };
     }
 
+    @Test
+    void twoWarsOfOneContainerShareOneHostAndUndeployIndependently() throws Exception {
+        WebArchive one = ShrinkWrap.create(WebArchive.class, "host_one_web.war").addClass(AnnotatedServlet.class);
+        WebArchive two = ShrinkWrap.create(WebArchive.class, "host_two_web.war").addClass(AnnotatedServlet.class);
+        var container = new VidocqDeployableContainer();
+        container.setup(new VidocqContainerConfiguration());
+        try (var client = HttpClient.newHttpClient()) {
+            var c1 = container.deploy(one).getContexts(HTTPContext.class).iterator().next();
+            var c2 = container.deploy(two).getContexts(HTTPContext.class).iterator().next();
+            assertEquals(c1.getPort(), c2.getPort());
+            String host = "http://" + c1.getHost() + ":" + c1.getPort();
+            assertEquals("annotated", fetch(client, host + "/host_one_web/annotated").body());
+            assertEquals("annotated", fetch(client, host + "/host_two_web/annotated").body());
+            assertEquals(404, fetch(client, host + "/unknown/annotated").statusCode());
+            container.undeploy(one);
+            assertEquals(404, fetch(client, host + "/host_one_web/annotated").statusCode());
+            assertEquals("annotated", fetch(client, host + "/host_two_web/annotated").body());
+        } finally {
+            container.undeploy(two);
+            container.stop();
+        }
+    }
+
+    private static HttpResponse<String> fetch(HttpClient client, String url) throws Exception {
+        return client.send(HttpRequest.newBuilder(URI.create(url)).GET().build(),
+                HttpResponse.BodyHandlers.ofString());
+    }
+
     /** A war deployed through the Arquillian container, the way the official TCK deploys it. */
     private static final class Deployed implements AutoCloseable {
         private final VidocqDeployableContainer container = new VidocqDeployableContainer();
@@ -253,6 +281,7 @@ class ServletTestHarnessTest {
 
         @Override public void close() {
             container.undeploy(war);
+            try { container.stop(); } catch (Exception e) { throw new IllegalStateException(e); }
         }
     }
 
