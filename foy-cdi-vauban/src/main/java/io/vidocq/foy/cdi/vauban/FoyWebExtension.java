@@ -19,6 +19,7 @@
  */
 package io.vidocq.foy.cdi.vauban;
 
+import io.vidocq.foy.internal.cdi.FoySessionContext;
 import io.vidocq.foy.spi.cdi.CdiWebComponents;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.enterprise.context.ConversationScoped;
@@ -31,8 +32,10 @@ import jakarta.enterprise.inject.Stereotype;
 import jakarta.enterprise.inject.build.compatible.spi.BeanInfo;
 import jakarta.enterprise.inject.build.compatible.spi.BuildCompatibleExtension;
 import jakarta.enterprise.inject.build.compatible.spi.ClassConfig;
+import jakarta.enterprise.inject.build.compatible.spi.Discovery;
 import jakarta.enterprise.inject.build.compatible.spi.Enhancement;
 import jakarta.enterprise.inject.build.compatible.spi.Messages;
+import jakarta.enterprise.inject.build.compatible.spi.MetaAnnotations;
 import jakarta.enterprise.inject.build.compatible.spi.Registration;
 import jakarta.enterprise.inject.build.compatible.spi.Synthesis;
 import jakarta.enterprise.inject.build.compatible.spi.SyntheticComponents;
@@ -63,6 +66,9 @@ import java.util.TreeMap;
  * <p>Run at build time by vauban's annotation processor (found through
  * {@code ServiceLoader} when foy-cdi-vauban is on the processor path):</p>
  * <ul>
+ *   <li>{@link #sessionContext} gives Vauban Foy's context for {@code @SessionScoped} (foy#21):
+ *       Vauban has no session context of its own, and no portable extension support for foy-core's
+ *       {@code FoySessionScopeExtension}.</li>
  *   <li>{@link #defaultScope} gives a web component without a bean-defining annotation the
  *       {@code @Dependent} scope, so CDI injects it; Foy calls each factory once, so servlets
  *       and filters stay singletons per declaration (Servlet 6.1 §2.2).</li>
@@ -110,6 +116,21 @@ public class FoyWebExtension implements BuildCompatibleExtension {
 
     /** Public no-arg constructor, required by {@code ServiceLoader}. */
     public FoyWebExtension() {}
+
+    /**
+     * Registers Foy's session context. The overload without the {@code boolean} reads
+     * {@code @NormalScope} from {@code SessionScoped}; the {@code boolean} overload would declare the
+     * scope non-passivating (on Weld, through its lite extension translator). This method runs only
+     * on Vauban: on CDI Full containers foy-core's portable extension registers the context, and a
+     * build compatible extension may not define a context for a built-in scope of CDI Full
+     * (CDI 4.1 §6.7).
+     *
+     * @param meta the meta-annotations of the deployment
+     */
+    @Discovery
+    public void sessionContext(MetaAnnotations meta) {
+        meta.addContext(SessionScoped.class, FoySessionContext.class);
+    }
 
     /**
      * Web components without a scope become {@code @Dependent} beans (one instance per declaration,

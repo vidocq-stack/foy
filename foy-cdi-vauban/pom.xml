@@ -19,6 +19,11 @@
             <groupId>io.vidocq.foy</groupId>
             <artifactId>foy-api</artifactId>
         </dependency>
+        <!-- FoySessionContext (foy#21), named by FoyWebExtension's @Discovery. -->
+        <dependency>
+            <groupId>io.vidocq.foy</groupId>
+            <artifactId>foy-core</artifactId>
+        </dependency>
         <dependency>
             <groupId>jakarta.servlet</groupId>
             <artifactId>jakarta.servlet-api</artifactId>
@@ -98,8 +103,10 @@
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-surefire-plugin</artifactId>
                 <configuration>
-                    <!-- Keep the module path; only add the JDK modules the test reads. -->
-                    <argLine>--add-modules java.compiler,java.net.http --add-reads io.vidocq.foy.cdi.vauban=java.compiler,java.net.http</argLine>
+                    <!-- Keep the module path; only add the JDK modules the test reads, and chappe-api,
+                         which foy-core (a compile dependency) puts on the module path while the
+                         main module does not read it. -->
+                    <argLine>--add-modules java.compiler,java.net.http --add-reads io.vidocq.foy.cdi.vauban=java.compiler,java.net.http,io.vidocq.chappe.api</argLine>
                 </configuration>
             </plugin>
         </plugins>

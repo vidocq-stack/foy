@@ -26,6 +26,7 @@ import io.vidocq.vauban.core.container.VaubanContainer;
 import jakarta.enterprise.context.Dependent;
 import jakarta.enterprise.inject.build.compatible.spi.BuildCompatibleExtension;
 import jakarta.inject.Singleton;
+import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -38,6 +39,8 @@ import javax.tools.ToolProvider;
 import java.io.File;
 import java.lang.module.ModuleFinder;
 import java.io.IOException;
+import java.net.CookieManager;
+import java.net.CookiePolicy;
 import java.net.ServerSocket;
 import java.net.URI;
 import java.net.URL;
@@ -354,6 +357,63 @@ class FoyWebExtensionTest {
                     assertEquals(200, response.statusCode(), path + ": " + response.body());
                     assertEquals(path, response.body());
                 }
+            } finally {
+                server.stop();
+                mounted.close();
+            }
+        }
+    }
+
+    @Test
+    @Disabled("Vauban drops MetaAnnotations.addContext contexts when every bean source is pre-processed "
+            + "(BUG-20261010-08; upstream issue drafted in docs/superpowers/plans/2026-10-10-cdi-session-context.md, Appendix A)")
+    @DisplayName("end to end, processed build: a @SessionScoped bean is one instance per session")
+    void sessionScopedBeanThroughAProcessedBuild() throws Exception {
+        var result = compile(ProcessorPath.CLASS_PATH, """
+                package psess.app;
+
+                @jakarta.enterprise.context.SessionScoped
+                public class Cart implements java.io.Serializable {
+                    private final String id = java.util.UUID.randomUUID().toString();
+
+                    public String id() {
+                        return id;
+                    }
+                }
+                """, """
+                package psess.app;
+
+                @jakarta.servlet.annotation.WebServlet("/cart")
+                public class CartServlet extends jakarta.servlet.http.HttpServlet {
+                    @jakarta.inject.Inject
+                    Cart cart;
+
+                    @Override
+                    protected void doGet(jakarta.servlet.http.HttpServletRequest q,
+                            jakarta.servlet.http.HttpServletResponse r) throws java.io.IOException {
+                        r.getWriter().write(cart.id());
+                    }
+                }
+                """);
+        assertTrue(result.success(), result::messages);
+
+        try (var loader = result.loader();
+             var container = withTccl(loader, () -> boot(loader))) {
+            var mounted = withTccl(loader, () -> FoyChappeBoot.builder()
+                    .beanManager(container.getBeanManager()).classLoader(loader).contextPath("/").build().orElseThrow());
+            int port;
+            try (var s = new ServerSocket(0)) {
+                port = s.getLocalPort();
+            }
+            Server server = Server.builder().host("127.0.0.1").port(port).handler(mounted.handler()).build();
+            server.start();
+            try {
+                var client = HttpClient.newBuilder().cookieHandler(new CookieManager(null, CookiePolicy.ACCEPT_ALL)).build();
+                var uri = URI.create("http://127.0.0.1:" + port + "/cart");
+                var first = client.send(HttpRequest.newBuilder(uri).build(), HttpResponse.BodyHandlers.ofString());
+                var second = client.send(HttpRequest.newBuilder(uri).build(), HttpResponse.BodyHandlers.ofString());
+                assertEquals(200, first.statusCode(), first::body);
+                assertEquals(first.body(), second.body());
             } finally {
                 server.stop();
                 mounted.close();

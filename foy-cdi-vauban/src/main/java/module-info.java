@@ -19,6 +19,7 @@
  */
 module io.vidocq.foy.cdi.vauban {
     requires transitive io.vidocq.foy.api;
+    requires io.vidocq.foy.core;
     requires jakarta.cdi;
     requires io.vidocq.vauban.core;
 
