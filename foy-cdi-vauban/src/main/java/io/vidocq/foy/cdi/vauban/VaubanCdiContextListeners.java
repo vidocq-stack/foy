@@ -17,14 +17,25 @@
  *
  * SPDX-License-Identifier: EPL-2.0 OR EUPL-1.2 OR GPL-2.0-or-later
  */
-module io.vidocq.foy.api {
-    requires transitive jakarta.servlet;
-    requires static jakarta.annotation;
-    // CdiContextListeners names the BeanManager; only its implementers need CDI.
-    requires static jakarta.cdi;
+package io.vidocq.foy.cdi.vauban;
 
-    exports io.vidocq.foy.spi.session;
-    exports io.vidocq.foy.spi.security;
-    exports io.vidocq.foy.spi.gen;
-    exports io.vidocq.foy.spi.cdi;
+import io.vidocq.foy.spi.cdi.CdiContextListeners;
+import io.vidocq.vauban.core.container.VaubanBeanManager;
+import jakarta.enterprise.inject.spi.BeanManager;
+import java.util.EventListener;
+import java.util.List;
+
+/**
+ * The session scope when Foy runs on Vauban (foy#21): a {@link VaubanWebContextsListener} that
+ * binds each request's {@code HttpSession} to Vauban's session context ({@code vauban-webcontexts})
+ * and ends the context with the session. Nothing for another CDI container.
+ */
+public final class VaubanCdiContextListeners implements CdiContextListeners {
+
+    @Override
+    public List<EventListener> listeners(BeanManager beanManager) {
+        return beanManager instanceof VaubanBeanManager
+                ? List.of(new VaubanWebContextsListener(beanManager))
+                : List.of();
+    }
 }

@@ -21,9 +21,14 @@ module io.vidocq.foy.cdi.vauban {
     requires transitive io.vidocq.foy.api;
     requires jakarta.cdi;
     requires io.vidocq.vauban.core;
+    // The session context (foy#21), driven from the servlet container's request and session events.
+    requires io.vidocq.vauban.webcontexts;
 
     exports io.vidocq.foy.cdi.vauban;
 
     provides jakarta.enterprise.inject.build.compatible.spi.BuildCompatibleExtension
             with io.vidocq.foy.cdi.vauban.FoyWebExtension;
+
+    provides io.vidocq.foy.spi.cdi.CdiContextListeners
+            with io.vidocq.foy.cdi.vauban.VaubanCdiContextListeners;
 }

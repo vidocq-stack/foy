@@ -25,4 +25,6 @@ module io.vidocq.foy.chappe {
     requires jakarta.cdi;
 
     exports io.vidocq.foy.chappe;
+
+    uses io.vidocq.foy.spi.cdi.CdiContextListeners;
 }

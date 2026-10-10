@@ -40,6 +40,7 @@ import io.vidocq.foy.internal.webxml.FragmentOrderer;
 import io.vidocq.foy.internal.webxml.WebAppDescriptor;
 import io.vidocq.foy.internal.webxml.WebXmlParser;
 import io.vidocq.foy.internal.listener.CdiRequestScopeListener;
+import io.vidocq.foy.spi.cdi.CdiContextListeners;
 import jakarta.enterprise.inject.spi.BeanManager;
 import jakarta.servlet.ServletException;
 
@@ -47,9 +48,11 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.net.URL;
 import java.util.ArrayList;
+import java.util.EventListener;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Objects;
+import java.util.ServiceLoader;
 import java.util.Optional;
 import java.util.ServiceConfigurationError;
 import java.util.Set;
@@ -290,6 +293,13 @@ public final class FoyChappeBoot {
             if (beanManager != null) {
                 // The CDI request context, active for each request under any container (foy#18).
                 deployment.listeners().addFirst(new CdiRequestScopeListener(beanManager));
+                // The contexts CDI Lite leaves to the servlet container, the session context first,
+                // driven by the adapter of the CDI implementation in use (foy#21).
+                for (CdiContextListeners provider : ServiceLoader.load(CdiContextListeners.class, loader)) {
+                    for (EventListener listener : provider.listeners(beanManager)) {
+                        deployment.listeners().registerFirst(listener);
+                    }
+                }
             }
 
             String mountPrefix = "/".equals(path) ? "" : path;

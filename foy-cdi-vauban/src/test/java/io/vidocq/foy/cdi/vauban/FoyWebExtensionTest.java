@@ -366,6 +366,63 @@ class FoyWebExtensionTest {
     private enum ProcessorPath { CLASS_PATH, MODULE_PATH }
 
     /** One application loader over several compiled archives. */
+    @Test
+    @DisplayName("@SessionScoped: an application compiled with vauban's processor keeps one instance per HTTP session (foy#21)")
+    void sessionScopedThroughFoyChappeBoot() throws Exception {
+        var result = compile(ProcessorPath.CLASS_PATH, """
+                package session.app;
+
+                @jakarta.enterprise.context.SessionScoped
+                public class Counter implements java.io.Serializable {
+                    private int count;
+
+                    public int next() {
+                        return ++count;
+                    }
+                }
+                """, """
+                package session.app;
+
+                @jakarta.servlet.annotation.WebServlet("/count")
+                public class CountServlet extends jakarta.servlet.http.HttpServlet {
+                    @jakarta.inject.Inject
+                    Counter counter;
+
+                    @Override
+                    protected void doGet(jakarta.servlet.http.HttpServletRequest q,
+                            jakarta.servlet.http.HttpServletResponse r) throws java.io.IOException {
+                        r.getWriter().write(String.valueOf(counter.next()));
+                    }
+                }
+                """);
+        assertTrue(result.success(), result::messages);
+
+        try (var loader = result.loader();
+             var container = withTccl(loader, () -> boot(loader))) {
+            var mounted = withTccl(loader, () -> FoyChappeBoot.builder()
+                    .beanManager(container.getBeanManager()).classLoader(loader).contextPath("/").build().orElseThrow());
+            int port;
+            try (var s = new ServerSocket(0)) {
+                port = s.getLocalPort();
+            }
+            Server server = Server.builder().host("127.0.0.1").port(port).handler(mounted.handler()).build();
+            server.start();
+            try {
+                var uri = URI.create("http://127.0.0.1:" + port + "/count");
+                var alice = HttpClient.newBuilder().cookieHandler(new java.net.CookieManager()).build();
+                var bob = HttpClient.newBuilder().cookieHandler(new java.net.CookieManager()).build();
+                assertEquals("1", alice.send(HttpRequest.newBuilder(uri).build(), HttpResponse.BodyHandlers.ofString()).body());
+                assertEquals("2", alice.send(HttpRequest.newBuilder(uri).build(), HttpResponse.BodyHandlers.ofString()).body(),
+                        "the same instance for the same session");
+                assertEquals("1", bob.send(HttpRequest.newBuilder(uri).build(), HttpResponse.BodyHandlers.ofString()).body(),
+                        "another session, another instance");
+            } finally {
+                server.stop();
+                mounted.close();
+            }
+        }
+    }
+
     private static URLClassLoader loaderOver(Path... archives) throws IOException {
         var urls = new URL[archives.length];
         for (int i = 0; i < archives.length; i++) urls[i] = archives[i].toUri().toURL();

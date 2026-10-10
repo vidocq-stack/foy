@@ -86,6 +86,17 @@ public final class ListenerRegistry {
         requestListeners.add(0, listener);
     }
 
+    /**
+     * Registers a request and session listener of the container itself, ahead of the application's:
+     * it sees a request or a new session first and is told last that it ended. Used for the
+     * listeners that drive CDI contexts ({@code CdiContextListeners}). Call it before the
+     * deployment serves requests.
+     */
+    public void registerFirst(EventListener listener) {
+        if (listener instanceof ServletRequestListener l) requestListeners.add(0, l);
+        if (listener instanceof HttpSessionListener l) sessionListeners.add(0, l);
+    }
+
     public boolean isProgrammatic(EventListener l) {
         return Boolean.TRUE.equals(programmatic.get(l));
     }

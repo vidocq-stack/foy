@@ -32,6 +32,12 @@
             <groupId>io.vidocq.vauban</groupId>
             <artifactId>vauban-core</artifactId>
         </dependency>
+        <!-- The session context (foy#21): this module binds the HttpSession to it. -->
+        <dependency>
+            <groupId>io.vidocq.vauban</groupId>
+            <artifactId>vauban-webcontexts</artifactId>
+            <version>${vauban.version}</version>
+        </dependency>
 
         <!-- Test only: FoyWebExtensionTest compiles tiny apps in-process with vauban's annotation
              processor on the processor path (with this module's classes), then serves them

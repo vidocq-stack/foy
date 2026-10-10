@@ -26,6 +26,9 @@
 
     <modules>
         <module>foy-it-weld</module>
+        <module>foy-it-session-scenarios</module>
+        <module>foy-it-weld-servlet</module>
+        <module>foy-it-vauban-session</module>
     </modules>
 
     <build>

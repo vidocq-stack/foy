@@ -1,0 +1,75 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>io.vidocq.foy</groupId>
+        <artifactId>foy-it-other-containers</artifactId>
+        <version>0.4.0-SNAPSHOT</version>
+    </parent>
+
+    <artifactId>foy-it-weld-servlet</artifactId>
+    <name>Foy :: Integration tests on Weld Servlet</name>
+    <description>Reference for the session scope (foy#21): Foy on Chappe hosts Weld's own Servlet
+        integration (weld-servlet-core), which manages the CDI request and session contexts itself.
+        The session scenarios run here first, against Weld, then unchanged against Foy and Vauban.</description>
+
+    <properties>
+        <!-- Weld 6.0 implements CDI 4.1, the level Foy targets (Weld 7 is CDI 5.0). -->
+        <weld.version>6.0.4.Final</weld.version>
+    </properties>
+
+    <!--
+        Every dependency is test-scoped: the module ships nothing. weld-servlet-core starts Weld
+        from its ServletContainerInitializer, which Foy discovers like any other; Foy is given no
+        BeanManager, so it neither discovers bean web components nor activates any CDI context:
+        Weld's own listener does. The application and the scenarios come from
+        foy-it-session-scenarios: its servlet is declared in WEB-INF/web.xml and reaches its beans
+        through CDI.current().
+    -->
+    <dependencies>
+        <dependency>
+            <groupId>io.vidocq.foy</groupId>
+            <artifactId>foy-it-session-scenarios</artifactId>
+            <version>${project.version}</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>io.vidocq.foy</groupId>
+            <artifactId>foy-chappe</artifactId>
+            <version>${project.version}</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>io.vidocq.chappe</groupId>
+            <artifactId>chappe-core</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.jboss.weld.servlet</groupId>
+            <artifactId>weld-servlet-core</artifactId>
+            <version>${weld.version}</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <!-- A class path, as in a plain servlet container hosting weld-servlet. -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <configuration>
+                    <useModulePath>false</useModulePath>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
+</project>
