@@ -59,6 +59,7 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletRequestWrapper;
 import jakarta.servlet.http.HttpServletResponse;
 
+import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
@@ -771,9 +772,17 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
         return CookieCodec.serializeSetCookie(c);
     }
 
-    /** A response that never committed: its whole buffered body, sent at once. */
+    /**
+     * A response that never committed: its whole buffered body, sent at once. With trailer fields
+     * and no declared length, the body length stays unknown so chappe chunks it and the trailer
+     * section can follow the last chunk.
+     */
     static Response toChappeResponse(HttpServletResponseImpl res) {
-        return toChappeResponse(res, Body.of(res.bodyBytes()));
+        byte[] bytes = res.bodyBytes();
+        Body body = res.getTrailerFields() != null && res.declaredContentLength() < 0
+                ? Body.of(new ByteArrayInputStream(bytes), -1)
+                : Body.of(bytes);
+        return toChappeResponse(res, body);
     }
 
     /**
@@ -782,6 +791,7 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
      * application {@code Transfer-Encoding} is never passed on (chappe would then send the body
      * unframed), and a streamed body carries its declared length as the body length rather than as
      * a {@code Content-Length} header, which chappe would otherwise send next to its own chunking.
+     * Trailer fields are evaluated lazily, once the body is complete ({@link FoyResponse}).
      */
     static Response toChappeResponse(HttpServletResponseImpl res, Body body) {
         var builder = Response.builder()
@@ -796,7 +806,11 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
                 builder.header(name, v);
             }
         }
-        return builder.build();
+        Response response = builder.build();
+        var trailerFields = res.getTrailerFields();
+        if (trailerFields == null) return response;
+        // Response.Builder only takes trailers known upfront; the supplier must run after the body.
+        return new FoyResponse(response.status(), response.headers(), response.body(), trailerFields);
     }
 
     private static Response notFound() {

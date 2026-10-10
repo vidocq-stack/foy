@@ -35,15 +35,17 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.Socket;
 import java.nio.charset.StandardCharsets;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * Servlet 6.1 trailer fields ({@code getTrailerFields()} /
- * {@code isTrailerFieldsReady()}) over HTTP/1.1 chunked, end to end through
- * the chappe bridge. Mirrors the TCK
- * {@code HttpServletRequest40Tests.TrailerTest} servlet and request
+ * Servlet 6.1 trailer fields over HTTP/1.1 chunked, end to end through the chappe bridge:
+ * request trailers ({@code getTrailerFields()} / {@code isTrailerFieldsReady()}, mirroring the
+ * TCK {@code HttpServletRequest40Tests.TrailerTest}) and response trailers
+ * ({@code setTrailerFields}, mirroring the TCK {@code HttpServletResponse40Tests.Trailer*})
  * (foy BUG-20260611-01: the TCK client hangs forever on its failure path, so
  * these assertions passing is what keeps the suite alive).
  */
@@ -157,6 +159,184 @@ class ServletTrailerEndToEndTest {
             assertTrue(response.contains("readyBeforeRead: false"),
                     "Chunked body unread -> trailers not ready: " + response);
         }
+    }
+
+    // ---- Response trailers (HttpServletResponse.setTrailerFields) ----
+
+    private void startServlet(String path, HttpServlet servlet) {
+        var dispatcher = new ServletDispatcher(List.of(
+                new ServletDispatcher.Mapping(UrlPatternMatcher.of(path), servlet, "S")));
+        startWith(new ChappeServletBridge(dispatcher, new VidocqServletContext("/"), "/"));
+    }
+
+    /** Replica of the TCK response TrailerTestServlet: it declares the chunking itself. */
+    private static HttpServlet responseTrailerServlet() {
+        return new HttpServlet() {
+            @Override
+            protected void doPost(HttpServletRequest req, HttpServletResponse resp) throws IOException {
+                resp.setHeader("Transfer-Encoding", "chunked");
+                try {
+                    resp.setTrailerFields(() -> Map.of("myTrailer", "foo"));
+                } catch (IllegalStateException e) {
+                    resp.getWriter().write("Get IllegalStateException when call setTrailerFields");
+                    return;
+                }
+                var out = resp.getWriter();
+                out.write("Current trailer field:");
+                resp.getTrailerFields().get().forEach((k, v) -> out.write(k + ":" + v));
+            }
+        };
+    }
+
+    private static final String TCK_REQUEST_TAIL =
+            "Content-Type: text/plain\r\nContent-Length: 3\r\n\r\nABC";
+
+    /** Byte-for-byte the TCK HttpServletResponse40Tests.TrailerTest exchange. */
+    @Test
+    void trailersOnHttp11Chunked() throws IOException {
+        startServlet("/TrailerTestServlet", responseTrailerServlet());
+        try (var socket = new Socket("127.0.0.1", port)) {
+            socket.setSoTimeout(5000);
+            write(socket.getOutputStream(), "POST /TrailerTestServlet HTTP/1.1\r\nHost: 127.0.0.1:" + port
+                    + "\r\n" + TCK_REQUEST_TAIL);
+            var response = readChunkedResponse(socket.getInputStream());
+            assertTrue(response.startsWith("HTTP/1.1 200"), response);
+            assertTrue(response.toLowerCase().contains("transfer-encoding: chunked"), response);
+            String marker = "Current trailer field:";
+            int at = response.indexOf(marker);
+            assertTrue(at >= 0, response);
+            assertEquals("myTrailer:foo\r\n0\r\nmyTrailer: foo\r\n\r\n",
+                    response.substring(at + marker.length()));
+        }
+    }
+
+    @Test
+    void setTrailerFieldsOnHttp10Throws() throws IOException {
+        startServlet("/TrailerTestServlet", responseTrailerServlet());
+        try (var socket = new Socket("127.0.0.1", port)) {
+            socket.setSoTimeout(5000);
+            write(socket.getOutputStream(), "POST /TrailerTestServlet HTTP/1.0\r\nHost: h\r\n" + TCK_REQUEST_TAIL);
+            var response = readAll(socket.getInputStream());
+            assertTrue(response.contains("Get IllegalStateException when call setTrailerFields"), response);
+        }
+    }
+
+    @Test
+    void setTrailerFieldsAfterCommitThrows() throws IOException {
+        startServlet("/committed", new HttpServlet() {
+            @Override
+            protected void doPost(HttpServletRequest req, HttpServletResponse resp) throws IOException {
+                var out = resp.getWriter();
+                out.write("committed;");
+                out.flush();
+                try {
+                    resp.setTrailerFields(() -> Map.of("myTrailer", "foo"));
+                    out.write("no exception");
+                } catch (IllegalStateException e) {
+                    out.write("ISE");
+                }
+            }
+        });
+        try (var socket = new Socket("127.0.0.1", port)) {
+            socket.setSoTimeout(5000);
+            write(socket.getOutputStream(), "POST /committed HTTP/1.1\r\nHost: h\r\nConnection: close\r\n"
+                    + TCK_REQUEST_TAIL);
+            var response = readAll(socket.getInputStream());
+            assertTrue(response.contains("ISE"), response);
+            assertFalse(response.contains("myTrailer"), response);
+        }
+    }
+
+    @Test
+    void setTrailerFieldsWithContentLengthThrows() throws IOException {
+        startServlet("/cl", new HttpServlet() {
+            @Override
+            protected void doPost(HttpServletRequest req, HttpServletResponse resp) throws IOException {
+                resp.setContentLength(3);
+                String outcome;
+                try {
+                    resp.setTrailerFields(() -> Map.of("myTrailer", "foo"));
+                    outcome = "BAD";
+                } catch (IllegalStateException e) {
+                    outcome = "ISE";
+                }
+                resp.getWriter().write(outcome);
+            }
+        });
+        try (var socket = new Socket("127.0.0.1", port)) {
+            socket.setSoTimeout(5000);
+            write(socket.getOutputStream(), "POST /cl HTTP/1.1\r\nHost: h\r\nConnection: close\r\n"
+                    + TCK_REQUEST_TAIL);
+            var response = readAll(socket.getInputStream());
+            assertTrue(response.endsWith("\r\n\r\nISE"), response);
+        }
+    }
+
+    /** RFC 9110 §6.5.1 framing/routing names are dropped; values are checked like header values. */
+    @Test
+    void forbiddenTrailerNamesAreDropped() throws IOException {
+        startServlet("/forbidden", new HttpServlet() {
+            @Override
+            protected void doGet(HttpServletRequest req, HttpServletResponse resp) throws IOException {
+                resp.setTrailerFields(() -> {
+                    var trailers = new LinkedHashMap<String, String>();
+                    trailers.put("Content-Length", "5");
+                    trailers.put("transfer-encoding", "gzip");
+                    trailers.put("Set-Cookie", "a=b");
+                    trailers.put("Cache-Control", "no-cache");
+                    trailers.put("x-ok", "1");
+                    trailers.put("x-split", "a\r\nInjected: yes");
+                    return trailers;
+                });
+                resp.getWriter().write("body");
+            }
+        });
+        try (var socket = new Socket("127.0.0.1", port)) {
+            socket.setSoTimeout(5000);
+            write(socket.getOutputStream(), "GET /forbidden HTTP/1.1\r\nHost: h\r\n\r\n");
+            var response = readChunkedResponse(socket.getInputStream());
+            assertTrue(response.endsWith("4\r\nbody\r\n0\r\nx-ok: 1\r\n\r\n"), response);
+        }
+    }
+
+    /** A response committed before its end streams its body, and the trailers still follow it. */
+    @Test
+    void trailersFollowACommittedBody() throws IOException {
+        startServlet("/streamed", new HttpServlet() {
+            @Override
+            protected void doGet(HttpServletRequest req, HttpServletResponse resp) throws IOException {
+                var produced = new StringBuilder();
+                resp.setTrailerFields(() -> Map.of("x-count", String.valueOf(produced.length())));
+                var out = resp.getOutputStream();
+                out.write("first".getBytes(StandardCharsets.US_ASCII));
+                out.flush();
+                produced.append("first");
+                out.write("second".getBytes(StandardCharsets.US_ASCII));
+                produced.append("second");
+            }
+        });
+        try (var socket = new Socket("127.0.0.1", port)) {
+            socket.setSoTimeout(5000);
+            write(socket.getOutputStream(), "GET /streamed HTTP/1.1\r\nHost: h\r\n\r\n");
+            var response = readChunkedResponse(socket.getInputStream());
+            assertTrue(response.contains("first"), response);
+            // The supplier runs once the whole body was produced.
+            assertTrue(response.endsWith("\r\n0\r\nx-count: 11\r\n\r\n"), response);
+        }
+    }
+
+    /** Reads one chunked response, up to the end of its trailer section (keep-alive safe). */
+    private static String readChunkedResponse(InputStream in) throws IOException {
+        var sb = new StringBuilder();
+        int b;
+        while ((b = in.read()) != -1) {
+            sb.append((char) b);
+            int head = sb.indexOf("\r\n\r\n");
+            if (head < 0) continue;
+            int last = sb.indexOf("\r\n0\r\n", head);
+            if (last >= 0 && sb.indexOf("\r\n\r\n", last + 2) >= 0) break;
+        }
+        return sb.toString();
     }
 
     private static void write(OutputStream out, String data) throws IOException {

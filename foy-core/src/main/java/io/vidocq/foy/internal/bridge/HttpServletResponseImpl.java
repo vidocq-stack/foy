@@ -47,6 +47,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
+import java.util.function.Supplier;
 import java.util.regex.Pattern;
 
 /**
@@ -238,6 +239,31 @@ public final class HttpServletResponseImpl implements HttpServletResponse {
 
     private HttpServletRequest boundRequest;
     public void bindRequest(HttpServletRequest req) { this.boundRequest = req; }
+
+    // ---- Trailer fields ----
+
+    private volatile Supplier<Map<String, String>> trailerFields;
+
+    /**
+     * Servlet 6.1 §5.3: trailers need a chunked HTTP/1.1 body or HTTP/2. Refused once committed,
+     * on HTTP/1.0, and on HTTP/1.1 when a {@code Content-Length} was declared. The supplier is
+     * evaluated by chappe once the body is complete ({@link FoyResponse#trailers()}).
+     */
+    @Override
+    public void setTrailerFields(Supplier<Map<String, String>> supplier) {
+        if (isCommitted()) throw new IllegalStateException("response already committed");
+        String protocol = boundRequest == null ? null : boundRequest.getProtocol();
+        if ("HTTP/1.0".equals(protocol) || "HTTP/0.9".equals(protocol)) {
+            throw new IllegalStateException("trailer fields are not supported on " + protocol);
+        }
+        if (contentLength >= 0 && !"HTTP/2".equals(protocol)) {
+            throw new IllegalStateException("trailer fields need a chunked response, but a Content-Length was declared");
+        }
+        this.trailerFields = supplier;
+    }
+
+    @Override
+    public Supplier<Map<String, String>> getTrailerFields() { return trailerFields; }
 
     // ---- Headers ----
 

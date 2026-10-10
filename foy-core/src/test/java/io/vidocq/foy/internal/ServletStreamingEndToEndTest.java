@@ -353,6 +353,7 @@ class ServletStreamingEndToEndTest {
     @Test
     void aFailureWhileCommittingSettlesTheHead() throws Exception {
         var flushFailure = new AtomicReference<Throwable>();
+        var flushFailed = new CountDownLatch(1);
         // The session cookie is serialised at the commit; a domain chappe cannot write fails it.
         start("/bad-commit", new HttpServlet() {
             @Override protected void doGet(HttpServletRequest req, HttpServletResponse resp) throws IOException {
@@ -362,6 +363,7 @@ class ServletStreamingEndToEndTest {
                     resp.flushBuffer();
                 } catch (IOException e) {
                     flushFailure.set(e);
+                    flushFailed.countDown();
                     throw e;
                 }
             }
@@ -372,6 +374,8 @@ class ServletStreamingEndToEndTest {
             var head = c.readHead();
             assertEquals(500, head.status());
         }
+        // The 500 can reach the client before the servlet thread's catch has run.
+        assertTrue(flushFailed.await(5, TimeUnit.SECONDS), "the servlet's flush never failed");
         assertInstanceOf(IOException.class, flushFailure.get(), "the commit failure reaches the servlet's flush");
     }
 
