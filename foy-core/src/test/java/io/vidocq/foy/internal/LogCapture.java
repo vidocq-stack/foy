@@ -26,13 +26,17 @@ import java.util.logging.Level;
 import java.util.logging.LogRecord;
 import java.util.logging.Logger;
 
-/** Captures the java.util.logging records of one logger (the default System.Logger backend). */
+/**
+ * Captures the java.util.logging records of one logger (the default System.Logger backend); while
+ * capturing, they are not printed.
+ */
 public final class LogCapture implements AutoCloseable {
 
     /** Holds every java.util.logging reference, so it is linked only after the read edge exists. */
     private static final class Jul {
         private final List<LogRecord> records = new CopyOnWriteArrayList<>();
         private final Logger logger;
+        private final boolean useParentHandlers;
         private final Handler handler = new Handler() {
             @Override public void publish(LogRecord r) { records.add(r); }
             @Override public void flush() {}
@@ -41,6 +45,9 @@ public final class LogCapture implements AutoCloseable {
 
         Jul(String name) {
             logger = Logger.getLogger(name);
+            // Captured records are the test's to assert: keep them off the console.
+            useParentHandlers = logger.getUseParentHandlers();
+            logger.setUseParentHandlers(false);
             logger.addHandler(handler);
         }
 
@@ -53,6 +60,7 @@ public final class LogCapture implements AutoCloseable {
 
         void close() {
             logger.removeHandler(handler);
+            logger.setUseParentHandlers(useParentHandlers);
         }
     }
 
