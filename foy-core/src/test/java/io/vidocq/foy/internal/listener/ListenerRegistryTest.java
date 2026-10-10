@@ -19,6 +19,7 @@
  */
 package io.vidocq.foy.internal.listener;
 
+import io.vidocq.foy.internal.LogCapture;
 import io.vidocq.foy.internal.container.VidocqServletContext;
 import jakarta.servlet.ServletContextEvent;
 import jakarta.servlet.ServletContextListener;
@@ -110,7 +111,10 @@ class ListenerRegistryTest {
         };
         var reg = new ListenerRegistry();
         reg.registerAll(List.of(a, b, c));
-        assertDoesNotThrow(() -> reg.fireContextDestroyed(new VidocqServletContext("/")));
+        try (var log = LogCapture.of(ListenerRegistry.class.getName())) {
+            assertDoesNotThrow(() -> reg.fireContextDestroyed(new VidocqServletContext("/")));
+            assertEquals(2, log.warnings().size(), log.warnings()::toString);
+        }
         assertEquals(List.of("c", "b", "a"), trace, "reverse order, every listener called");
     }
 

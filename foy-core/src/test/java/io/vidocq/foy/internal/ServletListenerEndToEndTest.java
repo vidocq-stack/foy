@@ -24,6 +24,7 @@ import io.vidocq.foy.spi.session.SessionStore;
 import io.vidocq.chappe.api.Server;
 import io.vidocq.foy.internal.bridge.ChappeServletBridge;
 import io.vidocq.foy.internal.container.VidocqServletContext;
+import io.vidocq.foy.internal.dispatcher.FilterMapping;
 import io.vidocq.foy.internal.dispatcher.FilterRegistry;
 import io.vidocq.foy.internal.dispatcher.ServletDispatcher;
 import io.vidocq.foy.internal.dispatcher.UrlPatternMatcher;
@@ -145,6 +146,31 @@ class ServletListenerEndToEndTest {
 
         getWithCookie("http://127.0.0.1:" + port + "/b?op=kill", sid);
         assertEquals(2, unbound.get(), "remaining binding must be unbound on invalidate");
+    }
+
+    @Test
+    void aFilterThrowingOnAnUnmappedPathStillEndsTheRequest() throws Exception {
+        AtomicInteger destroy = new AtomicInteger();
+        var ctx = new VidocqServletContext("/");
+        var reg = new ListenerRegistry();
+        reg.register(new ServletRequestListener() {
+            @Override public void requestDestroyed(ServletRequestEvent e) { destroy.incrementAndGet(); }
+        });
+        ctx.setListenerRegistry(reg);
+        var sessionManager = new SessionManager(new InMemorySessionStore(), ctx, 1800);
+        sessionManager.setListenerRegistry(reg);
+        jakarta.servlet.Filter failing = (req, res, chain) -> { throw new IllegalStateException("filter"); };
+        var bridge = new ChappeServletBridge(new ServletDispatcher(List.of()),
+                new FilterRegistry(List.of(FilterMapping.onRequest(UrlPatternMatcher.of("/*"), failing, "F"))),
+                ctx, sessionManager, "/");
+        var r = TestServerLauncher.start(bridge);
+        this.server = r.server;
+        this.port = r.port;
+
+        try (var log = LogCapture.of(ChappeServletBridge.class.getName())) {
+            assertEquals(500, get("http://127.0.0.1:" + port + "/unmapped").statusCode());
+        }
+        assertEquals(1, destroy.get(), "requestDestroyed fires when a filter of an unmapped path throws");
     }
 
     // ---- helpers ----

@@ -212,8 +212,47 @@ class CdiSessionScopeListenerTest {
         begin();
         Object instance = SessionContextBinding.get(cart, creationalContext());
         end();
+        try (var log = LogCapture.of(HttpSessionImpl.class.getName())) {
+            manager.close();
+            assertEquals(1, log.warnings().size(), log.warnings()::toString);
+        }
+        assertEquals(List.of(instance), cart.destroyed);
+    }
+
+    @Test
+    void withoutARequestContextControllerTheBeansAreStillDestroyed() {
+        cdi.requestContextControllerResolvable = false;
+        begin();
+        Object instance = SessionContextBinding.get(cart, creationalContext());
+        end();
         manager.close();
         assertEquals(List.of(instance), cart.destroyed);
+        assertEquals(List.of(), cdi.requestContext);
+        assertTrue(cdi.events.stream().anyMatch(e -> e.startsWith("Destroyed:")), cdi.events::toString);
+    }
+
+    @Test
+    void aFailingRequestContextControllerLookupStillDestroysTheBeans() {
+        cdi.createInstanceFailure = new IllegalStateException("no Instance API");
+        begin();
+        Object instance = SessionContextBinding.get(cart, creationalContext());
+        end();
+        manager.close();
+        assertEquals(List.of(instance), cart.destroyed);
+        assertEquals(List.of(), cdi.requestContext);
+        assertTrue(cdi.events.stream().anyMatch(e -> e.startsWith("Destroyed:")), cdi.events::toString);
+    }
+
+    @Test
+    void steppingAsideStillDestroysTheBeansWhenTheDestructionThrows() {
+        cdi.sessionContexts.add(CdiFakes.activeForeignContext());
+        HttpSessionImpl session = manager.createNew();
+        Object instance = SessionBeanStore.of(session).getOrCreate(cart, creationalContext());
+        var thrown = assertThrows(IllegalStateException.class,
+                () -> listener.aroundDestruction(session, () -> { throw new IllegalStateException("destruction"); }));
+        assertEquals("destruction", thrown.getMessage());
+        assertEquals(List.of(instance), cart.destroyed);
+        assertEquals(List.of(), cdi.events, "no Foy event while another context serves the thread");
     }
 
     @Test

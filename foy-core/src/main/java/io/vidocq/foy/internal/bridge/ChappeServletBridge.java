@@ -391,14 +391,16 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
             }
 
             registry.fireRequestInitialized(servletContext, req);
+            Exception thrown = null;
             try {
                 new VidocqFilterChain(filters, null).doFilter(req, res);
-            } catch (ServletException e) {
+            } catch (ServletException | IOException | RuntimeException e) {
+                thrown = e;
+            } finally {
+                // On every way out: the CDI request and session scope listeners unbind here.
                 registry.fireRequestDestroyed(servletContext, req);
-                return failed(res, req, e);
             }
-            registry.fireRequestDestroyed(servletContext, req);
-            return completed(req, res);
+            return thrown != null ? failed(res, req, thrown) : completed(req, res);
         }
 
         ServletDispatcher.Mapping m = match.get();

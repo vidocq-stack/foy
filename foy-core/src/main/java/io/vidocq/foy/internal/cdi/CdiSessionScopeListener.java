@@ -128,8 +128,11 @@ public final class CdiSessionScopeListener implements ServletRequestListener, Se
         }
         if (stepsAside()) {
             // Another session context serves this thread: Foy's events would duplicate its own.
-            destruction.run();
-            destroyBeans(session);
+            try {
+                destruction.run();
+            } finally {
+                destroyBeans(session);
+            }
             return;
         }
         SessionContextBinding binding = SessionContextBinding.bindTo(session);

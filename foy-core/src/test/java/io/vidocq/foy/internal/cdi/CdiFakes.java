@@ -172,12 +172,19 @@ final class CdiFakes {
         final List<String> requestContext = new CopyOnWriteArrayList<>();
         /** Runs after an event is recorded; may throw to emulate a failing observer. */
         volatile Consumer<String> onEvent = e -> {};
+        /** {@code false} emulates a container without {@code RequestContextController} (Vauban). */
+        volatile boolean requestContextControllerResolvable = true;
+        /** Thrown by {@code createInstance()} when set. */
+        volatile RuntimeException createInstanceFailure;
 
         BeanManager proxy() {
             return CdiFakes.proxy(BeanManager.class, (m, a) -> switch (m) {
                 case "getContexts" -> a[0] == SessionScoped.class ? List.copyOf(sessionContexts) : List.of();
                 case "getEvent" -> event(List.of());
-                case "createInstance" -> instance();
+                case "createInstance" -> {
+                    if (createInstanceFailure != null) throw createInstanceFailure;
+                    yield instance();
+                }
                 default -> throw new UnsupportedOperationException(m);
             });
         }
@@ -216,7 +223,7 @@ final class CdiFakes {
                 default -> throw new UnsupportedOperationException(m);
             });
             Instance<Object> selected = CdiFakes.proxy(Instance.class, (m, a) -> switch (m) {
-                case "isResolvable" -> true;
+                case "isResolvable" -> requestContextControllerResolvable;
                 case "get" -> controller;
                 default -> throw new UnsupportedOperationException(m);
             });
