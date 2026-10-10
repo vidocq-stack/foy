@@ -122,4 +122,57 @@ class ListenerRegistryTest {
         reg.registerAll(List.of(a, b));
         assertEquals(2, reg.contextListeners().size());
     }
+
+    @Test
+    void aThrowingRequestDestroyedListenerDoesNotSkipTheOthers() {
+        List<String> trace = new ArrayList<>();
+        ServletRequestListener outer = new ServletRequestListener() {
+            @Override public void requestDestroyed(ServletRequestEvent e) { trace.add("outer-destroyed"); }
+        };
+        ServletRequestListener first = new ServletRequestListener() {
+            @Override public void requestDestroyed(ServletRequestEvent e) { throw new IllegalStateException("first"); }
+        };
+        ServletRequestListener second = new ServletRequestListener() {
+            @Override public void requestDestroyed(ServletRequestEvent e) { throw new IllegalArgumentException("second"); }
+        };
+        var reg = new ListenerRegistry();
+        reg.register(outer);
+        reg.register(second);
+        reg.register(first);
+        var ctx = new VidocqServletContext("/");
+        var thrown = assertThrows(IllegalStateException.class, () -> reg.fireRequestDestroyed(ctx, null));
+        assertEquals("first", thrown.getMessage());
+        assertEquals(1, thrown.getSuppressed().length);
+        assertEquals("second", thrown.getSuppressed()[0].getMessage());
+        assertEquals(List.of("outer-destroyed"), trace);
+    }
+
+    @Test
+    void aThrowingRequestInitializedListenerDestroysTheListenersAlreadyInitialized() {
+        List<String> trace = new ArrayList<>();
+        class Tracing implements ServletRequestListener {
+            private final String name;
+            private final RuntimeException onDestroy;
+            Tracing(String name, RuntimeException onDestroy) { this.name = name; this.onDestroy = onDestroy; }
+            @Override public void requestInitialized(ServletRequestEvent e) { trace.add(name + "-initialized"); }
+            @Override public void requestDestroyed(ServletRequestEvent e) {
+                trace.add(name + "-destroyed");
+                if (onDestroy != null) throw onDestroy;
+            }
+        }
+        var reg = new ListenerRegistry();
+        reg.register(new Tracing("a", null));
+        reg.register(new Tracing("b", new IllegalArgumentException("b-cleanup")));
+        reg.register(new ServletRequestListener() {
+            @Override public void requestInitialized(ServletRequestEvent e) { throw new IllegalStateException("failing"); }
+            @Override public void requestDestroyed(ServletRequestEvent e) { trace.add("failing-destroyed"); }
+        });
+        reg.register(new Tracing("after", null));
+        var ctx = new VidocqServletContext("/");
+        var thrown = assertThrows(IllegalStateException.class, () -> reg.fireRequestInitialized(ctx, null));
+        assertEquals("failing", thrown.getMessage());
+        assertEquals(1, thrown.getSuppressed().length);
+        assertEquals("b-cleanup", thrown.getSuppressed()[0].getMessage());
+        assertEquals(List.of("a-initialized", "b-initialized", "b-destroyed", "a-destroyed"), trace);
+    }
 }
