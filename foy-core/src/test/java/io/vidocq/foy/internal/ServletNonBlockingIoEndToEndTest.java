@@ -427,14 +427,17 @@ class ServletNonBlockingIoEndToEndTest {
     }
 
     /**
-     * A listener writes 1 MiB while {@code isReady()} holds; a slow client reads 64 KiB every 50 ms.
+     * A listener writes 16 MiB while {@code isReady()} holds; the client reads nothing until the
+     * listener has seen {@code isReady()} answer {@code false}. 16 MiB is far above what the
+     * kernel socket buffers absorb, so the backpressure does not depend on the host's TCP tuning.
      * The writes never block, every byte arrives in order, and {@code onWritePossible} resumes the
-     * listener each time capacity frees up.
+     * listener once capacity frees up.
      */
     @Test
     void largeNonBlockingWriteResumesOnCapacity() throws Exception {
-        int total = 1 << 20;
+        int total = 16 << 20;
         var calls = new AtomicInteger();
+        var notReady = new CountDownLatch(1);
         var errors = new CopyOnWriteArrayList<Throwable>();
         start(new HttpServlet() {
             @Override
@@ -459,6 +462,7 @@ class ServletNonBlockingIoEndToEndTest {
                             out.write(chunk);
                             next.addAndGet(n);
                         }
+                        notReady.countDown();
                     }
                     @Override public void onError(Throwable t) {
                         errors.add(t);
@@ -474,13 +478,13 @@ class ServletNonBlockingIoEndToEndTest {
             socket.getOutputStream().write(("GET /nio HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
                     .getBytes(StandardCharsets.US_ASCII));
             socket.getOutputStream().flush();
+            assertTrue(notReady.await(10, TimeUnit.SECONDS), "isReady() never answered false");
             InputStream in = socket.getInputStream();
-            var received = new ByteArrayOutputStream();
+            var received = new ByteArrayOutputStream(total + 1024);
             byte[] buf = new byte[64 * 1024];
             int n;
             while ((n = in.read(buf)) != -1) {
                 received.write(buf, 0, n);
-                Thread.sleep(50); // part of the scenario: a slow client
             }
             byte[] all = received.toByteArray();
             String text = new String(all, StandardCharsets.ISO_8859_1);
