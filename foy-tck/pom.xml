@@ -184,6 +184,9 @@
                             <useFile>false</useFile>
                             <systemPropertyVariables>
                                 <webServerHost>127.0.0.1</webServerHost>
+                                <!-- HTTP/2 server push is an accepted gap (no h2c Upgrade nor PUSH_PROMISE
+                                     in chappe; push is deprecated in Servlet 6.1): the TCK's own switch
+                                     skips the ServerPushTests that need it (7 of 8), reported as skipped. -->
                                 <servlet.tck.support.http2Push>false</servlet.tck.support.http2Push>
                                 <webServerPort>8080</webServerPort>
                                 <ts_home>${project.build.directory}/test-classes</ts_home>

@@ -1,207 +1,207 @@
-servlet.tck.api.jakarta_servlet.asynccontext.AsyncContextTests 40 0
-servlet.tck.api.jakarta_servlet.asyncevent.AsynceventTests 9 0
-servlet.tck.api.jakarta_servlet.dispatchertype.DispatcherTypeTests 4 0
-servlet.tck.api.jakarta_servlet.dispatchtest.DispatchTests 38 0
-servlet.tck.api.jakarta_servlet.dofilter.DoFilerTests 1 0
-servlet.tck.api.jakarta_servlet.filter.FilterTests 2 0
-servlet.tck.api.jakarta_servlet.filterchain.FilterChainTests 1 0
-servlet.tck.api.jakarta_servlet.filterconfig.FilterConfigTests 6 0
-servlet.tck.api.jakarta_servlet.filterrequestdispatcher.FilterRequestDispatcherTests 8 0
-servlet.tck.api.jakarta_servlet.genericfilter.GenericFilterTests 8 0
-servlet.tck.api.jakarta_servlet.genericservlet.GenericServletTests 12 0
-servlet.tck.api.jakarta_servlet.registration.RegistrationTests 10 0
-servlet.tck.api.jakarta_servlet.requestdispatcher.RequestDispatcherTests 6 0
-servlet.tck.api.jakarta_servlet.scattributeevent.ScAttributeEventTests 4 0
-servlet.tck.api.jakarta_servlet.scattributelistener.ScAttributeListenerTests 3 0
-servlet.tck.api.jakarta_servlet.scattributelistener40.ScAttributeListenerTests 1 0
-servlet.tck.api.jakarta_servlet.scevent.ScEventTests 2 0
-servlet.tck.api.jakarta_servlet.scinitializer.addfilter.AddFilterTests 1 0
-servlet.tck.api.jakarta_servlet.scinitializer.addfilter1.AddFilter1Tests 1 0
-servlet.tck.api.jakarta_servlet.scinitializer.addlistener.AddListenerTests 1 0
-servlet.tck.api.jakarta_servlet.scinitializer.addlistener1.AddListener1Tests 1 0
-servlet.tck.api.jakarta_servlet.scinitializer.addservlet.AddServletTests 1 0
-servlet.tck.api.jakarta_servlet.scinitializer.addservlet1.AddServlet1Tests 1 0
-servlet.tck.api.jakarta_servlet.scinitializer.createfilter.CreateFilterTests 1 0
-servlet.tck.api.jakarta_servlet.scinitializer.createlistener.CreateListenerTests 1 0
-servlet.tck.api.jakarta_servlet.scinitializer.createservlet.CreateServletTests 1 0
-servlet.tck.api.jakarta_servlet.scinitializer.getclassloader.GetClassLoaderTests 1 0
-servlet.tck.api.jakarta_servlet.scinitializer.getdefaultsessiontrackingmodes.GetDefaultSessionTrackingModesTests 1 0
-servlet.tck.api.jakarta_servlet.scinitializer.geteffectivemajorversion.GetEffectiveMajorVersionTests 1 0
-servlet.tck.api.jakarta_servlet.scinitializer.geteffectiveminorversion.GetEffectiveMinorVersionTests 1 0
-servlet.tck.api.jakarta_servlet.scinitializer.geteffectivesessiontrackingmodes.GetEffectiveSessionTrackingModesTests 1 0
-servlet.tck.api.jakarta_servlet.scinitializer.getfilterregistration.GetFilterRegistrationTests 1 0
-servlet.tck.api.jakarta_servlet.scinitializer.getfilterregistrations.GetFilterRegistrationsTests 1 0
-servlet.tck.api.jakarta_servlet.scinitializer.getservletregistration.GetServletRegistrationTests 1 0
-servlet.tck.api.jakarta_servlet.scinitializer.getsessioncookieconfig.GetSessionCookieconfigTests 1 0
-servlet.tck.api.jakarta_servlet.scinitializer.setinitparameter.SetInitParameterTests 1 0
-servlet.tck.api.jakarta_servlet.scinitializer.setsessiontrackingmodes.SetSessionTrackingModesTests 1 0
-servlet.tck.api.jakarta_servlet.sclistener.ScListenerTests 1 0
-servlet.tck.api.jakarta_servlet.sclistener40.ScListener40Tests 1 0
-servlet.tck.api.jakarta_servlet.servlet.ServletTests 7 0
-servlet.tck.api.jakarta_servlet.servletconfig.ServletConfigTests 5 0
-servlet.tck.api.jakarta_servlet.servletcontext.ServletContextTests 28 0
-servlet.tck.api.jakarta_servlet.servletcontext30.ServletContext30Tests 21 0
-servlet.tck.api.jakarta_servlet.servletcontext301.ServletContext301Tests 1 0
-servlet.tck.api.jakarta_servlet.servletcontext302.ServletContext302Tests 1 0
-servlet.tck.api.jakarta_servlet.servletcontext303.ServletContext303Tests 8 0
-servlet.tck.api.jakarta_servlet.servletcontext304.ServletContext304Tests 1 0
-servlet.tck.api.jakarta_servlet.servletcontext305.ServletContext305Tests 10 0
-servlet.tck.api.jakarta_servlet.servletcontext306.ServletContext306Tests 7 0
-servlet.tck.api.jakarta_servlet.servletcontext31.ServletContext31Tests 1 0
-servlet.tck.api.jakarta_servlet.servletcontext40.ServletContext40Tests 12 3
-servlet.tck.api.jakarta_servlet.servletexception.ServletExceptionTests 5 0
-servlet.tck.api.jakarta_servlet.servletinputstream.ServletInputStreamTests 1 0
-servlet.tck.api.jakarta_servlet.servletoutputstream.ServletOutputStreamTests 15 0
-servlet.tck.api.jakarta_servlet.servletrequest.ServletRequestTests 39 0
-servlet.tck.api.jakarta_servlet.servletrequest1.ServletRequest1Tests 2 0
-servlet.tck.api.jakarta_servlet.servletrequest30.ServletRequest30Tests 15 0
-servlet.tck.api.jakarta_servlet.servletrequestwrapper.ServletRequestWrapperTests 32 0
-servlet.tck.api.jakarta_servlet.servletrequestwrapper30.ServletRequestWrapper30Tests 15 0
-servlet.tck.api.jakarta_servlet.servletrequestwrapper30x.ServletRequestWrapper30xTests 1 0
-servlet.tck.api.jakarta_servlet.servletresponse.ServletResponseTests 32 0
-servlet.tck.api.jakarta_servlet.servletresponsewrapper.ServletResponseWrapperTests 20 0
-servlet.tck.api.jakarta_servlet.servletresponsewrapper30.ServletResponseWrapper30Tests 1 0
-servlet.tck.api.jakarta_servlet.sessiontrackingmode.SessionTrackingModeTests 1 0
-servlet.tck.api.jakarta_servlet.sessiontrackingmode1.SessionTrackingMode1Tests 4 0
-servlet.tck.api.jakarta_servlet.sessiontrackingmode2.SessionTrackingMode2Tests 1 0
-servlet.tck.api.jakarta_servlet.sessiontrackingmode3.SessionTrackingMode3Tests 1 0
-servlet.tck.api.jakarta_servlet.sessiontrackingmode4.SessionTrackingMode4Tests 1 0
-servlet.tck.api.jakarta_servlet.srattributeevent.SrAttributeEventTests 4 0
-servlet.tck.api.jakarta_servlet.srattributelistener.SrAttributeListenerTests 3 0
-servlet.tck.api.jakarta_servlet.srattributelistener40.SrAttributeListener40Tests 1 0
-servlet.tck.api.jakarta_servlet.srevent.SrEventTests 3 0
-servlet.tck.api.jakarta_servlet.srlistener.SrListenerTests 1 0
-servlet.tck.api.jakarta_servlet.srlistener40.SrListener40Tests 1 0
-servlet.tck.api.jakarta_servlet.unavailableexception.UnAvailableExceptionTests 5 0
-servlet.tck.api.jakarta_servlet_http.asynccontext.AsyncContextTests 12 0
-servlet.tck.api.jakarta_servlet_http.cookie.CookieTests 33 0
-servlet.tck.api.jakarta_servlet_http.httpfilter.HttpFilterTests 1 0
-servlet.tck.api.jakarta_servlet_http.httpservlet.HttpServletTests 11 0
-servlet.tck.api.jakarta_servlet_http.httpservletrequest.HttpServletRequestTests 70 0
-servlet.tck.api.jakarta_servlet_http.httpservletrequest1.HttpServletRequest1Tests 1 0
-servlet.tck.api.jakarta_servlet_http.httpservletrequest30.HttpServletRequest30Tests 1 0
-servlet.tck.api.jakarta_servlet_http.httpservletrequest31.HttpServletRequest31Tests 1 0
-servlet.tck.api.jakarta_servlet_http.httpservletrequest40.HttpServletRequest40Tests 11 0
-servlet.tck.api.jakarta_servlet_http.httpservletrequestwrapper.HttpServletRequestWrapperTests 60 0
-servlet.tck.api.jakarta_servlet_http.httpservletresponse.HttpServletResponseTests 44 0
-servlet.tck.api.jakarta_servlet_http.httpservletresponse30.HttpServletResponse30Tests 4 0
-servlet.tck.api.jakarta_servlet_http.httpservletresponse40.HttpServletResponse40Tests 3 3
-servlet.tck.api.jakarta_servlet_http.httpservletresponsewrapper.HttpServletResponseWrapperTests 34 0
-servlet.tck.api.jakarta_servlet_http.httpservletresponsewrapper30.HttpServletResponseWrapper30Tests 4 0
-servlet.tck.api.jakarta_servlet_http.httpsession.HttpSessionTests 25 0
-servlet.tck.api.jakarta_servlet_http.httpsessionactivationlistener40.HttpSessionActivationListener40Tests 1 0
-servlet.tck.api.jakarta_servlet_http.httpsessionattributelistener.HttpSessionAttributeListenerTests 3 0
-servlet.tck.api.jakarta_servlet_http.httpsessionattributelistener40.HttpSessionAttributeListener40Tests 1 0
-servlet.tck.api.jakarta_servlet_http.httpsessionbindingevent.HttpSessionBindingEventTests 5 0
-servlet.tck.api.jakarta_servlet_http.httpsessionbindinglistener.HttpSessionBindingListenerTests 2 0
-servlet.tck.api.jakarta_servlet_http.httpsessionbindinglistener40.HttpSessionBindingListener40Tests 1 0
-servlet.tck.api.jakarta_servlet_http.httpsessionevent.HttpSessionEventTests 2 0
-servlet.tck.api.jakarta_servlet_http.httpsessionidlistener.HttpSessionIdListenerTests 1 0
-servlet.tck.api.jakarta_servlet_http.httpsessionlistener.HttpSessionListenerTests 2 0
-servlet.tck.api.jakarta_servlet_http.httpsessionlistener40.HttpSessionListener40Tests 1 0
-servlet.tck.api.jakarta_servlet_http.httpsessionx.HttpSessionxTests 8 0
-servlet.tck.api.jakarta_servlet_http.httpupgradehandler.HttpUpgradeHandlerTests 1 1
-servlet.tck.api.jakarta_servlet_http.part.PartTests 7 4
-servlet.tck.api.jakarta_servlet_http.part1.Part1Tests 7 4
-servlet.tck.api.jakarta_servlet_http.readlistener.ReadListenerTests 1 1
-servlet.tck.api.jakarta_servlet_http.readlistener1.ReadListener1Tests 2 2
-servlet.tck.api.jakarta_servlet_http.servletcontext303.ServletContext303Tests 4 0
-servlet.tck.api.jakarta_servlet_http.servletcontext304.ServletContext304Tests 1 0
-servlet.tck.api.jakarta_servlet_http.servletcontext305.ServletContext305Tests 1 0
-servlet.tck.api.jakarta_servlet_http.sessioncookieconfig.SessionCookieConfigTests 9 0
-servlet.tck.api.jakarta_servlet_http.writelistener.WriteListenerTests 1 1
-servlet.tck.compat.LeadingSlash.WithLeadingSlash.WithLeadingSlashTests 1 0
-servlet.tck.compat.LeadingSlash.WithoutLeadingSlash.WithoutLeadingSlashTests 1 0
-servlet.tck.pluggability.aordering.AorderingTests 1 0
-servlet.tck.pluggability.aordering1.Aordering1Tests 1 0
-servlet.tck.pluggability.aordering2.Aordering2Tests 1 0
-servlet.tck.pluggability.aordering3.Aordering3Tests 1 0
-servlet.tck.pluggability.aordering4.Aordering4Tests 1 0
-servlet.tck.pluggability.api.jakarta_servlet.asynccontext.AsyncContextTests 14 0
-servlet.tck.pluggability.api.jakarta_servlet.asyncevent.AsyncEventTests 9 0
-servlet.tck.pluggability.api.jakarta_servlet.dispatchertype.DispatcherTypeTests 4 0
-servlet.tck.pluggability.api.jakarta_servlet.dofilter.DoFilterTests 1 0
-servlet.tck.pluggability.api.jakarta_servlet.filter.FilterTests 2 0
-servlet.tck.pluggability.api.jakarta_servlet.filterchain.FilterChainTests 1 0
-servlet.tck.pluggability.api.jakarta_servlet.filterconfig.FilterConfigTests 6 0
-servlet.tck.pluggability.api.jakarta_servlet.filterrequestdispatcher.FilterRequestDispatcherTests 8 0
-servlet.tck.pluggability.api.jakarta_servlet.genericservlet.GenericServletTests 12 0
-servlet.tck.pluggability.api.jakarta_servlet.registration.RegistrationTests 10 0
-servlet.tck.pluggability.api.jakarta_servlet.requestdispatcher.RequestDispatcherTests 6 0
-servlet.tck.pluggability.api.jakarta_servlet.scattributeevent.ScAttributeEventTests 4 0
-servlet.tck.pluggability.api.jakarta_servlet.scattributelistener.ScAttributeListenerTests 3 0
-servlet.tck.pluggability.api.jakarta_servlet.scevent.ScEventTests 2 0
-servlet.tck.pluggability.api.jakarta_servlet.sclistener.ScListenerTests 1 0
-servlet.tck.pluggability.api.jakarta_servlet.servlet.ServletTests 7 0
-servlet.tck.pluggability.api.jakarta_servlet.servletconfig.ServletConfigTests 5 0
-servlet.tck.pluggability.api.jakarta_servlet.servletcontext.ServletContextTests 24 0
-servlet.tck.pluggability.api.jakarta_servlet.servletcontext30.ServletContext30Tests 16 0
-servlet.tck.pluggability.api.jakarta_servlet.servletexception.ServletExceptionTests 5 0
-servlet.tck.pluggability.api.jakarta_servlet.servletinputstream.ServletInputStreamTests 1 0
-servlet.tck.pluggability.api.jakarta_servlet.servletoutputstream.ServletOutputStreamTests 15 0
-servlet.tck.pluggability.api.jakarta_servlet.servletrequest.ServletRequestTests 39 0
-servlet.tck.pluggability.api.jakarta_servlet.servletrequest1.ServletRequest1Tests 2 0
-servlet.tck.pluggability.api.jakarta_servlet.servletrequest30.ServletRequest30Tests 15 0
-servlet.tck.pluggability.api.jakarta_servlet.servletrequestwrapper.ServletRequestWrapperTests 32 0
-servlet.tck.pluggability.api.jakarta_servlet.servletrequestwrapper30.ServletRequestWrapper30Tests 15 0
-servlet.tck.pluggability.api.jakarta_servlet.servletrequestwrapper30x.ServletRequestWrapper30xTests 1 0
-servlet.tck.pluggability.api.jakarta_servlet.servletresponse.ServletResponseTests 32 0
-servlet.tck.pluggability.api.jakarta_servlet.servletresponsewrapper.ServletResponseWrapperTests 20 0
-servlet.tck.pluggability.api.jakarta_servlet.servletresponsewrapper30.ServletResponseWrapper30Tests 1 0
-servlet.tck.pluggability.api.jakarta_servlet.sessiontrackingmode.SessionTrackingModeTests 1 0
-servlet.tck.pluggability.api.jakarta_servlet.srattributeevent.SrAttributeEventTests 4 0
-servlet.tck.pluggability.api.jakarta_servlet.srattributelistener.SrAttributeListenerTests 3 0
-servlet.tck.pluggability.api.jakarta_servlet.srevent.SrEventTests 3 0
-servlet.tck.pluggability.api.jakarta_servlet.srlistener.SrListenerTests 1 0
-servlet.tck.pluggability.api.jakarta_servlet.unavailableexception.UnAvailableExceptionTests 5 0
-servlet.tck.pluggability.api.jakarta_servlet_http.cookie.CookieTests 33 0
-servlet.tck.pluggability.api.jakarta_servlet_http.httpservlet.HttpServletTests 11 0
-servlet.tck.pluggability.api.jakarta_servlet_http.httpservletrequest.HttpServletRequestTests 70 0
-servlet.tck.pluggability.api.jakarta_servlet_http.httpservletrequest30.HttpServletRequest30Tests 1 0
-servlet.tck.pluggability.api.jakarta_servlet_http.httpservletrequestwrapper.HttpServletRequestWrapperTests 58 0
-servlet.tck.pluggability.api.jakarta_servlet_http.httpservletresponse.HttpServletResponseTests 44 0
-servlet.tck.pluggability.api.jakarta_servlet_http.httpservletresponse30.HttpServletResponse30Tests 4 0
-servlet.tck.pluggability.api.jakarta_servlet_http.httpservletresponsewrapper.HttpServletResponseWrapperTests 34 0
-servlet.tck.pluggability.api.jakarta_servlet_http.httpservletresponsewrapper30.HttpServletResponseWrapper30Tests 4 0
-servlet.tck.pluggability.api.jakarta_servlet_http.httpsession.HttpSessionTests 24 0
-servlet.tck.pluggability.api.jakarta_servlet_http.httpsessionattributelistener.HttpSessionAttributeListenerTests 3 0
-servlet.tck.pluggability.api.jakarta_servlet_http.httpsessionbindingevent.HttpSessionBindingEventTests 5 0
-servlet.tck.pluggability.api.jakarta_servlet_http.httpsessionbindinglistener.HttpSessionBindingListenerTests 2 0
-servlet.tck.pluggability.api.jakarta_servlet_http.httpsessionevent.HttpSessionEventTests 2 0
-servlet.tck.pluggability.api.jakarta_servlet_http.httpsessionlistener.HttpSessionListenerTests 2 0
-servlet.tck.pluggability.api.jakarta_servlet_http.sessioncookieconfig.SessionCookieConfigTests 9 0
-servlet.tck.pluggability.fragment.FragmentTests 5 0
-servlet.tck.spec.annotationservlet.webfilter.WebFilterTests 3 0
-servlet.tck.spec.annotationservlet.weblistener.WebListenerTests 7 0
-servlet.tck.spec.annotationservlet.webservlet.WebServletTests 5 0
-servlet.tck.spec.annotationservlet.webservletapi.WebServletApiTests 3 0
-servlet.tck.spec.annotationservlet.webservletdd.WebServletddTests 5 0
-servlet.tck.spec.async.AsyncTests 39 0
-servlet.tck.spec.defaultcontextpath.DefaultContextPathTests 1 0
-servlet.tck.spec.defaultmapping.DefaultMappingTests 2 0
-servlet.tck.spec.dir_struct.DirStructTests 1 0
-servlet.tck.spec.errorpage.ErrorPageTests 4 0
-servlet.tck.spec.errorpage1.ErrorPage1Tests 2 0
-servlet.tck.spec.httpservletresponse.HttpServletResponseTests 5 0
-servlet.tck.spec.i18n.encoding.EncodingTests 3 0
-servlet.tck.spec.listenerorder.ListenerOrderTests 1 0
-servlet.tck.spec.multifiltermapping.MultiFilterMappingTests 4 0
-servlet.tck.spec.pluggability.ordering.PluggabilityOrderingTests 1 0
-servlet.tck.spec.protocols.http.ProtocolsHttpTests 1 0
-servlet.tck.spec.rdspecialchar.RdSpecialCharTests 2 0
-servlet.tck.spec.requestdispatcher.RequestDispatcherTests 20 0
-servlet.tck.spec.requestmap.RequestMapTests 8 0
-servlet.tck.spec.security.annotations.AnnotationsTests 7 2
-servlet.tck.spec.security.clientcert.ClientCertTests 1 1
-servlet.tck.spec.security.clientcertanno.ClientCertAnnoTests 1 1
-servlet.tck.spec.security.denyUncovered.DenyUncoveredTests 5 4
-servlet.tck.spec.security.metadatacomplete.MetaDataCompleteTests 6 4
-servlet.tck.spec.security.secbasic.SecBasicTests 14 8
-servlet.tck.spec.security.secform.SecFormTests 25 17
-servlet.tck.spec.serverpush.ServerPushTests 8 7
-servlet.tck.spec.servletcontext.ServletContextTests 1 0
-servlet.tck.spec.servletmapping.ServletMappingTests 4 0
-servlet.tck.spec.servletresponse.servletResponseTests 2 2
-servlet.tck.spec.srlistener.SrListenerTests 13 0
-servlet.tck.spec.webapps.accesswebinf.AccessWebinfTests 1 0
-servlet.tck.spec.welcomefiles.WelcomeFilesTests 2 0
+servlet.tck.api.jakarta_servlet.asynccontext.AsyncContextTests 40 0 0
+servlet.tck.api.jakarta_servlet.asyncevent.AsynceventTests 9 0 0
+servlet.tck.api.jakarta_servlet.dispatchertype.DispatcherTypeTests 4 0 0
+servlet.tck.api.jakarta_servlet.dispatchtest.DispatchTests 38 0 0
+servlet.tck.api.jakarta_servlet.dofilter.DoFilerTests 1 0 0
+servlet.tck.api.jakarta_servlet.filter.FilterTests 2 0 0
+servlet.tck.api.jakarta_servlet.filterchain.FilterChainTests 1 0 0
+servlet.tck.api.jakarta_servlet.filterconfig.FilterConfigTests 6 0 0
+servlet.tck.api.jakarta_servlet.filterrequestdispatcher.FilterRequestDispatcherTests 8 0 0
+servlet.tck.api.jakarta_servlet.genericfilter.GenericFilterTests 8 0 0
+servlet.tck.api.jakarta_servlet.genericservlet.GenericServletTests 12 0 0
+servlet.tck.api.jakarta_servlet.registration.RegistrationTests 10 0 0
+servlet.tck.api.jakarta_servlet.requestdispatcher.RequestDispatcherTests 6 0 0
+servlet.tck.api.jakarta_servlet.scattributeevent.ScAttributeEventTests 4 0 0
+servlet.tck.api.jakarta_servlet.scattributelistener.ScAttributeListenerTests 3 0 0
+servlet.tck.api.jakarta_servlet.scattributelistener40.ScAttributeListenerTests 1 0 0
+servlet.tck.api.jakarta_servlet.scevent.ScEventTests 2 0 0
+servlet.tck.api.jakarta_servlet.scinitializer.addfilter.AddFilterTests 1 0 0
+servlet.tck.api.jakarta_servlet.scinitializer.addfilter1.AddFilter1Tests 1 0 0
+servlet.tck.api.jakarta_servlet.scinitializer.addlistener.AddListenerTests 1 0 0
+servlet.tck.api.jakarta_servlet.scinitializer.addlistener1.AddListener1Tests 1 0 0
+servlet.tck.api.jakarta_servlet.scinitializer.addservlet.AddServletTests 1 0 0
+servlet.tck.api.jakarta_servlet.scinitializer.addservlet1.AddServlet1Tests 1 0 0
+servlet.tck.api.jakarta_servlet.scinitializer.createfilter.CreateFilterTests 1 0 0
+servlet.tck.api.jakarta_servlet.scinitializer.createlistener.CreateListenerTests 1 0 0
+servlet.tck.api.jakarta_servlet.scinitializer.createservlet.CreateServletTests 1 0 0
+servlet.tck.api.jakarta_servlet.scinitializer.getclassloader.GetClassLoaderTests 1 0 0
+servlet.tck.api.jakarta_servlet.scinitializer.getdefaultsessiontrackingmodes.GetDefaultSessionTrackingModesTests 1 0 0
+servlet.tck.api.jakarta_servlet.scinitializer.geteffectivemajorversion.GetEffectiveMajorVersionTests 1 0 0
+servlet.tck.api.jakarta_servlet.scinitializer.geteffectiveminorversion.GetEffectiveMinorVersionTests 1 0 0
+servlet.tck.api.jakarta_servlet.scinitializer.geteffectivesessiontrackingmodes.GetEffectiveSessionTrackingModesTests 1 0 0
+servlet.tck.api.jakarta_servlet.scinitializer.getfilterregistration.GetFilterRegistrationTests 1 0 0
+servlet.tck.api.jakarta_servlet.scinitializer.getfilterregistrations.GetFilterRegistrationsTests 1 0 0
+servlet.tck.api.jakarta_servlet.scinitializer.getservletregistration.GetServletRegistrationTests 1 0 0
+servlet.tck.api.jakarta_servlet.scinitializer.getsessioncookieconfig.GetSessionCookieconfigTests 1 0 0
+servlet.tck.api.jakarta_servlet.scinitializer.setinitparameter.SetInitParameterTests 1 0 0
+servlet.tck.api.jakarta_servlet.scinitializer.setsessiontrackingmodes.SetSessionTrackingModesTests 1 0 0
+servlet.tck.api.jakarta_servlet.sclistener.ScListenerTests 1 0 0
+servlet.tck.api.jakarta_servlet.sclistener40.ScListener40Tests 1 0 0
+servlet.tck.api.jakarta_servlet.servlet.ServletTests 7 0 0
+servlet.tck.api.jakarta_servlet.servletconfig.ServletConfigTests 5 0 0
+servlet.tck.api.jakarta_servlet.servletcontext.ServletContextTests 28 0 0
+servlet.tck.api.jakarta_servlet.servletcontext30.ServletContext30Tests 21 0 0
+servlet.tck.api.jakarta_servlet.servletcontext301.ServletContext301Tests 1 0 0
+servlet.tck.api.jakarta_servlet.servletcontext302.ServletContext302Tests 1 0 0
+servlet.tck.api.jakarta_servlet.servletcontext303.ServletContext303Tests 8 0 0
+servlet.tck.api.jakarta_servlet.servletcontext304.ServletContext304Tests 1 0 0
+servlet.tck.api.jakarta_servlet.servletcontext305.ServletContext305Tests 10 0 0
+servlet.tck.api.jakarta_servlet.servletcontext306.ServletContext306Tests 7 0 0
+servlet.tck.api.jakarta_servlet.servletcontext31.ServletContext31Tests 1 0 0
+servlet.tck.api.jakarta_servlet.servletcontext40.ServletContext40Tests 12 3 0
+servlet.tck.api.jakarta_servlet.servletexception.ServletExceptionTests 5 0 0
+servlet.tck.api.jakarta_servlet.servletinputstream.ServletInputStreamTests 1 0 0
+servlet.tck.api.jakarta_servlet.servletoutputstream.ServletOutputStreamTests 15 0 0
+servlet.tck.api.jakarta_servlet.servletrequest.ServletRequestTests 39 0 0
+servlet.tck.api.jakarta_servlet.servletrequest1.ServletRequest1Tests 2 0 0
+servlet.tck.api.jakarta_servlet.servletrequest30.ServletRequest30Tests 15 0 0
+servlet.tck.api.jakarta_servlet.servletrequestwrapper.ServletRequestWrapperTests 32 0 0
+servlet.tck.api.jakarta_servlet.servletrequestwrapper30.ServletRequestWrapper30Tests 15 0 0
+servlet.tck.api.jakarta_servlet.servletrequestwrapper30x.ServletRequestWrapper30xTests 1 0 0
+servlet.tck.api.jakarta_servlet.servletresponse.ServletResponseTests 32 0 0
+servlet.tck.api.jakarta_servlet.servletresponsewrapper.ServletResponseWrapperTests 20 0 0
+servlet.tck.api.jakarta_servlet.servletresponsewrapper30.ServletResponseWrapper30Tests 1 0 0
+servlet.tck.api.jakarta_servlet.sessiontrackingmode.SessionTrackingModeTests 1 0 0
+servlet.tck.api.jakarta_servlet.sessiontrackingmode1.SessionTrackingMode1Tests 4 0 0
+servlet.tck.api.jakarta_servlet.sessiontrackingmode2.SessionTrackingMode2Tests 1 0 0
+servlet.tck.api.jakarta_servlet.sessiontrackingmode3.SessionTrackingMode3Tests 1 0 0
+servlet.tck.api.jakarta_servlet.sessiontrackingmode4.SessionTrackingMode4Tests 1 0 0
+servlet.tck.api.jakarta_servlet.srattributeevent.SrAttributeEventTests 4 0 0
+servlet.tck.api.jakarta_servlet.srattributelistener.SrAttributeListenerTests 3 0 0
+servlet.tck.api.jakarta_servlet.srattributelistener40.SrAttributeListener40Tests 1 0 0
+servlet.tck.api.jakarta_servlet.srevent.SrEventTests 3 0 0
+servlet.tck.api.jakarta_servlet.srlistener.SrListenerTests 1 0 0
+servlet.tck.api.jakarta_servlet.srlistener40.SrListener40Tests 1 0 0
+servlet.tck.api.jakarta_servlet.unavailableexception.UnAvailableExceptionTests 5 0 0
+servlet.tck.api.jakarta_servlet_http.asynccontext.AsyncContextTests 12 0 0
+servlet.tck.api.jakarta_servlet_http.cookie.CookieTests 33 0 0
+servlet.tck.api.jakarta_servlet_http.httpfilter.HttpFilterTests 1 0 0
+servlet.tck.api.jakarta_servlet_http.httpservlet.HttpServletTests 11 0 0
+servlet.tck.api.jakarta_servlet_http.httpservletrequest.HttpServletRequestTests 70 0 0
+servlet.tck.api.jakarta_servlet_http.httpservletrequest1.HttpServletRequest1Tests 1 0 0
+servlet.tck.api.jakarta_servlet_http.httpservletrequest30.HttpServletRequest30Tests 1 0 0
+servlet.tck.api.jakarta_servlet_http.httpservletrequest31.HttpServletRequest31Tests 1 0 0
+servlet.tck.api.jakarta_servlet_http.httpservletrequest40.HttpServletRequest40Tests 11 0 0
+servlet.tck.api.jakarta_servlet_http.httpservletrequestwrapper.HttpServletRequestWrapperTests 60 0 0
+servlet.tck.api.jakarta_servlet_http.httpservletresponse.HttpServletResponseTests 44 0 0
+servlet.tck.api.jakarta_servlet_http.httpservletresponse30.HttpServletResponse30Tests 4 0 0
+servlet.tck.api.jakarta_servlet_http.httpservletresponse40.HttpServletResponse40Tests 3 0 0
+servlet.tck.api.jakarta_servlet_http.httpservletresponsewrapper.HttpServletResponseWrapperTests 34 0 0
+servlet.tck.api.jakarta_servlet_http.httpservletresponsewrapper30.HttpServletResponseWrapper30Tests 4 0 0
+servlet.tck.api.jakarta_servlet_http.httpsession.HttpSessionTests 25 0 0
+servlet.tck.api.jakarta_servlet_http.httpsessionactivationlistener40.HttpSessionActivationListener40Tests 1 0 0
+servlet.tck.api.jakarta_servlet_http.httpsessionattributelistener.HttpSessionAttributeListenerTests 3 0 0
+servlet.tck.api.jakarta_servlet_http.httpsessionattributelistener40.HttpSessionAttributeListener40Tests 1 0 0
+servlet.tck.api.jakarta_servlet_http.httpsessionbindingevent.HttpSessionBindingEventTests 5 0 0
+servlet.tck.api.jakarta_servlet_http.httpsessionbindinglistener.HttpSessionBindingListenerTests 2 0 0
+servlet.tck.api.jakarta_servlet_http.httpsessionbindinglistener40.HttpSessionBindingListener40Tests 1 0 0
+servlet.tck.api.jakarta_servlet_http.httpsessionevent.HttpSessionEventTests 2 0 0
+servlet.tck.api.jakarta_servlet_http.httpsessionidlistener.HttpSessionIdListenerTests 1 0 0
+servlet.tck.api.jakarta_servlet_http.httpsessionlistener.HttpSessionListenerTests 2 0 0
+servlet.tck.api.jakarta_servlet_http.httpsessionlistener40.HttpSessionListener40Tests 1 0 0
+servlet.tck.api.jakarta_servlet_http.httpsessionx.HttpSessionxTests 8 0 0
+servlet.tck.api.jakarta_servlet_http.httpupgradehandler.HttpUpgradeHandlerTests 1 0 0
+servlet.tck.api.jakarta_servlet_http.part.PartTests 7 4 0
+servlet.tck.api.jakarta_servlet_http.part1.Part1Tests 7 4 0
+servlet.tck.api.jakarta_servlet_http.readlistener.ReadListenerTests 1 0 0
+servlet.tck.api.jakarta_servlet_http.readlistener1.ReadListener1Tests 2 0 0
+servlet.tck.api.jakarta_servlet_http.servletcontext303.ServletContext303Tests 4 0 0
+servlet.tck.api.jakarta_servlet_http.servletcontext304.ServletContext304Tests 1 0 0
+servlet.tck.api.jakarta_servlet_http.servletcontext305.ServletContext305Tests 1 0 0
+servlet.tck.api.jakarta_servlet_http.sessioncookieconfig.SessionCookieConfigTests 9 0 0
+servlet.tck.api.jakarta_servlet_http.writelistener.WriteListenerTests 1 0 0
+servlet.tck.compat.LeadingSlash.WithLeadingSlash.WithLeadingSlashTests 1 0 0
+servlet.tck.compat.LeadingSlash.WithoutLeadingSlash.WithoutLeadingSlashTests 1 0 0
+servlet.tck.pluggability.aordering.AorderingTests 1 0 0
+servlet.tck.pluggability.aordering1.Aordering1Tests 1 0 0
+servlet.tck.pluggability.aordering2.Aordering2Tests 1 0 0
+servlet.tck.pluggability.aordering3.Aordering3Tests 1 0 0
+servlet.tck.pluggability.aordering4.Aordering4Tests 1 0 0
+servlet.tck.pluggability.api.jakarta_servlet.asynccontext.AsyncContextTests 14 0 0
+servlet.tck.pluggability.api.jakarta_servlet.asyncevent.AsyncEventTests 9 0 0
+servlet.tck.pluggability.api.jakarta_servlet.dispatchertype.DispatcherTypeTests 4 0 0
+servlet.tck.pluggability.api.jakarta_servlet.dofilter.DoFilterTests 1 0 0
+servlet.tck.pluggability.api.jakarta_servlet.filter.FilterTests 2 0 0
+servlet.tck.pluggability.api.jakarta_servlet.filterchain.FilterChainTests 1 0 0
+servlet.tck.pluggability.api.jakarta_servlet.filterconfig.FilterConfigTests 6 0 0
+servlet.tck.pluggability.api.jakarta_servlet.filterrequestdispatcher.FilterRequestDispatcherTests 8 0 0
+servlet.tck.pluggability.api.jakarta_servlet.genericservlet.GenericServletTests 12 0 0
+servlet.tck.pluggability.api.jakarta_servlet.registration.RegistrationTests 10 0 0
+servlet.tck.pluggability.api.jakarta_servlet.requestdispatcher.RequestDispatcherTests 6 0 0
+servlet.tck.pluggability.api.jakarta_servlet.scattributeevent.ScAttributeEventTests 4 0 0
+servlet.tck.pluggability.api.jakarta_servlet.scattributelistener.ScAttributeListenerTests 3 0 0
+servlet.tck.pluggability.api.jakarta_servlet.scevent.ScEventTests 2 0 0
+servlet.tck.pluggability.api.jakarta_servlet.sclistener.ScListenerTests 1 0 0
+servlet.tck.pluggability.api.jakarta_servlet.servlet.ServletTests 7 0 0
+servlet.tck.pluggability.api.jakarta_servlet.servletconfig.ServletConfigTests 5 0 0
+servlet.tck.pluggability.api.jakarta_servlet.servletcontext.ServletContextTests 24 0 0
+servlet.tck.pluggability.api.jakarta_servlet.servletcontext30.ServletContext30Tests 16 0 0
+servlet.tck.pluggability.api.jakarta_servlet.servletexception.ServletExceptionTests 5 0 0
+servlet.tck.pluggability.api.jakarta_servlet.servletinputstream.ServletInputStreamTests 1 0 0
+servlet.tck.pluggability.api.jakarta_servlet.servletoutputstream.ServletOutputStreamTests 15 0 0
+servlet.tck.pluggability.api.jakarta_servlet.servletrequest.ServletRequestTests 39 0 0
+servlet.tck.pluggability.api.jakarta_servlet.servletrequest1.ServletRequest1Tests 2 0 0
+servlet.tck.pluggability.api.jakarta_servlet.servletrequest30.ServletRequest30Tests 15 0 0
+servlet.tck.pluggability.api.jakarta_servlet.servletrequestwrapper.ServletRequestWrapperTests 32 0 0
+servlet.tck.pluggability.api.jakarta_servlet.servletrequestwrapper30.ServletRequestWrapper30Tests 15 0 0
+servlet.tck.pluggability.api.jakarta_servlet.servletrequestwrapper30x.ServletRequestWrapper30xTests 1 0 0
+servlet.tck.pluggability.api.jakarta_servlet.servletresponse.ServletResponseTests 32 0 0
+servlet.tck.pluggability.api.jakarta_servlet.servletresponsewrapper.ServletResponseWrapperTests 20 0 0
+servlet.tck.pluggability.api.jakarta_servlet.servletresponsewrapper30.ServletResponseWrapper30Tests 1 0 0
+servlet.tck.pluggability.api.jakarta_servlet.sessiontrackingmode.SessionTrackingModeTests 1 0 0
+servlet.tck.pluggability.api.jakarta_servlet.srattributeevent.SrAttributeEventTests 4 0 0
+servlet.tck.pluggability.api.jakarta_servlet.srattributelistener.SrAttributeListenerTests 3 0 0
+servlet.tck.pluggability.api.jakarta_servlet.srevent.SrEventTests 3 0 0
+servlet.tck.pluggability.api.jakarta_servlet.srlistener.SrListenerTests 1 0 0
+servlet.tck.pluggability.api.jakarta_servlet.unavailableexception.UnAvailableExceptionTests 5 0 0
+servlet.tck.pluggability.api.jakarta_servlet_http.cookie.CookieTests 33 0 0
+servlet.tck.pluggability.api.jakarta_servlet_http.httpservlet.HttpServletTests 11 0 0
+servlet.tck.pluggability.api.jakarta_servlet_http.httpservletrequest.HttpServletRequestTests 70 0 0
+servlet.tck.pluggability.api.jakarta_servlet_http.httpservletrequest30.HttpServletRequest30Tests 1 0 0
+servlet.tck.pluggability.api.jakarta_servlet_http.httpservletrequestwrapper.HttpServletRequestWrapperTests 58 0 0
+servlet.tck.pluggability.api.jakarta_servlet_http.httpservletresponse.HttpServletResponseTests 44 0 0
+servlet.tck.pluggability.api.jakarta_servlet_http.httpservletresponse30.HttpServletResponse30Tests 4 0 0
+servlet.tck.pluggability.api.jakarta_servlet_http.httpservletresponsewrapper.HttpServletResponseWrapperTests 34 0 0
+servlet.tck.pluggability.api.jakarta_servlet_http.httpservletresponsewrapper30.HttpServletResponseWrapper30Tests 4 0 0
+servlet.tck.pluggability.api.jakarta_servlet_http.httpsession.HttpSessionTests 24 0 0
+servlet.tck.pluggability.api.jakarta_servlet_http.httpsessionattributelistener.HttpSessionAttributeListenerTests 3 0 0
+servlet.tck.pluggability.api.jakarta_servlet_http.httpsessionbindingevent.HttpSessionBindingEventTests 5 0 0
+servlet.tck.pluggability.api.jakarta_servlet_http.httpsessionbindinglistener.HttpSessionBindingListenerTests 2 0 0
+servlet.tck.pluggability.api.jakarta_servlet_http.httpsessionevent.HttpSessionEventTests 2 0 0
+servlet.tck.pluggability.api.jakarta_servlet_http.httpsessionlistener.HttpSessionListenerTests 2 0 0
+servlet.tck.pluggability.api.jakarta_servlet_http.sessioncookieconfig.SessionCookieConfigTests 9 0 0
+servlet.tck.pluggability.fragment.FragmentTests 5 0 0
+servlet.tck.spec.annotationservlet.webfilter.WebFilterTests 3 0 0
+servlet.tck.spec.annotationservlet.weblistener.WebListenerTests 7 0 0
+servlet.tck.spec.annotationservlet.webservlet.WebServletTests 5 0 0
+servlet.tck.spec.annotationservlet.webservletapi.WebServletApiTests 3 0 0
+servlet.tck.spec.annotationservlet.webservletdd.WebServletddTests 5 0 0
+servlet.tck.spec.async.AsyncTests 39 0 0
+servlet.tck.spec.defaultcontextpath.DefaultContextPathTests 1 0 0
+servlet.tck.spec.defaultmapping.DefaultMappingTests 2 0 0
+servlet.tck.spec.dir_struct.DirStructTests 1 0 0
+servlet.tck.spec.errorpage.ErrorPageTests 4 0 0
+servlet.tck.spec.errorpage1.ErrorPage1Tests 2 0 0
+servlet.tck.spec.httpservletresponse.HttpServletResponseTests 5 0 0
+servlet.tck.spec.i18n.encoding.EncodingTests 3 0 0
+servlet.tck.spec.listenerorder.ListenerOrderTests 1 0 0
+servlet.tck.spec.multifiltermapping.MultiFilterMappingTests 4 0 0
+servlet.tck.spec.pluggability.ordering.PluggabilityOrderingTests 1 0 0
+servlet.tck.spec.protocols.http.ProtocolsHttpTests 1 0 0
+servlet.tck.spec.rdspecialchar.RdSpecialCharTests 2 0 0
+servlet.tck.spec.requestdispatcher.RequestDispatcherTests 20 0 0
+servlet.tck.spec.requestmap.RequestMapTests 8 0 0
+servlet.tck.spec.security.annotations.AnnotationsTests 7 2 0
+servlet.tck.spec.security.clientcert.ClientCertTests 1 1 0
+servlet.tck.spec.security.clientcertanno.ClientCertAnnoTests 1 1 0
+servlet.tck.spec.security.denyUncovered.DenyUncoveredTests 5 4 0
+servlet.tck.spec.security.metadatacomplete.MetaDataCompleteTests 6 4 0
+servlet.tck.spec.security.secbasic.SecBasicTests 14 8 0
+servlet.tck.spec.security.secform.SecFormTests 25 17 0
+servlet.tck.spec.serverpush.ServerPushTests 8 0 7
+servlet.tck.spec.servletcontext.ServletContextTests 1 0 0
+servlet.tck.spec.servletmapping.ServletMappingTests 4 0 0
+servlet.tck.spec.servletresponse.servletResponseTests 2 0 0
+servlet.tck.spec.srlistener.SrListenerTests 13 0 0
+servlet.tck.spec.webapps.accesswebinf.AccessWebinfTests 1 0 0
+servlet.tck.spec.welcomefiles.WelcomeFilesTests 2 0 0

@@ -24,7 +24,7 @@ Options:
   --family <name>          Run one TCK family: api | spec | pluggability | compat.
   --failing [tally-file]   (combine with --family to narrow) Run only the classes whose "bad" count (3rd column) is
                            > 0 in the tally (default: foy-tck/tck-baseline.txt;
-                           format "<fqcn> <run> <bad>", see foy-tck/tck-tally.sh).
+                           format "<fqcn> <run> <bad> <skipped>", see foy-tck/tck-tally.sh).
   --no-install             Skip the reactor install step (code unchanged since
                            the last build).
   --dry-run                Print the Maven commands without running them.
@@ -97,7 +97,9 @@ if [ "$USE_FAILING" = true ]; then
         exit 2
     fi
     # With --family, keep only the failing classes of that family
-    FAILING_LIST="$(awk -v prefix="servlet.tck.$FAMILY." \
+    FAILING_PREFIX="servlet.tck."
+    if [ -n "$FAMILY" ]; then FAILING_PREFIX="servlet.tck.$FAMILY."; fi
+    FAILING_LIST="$(awk -v prefix="$FAILING_PREFIX" \
         'NF >= 3 && $3 > 0 && index($1, prefix) == 1 { printf "%s%s", sep, $1; sep="," }' "$TALLY_FILE")"
     if [ -z "$FAILING_LIST" ]; then
         echo "No failing class in $TALLY_FILE: nothing to run."
