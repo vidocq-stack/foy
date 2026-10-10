@@ -121,8 +121,10 @@ public final class ServletOutputStreamImpl extends ServletOutputStream {
     private boolean closed;
     private boolean discarding;
 
+    /** Set once by the response's request binding, read from any thread (not guarded by lock). */
+    private volatile NonBlockingHost host;
+
     // ---- non-blocking state, guarded by lock ----
-    private NonBlockingHost host;
     private volatile WriteListener listener;
     /** A listener is set and the async cycle that set it is still open. */
     private volatile boolean nonBlocking;

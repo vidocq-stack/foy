@@ -847,9 +847,47 @@ public final class HttpServletRequestImpl implements HttpServletRequest {
         return null;
     }
 
-    @Override public <T extends HttpUpgradeHandler> T upgrade(Class<T> handlerClass) {
-        throw new UnsupportedOperationException("upgrade not implemented");
+    /** The handler of an upgrade requested by the application, or {@code null}. */
+    private volatile HttpUpgradeHandler upgradeHandler;
+
+    /**
+     * Servlet 6.1 section 2.3.3.5: instantiates the handler through the context's component factory
+     * (never by reflection here) and marks the request upgraded. Once the servlet and its filters
+     * returned, the bridge sends the status and headers the application set (typically 101) instead
+     * of the response, discards any body written, and calls {@link HttpUpgradeHandler#init} with a
+     * {@link WebConnectionImpl}.
+     *
+     * @throws IOException over HTTP/2 or HTTP/1.0, where the HTTP/1.1 Upgrade mechanism does not exist
+     * @throws ServletException when the handler cannot be instantiated
+     * @throws IllegalStateException when the request is already upgraded
+     */
+    @Override public <T extends HttpUpgradeHandler> T upgrade(Class<T> handlerClass)
+            throws IOException, jakarta.servlet.ServletException {
+        java.util.Objects.requireNonNull(handlerClass, "handlerClass");
+        if (chappe.version() != io.vidocq.chappe.api.HttpVersion.HTTP_1_1) {
+            throw new IOException("HTTP upgrade is not supported over " + getProtocol());
+        }
+        if (upgradeHandler != null) throw new IllegalStateException("the request is already upgraded");
+        var factory = servletContext instanceof io.vidocq.foy.internal.container.VidocqServletContext v
+                ? v.componentFactory()
+                : io.vidocq.foy.internal.gen.RegistryComponentFactory.forClassLoader(handlerClass.getClassLoader());
+        T handler;
+        try {
+            handler = factory.newInstance(handlerClass);
+        } catch (jakarta.servlet.ServletException e) {
+            throw e;
+        } catch (RuntimeException | LinkageError e) {
+            throw new jakarta.servlet.ServletException("cannot instantiate " + handlerClass.getName(), e);
+        }
+        upgradeHandler = handler;
+        return handler;
     }
+
+    /** The handler of the upgrade the application requested, or {@code null}. */
+    HttpUpgradeHandler upgradeHandler() { return upgradeHandler; }
+
+    /** The context's class loader, for the upgraded connection's callbacks. */
+    ClassLoader applicationClassLoader() { return servletContext.getClassLoader(); }
     private io.vidocq.foy.internal.async.AsyncContextImpl asyncContext;
     private jakarta.servlet.http.HttpServletResponse boundResponse;
 

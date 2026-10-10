@@ -118,6 +118,21 @@ final class CallbackSerializer {
         }
     }
 
+    /**
+     * {@link #close()} that may also be called from a callback (an upgraded connection closed by
+     * its own listener): from the callback thread it does not wait for itself. Idempotent.
+     */
+    void shutdown() {
+        lock.lock();
+        try {
+            closed = true;
+            queue.clear();
+            if (drainer != Thread.currentThread()) awaitIdle();
+        } finally {
+            lock.unlock();
+        }
+    }
+
     /** Whether a callback is running or about to run. */
     boolean isRunning() {
         lock.lock();

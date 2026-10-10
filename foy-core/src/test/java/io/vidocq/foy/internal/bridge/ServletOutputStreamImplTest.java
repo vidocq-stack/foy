@@ -192,7 +192,8 @@ class ServletOutputStreamImplTest {
         out.setWriteListener(listener);
         listener.awaitWritePossible();
         out.write(bytes(40, 'q')); // 16 in the pipe, 24 kept
-        out.close(); // must not wait for the client
+        // Must not wait for the client: bounded, so a regression fails instead of hanging.
+        assertTimeoutPreemptively(java.time.Duration.ofSeconds(5), out::close);
         assertEquals("q".repeat(40), new String(pipe.reader().readAllBytes(), StandardCharsets.US_ASCII));
     }
 

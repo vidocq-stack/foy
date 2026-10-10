@@ -281,6 +281,48 @@ public final class VidocqServletContext implements ServletContext {
         return f;
     }
 
+    // ---- Upgraded connections (Servlet 6.1 section 2.3.3.5) ----
+
+    /** The open upgraded connections of this context, closed at undeploy. */
+    private final Set<AutoCloseable> upgradedConnections = java.util.concurrent.ConcurrentHashMap.newKeySet();
+    private volatile boolean upgradedConnectionsClosed;
+
+    /**
+     * Tracks an upgraded connection until {@link #unregisterUpgradedConnection} or undeploy.
+     *
+     * @return {@code false} when the context is already undeployed: the caller closes the connection
+     */
+    public boolean registerUpgradedConnection(AutoCloseable connection) {
+        upgradedConnections.add(connection);
+        if (upgradedConnectionsClosed) {
+            upgradedConnections.remove(connection);
+            return false;
+        }
+        return true;
+    }
+
+    /** The connection closed: no longer tracked. */
+    public void unregisterUpgradedConnection(AutoCloseable connection) {
+        upgradedConnections.remove(connection);
+    }
+
+    /**
+     * Undeploy: closes every open upgraded connection (its handler's {@code destroy()} runs) and
+     * refuses later ones. A failing close is logged and the others are still closed.
+     */
+    public void closeUpgradedConnections() {
+        upgradedConnectionsClosed = true;
+        for (AutoCloseable c : java.util.List.copyOf(upgradedConnections)) {
+            upgradedConnections.remove(c);
+            try {
+                c.close();
+            } catch (Exception e) {
+                System.getLogger(VidocqServletContext.class.getName())
+                        .log(System.Logger.Level.WARNING, "closing an upgraded connection failed", e);
+            }
+        }
+    }
+
     @Override public String getContextPath() { return contextPath; }
     @Override public ServletContext getContext(String uripath) {
         // Servlet 6.1 §4.8 : le conteneur peut retourner null si cross-context non supporté.

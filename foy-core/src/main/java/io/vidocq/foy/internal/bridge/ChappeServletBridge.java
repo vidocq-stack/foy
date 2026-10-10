@@ -22,6 +22,7 @@ package io.vidocq.foy.internal.bridge;
 import io.vidocq.chappe.api.Body;
 import io.vidocq.chappe.api.ConnectionUpgrade;
 import io.vidocq.chappe.api.Handler;
+import io.vidocq.chappe.api.Headers;
 import io.vidocq.chappe.api.HttpMethod;
 import io.vidocq.chappe.api.HttpVersion;
 import io.vidocq.chappe.api.Request;
@@ -62,6 +63,7 @@ import jakarta.servlet.http.Cookie;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletRequestWrapper;
 import jakarta.servlet.http.HttpServletResponse;
+import jakarta.servlet.http.HttpUpgradeHandler;
 
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
@@ -431,6 +433,10 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
         } catch (ServletException | IOException | RuntimeException e) {
             thrown = e;
         }
+        // Section 2.3.3.5: an upgraded request leaves the HTTP lifecycle here (no async or error
+        // machinery). A servlet that threw after upgrade() gets the regular error handling instead.
+        HttpUpgradeHandler upgradeHandler = req.upgradeHandler();
+        if (upgradeHandler != null && thrown == null) return upgraded(req, res, upgradeHandler, registry);
         // An async cycle started by the servlet (even one that then threw) ends in runAsyncCycles.
         AsyncEnd end = runAsyncCycles(req, res, thrown);
         AsyncContextImpl lastCycle = null;
@@ -453,6 +459,33 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
         // Section 2.3.3.3: onComplete closes the whole async processing, error dispatch included.
         if (lastCycle != null) lastCycle.endCycle();
         return failure != null ? failed(res, req, failure) : completed(req, res);
+    }
+
+    /**
+     * The end of an upgraded request (Servlet 6.1 section 2.3.3.5): {@code requestDestroyed} fires,
+     * then chappe gets a {@link ConnectionUpgrade} carrying the status and headers the application
+     * set (chappe drops any {@code Content-Length}/{@code Transfer-Encoding}); the buffered body is
+     * discarded. Once the head is on the wire, chappe calls the handler on the connection thread,
+     * which starts a {@link WebConnectionImpl} ({@code init}). A response already committed (the
+     * application flushed it) cannot be turned into an upgrade: it ends as a regular response.
+     */
+    private Response upgraded(HttpServletRequestImpl req, HttpServletResponseImpl res, HttpUpgradeHandler handler,
+                              ListenerRegistry registry) {
+        req.endNonBlockingIo();
+        registry.fireRequestDestroyed(servletContext, req);
+        if (res.isStreaming()) {
+            LOG.log(System.Logger.Level.WARNING,
+                    "the response was committed before the upgrade could be sent; upgrade not performed");
+            return completed(req, res);
+        }
+        maybeAttachSessionCookie(req, res);
+        var headers = Headers.builder();
+        for (Map.Entry<String, List<String>> e : res.allHeaders().entrySet()) {
+            for (String v : e.getValue()) headers.add(e.getKey(), v);
+        }
+        ClassLoader loader = req.applicationClassLoader();
+        return new ConnectionUpgrade(StatusCode.of(res.getStatus()), headers.build(),
+                connection -> new WebConnectionImpl(connection, handler, servletContext, loader).start());
     }
 
     /**

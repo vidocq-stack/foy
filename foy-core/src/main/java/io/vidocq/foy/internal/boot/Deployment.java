@@ -81,7 +81,8 @@ public final class Deployment implements AutoCloseable {
     public List<Filter> initializedFilters() { return initializedFilters; }
 
     /**
-     * Undeploys: Servlet 6.1 §2.3.4 — {@code destroy()} in reverse {@code init()} order
+     * Undeploys: open upgraded connections close first (their {@code HttpUpgradeHandler.destroy()}
+     * runs), then Servlet 6.1 §2.3.4 — {@code destroy()} in reverse {@code init()} order
      * (filters, then servlets), then the session reaper stops and every live session is
      * invalidated with its listeners ({@code sessionDestroyed}, {@code valueUnbound}; Foy does not
      * persist sessions across deployments), then {@code contextDestroyed}, then the context leaves
@@ -102,6 +103,9 @@ public final class Deployment implements AutoCloseable {
     static void undeploy(VidocqServletContext servletContext, ListenerRegistry contextListeners,
                          List<Servlet> initializedServlets, List<Filter> initializedFilters, Path tempDir,
                          SessionManager sessions) {
+        // Upgraded connections first: their handlers' destroy() runs while the application is intact.
+        try { servletContext.closeUpgradedConnections(); }
+        catch (RuntimeException e) { warn("closing the upgraded connections failed", e); }
         for (int i = initializedFilters.size() - 1; i >= 0; i--) {
             Filter f = initializedFilters.get(i);
             try { f.destroy(); } catch (RuntimeException e) { warn("destroy failed for filter " + f, e); }

@@ -519,7 +519,8 @@ class ServletNonBlockingIoEndToEndTest {
                             ac.complete();
                             return;
                         }
-                        while (nio.isReady()) {
+                        // Capped (16 MiB): a pipe that never fills must fail the test, not hang it.
+                        while (nio.isReady() && blocks.get() < 4096) {
                             writer.print(block);
                             blocks.incrementAndGet();
                         }
@@ -536,7 +537,7 @@ class ServletNonBlockingIoEndToEndTest {
         try (var client = new Client(port)) {
             client.send("GET /nio HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n");
             String response = client.readAll();
-            assertTrue(response.startsWith("HTTP/1.1 200"), response.substring(0, 100));
+            assertTrue(response.startsWith("HTTP/1.1 200"), response.substring(0, Math.min(100, response.length())));
             assertTrue(refused.get());
             assertFalse(response.contains("!"), "a refused print sends nothing");
         }

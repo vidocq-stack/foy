@@ -333,14 +333,18 @@ public final class ServletInputStreamImpl extends ServletInputStream {
 
     @Override
     public void close() throws IOException {
-        if (listener != null) {
-            // The pump owns the source until it stops; no further callback after a close.
-            lock.lock();
-            try { ended = true; }
-            finally { lock.unlock(); }
-            pump.stop(false);
-            return;
+        try {
+            if (listener != null) {
+                // The pump owns the source until it stops; no further callback after a close.
+                lock.lock();
+                try { ended = true; }
+                finally { lock.unlock(); }
+                pump.stop(false);
+                return;
+            }
+            delegate.close();
+        } finally {
+            if (host != null) host.inputClosed();
         }
-        delegate.close();
     }
 }
