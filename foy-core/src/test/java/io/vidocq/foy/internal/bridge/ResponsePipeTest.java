@@ -27,7 +27,9 @@ import java.nio.charset.StandardCharsets;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -55,7 +57,7 @@ class ResponsePipeTest {
         var read = CompletableFuture.supplyAsync(() -> {
             try { return pipe.reader().read(); } catch (IOException e) { throw new RuntimeException(e); }
         }, r -> Thread.ofVirtual().start(r));
-        assertThrows(java.util.concurrent.TimeoutException.class, () -> read.get(100, TimeUnit.MILLISECONDS));
+        assertThrows(TimeoutException.class, () -> read.get(100, TimeUnit.MILLISECONDS));
         pipe.write(bytes("x"), 0, 1);
         assertEquals('x', read.get(5, TimeUnit.SECONDS));
     }
@@ -85,7 +87,7 @@ class ResponsePipeTest {
     void writerBlocksWhenFullAndResumes() throws Exception {
         var pipe = new ResponsePipe(8);
         var done = new CountDownLatch(1);
-        var failure = new java.util.concurrent.atomic.AtomicReference<Throwable>();
+        var failure = new AtomicReference<Throwable>();
         Thread.ofVirtual().start(() -> {
             try {
                 pipe.write(bytes("0123456789ABCDEF"), 0, 16);
@@ -124,7 +126,7 @@ class ResponsePipeTest {
                 outcome.complete(t);
             }
         });
-        assertThrows(java.util.concurrent.TimeoutException.class, () -> outcome.get(100, TimeUnit.MILLISECONDS));
+        assertThrows(TimeoutException.class, () -> outcome.get(100, TimeUnit.MILLISECONDS));
         pipe.reader().close();
         assertInstanceOf(IOException.class, outcome.get(5, TimeUnit.SECONDS));
     }
@@ -152,7 +154,7 @@ class ResponsePipeTest {
                 outcome.complete(t);
             }
         });
-        assertThrows(java.util.concurrent.TimeoutException.class, () -> outcome.get(100, TimeUnit.MILLISECONDS));
+        assertThrows(TimeoutException.class, () -> outcome.get(100, TimeUnit.MILLISECONDS));
         pipe.abort(new RuntimeException("boom"));
         assertInstanceOf(IOException.class, outcome.get(5, TimeUnit.SECONDS));
     }

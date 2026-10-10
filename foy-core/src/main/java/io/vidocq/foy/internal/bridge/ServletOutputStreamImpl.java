@@ -24,6 +24,7 @@ import jakarta.servlet.WriteListener;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.util.Objects;
 
 /**
  * The response body stream: a bounded buffer of {@code bufferSize} bytes, then a live body.
@@ -125,7 +126,7 @@ public final class ServletOutputStreamImpl extends ServletOutputStream {
 
     @Override
     public void write(byte[] b, int off, int len) throws IOException {
-        java.util.Objects.checkFromIndexSize(off, len, b.length);
+        Objects.checkFromIndexSize(off, len, b.length);
         if (discarding || len == 0) return;
         if (closed) throw new IOException("stream closed");
         long declared = owner.declaredLength();

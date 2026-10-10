@@ -413,3 +413,28 @@ Statuts : `OPEN` → `INVESTIGATING` → `FIXED` (commit hash) → `CLOSED`.
   (`ListenerRegistry.addFirst`) whenever a `BeanManager` is given. A `BeanManager` that cannot supply a
   controller leaves the request without a context, as before. The session context is still not activated
   (no portable API).
+
+## BUG-20261010-01 — async timeout lets the pipeline thread and an async thread write the response concurrently
+
+- **Date** : 2026-10-10
+- **Statut** : OPEN (carried into Phase 5 Task 5.6)
+- **Module touché** : `foy-core` (`ChappeServletBridge.runPipeline`, `ServletOutputStreamImpl`, `ResponsePipe`)
+- **Symptôme** : after an `AsyncContext` timeout, `awaitAsyncIfStarted` returns while the async
+  thread (`AsyncContext.start`) may still be writing. The pipeline thread then runs
+  `finishBody()` → `ServletOutputStreamImpl.push()`/`ResponsePipe.write` while the async thread is
+  inside `write()`/`push()` on the same unsynchronised buffer. `ResponsePipe` is single-producer.
+  Possible effects: interleaved or lost body bytes, a corrupted `ByteArrayOutputStream` count, a
+  body finished while the async thread still writes (its write then fails with
+  "response body already ended"), or, when not yet committed, a buffered head sent while a late
+  commit's `head.complete` returns false.
+- **Reproduction minimale** : servlet calls `startAsync()`, `setTimeout(50)`, then
+  `ac.start(() -> { for (;;) { out.write(block); out.flush(); } })` — the timeout fires while the
+  async thread is writing; run repeatedly (race, not deterministic).
+- **Hypothèse de cause** : the Task 5.4 streaming model assumes one writer at a time, which the
+  async-completion handshake guarantees except on the timeout path: `AsyncContextImpl.awaitCompletion`
+  completes internally on timeout without waiting for (or fencing) the async thread.
+- **Investigations** :
+  - 2026-10-10 (Task 5.4 review, fix round 1) : found in review; not fixed in 5.4 by ruling —
+    Task 5.6 (async lifecycle: timeout → error dispatch, onComplete at the end of the cycle) owns it.
+    Fix direction: after a timeout, fence the response (writes from the stale async thread fail or
+    are dropped) before the pipeline touches the stream, or serialise stream access.

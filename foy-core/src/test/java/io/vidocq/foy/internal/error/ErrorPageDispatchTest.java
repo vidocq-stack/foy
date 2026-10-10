@@ -32,16 +32,19 @@ import jakarta.servlet.http.HttpServletResponse;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.fail;
 
 /** End-to-end error-page dispatch (Servlet 6.1 section 10.9). */
 class ErrorPageDispatchTest {
@@ -187,16 +190,16 @@ class ErrorPageDispatchTest {
                         .timeout(Duration.ofSeconds(5)).GET().build(),
                         HttpResponse.BodyHandlers.ofInputStream());
         assertEquals(200, res.statusCode());
-        var received = new java.io.ByteArrayOutputStream();
+        var received = new ByteArrayOutputStream();
         try (var in = res.body()) {
             byte[] buf = new byte[256];
             int n;
             while ((n = in.read(buf)) != -1) received.write(buf, 0, n);
-            org.junit.jupiter.api.Assertions.fail("the body must not end normally, got: " + received);
+            fail("the body must not end normally, got: " + received);
         } catch (IOException expected) {
             // truncated chunked body
         }
-        assertEquals("committed-content", received.toString(java.nio.charset.StandardCharsets.UTF_8));
+        assertEquals("committed-content", received.toString(StandardCharsets.UTF_8));
     }
 
     @Test

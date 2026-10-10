@@ -21,6 +21,8 @@ package io.vidocq.foy.internal.bridge;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.InterruptedIOException;
+import java.util.Objects;
 import java.util.concurrent.locks.Condition;
 import java.util.concurrent.locks.ReentrantLock;
 
@@ -61,7 +63,7 @@ final class ResponsePipe {
 
     /** Blocks while full; IOException("client disconnected") once the reader side is closed. */
     void write(byte[] b, int off, int len) throws IOException {
-        java.util.Objects.checkFromIndexSize(off, len, b.length);
+        Objects.checkFromIndexSize(off, len, b.length);
         while (len > 0) {
             lock.lock();
             try {
@@ -162,7 +164,7 @@ final class ResponsePipe {
 
         @Override
         public int read(byte[] b, int off, int len) throws IOException {
-            java.util.Objects.checkFromIndexSize(off, len, b.length);
+            Objects.checkFromIndexSize(off, len, b.length);
             if (len == 0) return 0;
             Runnable callback;
             int n;
@@ -177,7 +179,7 @@ final class ResponsePipe {
                         readable.await();
                     } catch (InterruptedException e) {
                         Thread.currentThread().interrupt();
-                        throw new java.io.InterruptedIOException("interrupted while waiting for the response body");
+                        throw new InterruptedIOException("interrupted while waiting for the response body");
                     }
                 }
                 n = Math.min(len, Math.min(count, ring.length - head));

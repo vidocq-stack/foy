@@ -141,6 +141,13 @@ class HttpServletResponseImplTest {
     }
 
     @Test
+    void negativeBufferSizeIsClampedToZero() {
+        var res = new HttpServletResponseImpl();
+        res.setBufferSize(-5);
+        assertEquals(0, res.getBufferSize());
+    }
+
+    @Test
     void headersIgnoredAfterFlushBuffer() throws IOException {
         var res = new HttpServletResponseImpl();
         res.setHeader("h0", "0");

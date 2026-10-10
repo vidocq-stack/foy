@@ -38,12 +38,14 @@ import jakarta.servlet.http.HttpServletResponse;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
+import java.io.BufferedInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.io.PrintWriter;
 import java.net.Socket;
+import java.net.SocketException;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
@@ -53,6 +55,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Consumer;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -347,10 +350,40 @@ class ServletStreamingEndToEndTest {
         }
     }
 
+    @Test
+    void aFailureWhileCommittingSettlesTheHead() throws Exception {
+        var flushFailure = new AtomicReference<Throwable>();
+        // The session cookie is serialised at the commit; a domain chappe cannot write fails it.
+        start("/bad-commit", new HttpServlet() {
+            @Override protected void doGet(HttpServletRequest req, HttpServletResponse resp) throws IOException {
+                req.getSession(true);
+                resp.getOutputStream().write("x".getBytes(StandardCharsets.US_ASCII));
+                try {
+                    resp.flushBuffer();
+                } catch (IOException e) {
+                    flushFailure.set(e);
+                    throw e;
+                }
+            }
+        }, ctx -> ctx.sessionCookieConfigInternal().setDomain("badĀdomain"));
+        try (var c = new RawClient(port)) {
+            c.send("GET /bad-commit HTTP/1.1\r\nHost: localhost\r\n\r\n");
+            // chappe must answer (its plain 500) rather than park on a head nobody settles.
+            var head = c.readHead();
+            assertEquals(500, head.status());
+        }
+        assertInstanceOf(IOException.class, flushFailure.get(), "the commit failure reaches the servlet's flush");
+    }
+
     // ---- helpers ----
 
     private void start(String pattern, HttpServlet servlet) {
+        start(pattern, servlet, ctx -> {});
+    }
+
+    private void start(String pattern, HttpServlet servlet, Consumer<VidocqServletContext> setup) {
         var ctx = new VidocqServletContext("/");
+        setup.accept(ctx);
         ctx.setListenerRegistry(listeners);
         var sessionManager = new SessionManager(new InMemorySessionStore(), ctx, 1800);
         sessionManager.setListenerRegistry(listeners);
@@ -393,7 +426,7 @@ class ServletStreamingEndToEndTest {
         RawClient(int port) throws IOException {
             socket = new Socket("127.0.0.1", port);
             socket.setSoTimeout(10_000);
-            in = new java.io.BufferedInputStream(socket.getInputStream());
+            in = new BufferedInputStream(socket.getInputStream());
             out = socket.getOutputStream();
         }
 
@@ -430,7 +463,7 @@ class ServletStreamingEndToEndTest {
             try {
                 int n;
                 while ((n = in.read(buf)) != -1) all.write(buf, 0, n);
-            } catch (java.net.SocketException reset) {
+            } catch (SocketException reset) {
                 // A reset is an acceptable way for the connection to end.
             }
             return all.toByteArray();

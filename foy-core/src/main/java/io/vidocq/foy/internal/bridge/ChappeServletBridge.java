@@ -21,6 +21,7 @@ package io.vidocq.foy.internal.bridge;
 
 import io.vidocq.chappe.api.Body;
 import io.vidocq.chappe.api.Handler;
+import io.vidocq.chappe.api.HttpMethod;
 import io.vidocq.chappe.api.Request;
 import io.vidocq.chappe.api.RequestContext;
 import io.vidocq.chappe.api.Response;
@@ -41,19 +42,32 @@ import io.vidocq.foy.internal.listener.ListenerRegistry;
 import io.vidocq.foy.internal.session.HttpSessionImpl;
 import io.vidocq.foy.internal.session.SessionManager;
 import io.vidocq.foy.internal.session.VidocqSessionCookieConfig;
+import io.vidocq.foy.internal.container.VidocqServletContext;
+import io.vidocq.foy.internal.security.SecurityConstraintEnforcer;
+import jakarta.servlet.AsyncContext;
 import jakarta.servlet.DispatcherType;
 import jakarta.servlet.Filter;
+import jakarta.servlet.ServletContext;
 import jakarta.servlet.ServletException;
+import jakarta.servlet.ServletRequest;
+import jakarta.servlet.ServletRequestWrapper;
 import jakarta.servlet.SessionCookieConfig;
 import jakarta.servlet.SessionTrackingMode;
+import jakarta.servlet.UnavailableException;
 import jakarta.servlet.http.Cookie;
 import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletRequestWrapper;
 import jakarta.servlet.http.HttpServletResponse;
 
 import java.io.IOException;
+import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.Supplier;
 
 /**
  * {@link Handler} Chappe which converts a Chappe request into a servlet cycle:
@@ -72,13 +86,13 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
     private final ServletDispatcher dispatcher;
     private static final System.Logger LOG = System.getLogger(ChappeServletBridge.class.getName());
     private final FilterRegistry filterRegistry;
-    private final io.vidocq.foy.internal.container.VidocqServletContext servletContext;
+    private final VidocqServletContext servletContext;
     private final SessionManager sessionManager;
     private final String contextPath;
 
     public ChappeServletBridge(ServletDispatcher dispatcher,
                                FilterRegistry filterRegistry,
-                               io.vidocq.foy.internal.container.VidocqServletContext servletContext,
+                               VidocqServletContext servletContext,
                                SessionManager sessionManager,
                                String contextPath) {
         this.dispatcher = dispatcher;
@@ -93,14 +107,14 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
     /** Construction without sessions. */
     public ChappeServletBridge(ServletDispatcher dispatcher,
                                FilterRegistry filterRegistry,
-                               io.vidocq.foy.internal.container.VidocqServletContext servletContext,
+                               VidocqServletContext servletContext,
                                String contextPath) {
         this(dispatcher, filterRegistry, servletContext, null, contextPath);
     }
 
     /** Minimal construction (compat tests). */
     public ChappeServletBridge(ServletDispatcher dispatcher,
-                               io.vidocq.foy.internal.container.VidocqServletContext servletContext,
+                               VidocqServletContext servletContext,
                                String contextPath) {
         this(dispatcher, new FilterRegistry(List.of()), servletContext, null, contextPath);
     }
@@ -126,7 +140,7 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
     @Override
     public Response handle(Request request) throws Exception {
         var head = new ResponseHead();
-        var requests = new java.util.ArrayList<HttpServletRequestImpl>(1);
+        var requests = new ArrayList<HttpServletRequestImpl>(1);
         var res = new HttpServletResponseImpl();
         res.setDefaultCharacterEncoding(servletContext.configuredResponseCharacterEncoding());
         res.bindCommitTarget(r -> commitHead(request, requests, r, head));
@@ -138,8 +152,8 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
         return head.await();
     }
 
-    private static final java.util.concurrent.atomic.AtomicLong PIPELINE_THREADS =
-            new java.util.concurrent.atomic.AtomicLong();
+    private static final AtomicLong PIPELINE_THREADS =
+            new AtomicLong();
 
     /** The pipeline thread's body: every way out settles the head or ends the live body. */
     private void runPipeline(Request request, List<HttpServletRequestImpl> requests,
@@ -158,24 +172,28 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
                 catch (RuntimeException e) { LOG.log(System.Logger.Level.WARNING, "ending the session access failed", e); }
             }
         }
-        if (!res.isStreaming()) {
-            // Never committed: the whole response goes out now (or chappe's 500 on failure).
-            if (failure != null) head.fail(failure);
-            else if (response != null) head.complete(response);
-            else head.fail(new IllegalStateException("no response produced"));
-            return;
-        }
-        if (failure != null) {
-            LOG.log(System.Logger.Level.ERROR,
-                    "unhandled exception after the response was committed; connection aborted", failure);
-            res.abortBody(failure);
-            return;
-        }
         try {
-            res.finishBody();
-        } catch (IOException e) {
-            // The client is gone while the rest of the body was pushed: nothing left to deliver.
-            res.abortBody(e);
+            if (!res.isStreaming()) {
+                // Never committed: the whole response goes out now (or chappe's 500 on failure).
+                if (failure != null) head.fail(failure);
+                else if (response != null) head.complete(response);
+                return;
+            }
+            if (failure != null) {
+                LOG.log(System.Logger.Level.ERROR,
+                        "unhandled exception after the response was committed; connection aborted", failure);
+                res.abortBody(failure);
+                return;
+            }
+            try {
+                res.finishBody();
+            } catch (IOException e) {
+                // The client is gone while the rest of the body was pushed: nothing left to deliver.
+                res.abortBody(e);
+            }
+        } finally {
+            // Last guard: chappe's thread must never park on a head nobody settles.
+            if (!head.isDone()) head.fail(new IllegalStateException("the response head was never settled"));
         }
     }
 
@@ -185,19 +203,31 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
      * with a live body, or with none for a response that carries no body on the wire.
      */
     private void commitHead(Request request, List<HttpServletRequestImpl> requests,
-                            HttpServletResponseImpl res, ResponseHead head) {
-        if (!requests.isEmpty()) maybeAttachSessionCookie(requests.getLast(), res);
-        Body body;
+                            HttpServletResponseImpl res, ResponseHead head) throws IOException {
         ResponsePipe pipe = null;
-        int status = res.getStatus();
-        if (request.method() == io.vidocq.chappe.api.HttpMethod.HEAD || status == 204 || status == 304) {
-            res.suppressBody();
-            body = Body.of(java.io.InputStream.nullInputStream(), res.declaredContentLength());
-        } else {
-            pipe = res.startStreaming();
-            body = Body.of(pipe.reader(), res.declaredContentLength());
+        Response response;
+        try {
+            if (!requests.isEmpty()) maybeAttachSessionCookie(requests.getLast(), res);
+            Body body;
+            int status = res.getStatus();
+            if (request.method() == HttpMethod.HEAD || status == 204 || status == 304) {
+                res.suppressBody();
+                body = Body.of(InputStream.nullInputStream(), res.declaredContentLength());
+            } else {
+                pipe = res.startStreaming();
+                body = Body.of(pipe.reader(), res.declaredContentLength());
+            }
+            response = toChappeResponse(res, body);
+        } catch (RuntimeException | Error e) {
+            // The head cannot be built: chappe answers its plain 500 instead of waiting forever,
+            // and the servlet's writes fail from now on.
+            var failure = new IOException("committing the response failed", e);
+            head.fail(failure);
+            if (pipe == null) res.startStreaming();
+            res.abortBody(failure);
+            throw failure;
         }
-        if (!head.complete(toChappeResponse(res, body)) && pipe != null) {
+        if (!head.complete(response) && pipe != null) {
             // chappe stopped waiting (server stop): fail the servlet's next write.
             try { pipe.reader().close(); } catch (IOException ignored) {}
         }
@@ -208,7 +238,7 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
      * committed for real already handed its head to chappe ({@code null} is returned and the
      * pipeline ends the body); otherwise {@code uncommitted} builds the whole response.
      */
-    private static Response respond(HttpServletResponseImpl res, java.util.function.Supplier<Response> uncommitted) {
+    private static Response respond(HttpServletResponseImpl res, Supplier<Response> uncommitted) {
         return res.isStreaming() ? null : uncommitted.get();
     }
 
@@ -346,7 +376,7 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
         registry.fireRequestInitialized(servletContext, req);
         Throwable thrown = null;
         try {
-            var enforcer = new io.vidocq.foy.internal.security.SecurityConstraintEnforcer(
+            var enforcer = new SecurityConstraintEnforcer(
                     servletContext.securityProvider());
             if (!enforcer.enforce(m.security(), req, res)) {
                 registry.fireRequestDestroyed(servletContext, req);
@@ -404,7 +434,7 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
      */
     private static String encodePath(String decoded) {
         var out = new StringBuilder(decoded.length() + 8);
-        for (byte b : decoded.getBytes(java.nio.charset.StandardCharsets.UTF_8)) {
+        for (byte b : decoded.getBytes(StandardCharsets.UTF_8)) {
             int c = b & 0xff;
             boolean plain = c < 0x80 && (Character.isLetterOrDigit(c) || "-._~!$&'()*+,=:@/".indexOf(c) >= 0);
             if (plain) out.append((char) c);
@@ -464,7 +494,7 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
         return respond(res, () -> Response.builder()
                 .status(StatusCode.of(status))
                 .header("Content-Type", "text/plain")
-                .body(Body.of("Bad Request".getBytes(java.nio.charset.StandardCharsets.US_ASCII)))
+                .body(Body.of("Bad Request".getBytes(StandardCharsets.US_ASCII)))
                 .build());
     }
 
@@ -476,7 +506,7 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
      */
     private static HttpServletRequest errorTargetRequest(HttpServletRequestImpl req, DispatchTarget target) {
         if (!(target.servlet() instanceof DefaultServlet)) return req;
-        return new jakarta.servlet.http.HttpServletRequestWrapper(req) {
+        return new HttpServletRequestWrapper(req) {
             @Override public String getServletPath() { return target.servletPath(); }
             @Override public String getPathInfo() { return target.pathInfo(); }
         };
@@ -500,9 +530,9 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
             ac.awaitCompletion();
             if (!ac.hasDispatch()) break;
             String dispatchPath = ac.dispatchPath();
-            jakarta.servlet.ServletContext targetCtx = ac.dispatchContext();
+            ServletContext targetCtx = ac.dispatchContext();
             try {
-                if (targetCtx instanceof io.vidocq.foy.internal.container.VidocqServletContext vctx
+                if (targetCtx instanceof VidocqServletContext vctx
                         && vctx != servletContext) {
                     // §2.3.3.3 + §9.4 : cross-context async dispatch — route vers le bridge
                     // cible en utilisant son resolver/invoker.
@@ -560,12 +590,12 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
      * info, no query string) leaves its attribute unset.
      */
     private static void setAsyncAttributes(HttpServletRequestImpl req) {
-        req.setAttribute(jakarta.servlet.AsyncContext.ASYNC_REQUEST_URI, req.getRequestURI());
-        req.setAttribute(jakarta.servlet.AsyncContext.ASYNC_CONTEXT_PATH, req.getContextPath());
-        req.setAttribute(jakarta.servlet.AsyncContext.ASYNC_SERVLET_PATH, req.getServletPath());
-        if (req.getPathInfo() != null) req.setAttribute(jakarta.servlet.AsyncContext.ASYNC_PATH_INFO, req.getPathInfo());
-        if (req.getQueryString() != null) req.setAttribute(jakarta.servlet.AsyncContext.ASYNC_QUERY_STRING, req.getQueryString());
-        req.setAttribute(jakarta.servlet.AsyncContext.ASYNC_MAPPING, req.getHttpServletMapping());
+        req.setAttribute(AsyncContext.ASYNC_REQUEST_URI, req.getRequestURI());
+        req.setAttribute(AsyncContext.ASYNC_CONTEXT_PATH, req.getContextPath());
+        req.setAttribute(AsyncContext.ASYNC_SERVLET_PATH, req.getServletPath());
+        if (req.getPathInfo() != null) req.setAttribute(AsyncContext.ASYNC_PATH_INFO, req.getPathInfo());
+        if (req.getQueryString() != null) req.setAttribute(AsyncContext.ASYNC_QUERY_STRING, req.getQueryString());
+        req.setAttribute(AsyncContext.ASYNC_MAPPING, req.getHttpServletMapping());
     }
 
     private void maybeHandleError(HttpServletRequestImpl req, HttpServletResponseImpl res,
@@ -594,10 +624,10 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
             // Servlet 6.1 §2.3.3.2 : UnavailableException remonte explicitement
             // un status 404 (permanent) ou 503 (temporary) au lieu du 500 générique.
             Throwable root = thrown;
-            while (root.getCause() != null && !(root instanceof jakarta.servlet.UnavailableException)) {
+            while (root.getCause() != null && !(root instanceof UnavailableException)) {
                 root = root.getCause();
             }
-            if (root instanceof jakarta.servlet.UnavailableException ue) {
+            if (root instanceof UnavailableException ue) {
                 errorStatus = ue.isPermanent() ? 404 : 503;
             } else {
                 errorStatus = 500;
@@ -613,8 +643,8 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
             // Pas d'error-page mappée : on applique tout de même le status approprié
             // (404/503 pour UnavailableException) et on court-circuite le error()
             // générique du handler.
-            if (thrown instanceof jakarta.servlet.UnavailableException
-                    || (thrown != null && thrown.getCause() instanceof jakarta.servlet.UnavailableException)) {
+            if (thrown instanceof UnavailableException
+                    || (thrown != null && thrown.getCause() instanceof UnavailableException)) {
                 res.clearErrorState();
                 res.resetBuffer();
                 try { res.sendError(errorStatus, thrown.getMessage()); }
@@ -701,10 +731,10 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
         }
     }
 
-    private static HttpServletRequestImpl unwrapImpl(jakarta.servlet.ServletRequest r) {
+    private static HttpServletRequestImpl unwrapImpl(ServletRequest r) {
         while (r != null) {
             if (r instanceof HttpServletRequestImpl i) return i;
-            if (r instanceof jakarta.servlet.ServletRequestWrapper w) r = w.getRequest();
+            if (r instanceof ServletRequestWrapper w) r = w.getRequest();
             else return null;
         }
         return null;
@@ -789,7 +819,7 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
                 .header("Content-Type", "text/plain");
         String cookie = req == null ? null : sessionCookieHeader(req);
         if (cookie != null) builder.header("Set-Cookie", cookie);
-        return builder.body(Body.of("Internal Server Error".getBytes(java.nio.charset.StandardCharsets.US_ASCII)))
+        return builder.body(Body.of("Internal Server Error".getBytes(StandardCharsets.US_ASCII)))
                 .build();
     }
 }

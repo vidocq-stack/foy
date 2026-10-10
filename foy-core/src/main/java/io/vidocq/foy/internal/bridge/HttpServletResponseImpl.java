@@ -19,15 +19,26 @@
  */
 package io.vidocq.foy.internal.bridge;
 
+import io.vidocq.foy.internal.container.VidocqServletContext;
+import io.vidocq.foy.internal.http.CookieCodec;
 import jakarta.servlet.ServletOutputStream;
+import jakarta.servlet.SessionTrackingMode;
 import jakarta.servlet.http.Cookie;
+import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 
 import java.io.IOException;
+import java.io.OutputStreamWriter;
 import java.io.PrintWriter;
+import java.io.UnsupportedEncodingException;
+import java.io.Writer;
+import java.net.URI;
+import java.net.URISyntaxException;
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
+import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collection;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
@@ -36,6 +47,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
+import java.util.regex.Pattern;
 
 /**
  * {@link HttpServletResponse} which accumulates the state (status, headers, body) up to its first
@@ -61,11 +73,11 @@ public final class HttpServletResponseImpl implements HttpServletResponse {
     private PrintWriter writer;
     private boolean streamAcquired;
     /** Committed as the application sees it ({@link #isCommitted()}): status and headers are frozen. */
-    private boolean committed;
+    private volatile boolean committed;
     /** Committed for real: the head was handed to chappe and the body is live. Implies {@link #committed}. */
     private volatile boolean headSent;
     /** Receives the response at its first real commit; {@code null} for a detached response (unit tests). */
-    private java.util.function.Consumer<HttpServletResponseImpl> onCommit;
+    private CommitTarget onCommit;
     /** Declared Content-Length, or -1 when none. */
     private long contentLength = -1;
     private boolean errorTriggered;
@@ -205,10 +217,10 @@ public final class HttpServletResponseImpl implements HttpServletResponse {
         String requestUri = boundRequest.getRequestURI();
         if (requestUri == null || requestUri.isEmpty()) requestUri = "/";
         try {
-            java.net.URI ref = new java.net.URI(location);
+            URI ref = new URI(location);
             // Already absolute (any scheme).
             if (ref.isAbsolute()) return location;
-            java.net.URI base = new java.net.URI(origin + requestUri);
+            URI base = new URI(origin + requestUri);
             if (location.startsWith("?")) {
                 // Query-only reference: keep the request path, replace the query.
                 return origin + requestUri + location;
@@ -216,7 +228,7 @@ public final class HttpServletResponseImpl implements HttpServletResponse {
             // RFC 3986 resolution: a leading '/' is relative to the server root, anything else to
             // the directory of the request URI, with "." and ".." segments removed.
             return base.resolve(ref).toString();
-        } catch (java.net.URISyntaxException e) {
+        } catch (URISyntaxException e) {
             // Not a valid URI reference (e.g. unescaped characters): keep the simple concatenation.
             if (location.startsWith("/")) return origin + location;
             int slash = requestUri.lastIndexOf('/');
@@ -224,8 +236,8 @@ public final class HttpServletResponseImpl implements HttpServletResponse {
         }
     }
 
-    private jakarta.servlet.http.HttpServletRequest boundRequest;
-    public void bindRequest(jakarta.servlet.http.HttpServletRequest req) { this.boundRequest = req; }
+    private HttpServletRequest boundRequest;
+    public void bindRequest(HttpServletRequest req) { this.boundRequest = req; }
 
     // ---- Headers ----
 
@@ -272,7 +284,7 @@ public final class HttpServletResponseImpl implements HttpServletResponse {
 
     /** RFC 7231 §7.1.1.1 — IMF-fixdate: "Sun, 06 Nov 1994 08:49:37 GMT". */
     private static String formatHttpDate(long dateMillis) {
-        return io.vidocq.foy.internal.http.CookieCodec.formatImfFixdate(java.time.Instant.ofEpochMilli(dateMillis));
+        return CookieCodec.formatImfFixdate(Instant.ofEpochMilli(dateMillis));
     }
     @Override public boolean containsHeader(String name) { return headers.containsKey(name); }
     @Override public String getHeader(String name) {
@@ -307,7 +319,7 @@ public final class HttpServletResponseImpl implements HttpServletResponse {
 
     @Override public void addCookie(Cookie cookie) {
         if (isCommitted()) return;
-        io.vidocq.foy.internal.http.CookieCodec.checkSerializable(cookie);
+        CookieCodec.checkSerializable(cookie);
         cookies.add(cookie);
     }
     public List<Cookie> cookies() { return cookies; }
@@ -405,7 +417,7 @@ public final class HttpServletResponseImpl implements HttpServletResponse {
             // Servlet 6.1 §5.4: an explicitly set charset which the JVM does not support
             // makes getWriter throw UnsupportedEncodingException.
             if (characterEncoding != null && !Charset.isSupported(characterEncoding)) {
-                throw new java.io.UnsupportedEncodingException(characterEncoding);
+                throw new UnsupportedEncodingException(characterEncoding);
             }
             // Resolve the charset (ISO-8859-1 by default) and lock it: the state now
             // reflects the charset actually used to write the body.
@@ -413,7 +425,7 @@ public final class HttpServletResponseImpl implements HttpServletResponse {
                 characterEncoding = defaultCharacterEncoding != null ? defaultCharacterEncoding : "ISO-8859-1";
             }
             charsetLocked = true;
-            writer = new ResponseWriter(new java.io.OutputStreamWriter(outputStream, charset()));
+            writer = new ResponseWriter(new OutputStreamWriter(outputStream, charset()));
             refreshContentTypeHeader();
         }
         return writer;
@@ -435,10 +447,15 @@ public final class HttpServletResponseImpl implements HttpServletResponse {
      * write that would exceed it commits the response and the body goes to the client live.
      */
     private int bufferSize = 8192;
+
+    /**
+     * Sets the buffer threshold. A negative size is clamped to 0 (every write then commits), so
+     * {@link #getBufferSize()} always reports the threshold actually enforced.
+     */
     @Override public void setBufferSize(int size) {
         if (outputStream.hasContent() || headSent) throw new IllegalStateException("content already written");
-        this.bufferSize = size;
-        outputStream.setLimit(size);
+        this.bufferSize = Math.max(0, size);
+        outputStream.setLimit(bufferSize);
     }
     @Override public int getBufferSize() { return bufferSize; }
     @Override public void flushBuffer() throws IOException {
@@ -467,18 +484,28 @@ public final class HttpServletResponseImpl implements HttpServletResponse {
      * The single commit point. Status, headers and cookies are frozen from here on; when the
      * bridge bound a commit target, the response head is handed to chappe at once (the session
      * cookie included, attached by the target) and the body becomes live. A detached response
-     * only records the commit.
+     * only records the commit. A target failure reaches the writer as an {@link IOException}.
      */
-    void commit() {
+    void commit() throws IOException {
         if (headSent) return;
         committed = true;
         if (onCommit == null) return;
         headSent = true;
-        onCommit.accept(this);
+        onCommit.commit(this);
+    }
+
+    /** Receives the response at its first real commit and hands its head to chappe. */
+    @FunctionalInterface
+    interface CommitTarget {
+        /**
+         * Hands the head of {@code res} over. On failure the target settles the head itself
+         * (chappe answers a plain 500) and throws, so the committing write fails.
+         */
+        void commit(HttpServletResponseImpl res) throws IOException;
     }
 
     /** Called by the bridge: {@code target} receives this response at its first real commit. */
-    void bindCommitTarget(java.util.function.Consumer<HttpServletResponseImpl> target) {
+    void bindCommitTarget(CommitTarget target) {
         this.onCommit = target;
     }
 
@@ -546,7 +573,7 @@ public final class HttpServletResponseImpl implements HttpServletResponse {
         // If the charset is not explicit, resolve it through the web.xml locale-encoding-mapping-list.
         if (!charsetExplicit && !charsetLocked && boundRequest != null
                 && boundRequest.getServletContext() instanceof
-                io.vidocq.foy.internal.container.VidocqServletContext vctx) {
+                VidocqServletContext vctx) {
             String enc = vctx.encodingForLocale(loc);
             if (enc != null) {
                 this.characterEncoding = enc;
@@ -569,7 +596,7 @@ public final class HttpServletResponseImpl implements HttpServletResponse {
         if (url == null || boundRequest == null) return url;
         var ctx = boundRequest.getServletContext();
         if (ctx == null || !ctx.getEffectiveSessionTrackingModes()
-                .contains(jakarta.servlet.SessionTrackingMode.URL)) return url;
+                .contains(SessionTrackingMode.URL)) return url;
         var session = boundRequest.getSession(false);
         if (session == null || boundRequest.isRequestedSessionIdFromCookie()) return url;
         if (!targetsThisApplication(url)) return url;
@@ -585,17 +612,17 @@ public final class HttpServletResponseImpl implements HttpServletResponse {
     @Override public String encodeRedirectURL(String url) { return encodeURL(url); }
 
     /** An RFC 3986 scheme followed by ':' at the start of a URL. */
-    private static final java.util.regex.Pattern SCHEME = java.util.regex.Pattern.compile("[A-Za-z][A-Za-z0-9+.-]*:");
+    private static final Pattern SCHEME = Pattern.compile("[A-Za-z][A-Za-z0-9+.-]*:");
 
     private boolean targetsThisApplication(String url) {
         if (url.isEmpty() || url.startsWith("#") || url.contains(";jsessionid=")) return false;
         String path;
         boolean absolute = url.startsWith("//") || SCHEME.matcher(url).lookingAt();
         if (absolute) {
-            java.net.URI uri;
+            URI uri;
             try {
-                uri = new java.net.URI(url.startsWith("//") ? boundRequest.getScheme() + ":" + url : url);
-            } catch (java.net.URISyntaxException e) {
+                uri = new URI(url.startsWith("//") ? boundRequest.getScheme() + ":" + url : url);
+            } catch (URISyntaxException e) {
                 return false;
             }
             if (uri.isOpaque() || uri.getHost() == null) return false;
@@ -632,7 +659,7 @@ public final class HttpServletResponseImpl implements HttpServletResponse {
     /** The response side of {@link ServletOutputStreamImpl}. */
     private final class StreamOwner implements ServletOutputStreamImpl.Owner {
         @Override public long declaredLength() { return contentLength; }
-        @Override public void overflow() { commit(); }
+        @Override public void overflow() throws IOException { commit(); }
         @Override public void flushRequested() throws IOException {
             if (!internalFlush) flushToClient();
         }
@@ -651,7 +678,7 @@ public final class HttpServletResponseImpl implements HttpServletResponse {
      * draining. Only an application {@link #flush()} commits.
      */
     private final class ResponseWriter extends PrintWriter {
-        ResponseWriter(java.io.Writer out) { super(out, false); }
+        ResponseWriter(Writer out) { super(out, false); }
 
         private void drain() {
             internalFlush = true;
@@ -686,7 +713,7 @@ public final class HttpServletResponseImpl implements HttpServletResponse {
         byte[] all = outputStream.toByteArray();
         // Content beyond the declared Content-Length is never sent.
         if (contentLength >= 0 && all.length > contentLength) {
-            return java.util.Arrays.copyOf(all, (int) contentLength);
+            return Arrays.copyOf(all, (int) contentLength);
         }
         return all;
     }
@@ -696,7 +723,7 @@ public final class HttpServletResponseImpl implements HttpServletResponse {
         for (var e : headers.entrySet()) out.put(e.getKey(), List.copyOf(e.getValue()));
         for (Cookie c : cookies) {
             out.computeIfAbsent("Set-Cookie", _ -> new ArrayList<>())
-                    .add(io.vidocq.foy.internal.http.CookieCodec.serializeSetCookie(c));
+                    .add(CookieCodec.serializeSetCookie(c));
         }
         return out;
     }
