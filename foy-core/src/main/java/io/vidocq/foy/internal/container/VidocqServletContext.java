@@ -283,6 +283,18 @@ public final class VidocqServletContext implements ServletContext {
         this.roleMapping = java.util.Objects.requireNonNull(mapping, "mapping");
     }
 
+    private volatile io.vidocq.foy.internal.security.WebSecurity security;
+
+    /** The application's security; a permit-all one over {@link #securitySettings()} until the deployer sets it. */
+    public io.vidocq.foy.internal.security.WebSecurity security() {
+        var s = security;
+        return s != null ? s : io.vidocq.foy.internal.security.WebSecurity.permitAll(securitySettings);
+    }
+
+    public void setSecurity(io.vidocq.foy.internal.security.WebSecurity security) {
+        this.security = java.util.Objects.requireNonNull(security, "security");
+    }
+
     private volatile io.vidocq.foy.internal.boot.ComponentFactory componentFactory;
 
     /** Sets the factory behind {@code createServlet/createFilter/createListener/addListener}. */

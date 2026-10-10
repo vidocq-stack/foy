@@ -33,6 +33,9 @@ import io.vidocq.foy.internal.dispatcher.FilterRegistry;
 import io.vidocq.foy.internal.dispatcher.ServletDispatcher;
 import io.vidocq.foy.internal.dispatcher.UrlPatternMatcher;
 import io.vidocq.foy.internal.listener.ListenerRegistry;
+import io.vidocq.foy.internal.security.ConstraintTable;
+import io.vidocq.foy.internal.security.SecuritySettings;
+import io.vidocq.foy.internal.security.WebSecurity;
 import io.vidocq.foy.internal.session.InMemorySessionStore;
 import io.vidocq.foy.internal.session.SessionManager;
 import jakarta.servlet.DispatcherType;
@@ -153,6 +156,8 @@ public final class WebAppDeployer {
             // End of the initialisation phase (Servlet 6.1 §4.4) — from now on the dynamic
             // configuration methods must throw IllegalStateException.
             ctx.markInitialized();
+            // Constraints are compiled once the configuration is final (setServletSecurity, declareRoles).
+            ctx.setSecurity(buildSecurity(model, ctx, servlets));
             // The session timeout is read once the initializers and the context listeners ran:
             // ServletContext.setSessionTimeout is honoured from both (section 4.4.1).
             sessions = new SessionManager(new InMemorySessionStore(), ctx, sessionTimeoutSeconds(ctx));
@@ -182,6 +187,33 @@ public final class WebAppDeployer {
     static int sessionTimeoutSeconds(VidocqServletContext ctx) {
         int minutes = ctx.getSessionTimeout();
         return minutes <= 0 ? -1 : Math.multiplyExact(minutes, 60);
+    }
+
+    /**
+     * Compiles the application's constraints: the descriptor's first, then each servlet's
+     * {@code ServletSecurityElement} (annotation, or {@code setServletSecurity} for a dynamic
+     * servlet) on its patterns (section 13.4.1). {@code *} names every declared role:
+     * {@code security-role}, {@code @DeclareRoles} and {@code ServletContext.declareRoles}, all
+     * gathered in the context's role mapping. Without {@code <deny-uncovered-http-methods/>},
+     * every uncovered method is reported at WARNING (section 13.8.4).
+     */
+    private static WebSecurity buildSecurity(WebAppModel model, VidocqServletContext ctx, List<ServletUnit> servlets) {
+        var table = ConstraintTable.builder()
+                .declaredRoles(ctx.roleMapping().declaredRoles())
+                .denyUncoveredHttpMethods(model.denyUncoveredHttpMethods());
+        model.securityConstraints().forEach(table::descriptor);
+        for (ServletUnit s : servlets) {
+            if (s.security() != null) table.servlet(s.patterns(), s.security());
+        }
+        ConstraintTable built = table.build();
+        if (!model.denyUncoveredHttpMethods()) {
+            for (String w : built.uncoveredMethodWarnings()) {
+                LOG.log(System.Logger.Level.WARNING, "{0}; these methods are not protected "
+                        + "(<deny-uncovered-http-methods/> would deny them)", w);
+            }
+        }
+        SecuritySettings settings = ctx.securitySettings();
+        return new WebSecurity(built, WebSecurity.authenticatorFor(model.loginConfig(), settings.identityStore()), settings);
     }
 
     /** Servlet 6.1 §4.8.1: the "jakarta.servlet.context.tempdir" attribute is required. */
@@ -439,7 +471,7 @@ public final class WebAppDeployer {
                 live.add(stub != null
                         ? new ServletDispatcher.Mapping(UrlPatternMatcher.of(p), stub, s.name())
                         : new ServletDispatcher.Mapping(UrlPatternMatcher.of(p), s.instance(), s.name(),
-                                s.asyncSupported(), s.security()));
+                                s.asyncSupported()));
             }
         }
         appendContainerDefault(ctx, live);

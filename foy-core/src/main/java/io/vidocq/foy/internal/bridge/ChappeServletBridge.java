@@ -48,7 +48,6 @@ import io.vidocq.foy.internal.session.HttpSessionImpl;
 import io.vidocq.foy.internal.session.SessionManager;
 import io.vidocq.foy.internal.session.VidocqSessionCookieConfig;
 import io.vidocq.foy.internal.container.VidocqServletContext;
-import io.vidocq.foy.internal.security.SecurityConstraintEnforcer;
 import jakarta.servlet.AsyncContext;
 import jakarta.servlet.DispatcherType;
 import jakarta.servlet.Filter;
@@ -343,6 +342,8 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
             // redirect; forward, include, error and async dispatches may still target them.
             if (ResourcePaths.isProtected(path)) return rejected(request, requests, res, 404);
         }
+        // The path the client asked for, before any welcome-file substitution: its constraint applies.
+        final String requestPath = path;
 
         Optional<ServletDispatcher.Mapping> match = dispatcher.find(path);
         if (!"*".equals(rawPath) && isContainerDefault(match)) {
@@ -357,6 +358,8 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
                 // A client tracked by URL keeps its session across the redirect.
                 redirected.setUrlSessionId(finalUrlSessionId);
                 redirected.accessRequestedSession();
+                Response refused = gate(redirected, res, requestPath);
+                if (refused != null) return refused;
                 try { res.sendRedirect(res.encodeRedirectURL(redirect)); } catch (IOException ignored) {}
                 return completed(redirected, res);
             }
@@ -380,6 +383,9 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
             req.bindResponse(res);
             req.setUrlSessionId(finalUrlSessionId);
             req.accessRequestedSession();
+            // No request listener has fired yet: nothing needs ending on a denial.
+            Response refused = gate(req, res, path);
+            if (refused != null) return refused;
             List<Filter> filters = filterRegistry.chainFor(path, DispatcherType.REQUEST);
             if (filters.isEmpty()) {
                 // Pas de mapping ni de filtre : 404 + error-page si mappée (§9.9.1).
@@ -430,17 +436,22 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
         boolean requestDestroyed = false;
         try {
             Throwable thrown = null;
+            boolean allowed = false;
             try {
-                var enforcer = new SecurityConstraintEnforcer(
-                        servletContext.identityStore());
-                if (!enforcer.enforce(m.security(), req, res)) {
-                    requestDestroyed = true;
-                    registry.fireRequestDestroyed(servletContext, req);
-                    return completed(req, res);
-                }
-                invoke(target, req, res, DispatcherType.REQUEST, requestChain);
+                // The original path, then the welcome target it resolved to (a constraint on either applies).
+                allowed = admitted(req, res, requestPath) && (requestPath.equals(path) || admitted(req, res, path));
+                if (allowed) invoke(target, req, res, DispatcherType.REQUEST, requestChain);
             } catch (ServletException | IOException | RuntimeException e) {
+                // A failing check fails closed: the target never ran, the error handling below answers.
                 thrown = e;
+            }
+            if (!allowed && thrown == null) {
+                // Denied: the mechanism produced the response (401, 403 or a challenge). requestDestroyed
+                // fires outside the inner try, so a listener failure is not caught there and fired a
+                // second time below; then the denial goes through the error pages, as sendError does.
+                requestDestroyed = true;
+                registry.fireRequestDestroyed(servletContext, req);
+                return denied(req, res, target.servletName());
             }
             // Section 2.3.3.5: an upgraded request leaves the HTTP lifecycle here (no async or error
             // machinery). A servlet that threw after upgrade() gets the regular error handling instead.
@@ -477,6 +488,42 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
             if (!requestDestroyed) endRequest(registry, req, t);
             throw t;
         }
+    }
+
+    /**
+     * Section 13.8: the constraint of the canonical path, for the original request only, before
+     * any target (the container default servlet and unmapped paths included). {@code OPTIONS *}
+     * names the server, not a resource.
+     */
+    private boolean admitted(HttpServletRequestImpl req, HttpServletResponseImpl res, String path)
+            throws IOException, ServletException {
+        return "*".equals(path) || servletContext.security().admit(req, res, path);
+    }
+
+    /**
+     * {@link #admitted} for a branch where no request listener fired: {@code null} when the request
+     * proceeds, otherwise the response of the denial (a failing check fails closed, with a 500).
+     */
+    private Response gate(HttpServletRequestImpl req, HttpServletResponseImpl res, String path) {
+        try {
+            if (admitted(req, res, path)) return null;
+        } catch (ServletException | IOException | RuntimeException e) {
+            return failed(res, req, e);
+        }
+        return denied(req, res, null);
+    }
+
+    /**
+     * The end of a request the security refused: the 401 or 403 the mechanism sent goes through the
+     * error pages (section 10.9.2), the challenge headers kept, as any {@code sendError} does.
+     */
+    private Response denied(HttpServletRequestImpl req, HttpServletResponseImpl res, String servletName) {
+        try {
+            maybeHandleError(req, res, null, servletName);
+        } catch (ServletException e) {
+            return failed(res, req, e);
+        }
+        return completed(req, res);
     }
 
     /**

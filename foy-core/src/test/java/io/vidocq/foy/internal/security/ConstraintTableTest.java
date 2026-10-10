@@ -22,7 +22,6 @@ package io.vidocq.foy.internal.security;
 import io.vidocq.foy.internal.security.ConstraintTable.Decision;
 import io.vidocq.foy.internal.security.ConstraintTable.Decision.Access;
 import io.vidocq.foy.internal.webxml.SecurityDefs.SecurityConstraintDef;
-import io.vidocq.foy.internal.webxml.SecurityDefs.WebResourceCollectionDef;
 import io.vidocq.foy.spi.security.Identity;
 import jakarta.servlet.HttpConstraintElement;
 import jakarta.servlet.HttpMethodConstraintElement;
@@ -40,8 +39,7 @@ class ConstraintTableTest {
 
     private static SecurityConstraintDef dd(List<String> patterns, List<String> methods, List<String> omissions,
                                             List<String> roles, String guarantee) {
-        return new SecurityConstraintDef(List.of(new WebResourceCollectionDef("c", patterns, methods, omissions)),
-                roles, guarantee);
+        return SecureApp.constraint(patterns, methods, omissions, roles, guarantee);
     }
 
     private static SecurityConstraintDef dd(String pattern, List<String> roles) {

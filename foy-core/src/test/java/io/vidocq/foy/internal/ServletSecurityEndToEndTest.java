@@ -25,9 +25,14 @@ import io.vidocq.foy.internal.container.VidocqServletContext;
 import io.vidocq.foy.internal.dispatcher.FilterRegistry;
 import io.vidocq.foy.internal.dispatcher.ServletDispatcher;
 import io.vidocq.foy.internal.dispatcher.UrlPatternMatcher;
+import io.vidocq.foy.internal.security.BasicAuthenticator;
+import io.vidocq.foy.internal.security.ConstraintTable;
 import io.vidocq.foy.internal.security.InMemoryIdentityStore;
 import io.vidocq.foy.internal.security.SecuritySettings;
+import io.vidocq.foy.internal.security.WebSecurity;
 import io.vidocq.foy.internal.gen.ClassFileDescriptorReader;
+import io.vidocq.foy.internal.webxml.SecurityDefs.SecurityConstraintDef;
+import io.vidocq.foy.internal.webxml.SecurityDefs.WebResourceCollectionDef;
 import io.vidocq.foy.spi.gen.WebComponentDescriptor;
 import jakarta.servlet.annotation.HttpConstraint;
 import jakarta.servlet.annotation.ServletSecurity;
@@ -112,6 +117,16 @@ class ServletSecurityEndToEndTest {
     }
 
     @Test
+    void anUnmappedPathIsCheckedBeforeThe404() throws Exception {
+        // No default servlet in this bridge: "/private/x" maps to nothing, the constraint still applies first.
+        startWith(new PublicServlet(), "/pub", new SecurityConstraintDef(List.of(new WebResourceCollectionDef(
+                "c", List.of("/private/*"), List.of(), List.of())), List.of("admin"), null));
+        assertEquals(401, get("/private/x", null).statusCode());
+        assertEquals(403, get("/private/x", "bob:b-secret").statusCode());
+        assertEquals(404, get("/private/x", "alice:a-secret").statusCode());
+    }
+
+    @Test
     void denyAllRefusesEvenAuthenticatedUsers() throws Exception {
         startWith(new DenyAllServlet(), "/nope");
         HttpResponse<String> r = get("/nope", "alice:a-secret");
@@ -147,13 +162,23 @@ class ServletSecurityEndToEndTest {
     }
 
     private void startWith(HttpServlet servlet, String pattern) {
+        startWith(servlet, pattern, null);
+    }
+
+    private void startWith(HttpServlet servlet, String pattern, SecurityConstraintDef descriptorConstraint) {
         var ctx = new VidocqServletContext("/");
-        ctx.setSecuritySettings(SecuritySettings.DEFAULTS.withIdentityStore(USERS));
+        var settings = SecuritySettings.DEFAULTS.withIdentityStore(USERS);
+        ctx.setSecuritySettings(settings);
+        var element = ClassFileDescriptorReader.read(servlet.getClass())
+                .map(WebComponentDescriptor::servletSecurity).orElse(null);
+        var table = ConstraintTable.builder();
+        if (descriptorConstraint != null) table.descriptor(descriptorConstraint);
+        if (element != null) table.servlet(List.of(pattern), element);
+        ctx.setSecurity(new WebSecurity(table.build(),
+                new BasicAuthenticator(USERS, BasicAuthenticator.DEFAULT_REALM), settings));
         var bridge = new ChappeServletBridge(
                 new ServletDispatcher(List.of(new ServletDispatcher.Mapping(
-                        UrlPatternMatcher.of(pattern), servlet, "S", true,
-                        ClassFileDescriptorReader.read(servlet.getClass())
-                                .map(WebComponentDescriptor::servletSecurity).orElse(null)))),
+                        UrlPatternMatcher.of(pattern), servlet, "S", true))),
                 new FilterRegistry(List.of()), ctx, null, "/");
         var r = TestServerLauncher.start(bridge);
         server = r.server;

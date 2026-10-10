@@ -43,7 +43,7 @@ import java.util.Optional;
  * </ul>
  * The password only ever lives in a {@code char[]} that is wiped after validation.
  */
-public final class BasicAuthenticator {
+public final class BasicAuthenticator implements Authenticator {
 
     /** Realm sent when {@code login-config} names none: neutral, no product name. */
     public static final String DEFAULT_REALM = "Restricted";
@@ -69,6 +69,20 @@ public final class BasicAuthenticator {
 
     public String challengeHeaderValue() {
         return "Basic realm=\"" + realm.replace("\\", "\\\\").replace("\"", "\\\"") + "\", charset=\"UTF-8\"";
+    }
+
+    @Override public String authType() { return jakarta.servlet.http.HttpServletRequest.BASIC_AUTH; }
+
+    @Override
+    public Optional<Identity> authenticate(io.vidocq.foy.internal.bridge.HttpServletRequestImpl req) {
+        return tryAuthenticate(req.getHeader("Authorization"));
+    }
+
+    @Override
+    public void challenge(io.vidocq.foy.internal.bridge.HttpServletRequestImpl req,
+                          jakarta.servlet.http.HttpServletResponse res) throws java.io.IOException {
+        res.setHeader("WWW-Authenticate", challengeHeaderValue());
+        res.sendError(jakarta.servlet.http.HttpServletResponse.SC_UNAUTHORIZED);
     }
 
     record UserPassword(String user, char[] password) {}
