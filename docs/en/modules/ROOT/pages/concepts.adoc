@@ -60,11 +60,16 @@ Annotated components are never found by a class scan: they are already known to 
 `foy-core` hosts `ChappeServletBridge` (package `io.vidocq.foy.internal.bridge`; `foy-chappe`'s `FoyChappeBoot` builds it), a Chappe `Handler` that:
 
 . exposes the Chappe `Request` as `HttpServletRequestImpl`;
-. exposes the Chappe `Response` as `HttpServletResponseImpl`;
-. invokes the `Filter` -> `Servlet` chain;
-. returns the Chappe `Body` built around `ServletOutputStreamImpl`.
+. runs the `Filter` -> `Servlet` chain on a Foy virtual thread (`foy-request-<n>`), while Chappe's connection thread waits for the response head;
+. hands Chappe the response as soon as it is committed: the head, then a live body fed by the servlet's output through a bounded pipe (`ResponsePipe`), so the client receives the body while the servlet writes it;
+. for a response that never committed (it fitted in the buffer), hands Chappe the whole buffered body at the end of the request.
 
-The Servlet `OutputStream` is wired directly to Chappe streaming — no body copy, no intermediate buffer.
+The four Servlet I/O models map onto that bridge:
+
+* **Blocking streams** — the default; a write blocks only when the client reads slower than the servlet writes.
+* **Async** (`AsyncContext`) — the request outlives `service()`; the response is completed by `complete()`, a dispatch, a timeout or an error.
+* **Non-blocking I/O** (`ReadListener`, `WriteListener`) — callbacks on Foy virtual threads, never on Chappe's connection thread, serialised per stream.
+* **HTTP Upgrade** (`HttpUpgradeHandler`) — after the `101` head, Chappe hands the raw connection to Foy, which exposes it as a `WebConnection`.
 
 == Application security
 
@@ -101,7 +106,11 @@ Resolution is fully build-time through Vauban — no dynamic proxy, no hot-path 
 
 | I/O threading
 | Platform pool + NIO `Selector`
-| Virtual threads (Foy: one VT per request)
+| Virtual threads (Foy: one VT per request, next to Chappe's connection VT)
+
+| HTTP/2 server push
+| `PushBuilder` (added in 4.0)
+| Deprecated — Foy's `newPushBuilder()` returns `null`
 
 | Legacy API
 | `SingleThreadModel`, partial `<run-as>`

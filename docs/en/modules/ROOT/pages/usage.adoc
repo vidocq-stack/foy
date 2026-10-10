@@ -50,7 +50,7 @@ public class StartupHook implements ServletContextListener {
 
 == Async (`AsyncContext`)
 
-Foy implements `request.startAsync()`, `AsyncContext.dispatch(...)`, `complete()`, and `setTimeout`. Each request runs on a *virtual thread* — switching to async carries no extra cost (no platform pool to protect).
+Foy implements `request.startAsync()`, `AsyncContext.start(...)`, `dispatch(...)`, `complete()`, `setTimeout` and `AsyncListener`. Each request runs on a *virtual thread* — switching to async carries no extra cost (no platform pool to protect).
 
 [source,java]
 ----
@@ -73,10 +73,114 @@ public class LongServlet extends HttpServlet {
 }
 ----
 
+The async lifecycle follows Servlet 6.1 section 2.3.3.3:
+
+* **One cycle at a time.** A cycle ends with `complete()`, a `dispatch(...)`, a timeout or an error; `onStartAsync` fires on the listeners when a dispatched target calls `startAsync()` again, and `onComplete` fires once, when the last cycle ends.
+* **Timeout.** The default timeout is 30 s (`setTimeout(0)` disables it). On timeout the listeners get `onTimeout`; if none of them calls `complete()` or `dispatch(...)`, the container raises an error dispatch with status `500`, which goes through the `<error-page>` mechanism, then completes the request.
+* **Errors.** An exception escaping the servlet after `startAsync()`, or an async dispatch target, reaches the listeners' `onError` and then the error dispatch, as for a timeout.
+* **One writer at a time.** When a cycle ends, the container takes the response output back before any listener runs: a thread started by `AsyncContext.start` that keeps writing afterwards gets an `IOException` (through the `PrintWriter`, the characters are dropped and `checkError()` turns true). A thread the application manages itself (its own executor) is not known to the container and cannot be fenced the same way (BUG-20261010-01, partial).
+
 [NOTE]
 ====
-A few edge cases of the 6.1 TCK around `startAsync` after dispatch are still failing — see xref:tck.adoc[TCK status].
+`ReadListener.onError` is not called when the async cycle times out: the timeout goes to the `AsyncListener`s and the error dispatch only. The specification does not require it and the TCK does not test it.
 ====
+
+== Streaming and response buffering
+
+The response is buffered up to `getBufferSize()` bytes (8192 by default, changed with `setBufferSize` before any content is written). While the content fits, the response is not committed: `reset()`, `resetBuffer()`, `sendError` and an error page can still replace it, and a response that ends there is sent whole with a `Content-Length` (chunked instead when trailer fields are set).
+
+The response is committed, and its head sent, at the first of:
+
+* a write that would overflow the buffer;
+* `flushBuffer()`, or `flush()` on the stream or writer;
+* the declared `Content-Length` written in full.
+
+From then on the body goes to the client while the servlet keeps writing: small writes are coalesced in the buffer and pushed when it fills, on a flush, and at the end of the request. Without a declared `Content-Length`, an HTTP/1.1 body is sent chunked; on HTTP/2 it is sent as DATA frames. A client that reads slowly slows the writing servlet down (the pipe between the servlet and the connection is bounded): memory stays bounded whatever the body size.
+
+An exception that escapes after the commit cannot change the response any more: it is logged and the connection is aborted, so the client sees a truncated body rather than a complete-looking one.
+
+== Non-blocking I/O (`ReadListener`, `WriteListener`)
+
+On an async-started request (or an upgraded connection, see below), `ServletInputStream.setReadListener` and `ServletOutputStream.setWriteListener` switch the stream to non-blocking mode (Servlet 6.1 section 3.7):
+
+* **Reading.** `onDataAvailable` fires when request bytes are buffered; read while `isReady()` is `true`, then return. `onAllDataRead` fires once at the end of the body, `onError` if the upload fails (a client that resets the connection, a body cut short). Callbacks never overlap.
+* **Writing.** Write while `isReady()` is `true`; a write never blocks. When `isReady()` answers `false`, `onWritePossible` fires again once the client has taken the pending bytes. `onError` fires if the client goes away.
+* A `read()` when no data is available, or a `write()` after `isReady()` answered `false` (while bytes still wait for the client), throws `IllegalStateException`, as the specification requires.
+
+[source,java]
+----
+@WebServlet(value = "/upload", asyncSupported = true)
+public class UploadServlet extends HttpServlet {
+    @Override
+    protected void doPost(HttpServletRequest req, HttpServletResponse resp) throws IOException {
+        AsyncContext ac = req.startAsync();
+        ServletInputStream in = req.getInputStream();
+        in.setReadListener(new ReadListener() {
+            long total;
+            @Override public void onDataAvailable() throws IOException {
+                byte[] buf = new byte[8192];
+                while (in.isReady()) {
+                    int n = in.read(buf);
+                    if (n < 0) break;
+                    total += n;
+                }
+            }
+            @Override public void onAllDataRead() throws IOException {
+                resp.getWriter().print(total);
+                ac.complete();
+            }
+            @Override public void onError(Throwable t) { ac.complete(); }
+        });
+    }
+}
+----
+
+Limits:
+
+* A `WriteListener` is not resumed after an `AsyncContext.dispatch(...)`: the dispatched target runs with a blocking stream (the listener stays set, but `onWritePossible` is not called again). Set the listener in the cycle that writes.
+* When a cycle ends with bytes still waiting for the client, the container sends them in blocking mode at the end of the request, in order. Foy sets no bound of its own on that wait: a client that never reads keeps the request thread until chappe's write timeout (30 s per blocked write by default) closes the connection (BUG-20261010-02).
+* If a `ReadListener` is still waiting for upload bytes when the request ends (the client went silent mid-body), the response is sent first and the connection is then closed instead of being kept alive: the unread part of the body cannot be skipped safely. An unread body that the client keeps sending is drained by Chappe as before.
+
+== Response trailers
+
+`HttpServletResponse.setTrailerFields(Supplier<Map<String, String>>)` sends trailer fields after the body: on HTTP/1.1 in the trailer section of a chunked body, on HTTP/2 in a final HEADERS frame. The supplier is called once, after the last byte of the body. It is refused (`IllegalStateException`) on HTTP/1.0, once the response is committed, and on HTTP/1.1 when a `Content-Length` is already declared. A failing supplier is logged and no trailer is sent. Names that RFC 9110 section 6.5.1 forbids in trailers (framing, routing, authentication, `Set-Cookie`, ...) are dropped.
+
+Limits:
+
+* The supplier runs on chappe's connection thread after `service()` has returned: it must not use request-scoped state (the request, the session, a CDI request scope, a `ThreadLocal` of the request thread). Compute the values in the servlet and let the supplier return them.
+* On HTTP/1.1, setting a `Content-Length` after `setTrailerFields` makes the body fixed-length: the trailers are then silently dropped.
+* On HTTP/1.1, a response sent with `Connection: close` is not chunked, so its trailers are dropped.
+* `reset()` keeps the supplier: call `setTrailerFields(null)` to remove it.
+
+== HTTP Upgrade (`HttpUpgradeHandler`)
+
+`HttpServletRequest.upgrade(Class)` hands the connection to an `HttpUpgradeHandler` once the servlet returns (Servlet 6.1 section 2.3.3.5). The application sets the `101` status and the `Upgrade`/`Connection` headers itself; the container sends that head, discards any body written to the response, ends the request lifecycle (`requestDestroyed`) and calls `init(WebConnection)`.
+
+[source,java]
+----
+@WebServlet("/echo")
+public class EchoUpgradeServlet extends HttpServlet {
+    @Override
+    protected void doGet(HttpServletRequest req, HttpServletResponse resp) throws IOException, ServletException {
+        resp.setStatus(101);
+        resp.setHeader("Upgrade", "echo");
+        resp.setHeader("Connection", "Upgrade");
+        req.upgrade(EchoHandler.class);
+    }
+}
+----
+
+* The handler is instantiated by the container, through the same component factory as servlets, filters and listeners (CDI included); an instantiation failure is a `ServletException`.
+* `upgrade` throws `IOException` on HTTP/1.0 and HTTP/2, and `IllegalStateException` after `startAsync()` or when called twice.
+* `WebConnection.getInputStream()` and `getOutputStream()` are blocking by default and support `ReadListener` and `WriteListener`.
+* `destroy()` is called once, when the connection ends: `WebConnection.close()`, a read or write error, or the undeployment of the application (which closes every upgraded connection it still holds).
+* A handler that neither reads nor closes keeps the connection open until a write fails or the application is undeployed: there is no idle timeout once a connection is upgraded.
+
+WebSocket is not built on top of this yet (Jakarta WebSocket is not implemented).
+
+== HTTP/2 server push
+
+Not supported. `HttpServletRequest.newPushBuilder()` returns `null`, which Servlet 6.1 allows when push is unavailable; push is deprecated in Servlet 6.1 in favour of `103 Early Hints`. Chappe has neither an h2c Upgrade nor a PUSH_PROMISE writer.
 
 == File upload (`@MultipartConfig`)
 
@@ -161,7 +265,7 @@ Foy deploys a container default servlet, named `foy.default`, mapped to `/` unle
 public class Fallback extends HttpServlet { /* ... */ }
 ----
 
-The response is still buffered whole before it is sent: streaming is the next phase (see xref:tck.adoc[TCK status]).
+A resource larger than the response buffer is streamed to the client while it is read, with its `Content-Length` when nothing was written to the response before (see <<streaming-and-response-buffering>>).
 
 == Welcome files
 
@@ -188,7 +292,7 @@ A path outside the context path (`/app2/x` for context `/app`) is 404; the conte
 
 == Response semantics
 
-`sendError` and `sendRedirect` reset the buffer and the declared `Content-Length` and commit the response. `setStatus`, headers, `setLocale`, `setContentType` and charset changes are ignored once the response is committed (after `flushBuffer`, or once the declared `Content-Length` is reached; the buffer never overflows because the body is held whole until the handler returns). A cookie with a `Max-Age` also carries an `Expires` attribute (RFC 6265). The default character encoding follows `<response-character-encoding>`, then the `ISO-8859-1` default, and a `Content-Type` charset or locale-encoding mapping overrides it until `getWriter` is called.
+`sendError` and `sendRedirect` reset the buffer and the declared `Content-Length` and commit the response. `setStatus`, headers, `setLocale`, `setContentType` and charset changes are ignored once the response is committed (on buffer overflow, after `flushBuffer`, or once the declared `Content-Length` is reached; see <<streaming-and-response-buffering>>). A cookie with a `Max-Age` also carries an `Expires` attribute (RFC 6265). The default character encoding follows `<response-character-encoding>`, then the `ISO-8859-1` default, and a `Content-Type` charset or locale-encoding mapping overrides it until `getWriter` is called.
 
 == Legacy deployment descriptors
 

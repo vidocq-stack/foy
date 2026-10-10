@@ -352,8 +352,28 @@ On a forward the mapping is that of the target; `jakarta.servlet.forward.mapping
 | **Implemented** — discovery, §8.2.2 ordering and §8.2.3 merge; see <<web-xml-and-web-fragment-xml-coverage>>.
 
 | Async (`AsyncContext`)
-| ⚠️
-| The `spec.async` suite passes (TCK 39/39, 0 in errors); the non-blocking I/O listener tests (`ReadListener`, `WriteListener`) still fail.
+| ✅
+| Cycles, `AsyncListener` events (`onStartAsync`, `onTimeout`, `onError`, `onComplete`), timeout routed to an error dispatch (`500`, error pages applied); see xref:usage.adoc#async-asynccontext[Usage].
+
+| Response streaming and buffering
+| ✅
+| Commit on buffer overflow, `flushBuffer` and a complete `Content-Length`; live chunked (HTTP/1.1) or DATA-frame (HTTP/2) body through a bounded pipe; `setBufferSize` honoured.
+
+| Non-blocking I/O (`ReadListener`, `WriteListener`)
+| ✅
+| On async-started requests and upgraded connections. Not resumed after an `AsyncContext.dispatch`; no `ReadListener.onError` on async timeout.
+
+| Response trailers (`setTrailerFields`)
+| ✅
+| HTTP/1.1 chunked and HTTP/2; supplier called after the body on Chappe's thread; see xref:usage.adoc#response-trailers[Usage] for the limits.
+
+| HTTP Upgrade (`HttpUpgradeHandler`, `WebConnection`)
+| ✅
+| HTTP/1.1 only; blocking and non-blocking streams; `destroy()` on close, I/O error or undeploy; no idle timeout once upgraded.
+
+| HTTP/2 server push (`PushBuilder`)
+| ❌
+| Not supported: `newPushBuilder()` returns `null` (deprecated in Servlet 6.1).
 
 | Multipart (`@MultipartConfig`)
 | ⚠️
@@ -371,13 +391,13 @@ On a forward the mapping is that of the target; `jakarta.servlet.forward.mapping
 | ❌
 | Not implemented.
 
-| WebSocket (Servlet 6.1 upgrade)
+| WebSocket (Jakarta WebSocket over the upgrade)
 | ❌
-| Not implemented (planned, no date).
+| Not implemented (planned, no date); HTTP Upgrade itself is available.
 
 | JSP
 | ❌
-| Not supported, not planned.
+| Not supported by Foy itself; planned through a JSP-engine SPI plugged by xref:ibarra::index.adoc[Ibarra] (Jakarta Pages 4.0).
 |===
 
 [#other-containers]
@@ -396,7 +416,7 @@ Foy does not need Vauban: give `FoyChappeBoot` the `BeanManager` of any CDI 4 co
 * Maven 3.9.16
 * Jakarta Servlet 6.1
 * Any CDI 4 container (Vauban, Weld) — see <<other-containers>>
-* Strict Java Modules, virtual threads (one VT per request)
+* Strict Java Modules, virtual threads (a Foy VT per request, next to Chappe's connection VT)
 * AOT-friendly (no reflection, no dynamic proxy)
 
 == Bugs and benchmarks

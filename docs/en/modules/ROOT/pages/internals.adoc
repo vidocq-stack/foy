@@ -79,7 +79,7 @@ sequenceDiagram
     Chappe->>Chappe: parse HTTP, virtual thread
     Chappe->>Bridge: handle(Request, Response)
     Bridge->>Bridge: HttpServletRequestImpl / HttpServletResponseImpl
-    Bridge->>Disp: dispatch(req, resp)
+    Bridge->>Disp: dispatch(req, resp) on foy-request-<n> (virtual thread)
     Disp->>Sec: enforce(@ServletSecurity)
     alt unauthorised
         Sec-->>Client: 401/403 (BasicAuthenticator)
@@ -87,12 +87,13 @@ sequenceDiagram
         Disp->>Session: ensureSession(req, resp)
         Disp->>Filters: build chain(URI, dispatcherType)
         Filters->>Servlet: doGet/doPost/...
-        Servlet-->>Filters: write OutputStream
+        Servlet-->>Bridge: commit (buffer overflow, flush): head + live Body
+        Bridge-->>Chappe: Response (Chappe thread released)
+        Chappe-->>Client: HTTP/2 frames (HEADERS + DATA) while the servlet writes
         Filters-->>Disp: chain ends
-        Disp-->>Bridge: response complete
+        Disp-->>Bridge: request complete (body ended)
     end
-    Bridge-->>Chappe: Body (streaming)
-    Chappe-->>Client: HTTP/2 frames (HEADERS + DATA)
+    Chappe-->>Client: last DATA frame (END_STREAM), trailers if any
 ....
 
 == Dispatch pipeline
@@ -108,14 +109,16 @@ For one request, `ChappeServletBridge` runs these steps in order (Servlet 6.1 §
 
 The session is touched in step 1 (`accessRequestedSession`) for every request carrying a session id, not only when the servlet calls `getSession`, so a busy session does not expire and `getLastAccessedTime()` stays correct.
 
-No body copy: `ServletOutputStreamImpl` writes straight into the Chappe `Body`. The `ServletInputStream` reads straight from the Chappe frame parser.
+Body path: `ServletOutputStreamImpl` buffers up to `getBufferSize()` bytes; the commit hands Chappe a `Body` whose reader is a bounded `ResponsePipe`, which the servlet then fills (coalesced writes pushed when the buffer fills, on a flush, at the end). The `ServletInputStream` reads from the Chappe body directly in blocking mode; with a `ReadListener`, a body pump (one virtual thread) reads ahead into a small buffer and drives the callbacks.
 
 == Threading model
 
-* **One *virtual thread* per request.** Chappe's `accept()` already produces one VT per connection. Foy stays on that thread until `service()` returns.
-* **No platform pool.** No `ExecutorService` to size.
-* **Async: no extra cost.** `request.startAsync()` captures the current VT; the program may detach the response, but the container reserves no platform thread.
-* **`ThreadLocal`** is used sparingly through `ScopedValue` (JEP 506) on the Chappe side. Foy inherits that context without pinning.
+* **Two virtual threads per request.** Chappe runs each connection (or HTTP/2 stream) on its own VT and calls the bridge there. The bridge starts the servlet pipeline on a second VT, `foy-request-<n>`, and parks Chappe's thread until the response head is known (the first commit, or the end of a request that never committed). Chappe then writes the head and reads the live body while the servlet keeps writing.
+* **Context crossing.** Chappe's `RequestContext.CURRENT` (a `ScopedValue`) is re-bound on the pipeline thread. Any other `ThreadLocal` or `ScopedValue` a Chappe filter set on the connection thread is *not* visible to servlet code.
+* **No platform pool.** No `ExecutorService` to size; every thread Foy starts (pipeline, `AsyncContext.start`, `ReadListener` body pump, `WriteListener` drain, upgraded-connection pumps, session reaper, async timeouts) is virtual.
+* **Async.** `request.startAsync()` lets `service()` return; the pipeline thread waits for the end of the cycle (complete, dispatch, timeout, error), runs dispatches and listeners, then ends the body. The container reserves no platform thread.
+* **Trailer supplier.** `setTrailerFields` suppliers are called by Chappe, on its connection thread, after the last byte of the body: request-scoped state is not available there.
+* **HTTP Upgrade.** After the `101` head, Chappe passes the raw connection to Foy; `HttpUpgradeHandler.init` runs on Chappe's connection thread (with the application class loader), and the `WebConnection` listener callbacks run on Foy virtual threads, serialised, never before `init` returns.
 
 [NOTE]
 ====
@@ -219,8 +222,8 @@ The guard covers `foy-core` only: `foy-cdi-vauban`'s `CdiWebComponentsCreator` a
 | No runtime reflection on the nominal path
 | Aligns with the Vidocq ecosystem's principles. AOT-friendly (GraalVM, Leyden CDS). Reflection remains only as the last, logged tier of the registry.
 
-| No body copy
-| `ServletOutputStreamImpl` and `ServletInputStreamImpl` wire directly onto the Chappe `Body`.
+| Bounded pipe instead of a whole-body buffer
+| A committed body goes through `ResponsePipe` (a ring buffer of at least 8 KiB): memory per response stays bounded whatever the body size, and a slow client back-pressures the writing servlet. A response that fits in the buffer is never piped.
 
 | `requires io.vidocq.chappe.api` in `foy-core`
 | Temporary M1 coupling — to be replaced in M2 by a `FoyHttpExchange` SPI inside `foy-api`, opening the door to other transports.
@@ -232,13 +235,17 @@ The guard covers `foy-core` only: `foy-cdi-vauban`'s `CdiWebComponentsCreator` a
 == Known limits
 
 * Security constraints are parsed, not enforced; `WEB-INF/lib` nested jars of a WAR are not opened; see xref:tck.adoc[].
-* The response body is buffered whole until the handler returns: `flushBuffer` marks the response committed (status and headers are then locked) but sends nothing to the connection, and the buffer never overflows (`setBufferSize` only changes the reported size), the non-blocking I/O listeners are incomplete, and HTTP/2 server push and HTTP Upgrade are missing: streaming, async and non-blocking I/O are the next phase.
+* HTTP/2 server push is not supported (`newPushBuilder()` returns `null`).
+* Response trailers: the supplier runs on Chappe's thread after `service()` (no request-scoped state); on HTTP/1.1 a `Content-Length` set after `setTrailerFields`, or a `Connection: close` response, drops the trailers silently; `reset()` keeps the supplier.
+* Non-blocking I/O: `ReadListener.onError` is not called on an async timeout; a `WriteListener` is not resumed after an `AsyncContext.dispatch`; bytes still waiting at the end of a cycle are sent in blocking mode, bounded only by Chappe's write timeout for a client that never reads (BUG-20261010-02).
+* HTTP Upgrade: no idle timeout once upgraded — a handler that never reads nor closes keeps the connection until a write fails or the application is undeployed. HTTP/1.1 only.
+* A request whose `ReadListener` is still waiting for upload bytes when the request ends (a client gone silent mid-body) is answered first, then its connection is closed instead of being kept alive.
 * Chappe exposes no connection identity and no HTTP/2 stream id: `getServletConnection().getConnectionId()` can repeat and `getProtocolRequestId()` is empty on HTTP/2 (BUG-20261009-09).
 * `getRequestDispatcher` and cross-context lookup compare the context path with a plain prefix test (no segment boundary), so `/app` also matches `/application/x`.
 * Cross-context dispatch (`ServletContext.getContext`): **implemented** via `CrossContextRegistry` (strict contextPath match on the contexts deployed in the same JVM).
 * Multipart: fully buffered in memory, no streaming parse.
 * WebSocket Servlet 6.1: not implemented (planned, no date).
-* JSP: not supported, not planned.
+* JSP: not supported by Foy itself; planned through a JSP-engine SPI that Ibarra (Jakarta Pages 4.0) plugs into.
 * Form-based and Digest authentication: not implemented.
 
 No comparative numbers (Tomcat, Jetty) have been recorded yet — a `BENCH.md` will be created with the first measured run (workspace convention).

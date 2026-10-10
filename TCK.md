@@ -5,7 +5,62 @@ First full-suite measurement run. Unlike cassini/champollion/vauban, this is a
 Vidocq runtime to serve Cassini-style stacks, and several spec chapters are not
 implemented yet. This report quantifies exactly which ones.
 
-## 0. Phase 4 exit: request, response and session core (2026-10-09)
+## 0. Phase 5 exit: streaming, async and non-blocking I/O (2026-10-10)
+
+`pr/ybl/servlet-completion-phase5` @ `3c0aa13` (chappe `pr/ybl/servlet-streaming-upgrade` @
+`3623006`, 0.4.0-SNAPSHOT), `./run-official-tck-servlet6.1.sh --all`: 1714 run,
+**1659 passing / 1714 run, 7 skipped**, 48 errors, 0 failures, 11 min 37 s (Phase 4: 1649
+passing, +10). Surefire's own summary: `Tests run: 1714, Failures: 0, Errors: 48, Skipped: 7`.
+A skipped test is never counted as passing: passing = run - errors - failures - skipped.
+
+Per family (passing / run, skipped):
+
+| Family | Phase 5 | Phase 4 |
+|---|---|---|
+| `api.*` | 848 / 859, 0 skipped | 840 / 859 |
+| `pluggability.*` | 646 / 646, 0 skipped | 646 / 646 |
+| `spec.*` | 163 / 207, 7 skipped | 161 / 207 |
+| `compat.*` | 2 / 2, 0 skipped | 2 / 2 |
+
+Family runs (`--family`) also count `GetServletRegistrationsTest` (`api.*`, 1/1, run
+separately at the exit: `api.*` 849 / 860 in family mode); `--family pluggability`
+gives 646 / 646, 0 skipped, identical to `--all`.
+
+`foy-tck/tck-tally.sh` now prints a fourth column, the skipped count
+(`<class> <run> <failures+errors> <skipped>`). The tally was joined with `LC_ALL=C join`
+against the previous `foy-tck/tck-baseline.txt` (both sides sorted with `LC_ALL=C`): zero
+class regression (no class with more failures or a different run count), `join -v` empty on
+both sides, 6 classes improved (10 tests). `foy-tck/tck-baseline.txt` is refreshed to this tally, with
+the skipped column. All 207 `tiers=Stats` lines show `reflection=0`.
+
+Improved classes: `HttpServletResponse40Tests` (3, response trailers),
+`HttpUpgradeHandlerTests` (1, HTTP Upgrade), `ReadListenerTests` (1),
+`ReadListener1Tests` (2), `WriteListenerTests` (1), `spec.servletresponse.servletResponseTests`
+(2, `flushBuffer` streaming). `spec.serverpush.ServerPushTests` reads `8 0 7`: its 7 errors
+became 7 skips through `servlet.tck.support.http2Push=false` (HTTP/2 push is an accepted gap,
+§3.6); its passing count is unchanged (1 before, 1 now), so this is not a gain.
+
+Remaining 48 errors and 7 skips, by class and by phase:
+
+| Count | Classes | Phase |
+|---|---|---|
+| 37 | `spec.security.*`: `secform` 17, `secbasic` 8, `denyUncovered` 4, `metadatacomplete` 4, `annotations` 2, `clientcert` 1, `clientcertanno` 1 | 6 (security) |
+| 8 | multipart: `PartTests` 4, `Part1Tests` 4 | 7 |
+| 3 | `ServletContext40Tests` (JSP and TLD: `addJsp`, `addJspContextListenerInTLD`, `setSessionTimeoutContextListenerInTLD`) | JSP-engine SPI, plugged by Ibarra (Jakarta Pages 4.0) |
+| 7 skipped | `spec.serverpush.ServerPushTests` (HTTP/2 push) | accepted gap |
+
+**Log noise.** `servlet.tck.api.jakarta_servlet.asynccontext.ACListener2` throws an
+`IOException` from `onComplete` on purpose; Foy logs each such listener failure at
+`WARNING` with its stack trace (`AsyncListener.onComplete threw`). These lines are expected
+and are not failures.
+
+Open bugs: BUG-20261010-01 (PARTIAL: async writes from threads the application manages
+itself), BUG-20261010-02 (kept non-blocking bytes sent blocking at the end of a cycle, bounded
+only by chappe's write timeout), plus the Phase 4 ones still open (-20261009-01, -03, -04,
+-09). Chappe: CHAPPE-008 (ordinary headers), CHAPPE-014 (lingering close skipped after an
+interrupted body read).
+
+## 0.1 Phase 4 exit: request, response and session core (2026-10-09)
 
 `pr/ybl/servlet-completion-phase4` @ `8cc03fd`, `./run-official-tck-servlet6.1.sh --all`:
 1714 run, **1649 pass**, 65 errors, 13 min 32 s (Phase 3: 1587, +62). Per family:
@@ -41,7 +96,7 @@ Remaining 65 errors, by class and by phase:
 Open bugs: BUG-20261009-01 (dispatch drops a non-HTTP wrapper), -03 (error dispatch paths),
 -04 (decoded paths in dispatch URIs), -09 (connection and HTTP/2 stream ids, chappe follow-up).
 
-## 0.1 Phase 3 exit: descriptors and pluggability (2026-10-09)
+## 0.2 Phase 3 exit: descriptors and pluggability (2026-10-09)
 
 `pr/ybl/servlet-completion-phase3`, `./run-official-tck-servlet6.1.sh --all`:
 1714 run, **1587 pass**, 127 errors, 13 min 52 s (Phase 2: 928). Per family:
@@ -63,7 +118,7 @@ BUG-20261008-02), `httpservletresponse`, `httpservletresponse30`,
 `fragment.FragmentTests` (1). They belong to the request/response phase (default
 servlet, welcome files) and the security phase.
 
-## 0.2 Phase 2 exit: build-time code generation (2026-10-08)
+## 0.3 Phase 2 exit: build-time code generation (2026-10-08)
 
 `pr/ybl/servlet-completion-phase2`, `./run-official-tck-servlet6.1.sh --all`:
 1714 run, **928 pass**, 786 errors, 11 min 19 s (Phase 1: 921). Per family:
@@ -201,13 +256,18 @@ timeouts, event ordering).
 `metadatacomplete`: FORM/BASIC auth flows and TLS client-cert mapping are
 partial in the chappe adapter + `SecurityProvider` SPI.
 
-### 3.6 Scattered behavioral gaps (2026-06 diagnosis; resolved in Phase 4 except server push and Upgrade)
+### 3.6 Scattered behavioral gaps (2026-06 diagnosis; resolved in Phases 4 and 5, push skipped)
 
-`spec.errorpage` (4/4), `spec.serverpush` (accepted gap: 7 of 8 skipped through
-`servlet.tck.support.http2Push=false` — chappe has no h2c Upgrade nor PUSH_PROMISE writer, and push is
-deprecated in Servlet 6.1 in favour of 103 Early Hints; `newPushBuilder()` returns `null`), `spec.welcomefiles` (2/2), `spec.requestdispatcher` (13/20),
-`spec.srlistener` (5/13), `spec.i18n.encoding` (2/3), `compat.LeadingSlash`
-(2/2), `HttpUpgradeHandler` (1/1), plus singles visible in the per-class log.
+`spec.errorpage` (4/4), `spec.welcomefiles` (2/2), `spec.requestdispatcher`
+(13/20), `spec.srlistener` (5/13), `spec.i18n.encoding` (2/3),
+`compat.LeadingSlash` (2/2) and `HttpUpgradeHandler` (1/1), plus singles visible
+in the per-class log. All were fixed in Phase 4, except `HttpUpgradeHandler`
+(Phase 5).
+
+`spec.serverpush` is an accepted gap: 7 of its 8 tests are skipped through
+`servlet.tck.support.http2Push=false`. Chappe has no h2c Upgrade nor
+PUSH_PROMISE writer, push is deprecated in Servlet 6.1 in favour of 103 Early
+Hints, and `newPushBuilder()` returns `null`.
 
 ## 4. What this means for the roadmap (2026-06 diagnosis, kept for history)
 

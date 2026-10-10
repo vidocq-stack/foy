@@ -462,3 +462,25 @@ Statuts : `OPEN` → `INVESTIGATING` → `FIXED` (commit hash) → `CLOSED`.
     `AsyncContext.start`) is refused from the end of its cycle only until a later cycle re-opens
     the output; it is not known to the container, so it cannot be retired. Memory safety holds
     (every output operation takes the lock); only the logical interleaving of bytes is the app's.
+
+## BUG-20261010-02 — kept non-blocking bytes are sent blocking at the end of a cycle, with no Foy-side bound
+
+- **Date** : 2026-10-10
+- **Statut** : OPEN (documented limit, Phase 5 exit)
+- **Module touché** : `foy-core` (`ServletOutputStreamImpl.endNonBlocking`, `ChappeServletBridge.finishBody`)
+- **Symptôme** : in non-blocking mode (`WriteListener`), a write the pipe cannot take is kept by
+  the stream (at most one buffer plus one write). When the async cycle ends (complete, dispatch,
+  timeout, error) with bytes still kept, the stream returns to blocking mode and `finishBody`
+  sends them on the pipeline thread, blocking until the client reads them. A client that never
+  reads holds the pipeline thread and the connection until chappe's write timeout closes the
+  channel (`ServerConfig.writeTimeout`, 30 s per blocked write by default; never with a zero
+  write timeout).
+- **Reproduction minimale** : async servlet with a `WriteListener` writing until `isReady()` is
+  `false`, then `complete()`; the client sends the request and never reads. The pipeline thread
+  stays in `ResponsePipe.write` until the write timeout fires.
+- **Hypothèse de cause** : by design of Task 5.8 (blocking mode after the cycle keeps byte order and
+  matches what blocking mode does anyway); the container has no write deadline of its own.
+- **Investigations** :
+  - 2026-10-10 (Task 5.8 review, deferred minor; recorded at the Phase 5 exit, Task 5.10) : fix
+    direction — bound the end-of-cycle drain with a container deadline (abort the body, so chappe
+    drops the connection) or rely on a mandatory non-zero chappe write timeout.

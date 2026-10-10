@@ -6,40 +6,44 @@ This page consolidates the status of the official Jakarta Servlet 6.1 TCK runs a
 
 == Summary
 
-This is a **measurement**, not a conformance claim. At the latest full run (`jakarta.tck:servlet-tck-runtime:6.1.0`, Phase 4 exit, 2026-10-09):
+This is a **measurement**, not a conformance claim. At the latest full run (`jakarta.tck:servlet-tck-runtime:6.1.0`, Phase 5 exit, 2026-10-10):
 
-* **1714** tests run, **1649** passed, 0 failures / 65 errors — **96.2 %** raw (Phase 3 exit: 1587; Phase 2 exit: 928);
-* Phase 4 added the container default servlet and welcome files, `HttpServletMapping`, the dispatcher semantics, servlet-name filter mappings, request path canonicalisation, sessions and legacy descriptors; no class regressed and 25 improved;
-* HTTP/2 server push is an accepted gap: chappe has no h2c Upgrade nor PUSH_PROMISE writer and push is deprecated in Servlet 6.1 in favour of 103 Early Hints. `HttpServletRequest.newPushBuilder()` returns `null`, and the TCK switch `servlet.tck.support.http2Push=false` (surefire system property of the `tck` profile) turns the `ServerPushTests` errors into skipped tests.
-* the 65 remaining errors are security (37: FORM, BASIC, client certificate, deny-uncovered), streaming and non-blocking I/O (10: `ReadListener`, `WriteListener`, HTTP Upgrade, response trailers, `flushBuffer`), multipart (8), HTTP/2 server push (7) and JSP-dependent tests (3).
+* **1714** tests run: **1659 passing**, 7 skipped, 0 failures / 48 errors — **96.8 %** of the tests run pass (Phase 4 exit: 1649; Phase 3 exit: 1587). A skipped test is never counted as passing;
+* Phase 5 added response streaming (commit on buffer overflow and `flushBuffer`), response trailers, the async lifecycle (timeout routed to an error dispatch, `AsyncListener` events), non-blocking I/O (`ReadListener`, `WriteListener`) and HTTP Upgrade (`HttpUpgradeHandler`, `WebConnection`); no class regressed and 6 improved (10 tests);
+* the 48 remaining errors are security (37: FORM, BASIC, client certificate, deny-uncovered), multipart (8) and JSP-dependent tests (3);
+* the 7 skipped tests are HTTP/2 server push, an accepted gap (see <<what-is-skipped>>).
 
-Per-family breakdown:
+Per-family breakdown (passing / run):
 
-[cols="2,1,1,1,3",options="header"]
+[cols="2,1,1,1,1,3",options="header"]
 |===
-| Family | Run | Pass | Score | Reading
+| Family | Run | Pass | Skipped | Score | Reading
 
 | `api.*` (core engine)
 | 859
-| 840
-| 97.8 %
-| ✅ The Servlet engine itself is solid; the rest is streaming, multipart and JSP
+| 848
+| 0
+| 98.7 %
+| ✅ The Servlet engine itself is solid; the rest is multipart (8) and JSP (3)
 
 | `pluggability.*`
 | 646
 | 646
+| 0
 | 100 %
 | ✅ Fragments, ordering and initializers
 
 | `spec.*` (behavioral, including security)
 | 207
-| 161
-| 77.8 %
-| ⚠️ Security enforcement (37) and server push (7)
+| 163
+| 7
+| 78.7 %
+| ⚠️ Security enforcement (37); server push skipped (7)
 
 | `compat.*`
 | 2
 | 2
+| 0
 | 100 %
 | ✅ Leading-slash dispatch compat (legacy 2.2/2.3 descriptors)
 |===
@@ -49,12 +53,23 @@ Per-family breakdown:
 Exact figures live in `target/surefire-reports/` after an `--all` run and in link:{repo-foy}/src/branch/main/TCK.md[`TCK.md`] (per-family tallies, root causes §3, roadmap §4). For historical detail, browse `git log -- TCK.md` on the `main` branch.
 ====
 
-== Nothing is skipped
+[#what-is-skipped]
+== What is skipped
 
-The full run reports `Skipped: 0` — no test battery is excluded. Two product decisions show up as errors rather than skips:
+The full run reports `Skipped: 7`, all in `spec.serverpush.ServerPushTests`:
 
-* **No JSP engine** (not supported, not planned) — JSP-dependent behaviours fail and are accepted gaps. For dynamic pages, use xref:cassini::index.adoc[Cassini] (REST) or pure Servlets.
-* **Hang safety net** — some TCK clients read raw sockets without `SO_TIMEOUT` and would hang forever on an unanswered request; `foy-tck` sets a global JUnit 120 s timeout (`SEPARATE_THREAD` mode). Tests hitting it (e.g. `HttpUpgradeHandlerTests.upgradeTest`, HTTP Upgrade not implemented) are counted as errors.
+* **HTTP/2 server push** is an accepted gap: chappe has no h2c Upgrade nor PUSH_PROMISE writer, and push is deprecated in Servlet 6.1 in favour of 103 Early Hints. `HttpServletRequest.newPushBuilder()` returns `null`, and the TCK's own switch `servlet.tck.support.http2Push=false` (a surefire system property of the `tck` profile in `foy-tck/pom.xml`) skips the 7 tests that need push. The eighth test of the class runs and passes.
+
+No other test battery is excluded. Two more product decisions show up as errors rather than skips:
+
+* **No JSP engine in Foy itself** — the 3 JSP-dependent `ServletContext40Tests` fail. A JSP-engine SPI in Foy, plugged by xref:ibarra::index.adoc[Ibarra] (Jakarta Pages 4.0), is the planned way to run them. For dynamic pages today, use xref:cassini::index.adoc[Cassini] (REST) or pure Servlets.
+* **Hang safety net** — some TCK clients read raw sockets without `SO_TIMEOUT` and would hang forever on an unanswered request; `foy-tck` sets a global JUnit 120 s timeout (`SEPARATE_THREAD` mode). No test hits it at the Phase 5 exit.
+
+== Reading the logs
+
+The run log carries expected `WARNING` lines that are not failures. `servlet.tck.api.jakarta_servlet.asynccontext.ACListener2` throws an `IOException` from `onComplete` on purpose, and Foy logs every listener failure at `WARNING` with its stack trace (`AsyncListener.onComplete threw`).
+
+Per-class figures come from `foy-tck/tck-tally.sh <log>`, which prints `<class> <run> <failures+errors> <skipped>`; a class passes `run - failures+errors - skipped` tests. Comparing two tallies is a `LC_ALL=C join` (both files sorted with `LC_ALL=C`); the script header gives the exact commands.
 
 == Runner architecture
 
@@ -89,7 +104,7 @@ cd foy
 ----
 
 `--no-install` skips the reactor build (use it when the code is unchanged),
-`--family` and `--failing` select tests (`--failing` reads the bad count of
+`--family` and `--failing` select tests (`--failing` reads the bad count, third column, of
 `foy-tck/tck-baseline.txt`, or the tally file given as argument), `--dry-run`
 prints the Maven commands, and `--help` lists every mode.
 
