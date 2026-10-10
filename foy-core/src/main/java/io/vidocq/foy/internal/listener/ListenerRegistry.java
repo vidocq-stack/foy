@@ -79,8 +79,9 @@ public final class ListenerRegistry {
     /**
      * Registers a request listener of the container itself, ahead of the application's: it sees a
      * request first and is told last that it ended (destroyed events run in reverse order). Used for
-     * the CDI request context ({@link CdiRequestScopeListener}). Call it before the deployment
-     * serves requests.
+     * the CDI request and session contexts ({@link CdiRequestScopeListener},
+     * {@code CdiSessionScopeListener}); the listener added last is the outermost. Call it before the
+     * deployment serves requests.
      */
     public void addFirst(ServletRequestListener listener) {
         requestListeners.add(0, listener);

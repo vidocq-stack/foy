@@ -14,7 +14,7 @@
     <name>Foy :: Integration tests on Weld</name>
     <description>Portability proof: Foy on Chappe with Weld SE (CDI 4.1) as the CDI container instead of
         Vauban — servlets, filters and listeners get injection, and @RequestScoped beans live per request,
-        over HTTP (vidocq-workspace#15).</description>
+        @SessionScoped beans per HTTP session, over HTTP (vidocq-workspace#15, foy#21).</description>
 
     <properties>
         <!-- Weld 6.0 implements CDI 4.1, the level Foy targets (Weld 7 is CDI 5.0). -->

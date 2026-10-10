@@ -39,6 +39,7 @@ import io.vidocq.foy.internal.webxml.FragmentMerger;
 import io.vidocq.foy.internal.webxml.FragmentOrderer;
 import io.vidocq.foy.internal.webxml.WebAppDescriptor;
 import io.vidocq.foy.internal.webxml.WebXmlParser;
+import io.vidocq.foy.internal.cdi.CdiSessionScopeListener;
 import io.vidocq.foy.internal.listener.CdiRequestScopeListener;
 import jakarta.enterprise.inject.spi.BeanManager;
 import jakarta.servlet.ServletException;
@@ -288,7 +289,14 @@ public final class FoyChappeBoot {
             }
 
             if (beanManager != null) {
+                // The CDI session context (foy#21): bound for each request inside the request
+                // context, and told by the session manager when sessions are created and destroyed.
+                CdiSessionScopeListener sessionScope = new CdiSessionScopeListener(beanManager);
+                deployment.listeners().addFirst(sessionScope);
+                deployment.sessionManager().setLifecycleHook(sessionScope);
                 // The CDI request context, active for each request under any container (foy#18).
+                // Added last with addFirst, so it is the outermost listener: still active while
+                // session beans are destroyed at the end of a request.
                 deployment.listeners().addFirst(new CdiRequestScopeListener(beanManager));
             }
 
