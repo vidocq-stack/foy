@@ -19,6 +19,7 @@
  */
 package io.vidocq.foy.internal.dispatcher;
 
+import io.vidocq.foy.internal.TestSecurity;
 import io.vidocq.chappe.api.Server;
 import io.vidocq.foy.internal.TestServerLauncherAccess;
 import io.vidocq.foy.internal.bridge.ChappeServletBridge;
@@ -203,7 +204,7 @@ class AsyncSupportedDispatchTest {
         var ctx = new VidocqServletContext("/");
         if (errorPages != null) ctx.setErrorPages(errorPages);
         var bridge = new ChappeServletBridge(new ServletDispatcher(mappings),
-                new FilterRegistry(filters), ctx, null, "/");
+                new FilterRegistry(filters), TestSecurity.permitAll(ctx), null, "/");
         var r = TestServerLauncherAccess.start(bridge);
         this.server = r.server();
         this.port = r.port();

@@ -393,7 +393,7 @@ class ServletStreamingEndToEndTest {
         sessionManager.setListenerRegistry(listeners);
         var dispatcher = new ServletDispatcher(List.of(
                 new ServletDispatcher.Mapping(UrlPatternMatcher.of(pattern), servlet, "S")));
-        var bridge = new ChappeServletBridge(dispatcher, new FilterRegistry(List.of()), ctx, sessionManager, "/");
+        var bridge = new ChappeServletBridge(dispatcher, new FilterRegistry(List.of()), TestSecurity.permitAll(ctx), sessionManager, "/");
         var r = TestServerLauncher.start(bridge);
         this.server = r.server;
         this.port = r.port;

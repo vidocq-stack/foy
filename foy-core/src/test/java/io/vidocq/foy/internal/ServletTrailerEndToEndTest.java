@@ -85,7 +85,7 @@ class ServletTrailerEndToEndTest {
     private void startTrailerServlet() {
         var dispatcher = new ServletDispatcher(List.of(
                 new ServletDispatcher.Mapping(UrlPatternMatcher.of("/TrailerTestServlet"), trailerServlet(), "T")));
-        startWith(new ChappeServletBridge(dispatcher, new VidocqServletContext("/"), "/"));
+        startWith(new ChappeServletBridge(dispatcher, TestSecurity.permitAll(new VidocqServletContext("/")), "/"));
     }
 
     /** Byte-for-byte the TCK TrailerTest request. */
@@ -146,7 +146,7 @@ class ServletTrailerEndToEndTest {
         };
         var dispatcher = new ServletDispatcher(List.of(
                 new ServletDispatcher.Mapping(UrlPatternMatcher.of("/peek"), peeking, "P")));
-        startWith(new ChappeServletBridge(dispatcher, new VidocqServletContext("/"), "/"));
+        startWith(new ChappeServletBridge(dispatcher, TestSecurity.permitAll(new VidocqServletContext("/")), "/"));
 
         try (var socket = new Socket("127.0.0.1", port)) {
             socket.setSoTimeout(5000);
@@ -166,7 +166,7 @@ class ServletTrailerEndToEndTest {
     private void startServlet(String path, HttpServlet servlet) {
         var dispatcher = new ServletDispatcher(List.of(
                 new ServletDispatcher.Mapping(UrlPatternMatcher.of(path), servlet, "S")));
-        startWith(new ChappeServletBridge(dispatcher, new VidocqServletContext("/"), "/"));
+        startWith(new ChappeServletBridge(dispatcher, TestSecurity.permitAll(new VidocqServletContext("/")), "/"));
     }
 
     /** Replica of the TCK response TrailerTestServlet: it declares the chunking itself. */

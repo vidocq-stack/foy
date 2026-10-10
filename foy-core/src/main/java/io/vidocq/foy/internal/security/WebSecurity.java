@@ -43,14 +43,29 @@ public final class WebSecurity {
     private final ConstraintTable constraints;
     private final Authenticator authenticator;
     private final SecuritySettings settings;
+    private final boolean refuseAll;
+
+    /**
+     * The security of a context the deployer has not configured: it fails closed. Every request
+     * answers 403 and no login is possible, so a context built outside {@code WebAppDeployer}
+     * never admits a request it was not explicitly told to admit.
+     */
+    public static final WebSecurity UNCONFIGURED =
+            new WebSecurity(ConstraintTable.EMPTY, new DenyingAuthenticator("NONE"), SecuritySettings.DEFAULTS, true);
 
     public WebSecurity(ConstraintTable constraints, Authenticator authenticator, SecuritySettings settings) {
+        this(constraints, authenticator, settings, false);
+    }
+
+    private WebSecurity(ConstraintTable constraints, Authenticator authenticator, SecuritySettings settings,
+                        boolean refuseAll) {
         this.constraints = Objects.requireNonNull(constraints, "constraints");
         this.authenticator = Objects.requireNonNull(authenticator, "authenticator");
         this.settings = Objects.requireNonNull(settings, "settings");
+        this.refuseAll = refuseAll;
     }
 
-    /** No constraint, BASIC over the settings' store: a context the deployer did not configure. */
+    /** No constraint, BASIC over the settings' store: chosen explicitly (tests, a bridge built by hand). */
     public static WebSecurity permitAll(SecuritySettings settings) {
         return new WebSecurity(ConstraintTable.EMPTY,
                 new BasicAuthenticator(settings.identityStore(), BasicAuthenticator.DEFAULT_REALM), settings);
@@ -83,6 +98,10 @@ public final class WebSecurity {
      */
     public boolean admit(HttpServletRequestImpl req, HttpServletResponse res, String canonicalPath)
             throws IOException, ServletException {
+        if (refuseAll) {
+            res.sendError(HttpServletResponse.SC_FORBIDDEN);
+            return false;
+        }
         Decision decision = constraints.decide(canonicalPath, req.getMethod());
         switch (decision.access()) {
             case UNCHECKED -> { return true; }

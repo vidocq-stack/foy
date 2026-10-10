@@ -384,7 +384,9 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
             req.setUrlSessionId(finalUrlSessionId);
             req.accessRequestedSession();
             // No request listener has fired yet: nothing needs ending on a denial.
-            Response refused = gate(req, res, path);
+            // The original path, then the welcome target it may have resolved to, as in the main branch.
+            Response refused = gate(req, res, requestPath);
+            if (refused == null && !requestPath.equals(path)) refused = gate(req, res, path);
             if (refused != null) return refused;
             List<Filter> filters = filterRegistry.chainFor(path, DispatcherType.REQUEST);
             if (filters.isEmpty()) {

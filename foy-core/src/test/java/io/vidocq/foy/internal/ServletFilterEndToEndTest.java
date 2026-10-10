@@ -127,7 +127,7 @@ class ServletFilterEndToEndTest {
                 FilterMapping.onRequest(UrlPatternMatcher.of("/*"), f1, "F1"),
                 FilterMapping.onRequest(UrlPatternMatcher.of("/*"), f2, "F2")
         ));
-        var bridge = new ChappeServletBridge(dispatcher, reg, new VidocqServletContext("/"), "/");
+        var bridge = new ChappeServletBridge(dispatcher, reg, TestSecurity.permitAll(new VidocqServletContext("/")), "/");
         var r = TestServerLauncher.start(bridge);
         server = r.server;
         port = r.port;
@@ -141,7 +141,7 @@ class ServletFilterEndToEndTest {
                 new ServletDispatcher.Mapping(UrlPatternMatcher.of(servletPattern), servlet, "S")));
         var reg = new FilterRegistry(List.of(
                 FilterMapping.onRequest(UrlPatternMatcher.of(filterPattern), filter, "F")));
-        var bridge = new ChappeServletBridge(dispatcher, reg, new VidocqServletContext("/"), "/");
+        var bridge = new ChappeServletBridge(dispatcher, reg, TestSecurity.permitAll(new VidocqServletContext("/")), "/");
         var r = TestServerLauncher.start(bridge);
         this.port = r.port;
         return r.server;

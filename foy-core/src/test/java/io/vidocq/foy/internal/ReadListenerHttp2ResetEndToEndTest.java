@@ -138,7 +138,7 @@ class ReadListenerHttp2ResetEndToEndTest {
         };
         var mappings = List.of(new ServletDispatcher.Mapping(UrlPatternMatcher.of("/nio"), servlet, "S"));
         var bridge = new ChappeServletBridge(new ServletDispatcher(mappings),
-                new FilterRegistry(List.of()), new VidocqServletContext("/"), null, "/");
+                new FilterRegistry(List.of()), TestSecurity.permitAll(new VidocqServletContext("/")), null, "/");
         var r = TestServerLauncher.start(bridge);
         server = r.server;
         return r.port;

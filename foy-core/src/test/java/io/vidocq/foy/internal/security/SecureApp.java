@@ -24,20 +24,29 @@ import io.vidocq.foy.internal.boot.DeployOptions;
 import io.vidocq.foy.internal.boot.Deployment;
 import io.vidocq.foy.internal.boot.WebAppDeployer;
 import io.vidocq.foy.internal.boot.WebAppModel;
+import io.vidocq.foy.internal.container.VidocqServletContext;
 import io.vidocq.foy.internal.session.SessionManager;
 import io.vidocq.foy.internal.webxml.SecurityDefs.SecurityConstraintDef;
 import io.vidocq.foy.internal.webxml.SecurityDefs.WebResourceCollectionDef;
 import io.vidocq.foy.spi.security.IdentityStore;
 
+import java.io.IOException;
+import java.io.InputStream;
 import java.net.CookieManager;
 import java.net.HttpCookie;
 import java.net.URI;
+import java.net.URL;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.nio.charset.StandardCharsets;
 import java.util.Base64;
 import java.util.List;
+import java.util.Set;
+import java.util.TreeSet;
+import java.util.stream.Stream;
 
 /** A deployed application with users alice (admin) and bob (user); cookies kept, redirects not followed. */
 final class SecureApp implements AutoCloseable {
@@ -55,9 +64,19 @@ final class SecureApp implements AutoCloseable {
 
     SecureApp(WebAppModel model) { this(model, SecuritySettings.DEFAULTS.withIdentityStore(USERS)); }
 
+    /** Static resources served from {@code resourceRoot} (a directory-aware provider), default settings. */
+    SecureApp(WebAppModel model, Path resourceRoot) {
+        this(model, DeployOptions.defaults(SecureApp.class.getClassLoader())
+                .withSecurity(SecuritySettings.DEFAULTS.withIdentityStore(USERS))
+                .withResourceProvider(new DirectoryResources(resourceRoot)));
+    }
+
     SecureApp(WebAppModel model, SecuritySettings settings) {
-        deployment = WebAppDeployer.deploy(model,
-                DeployOptions.defaults(SecureApp.class.getClassLoader()).withSecurity(settings));
+        this(model, DeployOptions.defaults(SecureApp.class.getClassLoader()).withSecurity(settings));
+    }
+
+    private SecureApp(WebAppModel model, DeployOptions options) {
+        deployment = WebAppDeployer.deploy(model, options);
         var started = io.vidocq.foy.internal.TestServerLauncherAccess.start(deployment.handler());
         server = started.server();
         port = started.port();
@@ -108,6 +127,31 @@ final class SecureApp implements AutoCloseable {
         return cookies.getCookieStore().getCookies().stream()
                 .filter(c -> SessionManager.COOKIE_NAME.equals(c.getName()))
                 .map(HttpCookie::getValue).findFirst().orElse(null);
+    }
+
+    /** Serves the files under {@code root}; lists directories (welcome files need it). */
+    record DirectoryResources(Path root) implements VidocqServletContext.ResourceProvider {
+        @Override public Set<String> listPaths(String path) {
+            Path p = root.resolve(path.substring(1));
+            if (!Files.isDirectory(p)) return null;
+            try (Stream<Path> s = Files.list(p)) {
+                var out = new TreeSet<String>();
+                s.forEach(c -> out.add(path + c.getFileName() + (Files.isDirectory(c) ? "/" : "")));
+                return out;
+            } catch (IOException e) {
+                return null;
+            }
+        }
+        @Override public InputStream openStream(String path) {
+            Path p = root.resolve(path.substring(1));
+            try { return Files.isRegularFile(p) ? Files.newInputStream(p) : null; }
+            catch (IOException e) { return null; }
+        }
+        @Override public URL toUrl(String path) {
+            Path p = root.resolve(path.substring(1));
+            try { return Files.exists(p) ? p.toUri().toURL() : null; }
+            catch (IOException e) { return null; }
+        }
     }
 
     @Override

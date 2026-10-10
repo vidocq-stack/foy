@@ -74,7 +74,7 @@ class ServletEndToEndTest {
 
         var dispatcher = new ServletDispatcher(List.of(
                 new ServletDispatcher.Mapping(UrlPatternMatcher.of("/hello"), hello, "HelloServlet")));
-        var bridge = new ChappeServletBridge(dispatcher, new VidocqServletContext("/"), "/");
+        var bridge = new ChappeServletBridge(dispatcher, TestSecurity.permitAll(new VidocqServletContext("/")), "/");
 
         startWith(bridge);
 
@@ -87,7 +87,7 @@ class ServletEndToEndTest {
         HttpServlet s = new HttpServlet() {};
         var dispatcher = new ServletDispatcher(List.of(
                 new ServletDispatcher.Mapping(UrlPatternMatcher.of("/known"), s, "K")));
-        var bridge = new ChappeServletBridge(dispatcher, new VidocqServletContext("/"), "/");
+        var bridge = new ChappeServletBridge(dispatcher, TestSecurity.permitAll(new VidocqServletContext("/")), "/");
 
         startWith(bridge);
 
@@ -106,7 +106,7 @@ class ServletEndToEndTest {
         };
         var dispatcher = new ServletDispatcher(List.of(
                 new ServletDispatcher.Mapping(UrlPatternMatcher.of("/api/*"), echo, "Echo")));
-        var bridge = new ChappeServletBridge(dispatcher, new VidocqServletContext("/"), "/");
+        var bridge = new ChappeServletBridge(dispatcher, TestSecurity.permitAll(new VidocqServletContext("/")), "/");
 
         startWith(bridge);
 
@@ -125,7 +125,7 @@ class ServletEndToEndTest {
         };
         var dispatcher = new ServletDispatcher(List.of(
                 new ServletDispatcher.Mapping(UrlPatternMatcher.of("/t"), s, "T")));
-        var bridge = new ChappeServletBridge(dispatcher, new VidocqServletContext("/"), "/");
+        var bridge = new ChappeServletBridge(dispatcher, TestSecurity.permitAll(new VidocqServletContext("/")), "/");
 
         startWith(bridge);
 

@@ -71,7 +71,7 @@ class ServletMultipartEndToEndTest {
         var bridge = new ChappeServletBridge(
                 new ServletDispatcher(List.of(new ServletDispatcher.Mapping(
                         UrlPatternMatcher.of("/upload"), s, "U"))),
-                new FilterRegistry(List.of()), ctx, null, "/");
+                new FilterRegistry(List.of()), TestSecurity.permitAll(ctx), null, "/");
         var r = TestServerLauncher.start(bridge);
         server = r.server;
         port = r.port;
@@ -113,7 +113,7 @@ class ServletMultipartEndToEndTest {
         var bridge = new ChappeServletBridge(
                 new ServletDispatcher(List.of(new ServletDispatcher.Mapping(
                         UrlPatternMatcher.of("/p"), s, "P"))),
-                new FilterRegistry(List.of()), ctx, null, "/");
+                new FilterRegistry(List.of()), TestSecurity.permitAll(ctx), null, "/");
         var r = TestServerLauncher.start(bridge);
         server = r.server;
         port = r.port;

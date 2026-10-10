@@ -117,6 +117,23 @@ class ServletSecurityEndToEndTest {
     }
 
     @Test
+    void aContextWithoutSecurityRefusesEveryRequest() throws Exception {
+        // Fail closed: a context nobody configured (no deployer, no explicit permit-all) admits nothing.
+        var ctx = new VidocqServletContext("/");
+        assertSame(WebSecurity.UNCONFIGURED, ctx.security());
+        var bridge = new ChappeServletBridge(
+                new ServletDispatcher(List.of(new ServletDispatcher.Mapping(
+                        UrlPatternMatcher.of("/pub"), new PublicServlet(), "S", true))),
+                new FilterRegistry(List.of()), ctx, null, "/");
+        var r = TestServerLauncher.start(bridge);
+        server = r.server;
+        port = r.port;
+        assertEquals(403, get("/pub", null).statusCode());
+        assertEquals(403, get("/pub", "alice:a-secret").statusCode());
+        assertEquals(403, get("/unmapped", null).statusCode());
+    }
+
+    @Test
     void anUnmappedPathIsCheckedBeforeThe404() throws Exception {
         // No default servlet in this bridge: "/private/x" maps to nothing, the constraint still applies first.
         startWith(new PublicServlet(), "/pub", new SecurityConstraintDef(List.of(new WebResourceCollectionDef(

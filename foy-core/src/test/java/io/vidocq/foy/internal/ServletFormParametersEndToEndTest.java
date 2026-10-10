@@ -51,7 +51,7 @@ class ServletFormParametersEndToEndTest {
     private void start(HttpServlet servlet) {
         var dispatcher = new ServletDispatcher(List.of(
                 new ServletDispatcher.Mapping(UrlPatternMatcher.of("/form"), servlet, "Form")));
-        var r = TestServerLauncher.start(new ChappeServletBridge(dispatcher, new VidocqServletContext("/"), "/"));
+        var r = TestServerLauncher.start(new ChappeServletBridge(dispatcher, TestSecurity.permitAll(new VidocqServletContext("/")), "/"));
         server = r.server;
         port = r.port;
     }

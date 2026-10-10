@@ -803,7 +803,7 @@ class ServletUpgradeEndToEndTest {
         var mappings = List.of(new ServletDispatcher.Mapping(UrlPatternMatcher.of("/up"), servlet, "S"));
         context = new VidocqServletContext("/");
         var bridge = new ChappeServletBridge(new ServletDispatcher(mappings),
-                new FilterRegistry(List.of()), context, null, "/");
+                new FilterRegistry(List.of()), TestSecurity.permitAll(context), null, "/");
         var r = TestServerLauncher.start(bridge);
         this.server = r.server;
         this.port = r.port;

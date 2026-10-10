@@ -19,6 +19,7 @@
  */
 package io.vidocq.foy.internal.error;
 
+import io.vidocq.foy.internal.TestSecurity;
 import io.vidocq.chappe.api.Server;
 import io.vidocq.foy.internal.TestServerLauncherAccess;
 import io.vidocq.foy.internal.bridge.ChappeServletBridge;
@@ -94,7 +95,7 @@ class ErrorPageDispatchTest {
                         thrown, "T", true),
                 new ServletDispatcher.Mapping(io.vidocq.foy.internal.dispatcher.UrlPatternMatcher.of("/err"),
                         errorServlet, "ERR", true))),
-                new FilterRegistry(List.of()), ctx, null, "/");
+                new FilterRegistry(List.of()), TestSecurity.permitAll(ctx), null, "/");
         var r = TestServerLauncherAccess.start(bridge);
         this.server = r.server();
         this.port = r.port();
@@ -231,7 +232,7 @@ class ErrorPageDispatchTest {
                         boom, "BOOM", true),
                 new ServletDispatcher.Mapping(io.vidocq.foy.internal.dispatcher.UrlPatternMatcher.of("/err"),
                         err, "ERR", true))),
-                new FilterRegistry(List.of()), ctx, null, "/");
+                new FilterRegistry(List.of()), TestSecurity.permitAll(ctx), null, "/");
         var r = TestServerLauncherAccess.start(bridge);
         this.server = r.server();
         this.port = r.port();

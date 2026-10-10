@@ -37,8 +37,11 @@ import jakarta.servlet.http.HttpServlet;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.Base64;
 import java.util.List;
 import java.util.Map;
@@ -128,6 +131,14 @@ class WebSecurityEndToEndTest {
             assertEquals(401, app.get("/%61dmin/x").statusCode());
             assertEquals(401, app.get("/admin;p=1/x").statusCode());
             assertEquals(401, app.get("/admin;jsessionid=abc/x").statusCode());
+            // An encoded slash or semicolon never turns into a separator that escapes the constraint.
+            var slash = app.get("/admin%2Fx");
+            assertEquals(400, slash.statusCode(), "%2F: " + slash.body());
+            // %3B decodes to a literal ";" inside the segment "admin;p=1": another name than "admin", so no
+            // servlet of "/admin/*" is reached and the default servlet answers 404.
+            var semi = app.get("/admin%3Bp=1/x");
+            assertEquals(404, semi.statusCode(), "%3B: " + semi.body());
+            assertFalse(semi.body().contains("user="));
             var dots = app.get("/open/../admin/x");
             assertTrue(List.of(400, 401, 404).contains(dots.statusCode()), String.valueOf(dots.statusCode()));
             assertFalse(dots.body().contains("user="));
@@ -213,6 +224,50 @@ class WebSecurityEndToEndTest {
                 assertFalse(w.contains("a-secret"), w);
                 assertFalse(w.contains(token), w);
             }
+        }
+    }
+
+    // ---- Welcome files (section 10.10): the redirect and the welcome target are both checked.
+
+    @TempDir Path root;
+
+    private void files() throws IOException {
+        Files.createDirectories(root.resolve("secret"));
+        Files.writeString(root.resolve("secret/index.html"), "secret index");
+        Files.createDirectories(root.resolve("pub"));
+        Files.writeString(root.resolve("pub/index.html"), "pub index");
+        Files.writeString(root.resolve("pub/other.txt"), "other");
+    }
+
+    @Test
+    void theDirectoryRedirectIsChecked() throws Exception {
+        files();
+        var model = WebAppModel.builder("/").welcomeFiles(List.of("index.html"))
+                .securityConstraints(List.of(constraint(List.of("/secret/*"), List.of(), List.of(), List.of("admin"), null)))
+                .build();
+        try (var app = new SecureApp(model, root)) {
+            var r = app.get("/secret");
+            assertEquals(401, r.statusCode(), "not the 302 to /secret/");
+            assertEquals("Basic realm=\"Restricted\", charset=\"UTF-8\"", r.headers().firstValue("WWW-Authenticate").orElse(""));
+            assertTrue(r.headers().firstValue("Location").isEmpty());
+            assertEquals(302, app.send("GET", "/secret", "alice:a-secret").statusCode());
+        }
+    }
+
+    @Test
+    void theWelcomeTargetIsChecked() throws Exception {
+        files();
+        var model = WebAppModel.builder("/").welcomeFiles(List.of("index.html"))
+                .securityConstraints(List.of(constraint(List.of("/pub/index.html"), List.of(), List.of(), List.of("admin"), null)))
+                .build();
+        try (var app = new SecureApp(model, root)) {
+            var r = app.get("/pub/");
+            assertEquals(401, r.statusCode(), r.body());
+            assertFalse(r.body().contains("pub index"));
+            assertEquals("other", app.get("/pub/other.txt").body(), "the directory itself is not constrained");
+            var ok = app.send("GET", "/pub/", "alice:a-secret");
+            assertEquals(200, ok.statusCode());
+            assertEquals("pub index", ok.body());
         }
     }
 

@@ -19,6 +19,7 @@
  */
 package io.vidocq.foy.internal.dispatcher;
 
+import io.vidocq.foy.internal.TestSecurity;
 import io.vidocq.chappe.api.Server;
 import io.vidocq.foy.internal.TestServerLauncherAccess;
 import io.vidocq.foy.internal.bridge.ChappeServletBridge;
@@ -245,7 +246,7 @@ class HttpServletMappingTest {
     private void startWith(List<FilterMapping> filters, ServletDispatcher.Mapping... mappings) {
         var ctx = new VidocqServletContext("/");
         var bridge = new ChappeServletBridge(new ServletDispatcher(List.of(mappings)),
-                new FilterRegistry(filters), ctx, null, "/");
+                new FilterRegistry(filters), TestSecurity.permitAll(ctx), null, "/");
         var r = TestServerLauncherAccess.start(bridge);
         this.server = r.server();
         this.port = r.port();

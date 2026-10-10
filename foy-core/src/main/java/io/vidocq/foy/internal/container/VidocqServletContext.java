@@ -283,13 +283,15 @@ public final class VidocqServletContext implements ServletContext {
         this.roleMapping = java.util.Objects.requireNonNull(mapping, "mapping");
     }
 
-    private volatile io.vidocq.foy.internal.security.WebSecurity security;
+    private volatile io.vidocq.foy.internal.security.WebSecurity security =
+            io.vidocq.foy.internal.security.WebSecurity.UNCONFIGURED;
 
-    /** The application's security; a permit-all one over {@link #securitySettings()} until the deployer sets it. */
-    public io.vidocq.foy.internal.security.WebSecurity security() {
-        var s = security;
-        return s != null ? s : io.vidocq.foy.internal.security.WebSecurity.permitAll(securitySettings);
-    }
+    /**
+     * The application's security. Until the deployer (or a test, explicitly) sets one it is
+     * {@link io.vidocq.foy.internal.security.WebSecurity#UNCONFIGURED}, which refuses every request:
+     * no context ever admits requests by default.
+     */
+    public io.vidocq.foy.internal.security.WebSecurity security() { return security; }
 
     public void setSecurity(io.vidocq.foy.internal.security.WebSecurity security) {
         this.security = java.util.Objects.requireNonNull(security, "security");

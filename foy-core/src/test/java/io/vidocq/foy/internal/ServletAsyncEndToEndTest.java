@@ -470,7 +470,7 @@ class ServletAsyncEndToEndTest {
 
     private void startMany(VidocqServletContext ctx, List<ServletDispatcher.Mapping> mappings) {
         var bridge = new ChappeServletBridge(new ServletDispatcher(mappings),
-                new FilterRegistry(List.of()), ctx, null, "/");
+                new FilterRegistry(List.of()), TestSecurity.permitAll(ctx), null, "/");
         var r = TestServerLauncher.start(bridge);
         this.server = r.server;
         this.port = r.port;

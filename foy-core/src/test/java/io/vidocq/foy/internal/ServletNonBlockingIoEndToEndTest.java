@@ -269,7 +269,7 @@ class ServletNonBlockingIoEndToEndTest {
         };
         var mappings = List.of(new ServletDispatcher.Mapping(UrlPatternMatcher.of("/nio"), servlet, "S"));
         var bridge = new ChappeServletBridge(new ServletDispatcher(mappings),
-                new FilterRegistry(List.of()), new VidocqServletContext("/"), null, "/");
+                new FilterRegistry(List.of()), TestSecurity.permitAll(new VidocqServletContext("/")), null, "/");
         server = Server.builder().host("127.0.0.1").port(0).writeTimeout(java.time.Duration.ofMillis(500))
                 .handler(bridge).build();
         server.start();
@@ -576,7 +576,7 @@ class ServletNonBlockingIoEndToEndTest {
     private void start(HttpServlet servlet) {
         var mappings = List.of(new ServletDispatcher.Mapping(UrlPatternMatcher.of("/nio"), servlet, "S"));
         var bridge = new ChappeServletBridge(new ServletDispatcher(mappings),
-                new FilterRegistry(List.of()), new VidocqServletContext("/"), null, "/");
+                new FilterRegistry(List.of()), TestSecurity.permitAll(new VidocqServletContext("/")), null, "/");
         var r = TestServerLauncher.start(bridge);
         this.server = r.server;
         this.port = r.port;
