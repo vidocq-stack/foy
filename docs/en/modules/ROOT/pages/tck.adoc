@@ -69,7 +69,7 @@ No other test battery is excluded. Two more product decisions show up as errors 
 
 The run log carries expected `WARNING` lines that are not failures. `servlet.tck.api.jakarta_servlet.asynccontext.ACListener2` throws an `IOException` from `onComplete` on purpose, and Foy logs every listener failure at `WARNING` with its stack trace (`AsyncListener.onComplete threw`).
 
-Per-class figures come from `foy-tck/tck-tally.sh <log>`, which prints `<class> <run> <failures+errors> <skipped>`; a class passes `run - failures+errors - skipped` tests. Comparing two tallies is a `LC_ALL=C join` (both files sorted with `LC_ALL=C`); the script header gives the exact commands.
+Per-class figures come from `foy-tck/tck-tally.sh <log>`, which prints `<class> <run> <bad> <skipped>`, where `bad` (the third column) is failures + errors; a class passes `run - bad - skipped` tests. Comparing two tallies is a `LC_ALL=C join` (both files sorted with `LC_ALL=C`); the script header gives the exact commands.
 
 == Runner architecture
 
@@ -104,7 +104,7 @@ cd foy
 ----
 
 `--no-install` skips the reactor build (use it when the code is unchanged),
-`--family` and `--failing` select tests (`--failing` reads the bad count, third column, of
+`--family` and `--failing` select tests (`--failing` reads the bad count — failures + errors, the third column — of
 `foy-tck/tck-baseline.txt`, or the tally file given as argument), `--dry-run`
 prints the Maven commands, and `--help` lists every mode.
 

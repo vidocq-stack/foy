@@ -78,7 +78,7 @@ The four Servlet I/O models map onto that bridge:
 * `AnonymousSecurityProvider` — open fallback for development.
 * Public SPI: `io.vidocq.foy.spi.security.SecurityProvider` for plugging custom providers (LDAP, JWT, OIDC).
 
-Form-based and Digest authentication are **not implemented** (the `spec.security.*` TCK family passes 21/59). Jakarta Authentication / Authorization: not implemented, later milestone.
+Form-based and Digest authentication are **not implemented** (the `spec.security.*` TCK family passes 22/59 at the Phase 5 exit). Jakarta Authentication / Authorization: not implemented, later milestone.
 
 == CDI: a single BeanManager
 

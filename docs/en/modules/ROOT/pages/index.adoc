@@ -23,7 +23,7 @@ The metaphor is direct: **Foy inherits the Chappe transport**. Just as Alphonse 
 | Java | 25 (LTS), virtual threads
 | Java modules | `io.vidocq.foy.api`, `io.vidocq.foy.core`, `io.vidocq.foy.chappe`, `io.vidocq.foy.cdi.vauban`
 | Runtime dependencies | `jakarta.servlet-api`, `jakarta.cdi-api` (static), {repo-chappe} (transport), {repo-vauban} (CDI)
-| TCK | ⚠️ baseline — **96.2 %** (1649/1714) of the official Jakarta Servlet 6.1 TCK over the full suite: `api.*` 840/859, `pluggability.*` 646/646, `spec.*` 161/207, `compat.*` 2/2. The remaining errors are security, streaming and non-blocking I/O, multipart, HTTP/2 server push and JSP. Details xref:tck.adoc[here].
+| TCK | ⚠️ baseline — **1659 passing / 1714 run, 7 skipped (96.8 %)** of the official Jakarta Servlet 6.1 TCK over the full suite (passing / run): `api.*` 848/859, `pluggability.*` 646/646, `spec.*` 163/207 (7 skipped: HTTP/2 server push), `compat.*` 2/2. The remaining errors are security, multipart and JSP (planned through a JSP-engine SPI plugged by xref:ibarra::index.adoc[Ibarra]). Details xref:tck.adoc[here].
 |===
 
 == Position in the ecosystem

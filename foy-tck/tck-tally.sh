@@ -1,9 +1,12 @@
 #!/bin/bash
 # Usage: foy-tck/tck-tally.sh <surefire-log>
-#   → "<class> <run> <failures+errors> <skipped>" lines, sorted with LC_ALL=C.
+#   → "<class> <run> <bad> <skipped>" lines (bad = failures + errors), sorted with LC_ALL=C.
 # A class passes run - bad - skipped tests: a skipped test is never a pass.
-# Compare two tallies (old, new) class by class:
-#   LC_ALL=C join old.txt new.txt | awk '$6 > $3 || $5 != $2 {print "REGRESSION", $0}'
+# Compare two tallies (old, new) class by class; both files must have this four-column format
+# (a three-column tally from before the skipped column shifts the fields and breaks the check):
+#   LC_ALL=C join old.txt new.txt \
+#     | awk '$5 != $2 || $6 > $3 || $7 > $4 || $5-$6-$7 < $2-$3-$4 {print "REGRESSION", $0}'
+#   (run count changed, more failures, a pass moved to skipped, or fewer passes)
 #   LC_ALL=C join -v1 old.txt new.txt; LC_ALL=C join -v2 old.txt new.txt   # must both be empty
 # Totals: awk '{r+=$2; b+=$3; s+=$4} END {print r - b - s " passing / " r " run, " s " skipped"}' new.txt
 if [ $# -ne 1 ] || [ ! -f "$1" ]; then
