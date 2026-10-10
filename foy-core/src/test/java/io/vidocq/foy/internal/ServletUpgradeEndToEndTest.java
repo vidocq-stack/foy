@@ -66,33 +66,42 @@ import static org.junit.jupiter.api.Assertions.*;
 @Timeout(30)
 class ServletUpgradeEndToEndTest {
 
-    /** What the handlers of the running test record; reset before each test. */
-    static final List<String> EVENTS = new CopyOnWriteArrayList<>();
-    static volatile CountDownLatch destroyed;
-    static volatile CountDownLatch errored;
-    static volatile CountDownLatch notReadySeen;
-    static final AtomicInteger DESTROY_CALLS = new AtomicInteger();
-    static final AtomicInteger WRITE_POSSIBLE_CALLS = new AtomicInteger();
-    static final AtomicReference<WebConnection> CONNECTION = new AtomicReference<>();
-    static final AtomicReference<Thread> CALLBACK_THREAD = new AtomicReference<>();
-    static volatile CountDownLatch writing;
     static final int LARGE = 4 * 1024 * 1024;
+
+    /**
+     * What the handlers of one test record. Each test gets its own probe and every handler captures
+     * the probe current when the container instantiates it, so a late {@code destroy()} from an
+     * earlier test's connection only ever touches that earlier test's probe.
+     */
+    static final class Probe {
+        final List<String> events = new CopyOnWriteArrayList<>();
+        final CountDownLatch destroyed = new CountDownLatch(1);
+        final CountDownLatch errored = new CountDownLatch(1);
+        final CountDownLatch notReadySeen = new CountDownLatch(1);
+        final CountDownLatch writing = new CountDownLatch(1);
+        final AtomicInteger destroyCalls = new AtomicInteger();
+        final AtomicInteger writePossibleCalls = new AtomicInteger();
+        final AtomicReference<WebConnection> connection = new AtomicReference<>();
+        final AtomicReference<Thread> callbackThread = new AtomicReference<>();
+
+        void destroy() {
+            destroyCalls.incrementAndGet();
+            destroyed.countDown();
+        }
+    }
+
+    /** The probe of the running test, captured by each handler at construction. */
+    static volatile Probe current;
 
     private Server server;
     private int port;
     private VidocqServletContext context;
+    private Probe probe;
 
     @BeforeEach
-    void reset() {
-        EVENTS.clear();
-        destroyed = new CountDownLatch(1);
-        errored = new CountDownLatch(1);
-        notReadySeen = new CountDownLatch(1);
-        DESTROY_CALLS.set(0);
-        WRITE_POSSIBLE_CALLS.set(0);
-        CONNECTION.set(null);
-        CALLBACK_THREAD.set(null);
-        writing = new CountDownLatch(1);
+    void newProbe() {
+        probe = new Probe();
+        current = probe;
     }
 
     @AfterEach
@@ -129,8 +138,8 @@ class ServletUpgradeEndToEndTest {
             assertTrue(init < hello && hello < world, all);
             assertTrue(all.substring(init).contains("=onDataAvailable"), all);
         }
-        assertTrue(destroyed.await(5, TimeUnit.SECONDS), "destroy() after the connection closed");
-        assertEquals(1, DESTROY_CALLS.get());
+        assertTrue(probe.destroyed.await(5, TimeUnit.SECONDS), "destroy() after the connection closed");
+        assertEquals(1, probe.destroyCalls.get());
     }
 
     /** WebConnection.close() calls destroy() once and closes the connection. */
@@ -142,8 +151,8 @@ class ServletUpgradeEndToEndTest {
             assertTrue(client.readHead().startsWith("HTTP/1.1 101 "));
             assertEquals("bye", client.readAll());
         }
-        assertTrue(destroyed.await(5, TimeUnit.SECONDS));
-        assertEquals(1, DESTROY_CALLS.get(), "a second close() is a no-op");
+        assertTrue(probe.destroyed.await(5, TimeUnit.SECONDS));
+        assertEquals(1, probe.destroyCalls.get(), "a second close() is a no-op");
     }
 
     @Test
@@ -168,7 +177,7 @@ class ServletUpgradeEndToEndTest {
             assertTrue(response.startsWith("HTTP/1.0 200") || response.startsWith("HTTP/1.1 200"), response);
             assertTrue(response.endsWith("IOException: HTTP upgrade is not supported over HTTP/1.0"), response);
         }
-        assertEquals(0, DESTROY_CALLS.get());
+        assertEquals(0, probe.destroyCalls.get());
     }
 
     @Test
@@ -204,9 +213,9 @@ class ServletUpgradeEndToEndTest {
                 req.upgrade(ClosingHandler.class);
                 try {
                     req.upgrade(ClosingHandler.class);
-                    EVENTS.add("second upgrade accepted");
+                    probe.events.add("second upgrade accepted");
                 } catch (IllegalStateException e) {
-                    EVENTS.add("ise");
+                    probe.events.add("ise");
                 }
             }
         });
@@ -215,7 +224,7 @@ class ServletUpgradeEndToEndTest {
             assertTrue(client.readHead().startsWith("HTTP/1.1 101 "));
             assertEquals("bye", client.readAll());
         }
-        assertEquals("ise", EVENTS.getFirst());
+        assertEquals("ise", probe.events.getFirst());
     }
 
     /** The request leaves the HTTP lifecycle (requestDestroyed) before the handler takes over. */
@@ -223,15 +232,15 @@ class ServletUpgradeEndToEndTest {
     void requestDestroyedFiresBeforeInit() throws Exception {
         start(upgradingServlet(ClosingHandler.class));
         context.listenerRegistry().register(new ServletRequestListener() {
-            @Override public void requestInitialized(ServletRequestEvent sre) { EVENTS.add("requestInitialized"); }
-            @Override public void requestDestroyed(ServletRequestEvent sre) { EVENTS.add("requestDestroyed"); }
+            @Override public void requestInitialized(ServletRequestEvent sre) { probe.events.add("requestInitialized"); }
+            @Override public void requestDestroyed(ServletRequestEvent sre) { probe.events.add("requestDestroyed"); }
         });
         try (var client = new Client(port)) {
             client.send(tckHead());
             assertTrue(client.readHead().startsWith("HTTP/1.1 101 "));
             assertEquals("bye", client.readAll());
         }
-        assertEquals(List.of("requestInitialized", "requestDestroyed", "init"), EVENTS);
+        assertEquals(List.of("requestInitialized", "requestDestroyed", "init"), probe.events);
     }
 
     /** A connection reset while the ReadListener waits: onError, then destroy() and the close. */
@@ -243,10 +252,10 @@ class ServletUpgradeEndToEndTest {
             client.readHead();
             client.readUntil("TCKHttpUpgradeHandler.init");
             client.reset();
-            assertTrue(errored.await(5, TimeUnit.SECONDS), "onError after the reset");
-            assertTrue(destroyed.await(5, TimeUnit.SECONDS), "destroy() after the read error");
+            assertTrue(probe.errored.await(5, TimeUnit.SECONDS), "onError after the reset");
+            assertTrue(probe.destroyed.await(5, TimeUnit.SECONDS), "destroy() after the read error");
         }
-        assertEquals(1, DESTROY_CALLS.get());
+        assertEquals(1, probe.destroyCalls.get());
     }
 
     /** A flush after upgrade() never commits: the upgrade still happens and the body never leaves. */
@@ -272,7 +281,7 @@ class ServletUpgradeEndToEndTest {
             assertTrue(head.startsWith("HTTP/1.1 101 "), head);
             assertEquals("bye", client.readAll());
         }
-        assertTrue(destroyed.await(5, TimeUnit.SECONDS));
+        assertTrue(probe.destroyed.await(5, TimeUnit.SECONDS));
     }
 
     @Test
@@ -296,7 +305,7 @@ class ServletUpgradeEndToEndTest {
             assertTrue(response.startsWith("HTTP/1.1 200"), response);
             assertTrue(response.endsWith("ise"), response);
         }
-        assertEquals(0, DESTROY_CALLS.get());
+        assertEquals(0, probe.destroyCalls.get());
     }
 
     /**
@@ -314,8 +323,8 @@ class ServletUpgradeEndToEndTest {
             client.shutdownOutput();
             assertEquals("", client.readAll(), "the connection closes after onAllDataRead");
         }
-        assertTrue(destroyed.await(5, TimeUnit.SECONDS));
-        assertEquals(List.of("onAllDataRead", "destroy"), EVENTS);
+        assertTrue(probe.destroyed.await(5, TimeUnit.SECONDS));
+        assertEquals(List.of("onAllDataRead", "destroy"), probe.events);
     }
 
     /**
@@ -329,15 +338,15 @@ class ServletUpgradeEndToEndTest {
             client.send(tckHead());
             assertTrue(client.readHead().startsWith("HTTP/1.1 101 "));
             client.send("go");
-            assertTrue(writing.await(5, TimeUnit.SECONDS), "the callback started writing");
-            Thread writer = CALLBACK_THREAD.get();
+            assertTrue(probe.writing.await(5, TimeUnit.SECONDS), "the callback started writing");
+            Thread writer = probe.callbackThread.get();
             long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
             while (writer.getState() != Thread.State.WAITING && System.nanoTime() < deadline) Thread.onSpinWait();
             assertEquals(Thread.State.WAITING, writer.getState(), "the callback never blocked on the write");
-            assertTimeoutPreemptively(java.time.Duration.ofSeconds(5), () -> CONNECTION.get().close());
-            assertTrue(destroyed.await(5, TimeUnit.SECONDS));
+            assertTimeoutPreemptively(java.time.Duration.ofSeconds(5), () -> probe.connection.get().close());
+            assertTrue(probe.destroyed.await(5, TimeUnit.SECONDS));
         }
-        assertEquals(1, DESTROY_CALLS.get());
+        assertEquals(1, probe.destroyCalls.get());
     }
 
     /** init throwing: destroy() runs and the connection closes. */
@@ -349,8 +358,8 @@ class ServletUpgradeEndToEndTest {
             assertTrue(client.readHead().startsWith("HTTP/1.1 101 "));
             assertEquals("x", client.readAll());
         }
-        assertTrue(destroyed.await(5, TimeUnit.SECONDS));
-        assertEquals(1, DESTROY_CALLS.get());
+        assertTrue(probe.destroyed.await(5, TimeUnit.SECONDS));
+        assertEquals(1, probe.destroyCalls.get());
     }
 
     /** Undeploying the context closes the upgraded connections it still holds. */
@@ -362,10 +371,10 @@ class ServletUpgradeEndToEndTest {
             assertTrue(client.readHead().startsWith("HTTP/1.1 101 "));
             client.readUntil("idle");
             context.closeUpgradedConnections();
-            assertTrue(destroyed.await(5, TimeUnit.SECONDS));
+            assertTrue(probe.destroyed.await(5, TimeUnit.SECONDS));
             assertEquals("", client.readAll(), "the connection closed");
         }
-        assertEquals(1, DESTROY_CALLS.get());
+        assertEquals(1, probe.destroyCalls.get());
     }
 
     /**
@@ -379,21 +388,23 @@ class ServletUpgradeEndToEndTest {
         try (var client = new Client(port)) {
             client.send(tckHead());
             assertTrue(client.readHead().startsWith("HTTP/1.1 101 "));
-            assertTrue(notReadySeen.await(10, TimeUnit.SECONDS), "isReady() never answered false");
+            assertTrue(probe.notReadySeen.await(10, TimeUnit.SECONDS), "isReady() never answered false");
             byte[] body = client.readAllBytes();
             assertEquals(LARGE, body.length);
             for (int i = 0; i < LARGE; i++) {
                 if (body[i] != (byte) i) fail("byte " + i + " out of order");
             }
         }
-        assertTrue(WRITE_POSSIBLE_CALLS.get() >= 2, "onWritePossible resumed the writer");
-        assertTrue(destroyed.await(5, TimeUnit.SECONDS));
+        assertTrue(probe.writePossibleCalls.get() >= 2, "onWritePossible resumed the writer");
+        assertTrue(probe.destroyed.await(5, TimeUnit.SECONDS));
     }
 
     // ---- handlers ----
 
     /** Closes its output in init, then records onAllDataRead and destroy. */
     public static final class OutputFirstHandler implements HttpUpgradeHandler {
+        private final Probe probe = current;
+
         @Override
         public void init(WebConnection wc) {
             try {
@@ -403,8 +414,8 @@ class ServletUpgradeEndToEndTest {
                         byte[] buf = new byte[64];
                         while (in.isReady() && in.read(buf) != -1) { /* drain */ }
                     }
-                    @Override public void onAllDataRead() { EVENTS.add("onAllDataRead"); }
-                    @Override public void onError(Throwable t) { EVENTS.add("onError"); }
+                    @Override public void onAllDataRead() { probe.events.add("onAllDataRead"); }
+                    @Override public void onError(Throwable t) { probe.events.add("onError"); }
                 });
                 ServletOutputStream out = wc.getOutputStream();
                 out.print("closed");
@@ -416,24 +427,25 @@ class ServletUpgradeEndToEndTest {
 
         @Override
         public void destroy() {
-            EVENTS.add("destroy");
-            DESTROY_CALLS.incrementAndGet();
-            destroyed.countDown();
+            probe.events.add("destroy");
+            probe.destroy();
         }
     }
 
     /** On the first data, writes 64 MiB (blocking) from the callback: a peer that reads nothing stalls it. */
     public static final class StallingHandler implements HttpUpgradeHandler {
+        private final Probe probe = current;
+
         @Override
         public void init(WebConnection wc) {
-            CONNECTION.set(wc);
+            probe.connection.set(wc);
             try {
                 ServletInputStream in = wc.getInputStream();
                 ServletOutputStream out = wc.getOutputStream();
                 in.setReadListener(new ReadListener() {
                     @Override public void onDataAvailable() {
-                        CALLBACK_THREAD.set(Thread.currentThread());
-                        writing.countDown();
+                        probe.callbackThread.set(Thread.currentThread());
+                        probe.writing.countDown();
                         byte[] chunk = new byte[64 * 1024];
                         try {
                             for (int i = 0; i < 1024; i++) out.write(chunk);
@@ -451,13 +463,14 @@ class ServletUpgradeEndToEndTest {
 
         @Override
         public void destroy() {
-            DESTROY_CALLS.incrementAndGet();
-            destroyed.countDown();
+            probe.destroy();
         }
     }
 
     /** Writes "x" then throws from init. */
     public static final class ThrowingInitHandler implements HttpUpgradeHandler {
+        private final Probe probe = current;
+
         @Override
         public void init(WebConnection wc) {
             try {
@@ -471,13 +484,14 @@ class ServletUpgradeEndToEndTest {
 
         @Override
         public void destroy() {
-            DESTROY_CALLS.incrementAndGet();
-            destroyed.countDown();
+            probe.destroy();
         }
     }
 
     /** The TCK's TCKHttpUpgradeHandler and TCKReadListener. */
     public static final class EchoHandler implements HttpUpgradeHandler {
+        private final Probe probe = current;
+
         @Override
         public void init(WebConnection wc) {
             try {
@@ -500,7 +514,7 @@ class ServletUpgradeEndToEndTest {
                         out.close();
                     }
                     @Override public void onError(Throwable t) {
-                        errored.countDown();
+                        probe.errored.countDown();
                     }
                 });
                 out.println("===============TCKHttpUpgradeHandler.init");
@@ -512,16 +526,17 @@ class ServletUpgradeEndToEndTest {
 
         @Override
         public void destroy() {
-            DESTROY_CALLS.incrementAndGet();
-            destroyed.countDown();
+            probe.destroy();
         }
     }
 
     /** Writes "bye" and closes the connection twice. */
     public static final class ClosingHandler implements HttpUpgradeHandler {
+        private final Probe probe = current;
+
         @Override
         public void init(WebConnection wc) {
-            EVENTS.add("init");
+            probe.events.add("init");
             try {
                 wc.getOutputStream().print("bye");
                 wc.getOutputStream().flush();
@@ -534,13 +549,14 @@ class ServletUpgradeEndToEndTest {
 
         @Override
         public void destroy() {
-            DESTROY_CALLS.incrementAndGet();
-            destroyed.countDown();
+            probe.destroy();
         }
     }
 
     /** Writes "idle" and keeps the connection open. */
     public static final class IdleHandler implements HttpUpgradeHandler {
+        private final Probe probe = current;
+
         @Override
         public void init(WebConnection wc) {
             try {
@@ -553,13 +569,14 @@ class ServletUpgradeEndToEndTest {
 
         @Override
         public void destroy() {
-            DESTROY_CALLS.incrementAndGet();
-            destroyed.countDown();
+            probe.destroy();
         }
     }
 
     /** Writes {@link #LARGE} bytes through a WriteListener, then closes the connection. */
     public static final class LargeWriteHandler implements HttpUpgradeHandler {
+        private final Probe probe = current;
+
         @Override
         public void init(WebConnection wc) {
             try {
@@ -568,10 +585,10 @@ class ServletUpgradeEndToEndTest {
                     private int written;
 
                     @Override public void onWritePossible() throws IOException {
-                        WRITE_POSSIBLE_CALLS.incrementAndGet();
+                        probe.writePossibleCalls.incrementAndGet();
                         while (true) {
                             if (!out.isReady()) {
-                                notReadySeen.countDown();
+                                probe.notReadySeen.countDown();
                                 return;
                             }
                             if (written == LARGE) {
@@ -587,7 +604,7 @@ class ServletUpgradeEndToEndTest {
                         }
                     }
                     @Override public void onError(Throwable t) {
-                        errored.countDown();
+                        probe.errored.countDown();
                     }
                 });
             } catch (IOException e) {
@@ -597,8 +614,7 @@ class ServletUpgradeEndToEndTest {
 
         @Override
         public void destroy() {
-            DESTROY_CALLS.incrementAndGet();
-            destroyed.countDown();
+            probe.destroy();
         }
     }
 
