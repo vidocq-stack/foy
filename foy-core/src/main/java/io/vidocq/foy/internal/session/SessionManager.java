@@ -57,6 +57,8 @@ public final class SessionManager implements AutoCloseable {
     private final ServletContext servletContext;
     private final int defaultMaxInactiveSeconds;
     private ListenerRegistry listenerRegistry = new ListenerRegistry();
+    /** CDI session context (foy#21); set by the bootstrap before the deployment serves requests. */
+    private volatile SessionLifecycleHook lifecycleHook = SessionLifecycleHook.NONE;
     /** Serialises the store re-keying of id changes with the removal of invalidated sessions. */
     private final Object renameLock = new Object();
     private ScheduledExecutorService reaper;
@@ -87,6 +89,13 @@ public final class SessionManager implements AutoCloseable {
     }
 
     public ListenerRegistry listenerRegistry() { return listenerRegistry; }
+
+    /** Installs the internal session hook (the CDI session context); {@code null} removes it. */
+    public void setLifecycleHook(SessionLifecycleHook hook) {
+        this.lifecycleHook = hook == null ? SessionLifecycleHook.NONE : hook;
+    }
+
+    SessionLifecycleHook lifecycleHook() { return lifecycleHook; }
 
     /**
      * Resolves an existing session by its ID and begins an access by the calling request (the
@@ -133,6 +142,13 @@ public final class SessionManager implements AutoCloseable {
             String id = generateId();
             HttpSessionImpl s = new HttpSessionImpl(id, servletContext, this, defaultMaxInactiveSeconds);
             store.put(s);
+            // The hook first (foy#21): a session bean used from a sessionCreated listener must
+            // resolve to this session, not re-enter getSession(true) and create another one.
+            try {
+                lifecycleHook.sessionCreated(s);
+            } catch (RuntimeException e) {
+                LOG.log(System.Logger.Level.WARNING, "session lifecycle hook failed on creation of session " + id, e);
+            }
             listenerRegistry.fireSessionCreated(s);
             return s;
         } finally {
@@ -204,6 +220,18 @@ public final class SessionManager implements AutoCloseable {
                 Thread.ofVirtual().name("foy-session-reaper").factory());
         long millis = Math.max(1, period.toMillis());
         reaper.scheduleWithFixedDelay(this::reapSafely, millis, millis, TimeUnit.MILLISECONDS);
+    }
+
+    /**
+     * Test seam for the integration tests of other modules (foy-it-weld, foy-cdi-vauban), where the
+     * minute granularity of the session timeout makes the default period too long: replaces the
+     * running reaper with one of {@code period}. A no-op once the manager is closed.
+     */
+    public synchronized void restartReaper(Duration period) {
+        if (closed) return;
+        if (reaper != null) reaper.shutdown();
+        reaper = null;
+        startReaper(period);
     }
 
     synchronized boolean isReaperRunning() {

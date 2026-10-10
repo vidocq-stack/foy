@@ -64,6 +64,8 @@ public final class HttpSessionImpl implements HttpSession {
     private volatile boolean invalidated;
     /** Requests currently using the session; guarded by {@code this}. */
     private int accessCount;
+    /** The Servlet half of the invalidation ran; touched only by the invalidating thread. */
+    private boolean servletDestructionRan;
     private final ConcurrentMap<String, Object> attributes = new ConcurrentHashMap<>();
     /**
      * Foy-internal state of the CDI session context (foy#21): never an attribute, so the
@@ -140,11 +142,26 @@ public final class HttpSessionImpl implements HttpSession {
 
     /**
      * Second half of an invalidation claimed by {@link #claimExpired}, {@link #claimInvalidation}
-     * or {@link #invalidate()}: {@code sessionDestroyed}, then the unbinding of the attributes,
-     * then the removal from the store. A failing listener is logged and does not stop the
-     * invalidation.
+     * or {@link #invalidate()}: the session lifecycle hook (the CDI session context, foy#21) wraps
+     * {@code sessionDestroyed} and the unbinding of the attributes, then the session leaves its
+     * store. A failing listener or hook is logged and does not stop the invalidation; the Servlet
+     * half runs exactly once whatever the hook does.
      */
     void completeInvalidation() {
+        try {
+            manager.lifecycleHook().aroundDestruction(this, this::destroyServletState);
+        } catch (RuntimeException e) {
+            LOG.log(System.Logger.Level.WARNING, "session lifecycle hook failed for session " + id, e);
+        } finally {
+            if (!servletDestructionRan) destroyServletState();
+            manager.onInvalidated(this);
+        }
+    }
+
+    /** {@code sessionDestroyed}, then the unbinding of the attributes; runs once. */
+    private void destroyServletState() {
+        if (servletDestructionRan) return;
+        servletDestructionRan = true;
         try {
             manager.listenerRegistry().fireSessionDestroyed(this);
         } catch (RuntimeException e) {
@@ -163,7 +180,6 @@ public final class HttpSessionImpl implements HttpSession {
                 LOG.log(System.Logger.Level.WARNING, "unbinding " + name + " failed for session " + id, e);
             }
         }
-        manager.onInvalidated(this);
     }
 
     /**
