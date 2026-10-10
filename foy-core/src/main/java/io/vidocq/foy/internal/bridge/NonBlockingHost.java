@@ -31,6 +31,9 @@ interface NonBlockingHost {
     CallbackSerializer callbacks();
     /** An I/O failure or a throwing callback, after the listener's {@code onError}: fails the owner (the async cycle). */
     void failed(Throwable t);
-    /** The application closed the input stream (an upgraded connection may then end). */
-    default void inputClosed() {}
+    /**
+     * The application is done with the input (an upgraded connection may then end): it closed the
+     * stream, a blocking read returned {@code -1}, or {@code onAllDataRead} returned.
+     */
+    default void inputDone() {}
 }

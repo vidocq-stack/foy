@@ -74,6 +74,8 @@ class ServletUpgradeEndToEndTest {
     static final AtomicInteger DESTROY_CALLS = new AtomicInteger();
     static final AtomicInteger WRITE_POSSIBLE_CALLS = new AtomicInteger();
     static final AtomicReference<WebConnection> CONNECTION = new AtomicReference<>();
+    static final AtomicReference<Thread> CALLBACK_THREAD = new AtomicReference<>();
+    static volatile CountDownLatch writing;
     static final int LARGE = 4 * 1024 * 1024;
 
     private Server server;
@@ -89,10 +91,16 @@ class ServletUpgradeEndToEndTest {
         DESTROY_CALLS.set(0);
         WRITE_POSSIBLE_CALLS.set(0);
         CONNECTION.set(null);
+        CALLBACK_THREAD.set(null);
+        writing = new CountDownLatch(1);
     }
 
     @AfterEach
-    void tearDown() { if (server != null) server.stop(); }
+    void tearDown() {
+        // Undeploy first: every connection still open is destroyed now, never during the next test.
+        if (context != null) context.closeUpgradedConnections();
+        if (server != null) server.stop();
+    }
 
     /** The TCK's upgradeTest: 101 with the application's headers, then an echo through a ReadListener. */
     @Test
@@ -230,13 +238,118 @@ class ServletUpgradeEndToEndTest {
     @Test
     void aReadErrorGoesToOnErrorThenDestroy() throws Exception {
         start(upgradingServlet(EchoHandler.class));
-        var client = new Client(port);
-        client.send(tckHead());
-        client.readHead();
-        client.readUntil("TCKHttpUpgradeHandler.init");
-        client.reset();
-        assertTrue(errored.await(5, TimeUnit.SECONDS), "onError after the reset");
-        assertTrue(destroyed.await(5, TimeUnit.SECONDS), "destroy() after the read error");
+        try (var client = new Client(port)) {
+            client.send(tckHead());
+            client.readHead();
+            client.readUntil("TCKHttpUpgradeHandler.init");
+            client.reset();
+            assertTrue(errored.await(5, TimeUnit.SECONDS), "onError after the reset");
+            assertTrue(destroyed.await(5, TimeUnit.SECONDS), "destroy() after the read error");
+        }
+        assertEquals(1, DESTROY_CALLS.get());
+    }
+
+    /** A flush after upgrade() never commits: the upgrade still happens and the body never leaves. */
+    @Test
+    void bodyFlushedAfterUpgradeIsDiscarded() throws Exception {
+        start(new HttpServlet() {
+            @Override
+            protected void doPost(HttpServletRequest req, HttpServletResponse resp) throws IOException, ServletException {
+                resp.getWriter().println("Before upgrade");
+                resp.setStatus(101);
+                resp.setHeader("Upgrade", "YES");
+                resp.setHeader("Connection", "Upgrade");
+                req.upgrade(ClosingHandler.class);
+                resp.getWriter().println("End of Test");
+                resp.flushBuffer();
+                resp.getWriter().print("z".repeat(64 * 1024)); // more than the buffer
+                resp.getWriter().flush();
+            }
+        });
+        try (var client = new Client(port)) {
+            client.send(tckHead());
+            String head = client.readHead();
+            assertTrue(head.startsWith("HTTP/1.1 101 "), head);
+            assertEquals("bye", client.readAll());
+        }
+        assertTrue(destroyed.await(5, TimeUnit.SECONDS));
+    }
+
+    @Test
+    void upgradeAfterStartAsyncThrowsIse() throws Exception {
+        start(new HttpServlet() {
+            @Override
+            protected void doPost(HttpServletRequest req, HttpServletResponse resp) throws IOException, ServletException {
+                var ac = req.startAsync();
+                try {
+                    req.upgrade(ClosingHandler.class);
+                    resp.getWriter().print("upgraded");
+                } catch (IllegalStateException e) {
+                    resp.getWriter().print("ise");
+                }
+                ac.complete();
+            }
+        });
+        try (var client = new Client(port)) {
+            client.send(tckHead().replace("Connection: Upgrade", "Connection: close"));
+            String response = client.readAll();
+            assertTrue(response.startsWith("HTTP/1.1 200"), response);
+            assertTrue(response.endsWith("ise"), response);
+        }
+        assertEquals(0, DESTROY_CALLS.get());
+    }
+
+    /**
+     * The output is closed before the peer ends its side: the end of the input still reaches the
+     * ReadListener ({@code onAllDataRead}), and only then does the connection close.
+     */
+    @Test
+    void onAllDataReadIsDeliveredWhenTheOutputClosedFirst() throws Exception {
+        start(upgradingServlet(OutputFirstHandler.class));
+        try (var client = new Client(port)) {
+            client.send(tckHead());
+            assertTrue(client.readHead().startsWith("HTTP/1.1 101 "));
+            client.readUntil("closed");
+            client.send("Hi");
+            client.shutdownOutput();
+            assertEquals("", client.readAll(), "the connection closes after onAllDataRead");
+        }
+        assertTrue(destroyed.await(5, TimeUnit.SECONDS));
+        assertEquals(List.of("onAllDataRead", "destroy"), EVENTS);
+    }
+
+    /**
+     * WebConnection.close() from another thread while a callback is blocked writing to a peer that
+     * reads nothing: the connection closes first, so the blocked write fails and close() returns.
+     */
+    @Test
+    void closeReturnsWhileACallbackIsBlockedOnAStalledPeer() throws Exception {
+        start(upgradingServlet(StallingHandler.class));
+        try (var client = new Client(port)) {
+            client.send(tckHead());
+            assertTrue(client.readHead().startsWith("HTTP/1.1 101 "));
+            client.send("go");
+            assertTrue(writing.await(5, TimeUnit.SECONDS), "the callback started writing");
+            Thread writer = CALLBACK_THREAD.get();
+            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+            while (writer.getState() != Thread.State.WAITING && System.nanoTime() < deadline) Thread.onSpinWait();
+            assertEquals(Thread.State.WAITING, writer.getState(), "the callback never blocked on the write");
+            assertTimeoutPreemptively(java.time.Duration.ofSeconds(5), () -> CONNECTION.get().close());
+            assertTrue(destroyed.await(5, TimeUnit.SECONDS));
+        }
+        assertEquals(1, DESTROY_CALLS.get());
+    }
+
+    /** init throwing: destroy() runs and the connection closes. */
+    @Test
+    void initThrowingDestroysAndCloses() throws Exception {
+        start(upgradingServlet(ThrowingInitHandler.class));
+        try (var client = new Client(port)) {
+            client.send(tckHead());
+            assertTrue(client.readHead().startsWith("HTTP/1.1 101 "));
+            assertEquals("x", client.readAll());
+        }
+        assertTrue(destroyed.await(5, TimeUnit.SECONDS));
         assertEquals(1, DESTROY_CALLS.get());
     }
 
@@ -278,6 +391,90 @@ class ServletUpgradeEndToEndTest {
     }
 
     // ---- handlers ----
+
+    /** Closes its output in init, then records onAllDataRead and destroy. */
+    public static final class OutputFirstHandler implements HttpUpgradeHandler {
+        @Override
+        public void init(WebConnection wc) {
+            try {
+                ServletInputStream in = wc.getInputStream();
+                in.setReadListener(new ReadListener() {
+                    @Override public void onDataAvailable() throws IOException {
+                        byte[] buf = new byte[64];
+                        while (in.isReady() && in.read(buf) != -1) { /* drain */ }
+                    }
+                    @Override public void onAllDataRead() { EVENTS.add("onAllDataRead"); }
+                    @Override public void onError(Throwable t) { EVENTS.add("onError"); }
+                });
+                ServletOutputStream out = wc.getOutputStream();
+                out.print("closed");
+                out.close();
+            } catch (IOException e) {
+                throw new RuntimeException(e);
+            }
+        }
+
+        @Override
+        public void destroy() {
+            EVENTS.add("destroy");
+            DESTROY_CALLS.incrementAndGet();
+            destroyed.countDown();
+        }
+    }
+
+    /** On the first data, writes 64 MiB (blocking) from the callback: a peer that reads nothing stalls it. */
+    public static final class StallingHandler implements HttpUpgradeHandler {
+        @Override
+        public void init(WebConnection wc) {
+            CONNECTION.set(wc);
+            try {
+                ServletInputStream in = wc.getInputStream();
+                ServletOutputStream out = wc.getOutputStream();
+                in.setReadListener(new ReadListener() {
+                    @Override public void onDataAvailable() {
+                        CALLBACK_THREAD.set(Thread.currentThread());
+                        writing.countDown();
+                        byte[] chunk = new byte[64 * 1024];
+                        try {
+                            for (int i = 0; i < 1024; i++) out.write(chunk);
+                        } catch (IOException closed) {
+                            // the connection was closed under the write
+                        }
+                    }
+                    @Override public void onAllDataRead() {}
+                    @Override public void onError(Throwable t) {}
+                });
+            } catch (IOException e) {
+                throw new RuntimeException(e);
+            }
+        }
+
+        @Override
+        public void destroy() {
+            DESTROY_CALLS.incrementAndGet();
+            destroyed.countDown();
+        }
+    }
+
+    /** Writes "x" then throws from init. */
+    public static final class ThrowingInitHandler implements HttpUpgradeHandler {
+        @Override
+        public void init(WebConnection wc) {
+            try {
+                wc.getOutputStream().print("x");
+                wc.getOutputStream().flush();
+            } catch (IOException e) {
+                throw new RuntimeException(e);
+            }
+            throw new IllegalStateException("init failed");
+        }
+
+        @Override
+        public void destroy() {
+            DESTROY_CALLS.incrementAndGet();
+            destroyed.countDown();
+        }
+    }
 
     /** The TCK's TCKHttpUpgradeHandler and TCKReadListener. */
     public static final class EchoHandler implements HttpUpgradeHandler {

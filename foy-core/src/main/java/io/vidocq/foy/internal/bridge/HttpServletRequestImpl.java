@@ -859,7 +859,8 @@ public final class HttpServletRequestImpl implements HttpServletRequest {
      *
      * @throws IOException over HTTP/2 or HTTP/1.0, where the HTTP/1.1 Upgrade mechanism does not exist
      * @throws ServletException when the handler cannot be instantiated
-     * @throws IllegalStateException when the request is already upgraded
+     * @throws IllegalStateException when the request is already upgraded, async-started, or its
+     *         response already committed
      */
     @Override public <T extends HttpUpgradeHandler> T upgrade(Class<T> handlerClass)
             throws IOException, jakarta.servlet.ServletException {
@@ -868,6 +869,12 @@ public final class HttpServletRequestImpl implements HttpServletRequest {
             throw new IOException("HTTP upgrade is not supported over " + getProtocol());
         }
         if (upgradeHandler != null) throw new IllegalStateException("the request is already upgraded");
+        // An async request keeps the HTTP lifecycle (its cycles, its body pump): it cannot also leave it.
+        if (isAsyncStarted()) throw new IllegalStateException("upgrade() after startAsync()");
+        var response = boundResponse instanceof HttpServletResponseImpl impl ? impl : null;
+        if (response != null && response.isCommitted()) {
+            throw new IllegalStateException("the response is already committed");
+        }
         var factory = servletContext instanceof io.vidocq.foy.internal.container.VidocqServletContext v
                 ? v.componentFactory()
                 : io.vidocq.foy.internal.gen.RegistryComponentFactory.forClassLoader(handlerClass.getClassLoader());
@@ -879,6 +886,8 @@ public final class HttpServletRequestImpl implements HttpServletRequest {
         } catch (RuntimeException | LinkageError e) {
             throw new jakarta.servlet.ServletException("cannot instantiate " + handlerClass.getName(), e);
         }
+        // From now on the body is discarded and the response never commits (the upgrade head is sent instead).
+        if (response != null) response.discardForUpgrade();
         upgradeHandler = handler;
         return handler;
     }

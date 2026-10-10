@@ -26,9 +26,7 @@ import jakarta.servlet.ServletOutputStream;
 import jakarta.servlet.http.HttpUpgradeHandler;
 import jakarta.servlet.http.WebConnection;
 
-import java.io.FilterInputStream;
 import java.io.IOException;
-import java.io.InputStream;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
@@ -40,19 +38,28 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * straight to the connection. Both accept a listener (the connection is upgraded); their callbacks
  * share one {@link CallbackSerializer}, held while {@code init} runs, so no callback overlaps it.</p>
  *
- * <p>The connection closes, calling {@link HttpUpgradeHandler#destroy()} once first, when:</p>
+ * <p>The connection closes when:</p>
  * <ul>
  *   <li>the application calls {@link #close()};</li>
- *   <li>the application closed the output stream and the input is done: closed by the
- *       application, or at its end (the peer half-closed: after {@code onAllDataRead}, or after a
- *       blocking read returned {@code -1}). Neither direction can carry anything more;</li>
+ *   <li>the application closed the output stream and is done with the input: it closed the input
+ *       stream, a blocking read returned {@code -1}, or (with a {@code ReadListener})
+ *       {@code onAllDataRead} returned. Neither direction carries anything more then;</li>
  *   <li>a read or a write fails, or a listener callback throws: {@code onError} first;</li>
  *   <li>{@code init} throws;</li>
- *   <li>the context is undeployed ({@link VidocqServletContext#closeUpgradedConnections()}): the
- *       connection is closed first, which wakes any read or write blocked on it.</li>
+ *   <li>the context is undeployed ({@link VidocqServletContext#closeUpgradedConnections()}).</li>
  * </ul>
+ * <p>Closing never waits on the peer: unless it runs inside a listener callback, the connection is
+ * closed first, which wakes a read or a write blocked on it (chappe has no write timeout after an
+ * upgrade); then callbacks stop (the one in progress returns) and {@link HttpUpgradeHandler#destroy()}
+ * runs once. From a callback, callbacks stop first, then {@code destroy()}, then the connection
+ * closes. {@code destroy()} only runs once {@code init} returned: a close during {@code init} (an
+ * undeploy, or {@code init} itself) closes the connection at once and leaves {@code destroy()} to
+ * the end of {@code init}; a connection whose context was undeployed before {@code init} only
+ * closes.</p>
+ *
  * <p>Chappe keeps an upgraded connection open until it is closed (no idle timeout, a half-close does
- * not close it), so one of these must happen for the connection and its thread to go.</p>
+ * not close it). A handler that never reads nor closes keeps the connection, and its thread, until a
+ * write fails or the context is undeployed.</p>
  */
 final class WebConnectionImpl implements WebConnection {
 
@@ -66,13 +73,16 @@ final class WebConnectionImpl implements WebConnection {
     private final ServletInputStreamImpl input;
     private final UpgradedOutputStream output;
     private final AtomicBoolean closed = new AtomicBoolean();
-    /** Registered with the context: undeploy closes the connection before destroying the handler. */
-    private final AutoCloseable undeployHook = () -> close(true);
+    /** Registered with the context: undeploy closes the connection. */
+    private final AutoCloseable undeployHook = this::close;
 
-    /** Guards {@link #inputDone} and {@link #outputClosed}, so exactly one side sees both. */
-    private final Object ends = new Object();
+    /** Guards the fields below. */
+    private final Object state = new Object();
     private boolean inputDone;
     private boolean outputClosed;
+    private boolean initRunning;
+    /** A close happened while {@code init} ran: {@code destroy()} is due once it returns. */
+    private boolean destroyDue;
 
     /**
      * @param context the context tracking the connection for undeploy, or {@code null}
@@ -87,10 +97,10 @@ final class WebConnectionImpl implements WebConnection {
         NonBlockingHost host = new NonBlockingHost() {
             @Override public boolean nonBlockingAllowed() { return true; }
             @Override public CallbackSerializer callbacks() { return callbacks; }
-            @Override public void failed(Throwable t) { close(false); }
-            @Override public void inputClosed() { inputDone(); }
+            @Override public void failed(Throwable t) { close(); }
+            @Override public void inputDone() { WebConnectionImpl.this.inputDone(); }
         };
-        this.input = new ServletInputStreamImpl(new EndTracking(connection.input()), host);
+        this.input = new ServletInputStreamImpl(connection.input(), host);
         this.output = new UpgradedOutputStream(connection.output(), host, this::outputClosed);
     }
 
@@ -100,9 +110,13 @@ final class WebConnectionImpl implements WebConnection {
      */
     void start() {
         if (context != null && !context.registerUpgradedConnection(undeployHook)) {
-            // Undeployed meanwhile: the handler never starts.
-            close(true);
+            // Undeployed meanwhile: the handler never starts, so it is not destroyed either.
+            closed.set(true);
+            closeConnection();
             return;
+        }
+        synchronized (state) {
+            initRunning = true;
         }
         callbacks.hold();
         Thread thread = Thread.currentThread();
@@ -112,10 +126,16 @@ final class WebConnectionImpl implements WebConnection {
             handler.init(this);
         } catch (Throwable t) {
             LOG.log(System.Logger.Level.WARNING, "HttpUpgradeHandler.init failed; connection closed", t);
-            close(false);
+            close();
         } finally {
             thread.setContextClassLoader(previous);
             callbacks.release();
+            boolean destroyNow;
+            synchronized (state) {
+                initRunning = false;
+                destroyNow = destroyDue;
+            }
+            if (destroyNow) destroy();
         }
     }
 
@@ -129,23 +149,30 @@ final class WebConnectionImpl implements WebConnection {
         return output;
     }
 
-    /** Calls {@link HttpUpgradeHandler#destroy()} once, then closes the connection. Idempotent. */
+    /**
+     * Closes the connection once (see the class description for the order); {@code destroy()} runs
+     * once, after {@code init} returned. Idempotent, from any thread.
+     */
     @Override
     public void close() {
-        close(false);
-    }
-
-    /**
-     * Closes once: listener callbacks stop (the one in progress finishes first, unless this runs in
-     * it), {@code destroy()}, then the connection. {@code abort} (undeploy) closes the connection
-     * first, so a callback blocked on the connection returns.
-     */
-    private void close(boolean abort) {
         if (!closed.compareAndSet(false, true)) return;
-        if (abort) closeConnection();
+        // Outside a callback, nothing may wait on the peer: the connection goes first.
+        boolean inCallback = callbacks.isCallbackThread();
+        if (!inCallback) closeConnection();
         input.endNonBlocking(false);
         output.end();
         callbacks.shutdown();
+        boolean destroyNow;
+        synchronized (state) {
+            destroyNow = !initRunning;
+            if (!destroyNow) destroyDue = true;
+        }
+        // During init the connection is already closed (init is never a callback); destroy() waits for init.
+        if (destroyNow) destroy();
+    }
+
+    /** {@code destroy()} with the application's class loader, then the connection closes. */
+    private void destroy() {
         Thread thread = Thread.currentThread();
         ClassLoader previous = thread.getContextClassLoader();
         thread.setContextClassLoader(applicationLoader);
@@ -170,48 +197,19 @@ final class WebConnectionImpl implements WebConnection {
 
     private void inputDone() {
         boolean both;
-        synchronized (ends) {
+        synchronized (state) {
             inputDone = true;
             both = outputClosed;
         }
-        if (both) close(false);
+        if (both) close();
     }
 
     private void outputClosed() {
         boolean both;
-        synchronized (ends) {
+        synchronized (state) {
             outputClosed = true;
             both = inputDone;
         }
-        if (both) close(false);
-    }
-
-    /** The connection's input, reporting its end ({@code -1}) as the input being done. */
-    private final class EndTracking extends FilterInputStream {
-        EndTracking(InputStream in) {
-            super(in);
-        }
-
-        @Override
-        public int read() throws IOException {
-            int b = super.read();
-            if (b < 0) ended();
-            return b;
-        }
-
-        @Override
-        public int read(byte[] b, int off, int len) throws IOException {
-            int n = super.read(b, off, len);
-            if (n < 0) ended();
-            return n;
-        }
-
-        /**
-         * The peer half-closed. With a ReadListener, onAllDataRead comes next (the output is normally
-         * still open then); an output already closed ends the connection now.
-         */
-        private void ended() {
-            inputDone();
-        }
+        if (both) close();
     }
 }

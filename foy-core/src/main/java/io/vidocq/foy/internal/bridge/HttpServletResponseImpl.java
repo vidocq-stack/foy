@@ -135,7 +135,31 @@ public final class HttpServletResponseImpl implements HttpServletResponse {
         this.errorMessage = null;
         // A response whose head is on the wire stays committed.
         this.committed = headSent;
-        outputStream.setDiscarding(false);
+        outputStream.setDiscarding(upgrading);
+    }
+
+    /** The request was upgraded: its body is discarded and the response never commits. */
+    private volatile boolean upgrading;
+
+    /**
+     * Servlet 6.1 section 2.3.3.5: the request was upgraded. The content written so far is dropped,
+     * later writes are accepted and dropped, and no flush, overflow or declared length ever commits
+     * the response: the bridge sends the status and headers (still settable) as the upgrade head.
+     *
+     * @throws IllegalStateException when the response is already committed
+     */
+    void discardForUpgrade() {
+        var lock = outputStream.lock();
+        lock.lock();
+        try {
+            if (committed || headSent) throw new IllegalStateException("the response is already committed");
+            drainWriter();
+            upgrading = true;
+            outputStream.resetBuffer();
+            outputStream.setDiscarding(true);
+        } finally {
+            lock.unlock();
+        }
     }
     @Override public void sendRedirect(String location) throws IOException {
         sendRedirect(location, SC_FOUND, true);
@@ -510,6 +534,8 @@ public final class HttpServletResponseImpl implements HttpServletResponse {
      * error page can still replace a sendError body.
      */
     private void flushToClient() throws IOException {
+        // An upgraded request's body is discarded: a flush never puts a head on the wire.
+        if (upgrading) return;
         if (!headSent) {
             if (outputStream.isDiscarding()) {
                 committed = true;
@@ -527,7 +553,7 @@ public final class HttpServletResponseImpl implements HttpServletResponse {
      * only records the commit. A target failure reaches the writer as an {@link IOException}.
      */
     void commit() throws IOException {
-        if (headSent) return;
+        if (headSent || upgrading) return;
         committed = true;
         if (onCommit == null) return;
         headSent = true;

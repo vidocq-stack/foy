@@ -88,7 +88,7 @@ public final class ServletInputStreamImpl extends ServletInputStream {
             return n == -1 ? -1 : one[0] & 0xFF;
         }
         int b = delegate.read();
-        if (b == -1) finished = true;
+        if (b == -1) endReached();
         return b;
     }
 
@@ -97,7 +97,7 @@ public final class ServletInputStreamImpl extends ServletInputStream {
         Objects.checkFromIndexSize(off, len, b.length);
         if (listener != null) return readNonBlocking(b, off, len);
         int n = delegate.read(b, off, len);
-        if (n == -1) finished = true;
+        if (n == -1) endReached();
         return n;
     }
 
@@ -119,6 +119,12 @@ public final class ServletInputStreamImpl extends ServletInputStream {
         int n = read(tmp, 0, tmp.length);
         if (n > 0) buffer.put(tmp, 0, n);
         return n;
+    }
+
+    /** A blocking read returned {@code -1}. */
+    private void endReached() {
+        finished = true;
+        if (host != null) host.inputDone();
     }
 
     private int readNonBlocking(byte[] b, int off, int len) throws IOException {
@@ -312,7 +318,11 @@ public final class ServletInputStreamImpl extends ServletInputStream {
             try {
                 if (allDataReadFired || errored || ended) return;
                 allDataReadFired = true;
-                submit(() -> listener.onAllDataRead());
+                // The input is done once the application handled its end (not at the raw -1).
+                submit(() -> {
+                    listener.onAllDataRead();
+                    host.inputDone();
+                });
             } finally {
                 lock.unlock();
             }
@@ -344,7 +354,7 @@ public final class ServletInputStreamImpl extends ServletInputStream {
             }
             delegate.close();
         } finally {
-            if (host != null) host.inputClosed();
+            if (host != null) host.inputDone();
         }
     }
 }

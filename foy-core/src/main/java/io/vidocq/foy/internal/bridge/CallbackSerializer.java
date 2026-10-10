@@ -133,6 +133,16 @@ final class CallbackSerializer {
         }
     }
 
+    /** Whether the calling thread is the one running callbacks (it is inside a callback). */
+    boolean isCallbackThread() {
+        lock.lock();
+        try {
+            return drainer == Thread.currentThread();
+        } finally {
+            lock.unlock();
+        }
+    }
+
     /** Whether a callback is running or about to run. */
     boolean isRunning() {
         lock.lock();

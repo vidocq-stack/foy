@@ -466,8 +466,9 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
      * then chappe gets a {@link ConnectionUpgrade} carrying the status and headers the application
      * set (chappe drops any {@code Content-Length}/{@code Transfer-Encoding}); the buffered body is
      * discarded. Once the head is on the wire, chappe calls the handler on the connection thread,
-     * which starts a {@link WebConnectionImpl} ({@code init}). A response already committed (the
-     * application flushed it) cannot be turned into an upgrade: it ends as a regular response.
+     * which starts a {@link WebConnectionImpl} ({@code init}). {@code upgrade()} refuses a committed
+     * response and switches the response to discard mode (no write, flush or overflow commits it), so
+     * a streaming response here is a defensive case only: it ends as a regular response.
      */
     private Response upgraded(HttpServletRequestImpl req, HttpServletResponseImpl res, HttpUpgradeHandler handler,
                               ListenerRegistry registry) {
