@@ -62,6 +62,12 @@ public final class SessionManager implements AutoCloseable {
     /** Serialises the store re-keying of id changes with the removal of invalidated sessions. */
     private final Object renameLock = new Object();
     private ScheduledExecutorService reaper;
+    /**
+     * Serialises {@link #restartReaper} with {@link #close()}: never taken by a scan, so awaiting a
+     * reaper while holding it cannot deadlock.
+     */
+    private final java.util.concurrent.locks.ReentrantLock reaperSwap =
+            new java.util.concurrent.locks.ReentrantLock();
     private final ClassLoader applicationLoader;
     /** Set by {@link #close()}: no session is created afterwards. */
     private volatile boolean closed;
@@ -223,15 +229,29 @@ public final class SessionManager implements AutoCloseable {
     }
 
     /**
-     * Test seam for the integration tests of other modules (foy-it-weld, foy-cdi-vauban), where the
-     * minute granularity of the session timeout makes the default period too long: replaces the
-     * running reaper with one of {@code period}. A no-op once the manager is closed.
+     * <strong>Internal, test seam only</strong> (not an application API): public for the integration
+     * tests of other modules (foy-it-weld, foy-cdi-vauban), where the minute granularity of the
+     * session timeout makes the default period too long. Replaces the running reaper with one of
+     * {@code period}: the replaced reaper is stopped and awaited (bounded, as in {@link #close()})
+     * first, and {@link #close()} waits for a restart in progress, so no scan of a replaced reaper
+     * outlives {@code close()}. A no-op once the manager is closed.
      */
-    public synchronized void restartReaper(Duration period) {
-        if (closed) return;
-        if (reaper != null) reaper.shutdown();
-        reaper = null;
-        startReaper(period);
+    public void restartReaper(Duration period) {
+        reaperSwap.lock();
+        try {
+            ScheduledExecutorService replaced;
+            synchronized (this) {
+                if (closed) return;
+                replaced = reaper;
+                reaper = null;
+            }
+            if (replaced != null) stopReaper(replaced);
+            synchronized (this) {
+                if (!closed) startReaper(period);
+            }
+        } finally {
+            reaperSwap.unlock();
+        }
     }
 
     synchronized boolean isReaperRunning() {
@@ -273,22 +293,31 @@ public final class SessionManager implements AutoCloseable {
         } finally {
             closeLock.writeLock().unlock();
         }
-        ScheduledExecutorService r;
-        synchronized (this) {
-            r = reaper;
-        }
-        if (r != null) {
-            // Let a scan in progress finish its listeners; interrupt it only if it overruns.
-            r.shutdown();
-            try {
-                if (!r.awaitTermination(5, TimeUnit.SECONDS)) r.shutdownNow();
-            } catch (InterruptedException e) {
-                r.shutdownNow();
-                Thread.currentThread().interrupt();
+        // A restart in progress ends first: its replaced reaper is awaited, and it starts none
+        // once closed is set.
+        reaperSwap.lock();
+        try {
+            ScheduledExecutorService r;
+            synchronized (this) {
+                r = reaper;
             }
+            if (r != null) stopReaper(r);
+        } finally {
+            reaperSwap.unlock();
         }
         for (HttpSession s : store.sessions()) {
             if (s instanceof HttpSessionImpl impl && impl.claimInvalidation()) impl.completeInvalidation();
+        }
+    }
+
+    /** Stops {@code r}, letting a scan in progress finish its listeners; interrupts it only if it overruns. */
+    private static void stopReaper(ScheduledExecutorService r) {
+        r.shutdown();
+        try {
+            if (!r.awaitTermination(5, TimeUnit.SECONDS)) r.shutdownNow();
+        } catch (InterruptedException e) {
+            r.shutdownNow();
+            Thread.currentThread().interrupt();
         }
     }
 

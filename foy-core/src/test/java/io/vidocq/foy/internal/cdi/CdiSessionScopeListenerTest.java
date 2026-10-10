@@ -244,6 +244,16 @@ class CdiSessionScopeListenerTest {
     }
 
     @Test
+    void anErrorFromTheRequestContextControllerLookupLeavesNoBindingOnTheThread() {
+        cdi.createInstanceError = new StackOverflowError("lookup");
+        HttpSessionImpl session = manager.createNew();
+        assertThrows(StackOverflowError.class, () -> listener.aroundDestruction(session, () -> { }));
+        cdi.createInstanceError = null; // the tear-down closes the manager through the listener
+        assertNull(SessionContextBinding.current(),
+                "the reaper's reused thread must not keep the dying session bound");
+    }
+
+    @Test
     void steppingAsideStillDestroysTheBeansWhenTheDestructionThrows() {
         cdi.sessionContexts.add(CdiFakes.activeForeignContext());
         HttpSessionImpl session = manager.createNew();

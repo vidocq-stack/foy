@@ -176,6 +176,8 @@ final class CdiFakes {
         volatile boolean requestContextControllerResolvable = true;
         /** Thrown by {@code createInstance()} when set. */
         volatile RuntimeException createInstanceFailure;
+        /** Thrown by {@code createInstance()} when set (an {@link Error} escaping the lookup). */
+        volatile Error createInstanceError;
 
         BeanManager proxy() {
             return CdiFakes.proxy(BeanManager.class, (m, a) -> switch (m) {
@@ -183,6 +185,7 @@ final class CdiFakes {
                 case "getEvent" -> event(List.of());
                 case "createInstance" -> {
                     if (createInstanceFailure != null) throw createInstanceFailure;
+                    if (createInstanceError != null) throw createInstanceError;
                     yield instance();
                 }
                 default -> throw new UnsupportedOperationException(m);

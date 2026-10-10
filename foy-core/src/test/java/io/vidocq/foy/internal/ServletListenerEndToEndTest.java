@@ -173,6 +173,33 @@ class ServletListenerEndToEndTest {
         assertEquals(1, destroy.get(), "requestDestroyed fires when a filter of an unmapped path throws");
     }
 
+    @Test
+    void anErrorThrownByAMappedServletStillEndsTheRequestOnce() throws Exception {
+        AtomicInteger init = new AtomicInteger();
+        AtomicInteger destroy = new AtomicInteger();
+        ServletRequestListener rl = new ServletRequestListener() {
+            @Override public void requestInitialized(ServletRequestEvent e) { init.incrementAndGet(); }
+            @Override public void requestDestroyed(ServletRequestEvent e) { destroy.incrementAndGet(); }
+        };
+        startServer("/*", new HttpServlet() {
+            @Override protected void doGet(HttpServletRequest req, HttpServletResponse resp) {
+                throw new StackOverflowError("servlet");
+            }
+        }, rl);
+
+        // Unchanged response behaviour: the Error propagates out of the bridge and chappe drops the
+        // exchange without a response.
+        try (var log = LogCapture.of(ChappeServletBridge.class.getName())) {
+            assertThrows(IOException.class, () -> get("http://127.0.0.1:" + port + "/boom"),
+                    "an Error still propagates out of the bridge");
+        }
+        // The JDK client retries an idempotent request once when the connection closes without a
+        // response: count per request served.
+        assertTrue(init.get() >= 1, "the request reached the servlet");
+        assertEquals(init.get(), destroy.get(),
+                "requestDestroyed fires exactly once per request when a servlet throws an Error");
+    }
+
     // ---- helpers ----
 
     private void startServer(String pattern, HttpServlet servlet, java.util.EventListener listener) {

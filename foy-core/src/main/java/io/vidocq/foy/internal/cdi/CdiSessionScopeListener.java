@@ -135,12 +135,15 @@ public final class CdiSessionScopeListener implements ServletRequestListener, Se
             }
             return;
         }
-        SessionContextBinding binding = SessionContextBinding.bindTo(session);
+        // Activated first and bound inside the try: whatever escapes (an Error from the
+        // RequestContextController lookup included), the reaper's reused thread keeps no binding.
         RequestContextController requestContext = activateRequestContext();
+        SessionContextBinding binding = null;
         try {
+            binding = SessionContextBinding.bindTo(session);
             destruction.run();
         } finally {
-            binding.unbind();
+            if (binding != null) binding.unbind();
             try {
                 destroyScope(session);
             } finally {

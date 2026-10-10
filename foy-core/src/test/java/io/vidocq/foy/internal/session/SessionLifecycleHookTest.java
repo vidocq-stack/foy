@@ -31,9 +31,17 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
+import io.vidocq.foy.spi.session.SessionStore;
+import jakarta.servlet.http.HttpSession;
+
 import java.time.Duration;
+import java.util.Collection;
 import java.util.List;
+import java.util.Optional;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -180,5 +188,47 @@ class SessionLifecycleHookTest {
         manager.close();
         manager.restartReaper(Duration.ofMillis(50));
         assertFalse(manager.isReaperRunning());
+    }
+
+    @Test
+    void restartReaperWaitsForTheReplacedReaperSoThatNoScanOutlivesClose() throws Exception {
+        var scanning = new CountDownLatch(1);
+        var release = new CountDownLatch(1);
+        var scans = new AtomicInteger();
+        SessionStore blocking = new SessionStore() {
+            @Override public Optional<HttpSession> get(String id) { return Optional.empty(); }
+            @Override public void put(HttpSession session) { }
+            @Override public void remove(String id) { }
+            @Override public int size() { return 0; }
+            @Override public Collection<HttpSession> sessions() {
+                scans.incrementAndGet();
+                scanning.countDown();
+                try {
+                    release.await(10, TimeUnit.SECONDS);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+                return List.of();
+            }
+        };
+        var blocked = new SessionManager(blocking, new VidocqServletContext("/"), 1800);
+        try {
+            blocked.restartReaper(Duration.ofMillis(1));
+            assertTrue(scanning.await(5, TimeUnit.SECONDS), "the first reaper never scanned");
+            Thread restart = Thread.ofVirtual().start(() -> blocked.restartReaper(Duration.ofHours(1)));
+            restart.join(Duration.ofMillis(300));
+            assertTrue(restart.isAlive(), "restartReaper returned while the replaced reaper was scanning");
+            release.countDown();
+            restart.join(Duration.ofSeconds(5));
+            assertFalse(restart.isAlive(), "restartReaper never returned");
+            blocked.restartReaper(Duration.ofHours(1));
+        } finally {
+            release.countDown();
+            blocked.close();
+        }
+        int afterClose = scans.get();
+        Thread.sleep(100);
+        assertEquals(afterClose, scans.get(), "a scan ran after close() returned");
+        assertFalse(blocked.isReaperRunning());
     }
 }

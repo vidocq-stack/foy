@@ -423,44 +423,56 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
         req.accessRequestedSession();
 
         registry.fireRequestInitialized(servletContext, req);
-        Throwable thrown = null;
+        // requestDestroyed fires exactly once on every way out, an Error thrown by the application
+        // included (the CDI request and session scope listeners unbind there).
+        boolean requestDestroyed = false;
         try {
-            var enforcer = new SecurityConstraintEnforcer(
-                    servletContext.securityProvider());
-            if (!enforcer.enforce(m.security(), req, res)) {
-                registry.fireRequestDestroyed(servletContext, req);
-                return completed(req, res);
+            Throwable thrown = null;
+            try {
+                var enforcer = new SecurityConstraintEnforcer(
+                        servletContext.securityProvider());
+                if (!enforcer.enforce(m.security(), req, res)) {
+                    requestDestroyed = true;
+                    registry.fireRequestDestroyed(servletContext, req);
+                    return completed(req, res);
+                }
+                invoke(target, req, res, DispatcherType.REQUEST, requestChain);
+            } catch (ServletException | IOException | RuntimeException e) {
+                thrown = e;
             }
-            invoke(target, req, res, DispatcherType.REQUEST, requestChain);
-        } catch (ServletException | IOException | RuntimeException e) {
-            thrown = e;
-        }
-        // Section 2.3.3.5: an upgraded request leaves the HTTP lifecycle here (no async or error
-        // machinery). A servlet that threw after upgrade() gets the regular error handling instead.
-        HttpUpgradeHandler upgradeHandler = req.upgradeHandler();
-        if (upgradeHandler != null && thrown == null) return upgraded(req, res, upgradeHandler, registry);
-        // An async cycle started by the servlet (even one that then threw) ends in runAsyncCycles.
-        AsyncEnd end = runAsyncCycles(req, res, thrown);
-        AsyncContextImpl lastCycle = null;
-        if (end != null) {
-            // No ReadListener callback after the async processing; the body pump stops (chappe gets
-            // the body back once the response is delivered, see handBack).
-            req.endNonBlockingIo();
-            thrown = end.thrown();
-            lastCycle = end.lastCycle();
-        }
-        registry.fireRequestDestroyed(servletContext, req);
+            // Section 2.3.3.5: an upgraded request leaves the HTTP lifecycle here (no async or error
+            // machinery). A servlet that threw after upgrade() gets the regular error handling instead.
+            HttpUpgradeHandler upgradeHandler = req.upgradeHandler();
+            if (upgradeHandler != null && thrown == null) {
+                requestDestroyed = true; // upgraded() fires it, before handing the connection over
+                return upgraded(req, res, upgradeHandler, registry);
+            }
+            // An async cycle started by the servlet (even one that then threw) ends in runAsyncCycles.
+            AsyncEnd end = runAsyncCycles(req, res, thrown);
+            AsyncContextImpl lastCycle = null;
+            if (end != null) {
+                // No ReadListener callback after the async processing; the body pump stops (chappe gets
+                // the body back once the response is delivered, see handBack).
+                req.endNonBlockingIo();
+                thrown = end.thrown();
+                lastCycle = end.lastCycle();
+            }
+            requestDestroyed = true;
+            registry.fireRequestDestroyed(servletContext, req);
 
-        Throwable failure = null;
-        try {
-            maybeHandleError(req, res, thrown, target.servletName());
-        } catch (ServletException e) {
-            failure = e;
+            Throwable failure = null;
+            try {
+                maybeHandleError(req, res, thrown, target.servletName());
+            } catch (ServletException e) {
+                failure = e;
+            }
+            if (failure == null && thrown != null && !errorPageHandled(req)) failure = thrown;
+            // Section 2.3.3.3: onComplete closes the whole async processing, error dispatch included.
+            if (lastCycle != null) lastCycle.endCycle();
+            return failure != null ? failed(res, req, failure) : completed(req, res);
+        } finally {
+            if (!requestDestroyed) registry.fireRequestDestroyed(servletContext, req);
         }
-        if (failure == null && thrown != null && !errorPageHandled(req)) failure = thrown;
-        // Section 2.3.3.3: onComplete closes the whole async processing, error dispatch included.
-        if (lastCycle != null) lastCycle.endCycle();
-        return failure != null ? failed(res, req, failure) : completed(req, res);
     }
 
     /**
