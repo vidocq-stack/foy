@@ -389,7 +389,7 @@ public final class HttpServletRequestImpl implements HttpServletRequest {
      * finishes first) and the body pump stops after its current read. Never waits for that read: a
      * silent client must not hold the response back. On HTTP/2 the read (a DATA queue) is
      * interrupted; on HTTP/1.x it cannot be (that would close the connection), so the bridge waits
-     * for it in {@link #awaitInputHandBack()} once the response is delivered. Idempotent.
+     * for it in {@link #handBackInput()} once the response is delivered. Idempotent.
      */
     void endNonBlockingIo() {
         CallbackSerializer s;
@@ -413,13 +413,15 @@ public final class HttpServletRequestImpl implements HttpServletRequest {
     }
 
     /**
-     * Waits until the body pump is gone, so chappe drains the unread body alone; called once the
-     * response is delivered (its body released). No-op without a pump.
+     * Called once the response is delivered (its body released, on a normal or a failed exit):
+     * the body pump lets go of chappe's body ({@link ServletInputStreamImpl#handBack()}), so chappe
+     * drains the unread body alone. Bounded: a pump still blocked on a silent upload is
+     * interrupted, which closes the connection. No-op without a pump.
      */
-    void awaitInputHandBack() {
+    void handBackInput() {
         if (chappe.version() == io.vidocq.chappe.api.HttpVersion.HTTP_2) return;
         var body = trackedBody;
-        if (body != null) body.awaitPumpExit();
+        if (body != null) body.handBack();
     }
 
     @Override public ServletInputStream getInputStream() throws IOException {

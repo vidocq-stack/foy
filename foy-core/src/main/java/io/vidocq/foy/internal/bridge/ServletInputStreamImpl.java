@@ -226,6 +226,28 @@ public final class ServletInputStreamImpl extends ServletInputStream {
         if (p != null) p.awaitExit();
     }
 
+    /**
+     * Gives the source back to its owner once the response is delivered (HTTP/1.1: chappe drains the
+     * unread body next, or closes a failed connection). A pump still blocked on a read is
+     * interrupted, which closes a socket-backed channel: an upload the application stopped reading
+     * midway ends the connection, as when a container cannot swallow the rest of a body, and a
+     * silent client can never pin the connection. Then waits for the pump, now bounded. No-op
+     * without a pump or once it exited.
+     */
+    void handBack() {
+        ReadPump p;
+        lock.lock();
+        try {
+            ended = true;
+            p = pump;
+        } finally {
+            lock.unlock();
+        }
+        if (p == null) return;
+        if (p.isAlive()) p.stop(true);
+        p.awaitExit();
+    }
+
     /** Whether a pump still runs (a read may be in progress). */
     boolean pumpAlive() {
         lock.lock();

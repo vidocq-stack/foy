@@ -233,6 +233,103 @@ class ServletNonBlockingIoEndToEndTest {
         }
     }
 
+    /**
+     * A client that neither reads the response nor sends the rest of its body: chappe's write
+     * times out, and the connection is closed within a bound; the body pump (blocked on the silent
+     * upload) does not pin the connection thread and the socket.
+     */
+    @Test
+    void aWriteTimeoutWithAPumpBlockedOnASilentUploadClosesTheConnection() throws Exception {
+        var writeFailed = new CountDownLatch(1);
+        var servlet = new HttpServlet() {
+            @Override
+            protected void doPost(HttpServletRequest req, HttpServletResponse resp) throws IOException {
+                AsyncContext ac = req.startAsync();
+                ac.setTimeout(0);
+                ServletOutputStream out = resp.getOutputStream();
+                ServletInputStream in = req.getInputStream();
+                in.setReadListener(new ReadListener() {
+                    @Override public void onDataAvailable() throws IOException {
+                        byte[] buf = new byte[64];
+                        while (in.isReady() && in.read(buf) != -1) { /* drain */ }
+                        byte[] block = new byte[64 * 1024];
+                        try {
+                            for (int i = 0; i < 256; i++) out.write(block); // 16 MiB nobody reads
+                        } catch (IOException e) {
+                            writeFailed.countDown();
+                            throw e;
+                        }
+                        ac.complete();
+                    }
+                    @Override public void onAllDataRead() {}
+                    @Override public void onError(Throwable t) {}
+                });
+            }
+        };
+        var mappings = List.of(new ServletDispatcher.Mapping(UrlPatternMatcher.of("/nio"), servlet, "S"));
+        var bridge = new ChappeServletBridge(new ServletDispatcher(mappings),
+                new FilterRegistry(List.of()), new VidocqServletContext("/"), null, "/");
+        server = Server.builder().host("127.0.0.1").port(0).writeTimeout(java.time.Duration.ofMillis(500))
+                .handler(bridge).build();
+        server.start();
+        port = server.port();
+
+        try (var socket = new Socket()) {
+            socket.setReceiveBufferSize(4096);
+            socket.connect(new java.net.InetSocketAddress("127.0.0.1", port));
+            socket.setSoTimeout(5_000);
+            var out = socket.getOutputStream();
+            out.write((head() + "5\r\nHello\r\n").getBytes(StandardCharsets.US_ASCII)); // then silence
+            out.flush();
+            assertTrue(writeFailed.await(10, TimeUnit.SECONDS), "chappe's write never timed out");
+            // The connection must now be closed: reading reaches its end (or a reset) instead of
+            // waiting for bytes that never come.
+            var in = socket.getInputStream();
+            byte[] buf = new byte[64 * 1024];
+            try {
+                while (in.read(buf) != -1) { /* what was sent before the timeout */ }
+            } catch (SocketException reset) {
+                // a reset closes the connection as well
+            }
+        }
+    }
+
+    /**
+     * A committed response aborted by the async timeout while the pump waits on a silent upload:
+     * chappe's write fails (not a socket failure: the body stream throws), and the connection must
+     * still close within a bound instead of waiting for the client's next byte.
+     */
+    @Test
+    void anAbortedCommittedResponseWithAPumpBlockedOnASilentUploadClosesTheConnection() throws Exception {
+        start(new HttpServlet() {
+            @Override
+            protected void doPost(HttpServletRequest req, HttpServletResponse resp) throws IOException {
+                AsyncContext ac = req.startAsync();
+                ac.setTimeout(300);
+                resp.getOutputStream().print("partial");
+                resp.flushBuffer(); // committed: the timeout aborts the body
+                ServletInputStream in = req.getInputStream();
+                in.setReadListener(new ReadListener() {
+                    @Override public void onDataAvailable() throws IOException {
+                        byte[] buf = new byte[64];
+                        while (in.isReady() && in.read(buf) != -1) { /* drain */ }
+                    }
+                    @Override public void onAllDataRead() { ac.complete(); }
+                    @Override public void onError(Throwable t) {}
+                });
+            }
+        });
+
+        try (var client = new Client(port)) {
+            client.send(head());
+            client.send("5\r\nHello\r\n"); // then silence: the body never ends
+            // Head, "partial", then the end of the connection (EOF or reset) within the 5 s timeout.
+            String all = client.readAll();
+            assertTrue(all.startsWith("HTTP/1.1 200"), all);
+            assertTrue(all.contains("partial"), all);
+        }
+    }
+
     @Test
     void readListenerInAsyncDispatchWithoutStartAsyncThrowsIse() throws Exception {
         start(new HttpServlet() {

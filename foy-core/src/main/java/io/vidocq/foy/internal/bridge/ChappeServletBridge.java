@@ -20,6 +20,7 @@
 package io.vidocq.foy.internal.bridge;
 
 import io.vidocq.chappe.api.Body;
+import io.vidocq.chappe.api.ConnectionUpgrade;
 import io.vidocq.chappe.api.Handler;
 import io.vidocq.chappe.api.HttpMethod;
 import io.vidocq.chappe.api.HttpVersion;
@@ -27,6 +28,7 @@ import io.vidocq.chappe.api.Request;
 import io.vidocq.chappe.api.RequestContext;
 import io.vidocq.chappe.api.Response;
 import io.vidocq.chappe.api.StatusCode;
+import io.vidocq.chappe.api.WebSocketUpgrade;
 import io.vidocq.foy.internal.container.DefaultServlet;
 import io.vidocq.foy.internal.container.ResourcePaths;
 import io.vidocq.foy.internal.dispatcher.DispatchResolver;
@@ -249,14 +251,21 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
     }
 
     /**
-     * {@code response}, whose body's release waits for the request body pumps of {@code requests}
-     * ({@link HttpServletRequestImpl#awaitInputHandBack()}): chappe releases the body after the
-     * response was written and before it drains the unread request body, so a silent client never
-     * holds the response back and chappe never reads the body concurrently with a pump.
+     * {@code response}, whose body's release hands the request body back from the pumps of
+     * {@code requests} ({@link HttpServletRequestImpl#handBackInput()}). Chappe releases the body
+     * after the response was written, or on a failed exit, and before it drains the unread request
+     * body or closes the connection: a silent client never holds the response back, chappe never
+     * reads the body concurrently with a pump, and a pump still blocked on a read is interrupted
+     * (the connection closes) so nothing waits without bound. An upgrade response
+     * ({@link ConnectionUpgrade}, {@link WebSocketUpgrade}) is never wrapped: chappe recognises it
+     * by its type. The wrapper hides a {@code FileBody} from chappe's sendfile path; it is applied
+     * at every HTTP/1.x commit (a listener may still be set) and to a buffered response only while
+     * a pump is alive.
      */
     private static Response handBack(Response response, List<HttpServletRequestImpl> requests) {
+        if (response instanceof ConnectionUpgrade || response instanceof WebSocketUpgrade) return response;
         return new InputHandBackResponse(response, () -> {
-            for (HttpServletRequestImpl r : List.copyOf(requests)) r.awaitInputHandBack();
+            for (HttpServletRequestImpl r : List.copyOf(requests)) r.handBackInput();
         });
     }
 

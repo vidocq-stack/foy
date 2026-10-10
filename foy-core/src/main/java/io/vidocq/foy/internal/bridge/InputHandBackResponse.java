@@ -32,9 +32,13 @@ import java.util.concurrent.atomic.AtomicBoolean;
 /**
  * A response whose body runs a hook once chappe released it ({@link Body#release()}): after the
  * body was written, or the exchange failed. On HTTP/1.1 chappe releases the handler's response
- * body before it drains the unread request body, so the hook is where Foy waits for its
- * {@link ReadPump} to let go of the request body: the response is already delivered, and chappe's
- * drain never reads concurrently with the pump.
+ * body before it drains the unread request body (or closes a failed connection), so the hook is
+ * where Foy's {@link ReadPump} lets go of the request body: the response is already delivered, and
+ * chappe's drain never reads concurrently with the pump.
+ *
+ * <p>The wrapper is a plain {@link Body} to chappe: a {@code FileBody} delegate loses chappe's
+ * sendfile path (its bytes are copied through {@link Body#asInputStream()}). The bridge never wraps
+ * an upgrade response, which chappe recognises by its type.</p>
  *
  * <p>Everything else (status, headers, trailers, the body's bytes and length) is the delegate's,
  * read lazily, so trailers are still evaluated after the body ({@link FoyResponse}).</p>
