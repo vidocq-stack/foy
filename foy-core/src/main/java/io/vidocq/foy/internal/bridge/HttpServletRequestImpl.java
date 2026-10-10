@@ -328,7 +328,77 @@ public final class HttpServletRequestImpl implements HttpServletRequest {
     private boolean encodingLocked;
 
     /** Body stream wrapper kept for EOF tracking ({@link #isTrailerFieldsReady()}). */
-    private ServletInputStreamImpl trackedBody;
+    private volatile ServletInputStreamImpl trackedBody;
+
+    // ---- Non-blocking I/O (Servlet 6.1 section 3.7) ----
+
+    private final Object callbacksMonitor = new Object();
+    /** Created on first use; guarded by {@link #callbacksMonitor}. */
+    private CallbackSerializer callbacks;
+    /** A dispatch is running: listener callbacks wait. Guarded by {@link #callbacksMonitor}. */
+    private boolean callbacksHeld = true;
+    /**
+     * Non-blocking input is allowed once async started (an upgraded connection gets its own
+     * streams, see {@link #upgrade}); failures fail the open cycle.
+     */
+    private final ServletInputStreamImpl.NonBlockingHost nonBlockingHost = new ServletInputStreamImpl.NonBlockingHost() {
+        @Override public boolean nonBlockingAllowed() { return isAsyncStarted(); }
+        @Override public CallbackSerializer callbacks() { return callbackSerializer(); }
+        @Override public void failed(Throwable t) {
+            var cycle = asyncContext;
+            if (cycle != null) cycle.fail(t);
+        }
+    };
+
+    /** The request's listener callback serializer, run with the application's class loader. */
+    CallbackSerializer callbackSerializer() {
+        synchronized (callbacksMonitor) {
+            if (callbacks == null) {
+                callbacks = new CallbackSerializer(servletContext.getClassLoader());
+                if (callbacksHeld) callbacks.hold();
+            }
+            return callbacks;
+        }
+    }
+
+    /**
+     * A dispatch (REQUEST or ASYNC) is about to run: listener callbacks wait for it, and the one in
+     * progress finishes first. Called by the bridge on the pipeline thread.
+     */
+    void holdCallbacks() {
+        CallbackSerializer s;
+        synchronized (callbacksMonitor) {
+            callbacksHeld = true;
+            s = callbacks;
+        }
+        if (s != null) s.hold();
+    }
+
+    /** The dispatch returned: listener callbacks may run. Called by the bridge on the pipeline thread. */
+    void releaseCallbacks() {
+        CallbackSerializer s;
+        synchronized (callbacksMonitor) {
+            callbacksHeld = false;
+            s = callbacks;
+        }
+        if (s != null) s.release();
+    }
+
+    /**
+     * The async processing is over: no listener callback runs any more (the one in progress
+     * finishes first), and the body pump stops, its current read returned, so chappe can drain the
+     * unread body alone. Idempotent.
+     */
+    void endNonBlockingIo() {
+        CallbackSerializer s;
+        synchronized (callbacksMonitor) {
+            callbacksHeld = true;
+            s = callbacks;
+        }
+        if (s != null) s.close();
+        var body = trackedBody;
+        if (body != null) body.endNonBlocking();
+    }
 
     @Override public ServletInputStream getInputStream() throws IOException {
         if (reader != null) throw new IllegalStateException("getReader() already called");
@@ -336,7 +406,7 @@ public final class HttpServletRequestImpl implements HttpServletRequest {
             java.io.InputStream source = bodyConsumedByParameters
                     ? java.io.InputStream.nullInputStream()
                     : chappe.body().asInputStream();
-            trackedBody = new ServletInputStreamImpl(source);
+            trackedBody = new ServletInputStreamImpl(source, nonBlockingHost);
             inputStream = trackedBody;
             encodingLocked = true;
         }
@@ -356,7 +426,7 @@ public final class HttpServletRequestImpl implements HttpServletRequest {
             java.io.InputStream source = bodyConsumedByParameters
                     ? java.io.InputStream.nullInputStream()
                     : chappe.body().asInputStream();
-            trackedBody = new ServletInputStreamImpl(source);
+            trackedBody = new ServletInputStreamImpl(source, nonBlockingHost);
             reader = new BufferedReader(new InputStreamReader(trackedBody, cs));
             encodingLocked = true;
         }

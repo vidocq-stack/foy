@@ -170,6 +170,8 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
             // End of request processing (asynchronous processing included, awaited by handle):
             // the sessions used by the request become idle, and their last-accessed time moves.
             for (HttpServletRequestImpl r : requests) {
+                // Last guard (idempotent): the body pump must be gone before chappe drains the body.
+                r.endNonBlockingIo();
                 try { r.endSessionAccess(); }
                 catch (RuntimeException e) { LOG.log(System.Logger.Level.WARNING, "ending the session access failed", e); }
             }
@@ -392,6 +394,8 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
         AsyncEnd end = runAsyncCycles(req, res, thrown);
         AsyncContextImpl lastCycle = null;
         if (end != null) {
+            // No ReadListener callback after the async processing; chappe gets the body back.
+            req.endNonBlockingIo();
             thrown = end.thrown();
             lastCycle = end.lastCycle();
         }
@@ -549,7 +553,9 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
      * <p>A dispatch (REQUEST or ASYNC) that throws after its {@code startAsync} fails the cycle it
      * opened: {@code onError}, then the error path above, and the container completes the cycle.
      * An exception thrown after the application already completed or dispatched the cycle goes
-     * to the error machinery as is. The caller fires {@code onComplete} on
+     * to the error machinery as is. Non-blocking I/O callbacks ({@code ReadListener}) run only while
+     * a cycle is awaited, never during a dispatch nor once the cycle ended; an active listener does
+     * not end a cycle, only complete, dispatch, timeout or error do. The caller fires {@code onComplete} on
      * {@link AsyncEnd#lastCycle()} once the error dispatch is over.</p>
      *
      * @param dispatchFailure what the REQUEST dispatch threw, or {@code null}
@@ -565,7 +571,14 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
         for (int i = 0; ; i++) {
             if (pending != null) ac.fail(pending);
             AsyncContextImpl cycle = ac;
-            CycleEnd outcome = cycle.awaitCycleEnd(() -> res.claimOutput(cycle.startedThreads()));
+            // The dispatch that opened the cycle returned: non-blocking I/O callbacks may run. Once
+            // the cycle ends they wait again (the one in progress finishes first), so they never
+            // overlap the async listeners, the error dispatch or a new ASYNC dispatch.
+            req.releaseCallbacks();
+            CycleEnd outcome = cycle.awaitCycleEnd(() -> {
+                res.claimOutput(cycle.startedThreads());
+                req.holdCallbacks();
+            });
             // The failure was not routed to the cycle (already completed or dispatched): it goes to
             // the error machinery as is, and no dispatch follows.
             if (pending != null && cycle.error() != pending && outcome != CycleEnd.TIMEOUT) {
