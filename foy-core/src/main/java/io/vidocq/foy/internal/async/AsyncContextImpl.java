@@ -31,10 +31,11 @@ import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.ExecutionException;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * {@link AsyncContext} Jakarta Servlet 6.1: one async cycle (section 2.3.3.3).
@@ -69,8 +70,7 @@ public final class AsyncContextImpl implements AsyncContext {
 
     private static final System.Logger LOG = System.getLogger(AsyncContextImpl.class.getName());
 
-    private static final ExecutorService VIRTUAL_EXECUTOR =
-            Executors.newVirtualThreadPerTaskExecutor();
+    private static final AtomicLong ASYNC_THREADS = new AtomicLong();
 
     /** How an async cycle ended, as {@link #awaitCycleEnd} reports it. */
     public enum CycleEnd {
@@ -101,6 +101,10 @@ public final class AsyncContextImpl implements AsyncContext {
     private Throwable error;
     /** onComplete fired, or the listeners were handed over to a new cycle. Guarded by {@code this}. */
     private boolean ended;
+    /** The container completed the cycle (timeout or error, no listener completed or dispatched). */
+    private volatile boolean containerCompleted;
+    /** The threads {@link #start} created: they lose the response for good once the cycle ends. */
+    private final Set<Thread> startedThreads = ConcurrentHashMap.newKeySet();
 
     private record ListenerRegistration(AsyncListener listener,
                                         ServletRequest suppliedReq,
@@ -176,12 +180,22 @@ public final class AsyncContextImpl implements AsyncContext {
         signal.complete(null);
     }
 
+    /**
+     * Runs {@code run} on a new virtual thread, registered before it starts: when the cycle ends,
+     * the bridge refuses that thread's later writes for good, also after a new cycle re-opens the
+     * response (BUG-20261010-01). A throwing runnable fails the cycle.
+     */
     @Override public void start(Runnable run) {
-        VIRTUAL_EXECUTOR.execute(() -> {
+        Thread thread = Thread.ofVirtual().name("foy-async-" + ASYNC_THREADS.incrementAndGet()).unstarted(() -> {
             try { run.run(); }
             catch (Throwable t) { fail(t); }
         });
+        startedThreads.add(thread);
+        thread.start();
     }
+
+    /** The threads {@link #start} created for this cycle. */
+    public Set<Thread> startedThreads() { return Set.copyOf(startedThreads); }
 
     @Override public void addListener(AsyncListener listener) {
         addListener(listener, request, response);
@@ -213,18 +227,20 @@ public final class AsyncContextImpl implements AsyncContext {
     public CycleEnd awaitCycleEnd(Runnable onResume) {
         boolean signalled = waitForSignal();
         onResume.run();
-        if (!signalled) {
-            timedOut = true;
-            fireOnTimeout();
-        } else {
-            Throwable failure;
-            synchronized (this) { failure = error; }
-            if (failure != null) fireOnError(failure);
+        // A complete() or dispatch() that won the race against the timeout or the failure ends the
+        // cycle as the application asked: no onTimeout / onError then.
+        Throwable failure;
+        synchronized (this) {
+            if (!signalled && !completed) timedOut = true;
+            failure = completed ? null : error;
         }
+        if (timedOut) fireOnTimeout();
+        else if (failure != null) fireOnError(failure);
         synchronized (this) {
             if (dispatchPath != null) return CycleEnd.DISPATCH;
             if (completed) return CycleEnd.COMPLETE;
             completed = true; // the container completes the cycle
+            containerCompleted = true;
             return timedOut ? CycleEnd.TIMEOUT : CycleEnd.ERROR;
         }
     }
@@ -290,6 +306,8 @@ public final class AsyncContextImpl implements AsyncContext {
     /** Target context of a cross-context dispatch — null for an intra-context dispatch. */
     public ServletContext dispatchContext() { return dispatchContext; }
     public boolean timedOut() { return timedOut; }
+    /** Whether the container completed the cycle after a timeout or an error. */
+    public boolean containerCompleted() { return containerCompleted; }
     public boolean isCompleted() { return completed; }
 
     private void fireOnTimeout() {

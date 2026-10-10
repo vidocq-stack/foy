@@ -728,8 +728,17 @@ public final class HttpServletResponseImpl implements HttpServletResponse {
      * an abort of the body.
      */
     void claimOutput() {
+        claimOutput(List.of());
+    }
+
+    /**
+     * {@link #claimOutput()}, and the threads {@code cycleThreads} (those the ended cycle's
+     * {@code AsyncContext.start} created) are refused for good, even after a new cycle re-opens the
+     * output with {@link #openOutput}.
+     */
+    void claimOutput(Collection<Thread> cycleThreads) {
         this.asyncWriteFailure = null;
-        outputStream.claim();
+        outputStream.claim(cycleThreads);
     }
 
     /** The response side of {@link ServletOutputStreamImpl}. */
@@ -793,6 +802,30 @@ public final class HttpServletResponseImpl implements HttpServletResponse {
         @Override public void println() { locked(() -> { super.println(); drain(); }); }
         @Override public void flush() { locked(super::flush); }
         @Override public void close() { locked(super::close); }
+
+        // PrintWriter's println(x), printf and format hold the writer's monitor while they call
+        // write(): taking the stream lock first here keeps one lock order everywhere (stream lock,
+        // then monitor), as drainWriter() does; otherwise a println on one thread and a drain on
+        // another would deadlock.
+        @Override public void println(boolean x) { locked(() -> super.println(x)); }
+        @Override public void println(char x) { locked(() -> super.println(x)); }
+        @Override public void println(int x) { locked(() -> super.println(x)); }
+        @Override public void println(long x) { locked(() -> super.println(x)); }
+        @Override public void println(float x) { locked(() -> super.println(x)); }
+        @Override public void println(double x) { locked(() -> super.println(x)); }
+        @Override public void println(char[] x) { locked(() -> super.println(x)); }
+        @Override public void println(String x) { locked(() -> super.println(x)); }
+        @Override public void println(Object x) { locked(() -> super.println(x)); }
+        @Override public PrintWriter format(String format, Object... args) {
+            locked(() -> super.format(format, args));
+            return this;
+        }
+        @Override public PrintWriter format(Locale l, String format, Object... args) {
+            locked(() -> super.format(l, format, args));
+            return this;
+        }
+        @Override public PrintWriter printf(String format, Object... args) { return format(format, args); }
+        @Override public PrintWriter printf(Locale l, String format, Object... args) { return format(l, format, args); }
     }
 
     /**

@@ -417,7 +417,7 @@ Statuts : `OPEN` → `INVESTIGATING` → `FIXED` (commit hash) → `CLOSED`.
 ## BUG-20261010-01 — async timeout lets the pipeline thread and an async thread write the response concurrently
 
 - **Date** : 2026-10-10
-- **Statut** : FIXED (Phase 5 Task 5.6 commit `fix(core): async timeout error dispatch and listener event order`)
+- **Statut** : PARTIAL — data race FIXED (Task 5.6 + fix round 1); residual gap below (threads the application manages itself)
 - **Module touché** : `foy-core` (`ChappeServletBridge.runPipeline`, `ServletOutputStreamImpl`, `ResponsePipe`)
 - **Symptôme** : after an `AsyncContext` timeout, `awaitAsyncIfStarted` returns while the async
   thread (`AsyncContext.start`) may still be writing. The pipeline thread then runs
@@ -449,3 +449,16 @@ Statuts : `OPEN` → `INVESTIGATING` → `FIXED` (commit hash) → `CLOSED`.
     `startAsync` re-opens the output (`openOutput`). Tests: `ResponseOutputFenceTest`,
     `ServletAsyncEndToEndTest.lateAsyncWritesFailOnceTheTimeoutFired` and
     `aCommittedResponseTimingOutStopsTheStaleWriter` (writer looping past the timeout, latch-driven).
+  - 2026-10-10 (Task 5.6 fix round 1) : (a) lock-order deadlock fixed: PrintWriter's println(x),
+    printf and format hold the writer monitor before calling write(); `ResponseWriter` now overrides
+    them to take the stream lock first, so the order is always stream lock → monitor (test
+    `printlnOnOneThreadAndFlushBufferOnAnotherDoNotDeadlock`, hung 10 s before). (b) Per-cycle claim:
+    `AsyncContext.start` registers its virtual thread before it runs; when a cycle ends those threads
+    are retired for good (`claimOutput(cycleThreads)`), so a re-opened output (new `startAsync`)
+    does not let them write again. (c) Every cycle, including one opened by an ASYNC target that then
+    throws, ends in `ChappeServletBridge.runAsyncCycles` (claim, onError, container completion).
+    (d) `finish`/`abort` are mutually exclusive (one `AtomicBoolean` claimed by compare-and-set).
+    **Residual gap** : a thread the application created itself (its own executor, not
+    `AsyncContext.start`) is refused from the end of its cycle only until a later cycle re-opens
+    the output; it is not known to the container, so it cannot be retired. Memory safety holds
+    (every output operation takes the lock); only the logical interleaving of bytes is the app's.

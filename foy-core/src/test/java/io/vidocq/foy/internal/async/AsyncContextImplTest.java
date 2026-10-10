@@ -102,6 +102,47 @@ class AsyncContextImplTest {
         assertEquals(List.of("fence", "onTimeout"), order);
     }
 
+    /** Fix round 1: a complete() that lands between the timeout and onTimeout wins, no onTimeout. */
+    @Test
+    void aCompleteRacingTheTimeoutSuppressesOnTimeout() {
+        var ctx = newAsync();
+        ctx.setTimeout(10);
+        var recorder = new Recorder();
+        ctx.addListener(recorder);
+        // onResume runs after the wait timed out and before the listeners: the app completes there.
+        assertEquals(CycleEnd.COMPLETE, ctx.awaitCycleEnd(ctx::complete));
+        assertFalse(ctx.timedOut());
+        assertEquals(List.of(), recorder.events);
+    }
+
+    @Test
+    void aCompleteRacingAFailureSuppressesOnError() {
+        var ctx = newAsync();
+        var recorder = new Recorder();
+        ctx.addListener(recorder);
+        ctx.fail(new IOException("client gone"));
+        assertEquals(CycleEnd.COMPLETE, ctx.awaitCycleEnd(ctx::complete));
+        assertEquals(List.of(), recorder.events);
+    }
+
+    @Test
+    void aContainerCompletedCycleRefusesDispatchAndIgnoresComplete() {
+        var ctx = newAsync();
+        ctx.fail(new IllegalStateException("servlet threw"));
+        assertEquals(CycleEnd.ERROR, ctx.awaitCycleEnd(NO_FENCE));
+        assertTrue(ctx.containerCompleted());
+        assertThrows(IllegalStateException.class, () -> ctx.dispatch("/late"));
+        assertDoesNotThrow(ctx::complete);
+    }
+
+    @Test
+    void startRegistersItsThreadBeforeRunning() throws Exception {
+        var ctx = newAsync();
+        CompletableFuture<Thread> captured = new CompletableFuture<>();
+        ctx.start(() -> captured.complete(Thread.currentThread()));
+        assertTrue(ctx.startedThreads().contains(captured.get(1, TimeUnit.SECONDS)));
+    }
+
     @Test
     void listenerCompletingInOnTimeoutEndsWithComplete() {
         var ctx = newAsync();

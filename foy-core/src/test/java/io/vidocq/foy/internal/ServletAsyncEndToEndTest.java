@@ -279,6 +279,104 @@ class ServletAsyncEndToEndTest {
         assertEquals(List.of("onError", "onComplete"), recorder.events);
     }
 
+    /** Fix round 1: a servlet throwing after startAsync fails its cycle: onError, error page, onComplete. */
+    @Test
+    void servletThrowingAfterStartAsyncGoesThroughOnErrorAndTheErrorPage() throws Exception {
+        var recorder = new Recorder();
+        var late = new CompletableFuture<String>();
+        HttpServlet s = new HttpServlet() {
+            @Override
+            protected void doGet(HttpServletRequest req, HttpServletResponse resp) {
+                AsyncContext ac = req.startAsync();
+                ac.addListener(recorder);
+                Thread.ofVirtual().start(() -> {
+                    try {
+                        recorder.completed.await();
+                        ac.complete(); // a no-op on a container-completed cycle
+                        try { ac.dispatch("/x"); late.complete("dispatch accepted"); }
+                        catch (IllegalStateException e) { late.complete("ISE"); }
+                    } catch (Throwable t) { late.complete(t.toString()); }
+                });
+                throw new IllegalStateException("thrown after startAsync");
+            }
+        };
+        startWithErrorPage(s, "/throws");
+
+        HttpResponse<String> r = get("/throws");
+        assertEquals(500, r.statusCode());
+        assertEquals("err:500", r.body());
+        assertEquals(List.of("onError", "onComplete"), recorder.events);
+        assertEquals("ISE", late.get(5, TimeUnit.SECONDS));
+    }
+
+    /**
+     * Fix round 1: an ASYNC target that opens a new cycle and then throws ends THAT cycle: its
+     * listeners hear onError and onComplete, its threads lose the response.
+     */
+    @Test
+    void asyncTargetStartingAsyncThenThrowingEndsTheNewCycle() throws Exception {
+        var first = new Recorder();
+        var second = new Recorder();
+        var staleWrite = new CompletableFuture<Throwable>();
+        HttpServlet origin = new HttpServlet() {
+            @Override
+            protected void doGet(HttpServletRequest req, HttpServletResponse resp) {
+                AsyncContext ac = req.startAsync();
+                ac.addListener(first);
+                ac.dispatch("/target");
+            }
+        };
+        HttpServlet target = new HttpServlet() {
+            @Override
+            protected void doGet(HttpServletRequest req, HttpServletResponse resp) {
+                AsyncContext ac = req.startAsync();
+                ac.addListener(second);
+                ac.start(() -> {
+                    try {
+                        second.completed.await();
+                        ac.getResponse().getOutputStream().write('x');
+                        staleWrite.complete(null);
+                    } catch (Throwable t) { staleWrite.complete(t); }
+                });
+                throw new IllegalStateException("target threw after startAsync");
+            }
+        };
+        startMany(List.of(
+                new ServletDispatcher.Mapping(UrlPatternMatcher.of("/origin"), origin, "O"),
+                new ServletDispatcher.Mapping(UrlPatternMatcher.of("/target"), target, "T")));
+
+        HttpResponse<String> r = get("/origin");
+        assertEquals(500, r.statusCode());
+        assertEquals(List.of("onStartAsync"), first.events);
+        assertEquals(List.of("onError", "onComplete"), second.events);
+        assertInstanceOf(IOException.class, staleWrite.get(5, TimeUnit.SECONDS));
+    }
+
+    @Test
+    void isAsyncStartedIsFalseDuringTheTimeoutErrorDispatch() throws Exception {
+        HttpServlet s = new HttpServlet() {
+            @Override
+            protected void doGet(HttpServletRequest req, HttpServletResponse resp) {
+                req.startAsync().setTimeout(20);
+            }
+        };
+        HttpServlet errorPage = new HttpServlet() {
+            @Override
+            protected void service(HttpServletRequest req, HttpServletResponse resp) throws IOException {
+                resp.getWriter().write("asyncStarted=" + req.isAsyncStarted());
+            }
+        };
+        var ctx = new VidocqServletContext("/");
+        ctx.setErrorPages(new ErrorPageRegistry().register(500, "/err"));
+        startMany(ctx, List.of(
+                new ServletDispatcher.Mapping(UrlPatternMatcher.of("/timeout"), s, "S"),
+                new ServletDispatcher.Mapping(UrlPatternMatcher.of("/err"), errorPage, "E")));
+
+        HttpResponse<String> r = get("/timeout");
+        assertEquals(500, r.statusCode());
+        assertEquals("asyncStarted=false", r.body());
+    }
+
     /**
      * BUG-20261010-01: an async thread still writing when the timeout fires must not race the
      * pipeline thread. From the timeout on, the stale thread's writes fail; the error response is

@@ -24,7 +24,11 @@ import jakarta.servlet.WriteListener;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.util.Collection;
 import java.util.Objects;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.locks.ReentrantLock;
 
 /**
@@ -100,13 +104,27 @@ public final class ServletOutputStreamImpl extends ServletOutputStream {
     /** From now on only the calling thread may write (end of an async cycle). */
     void claim() { this.claimant = Thread.currentThread(); }
 
+    /**
+     * Like {@link #claim()}, and {@code retired} (the threads an ended cycle started) are refused
+     * for good: a later {@link #open()} by a new cycle does not let them write again.
+     */
+    void claim(Collection<Thread> retired) {
+        this.retired.addAll(retired);
+        claim();
+    }
+
+    /** Threads of ended cycles, never allowed to write again. */
+    private final Set<Thread> retired = ConcurrentHashMap.newKeySet();
+
     /** Any thread may write again (a new async cycle started). */
     void open() { this.claimant = null; }
 
     /** Whether the calling thread may write: no claim, or the claiming thread. */
     boolean writableByCurrentThread() {
+        Thread current = Thread.currentThread();
+        if (!retired.isEmpty() && retired.contains(current)) return false;
         Thread c = claimant;
-        return c == null || c == Thread.currentThread();
+        return c == null || c == current;
     }
 
     private void checkWritable() throws IOException {
@@ -281,7 +299,7 @@ public final class ServletOutputStreamImpl extends ServletOutputStream {
     void finish() throws IOException {
         lock.lock();
         try {
-            if (pipe == null || ended) return;
+            if (pipe == null || ended.get()) return;
             long declared = owner.declaredLength();
             if (declared >= 0 && written < declared) {
                 abort(new IOException("response body shorter than its Content-Length ("
@@ -289,8 +307,8 @@ public final class ServletOutputStreamImpl extends ServletOutputStream {
                 return;
             }
             push();
-            ended = true;
-            pipe.finish();
+            // finish and abort are mutually exclusive: whichever claims the end first wins.
+            if (ended.compareAndSet(false, true)) pipe.finish();
         } finally {
             lock.unlock();
         }
@@ -303,8 +321,7 @@ public final class ServletOutputStreamImpl extends ServletOutputStream {
      */
     void abort(Throwable cause) {
         ResponsePipe target = pipe;
-        if (target == null || ended) return;
-        ended = true;
+        if (target == null || !ended.compareAndSet(false, true)) return;
         target.abort(cause);
         lock.lock();
         try {
@@ -315,7 +332,7 @@ public final class ServletOutputStreamImpl extends ServletOutputStream {
     }
 
     /** Set once the live body ended, normally or not. */
-    private volatile boolean ended;
+    private final AtomicBoolean ended = new AtomicBoolean();
 
     public byte[] toByteArray() {
         lock.lock();

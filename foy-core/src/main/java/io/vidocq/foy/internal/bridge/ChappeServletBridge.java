@@ -34,6 +34,7 @@ import io.vidocq.foy.internal.dispatcher.FilterRegistry;
 import io.vidocq.foy.internal.dispatcher.RequestDispatcherImpl;
 import io.vidocq.foy.internal.dispatcher.ServletDispatcher;
 import io.vidocq.foy.internal.async.AsyncContextImpl;
+import io.vidocq.foy.internal.async.AsyncContextImpl.CycleEnd;
 import io.vidocq.foy.internal.dispatcher.VidocqFilterChain;
 import io.vidocq.foy.internal.error.ErrorPageRegistry;
 import io.vidocq.foy.internal.http.CookieCodec;
@@ -376,7 +377,6 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
 
         registry.fireRequestInitialized(servletContext, req);
         Throwable thrown = null;
-        AsyncContextImpl lastCycle = null;
         try {
             var enforcer = new SecurityConstraintEnforcer(
                     servletContext.securityProvider());
@@ -385,16 +385,15 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
                 return completed(req, res);
             }
             invoke(target, req, res, DispatcherType.REQUEST, requestChain);
-            AsyncEnd end = awaitAsyncIfStarted(req, res);
-            if (end != null) {
-                thrown = end.thrown();
-                lastCycle = end.lastCycle();
-            }
         } catch (ServletException | IOException | RuntimeException e) {
             thrown = e;
-            // The servlet threw after startAsync: the cycle ends here, its threads lose the response.
-            lastCycle = req.asyncContextInternal();
-            if (lastCycle != null) res.claimOutput();
+        }
+        // An async cycle started by the servlet (even one that then threw) ends in runAsyncCycles.
+        AsyncEnd end = runAsyncCycles(req, res, thrown);
+        AsyncContextImpl lastCycle = null;
+        if (end != null) {
+            thrown = end.thrown();
+            lastCycle = end.lastCycle();
         }
         registry.fireRequestDestroyed(servletContext, req);
 
@@ -533,36 +532,53 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
     }
 
     /**
-     * If the servlet started async, waits for each async cycle to end (Servlet 6.1 section 2.3.3.3)
-     * on this pipeline thread and acts on how it ended:
+     * Ends every async cycle of the request (Servlet 6.1 section 2.3.3.3) on this pipeline thread,
+     * in one place for the REQUEST dispatch and every ASYNC dispatch. Each cycle is awaited through
+     * {@link AsyncContextImpl#awaitCycleEnd}, which first claims the response output for this thread
+     * (the cycle's threads lose it for good: BUG-20261010-01), then acts on how it ended:
      * <ul>
      *   <li>{@code complete()}: done;</li>
      *   <li>{@code dispatch()}: the target runs under {@link DispatcherType#ASYNC}; when it opens a
-     *       new cycle ({@code startAsync}) that cycle is awaited in turn, otherwise done;</li>
+     *       new cycle ({@code startAsync}) that cycle is ended in turn, otherwise done;</li>
      *   <li>timeout (no listener completed or dispatched): an error dispatch with status 500
      *       ({@code sendError(500)}, then {@link #maybeHandleError} dispatches the error page, or the
      *       plain 500 stands); a live body cannot carry an error page and is aborted;</li>
      *   <li>error ({@link AsyncContextImpl#fail}): the failure is returned for the error machinery
      *       (an error page or a 500, an aborted body once committed).</li>
      * </ul>
-     * <p>When a cycle ends, the response output is claimed by this thread first, so a thread of the
-     * cycle still writing fails instead of racing the listeners and the error dispatch
-     * (BUG-20261010-01). The caller fires {@code onComplete} on {@link AsyncEnd#lastCycle()} once the
-     * error dispatch is over. Returns {@code null} when the servlet did not start async.</p>
+     * <p>A dispatch (REQUEST or ASYNC) that throws after its {@code startAsync} fails the cycle it
+     * opened: {@code onError}, then the error path above, and the container completes the cycle.
+     * An exception thrown after the application already completed or dispatched the cycle goes
+     * to the error machinery as is. The caller fires {@code onComplete} on
+     * {@link AsyncEnd#lastCycle()} once the error dispatch is over.</p>
+     *
+     * @param dispatchFailure what the REQUEST dispatch threw, or {@code null}
+     * @return {@code null} when the request never started async
      */
-    private AsyncEnd awaitAsyncIfStarted(HttpServletRequestImpl req, HttpServletResponseImpl res) {
+    private AsyncEnd runAsyncCycles(HttpServletRequestImpl req, HttpServletResponseImpl res,
+                                    Throwable dispatchFailure) {
         AsyncContextImpl ac = req.asyncContextInternal();
         if (ac == null) return null;
+        Throwable pending = dispatchFailure;
         // A redispatched servlet may call startAsync + dispatch again (section 2.3.3.3,
         // startAsyncAgainTest*); bounded to 16 dispatches against endless loops.
         for (int i = 0; ; i++) {
-            switch (ac.awaitCycleEnd(res::claimOutput)) {
-                case COMPLETE -> { return new AsyncEnd(ac, null); }
+            if (pending != null) ac.fail(pending);
+            AsyncContextImpl cycle = ac;
+            CycleEnd outcome = cycle.awaitCycleEnd(() -> res.claimOutput(cycle.startedThreads()));
+            // The failure was not routed to the cycle (already completed or dispatched): it goes to
+            // the error machinery as is, and no dispatch follows.
+            if (pending != null && cycle.error() != pending && outcome != CycleEnd.TIMEOUT) {
+                return new AsyncEnd(cycle, pending);
+            }
+            pending = null;
+            switch (outcome) {
+                case COMPLETE -> { return new AsyncEnd(cycle, null); }
                 case TIMEOUT -> {
                     timeoutErrorDispatch(res);
-                    return new AsyncEnd(ac, null);
+                    return new AsyncEnd(cycle, null);
                 }
-                case ERROR -> { return new AsyncEnd(ac, ac.error()); }
+                case ERROR -> { return new AsyncEnd(cycle, cycle.error()); }
                 case DISPATCH -> { /* below */ }
             }
             if (i >= 16) {
@@ -609,11 +625,11 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
                     invoke(target, wrapped, res, DispatcherType.ASYNC);
                 }
             } catch (ServletException | IOException | RuntimeException e) {
-                return new AsyncEnd(ac, e);
+                pending = e;
             }
-            // The redispatched target may have opened a new cycle.
+            // The redispatched target may have opened a new cycle (also when it threw afterwards).
             AsyncContextImpl next = req.asyncContextInternal();
-            if (next == null) return new AsyncEnd(ac, null);
+            if (next == null) return new AsyncEnd(ac, pending);
             ac = next;
         }
     }

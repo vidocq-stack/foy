@@ -112,6 +112,83 @@ class ResponseOutputFenceTest {
         assertEquals(1, failures.size());
     }
 
+    /** Fix round 1: println/printf (writer monitor first) against flushBuffer (stream lock first). */
+    @Test
+    void printlnOnOneThreadAndFlushBufferOnAnotherDoNotDeadlock() throws Exception {
+        var res = new HttpServletResponseImpl();
+        res.setBufferSize(1 << 22);
+        var writer = res.getWriter();
+        var go = new CountDownLatch(1);
+        var printer = new CompletableFuture<Throwable>();
+        var flusher = new CompletableFuture<Throwable>();
+        Thread.ofVirtual().start(() -> {
+            try {
+                go.await();
+                for (int i = 0; i < 5_000; i++) {
+                    writer.println("line");
+                    writer.printf("%d%n", i);
+                    writer.println(i);
+                }
+                printer.complete(null);
+            } catch (Throwable t) { printer.complete(t); }
+        });
+        Thread.ofVirtual().start(() -> {
+            try {
+                go.await();
+                for (int i = 0; i < 5_000; i++) res.flushBuffer();
+                flusher.complete(null);
+            } catch (Throwable t) { flusher.complete(t); }
+        });
+        go.countDown();
+        assertNull(printer.get(10, TimeUnit.SECONDS), "println/printf side hung or failed");
+        assertNull(flusher.get(10, TimeUnit.SECONDS), "flushBuffer side hung or failed");
+    }
+
+    @Test
+    void aRetiredCycleThreadStaysRefusedAfterANewCycleOpensTheOutput() throws Exception {
+        var res = new HttpServletResponseImpl();
+        var out = res.getOutputStream();
+        var stale = new CompletableFuture<Throwable>();
+        var release = new CountDownLatch(1);
+        Thread staleThread = Thread.ofVirtual().unstarted(() -> {
+            try { release.await(); out.write('s'); stale.complete(null); }
+            catch (Throwable t) { stale.complete(t); }
+        });
+        res.claimOutput(java.util.List.of(staleThread)); // cycle N ends
+        res.openOutput(_ -> {});                         // cycle N+1 opens the output again
+        staleThread.start();
+        release.countDown();
+        assertInstanceOf(IOException.class, stale.get(5, TimeUnit.SECONDS));
+        assertNull(onOtherThread(() -> out.write('n')), "a thread of the new cycle may write");
+        assertEquals("n", body(res));
+    }
+
+    @Test
+    void finishThenAbortLeavesAWholeBody() throws Exception {
+        var res = new HttpServletResponseImpl();
+        var pipe = new AtomicReference<ResponsePipe>();
+        res.bindCommitTarget(r -> pipe.set(r.startStreaming()));
+        var out = res.getOutputStream();
+        out.write('a');
+        out.flush();
+        res.finishBody();
+        res.abortBody(new IOException("late abort"));
+        assertArrayEquals(new byte[] {'a'}, pipe.get().reader().readAllBytes());
+    }
+
+    @Test
+    void abortThenFinishLeavesAnAbortedBody() throws Exception {
+        var res = new HttpServletResponseImpl();
+        var pipe = new AtomicReference<ResponsePipe>();
+        res.bindCommitTarget(r -> pipe.set(r.startStreaming()));
+        var out = res.getOutputStream();
+        out.write('a');
+        out.flush();
+        res.abortBody(new IOException("abort"));
+        res.finishBody();
+        assertThrows(IOException.class, () -> pipe.get().reader().readAllBytes());
+    }
+
     @Test
     void writersOnTwoThreadsAreSerialised() throws Exception {
         var res = new HttpServletResponseImpl();

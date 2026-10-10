@@ -813,7 +813,8 @@ public final class HttpServletRequestImpl implements HttpServletRequest {
         // reste true après un complete() pendant la fin du service(). Le flag bascule
         // à false dès qu'un dispatch est planifié (le request original cède sa place
         // au servlet redispatched, cf. TCK asyncStartedTest4).
-        return asyncContext != null && !asyncContext.hasDispatch();
+        // Once the container completed a timed-out or failed cycle (error dispatch), async is over.
+        return asyncContext != null && !asyncContext.hasDispatch() && !asyncContext.containerCompleted();
     }
     @Override public boolean isAsyncSupported() { return asyncSupported; }
     @Override public AsyncContext getAsyncContext() {
