@@ -367,6 +367,79 @@ class FoyWebExtensionTest {
 
     /** One application loader over several compiled archives. */
     @Test
+    @DisplayName("@RequestScoped: an application compiled with vauban's processor gets one instance per request, concurrent requests apart (vauban#147)")
+    void requestScopedThroughFoyChappeBoot() throws Exception {
+        var result = compile(ProcessorPath.CLASS_PATH, """
+                package request.app;
+
+                @jakarta.enterprise.context.RequestScoped
+                public class Token {
+                    private final String id = java.util.UUID.randomUUID().toString();
+
+                    public String id() {
+                        return id;
+                    }
+                }
+                """, """
+                package request.app;
+
+                @jakarta.servlet.annotation.WebServlet("/token")
+                public class TokenServlet extends jakarta.servlet.http.HttpServlet {
+                    @jakarta.inject.Inject
+                    Token first;
+
+                    @jakarta.inject.Inject
+                    Token second;
+
+                    @Override
+                    protected void doGet(jakarta.servlet.http.HttpServletRequest q,
+                            jakarta.servlet.http.HttpServletResponse r) throws java.io.IOException {
+                        String before = first.id();
+                        try {
+                            Thread.sleep(50); // let the concurrent requests overlap
+                        } catch (InterruptedException e) {
+                            Thread.currentThread().interrupt();
+                        }
+                        r.getWriter().write(before + "|" + second.id());
+                    }
+                }
+                """);
+        assertTrue(result.success(), result::messages);
+
+        try (var loader = result.loader();
+             var container = withTccl(loader, () -> boot(loader))) {
+            var mounted = withTccl(loader, () -> FoyChappeBoot.builder()
+                    .beanManager(container.getBeanManager()).classLoader(loader).contextPath("/").build().orElseThrow());
+            int port;
+            try (var s = new ServerSocket(0)) {
+                port = s.getLocalPort();
+            }
+            Server server = Server.builder().host("127.0.0.1").port(port).handler(mounted.handler()).build();
+            server.start();
+            try {
+                var client = HttpClient.newHttpClient();
+                var request = HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port + "/token")).build();
+                var futures = new ArrayList<java.util.concurrent.CompletableFuture<HttpResponse<String>>>();
+                for (int i = 0; i < 8; i++) {
+                    futures.add(client.sendAsync(request, HttpResponse.BodyHandlers.ofString()));
+                }
+                var ids = new java.util.HashSet<String>();
+                for (var future : futures) {
+                    var response = future.get();
+                    assertEquals(200, response.statusCode(), response::body);
+                    var parts = response.body().split("\\|");
+                    assertEquals(parts[0], parts[1], "one instance within a request: " + response.body());
+                    ids.add(parts[0]);
+                }
+                assertEquals(8, ids.size(), "one instance per request, concurrent requests apart: " + ids);
+            } finally {
+                server.stop();
+                mounted.close();
+            }
+        }
+    }
+
+    @Test
     @DisplayName("@SessionScoped: an application compiled with vauban's processor keeps one instance per HTTP session (foy#21)")
     void sessionScopedThroughFoyChappeBoot() throws Exception {
         var result = compile(ProcessorPath.CLASS_PATH, """
