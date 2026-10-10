@@ -203,8 +203,9 @@ partial in the chappe adapter + `SecurityProvider` SPI.
 
 ### 3.6 Scattered behavioral gaps (2026-06 diagnosis; resolved in Phase 4 except server push and Upgrade)
 
-`spec.errorpage` (4/4), `spec.serverpush` (7/8 — HTTP/2 server push through
-chappe), `spec.welcomefiles` (2/2), `spec.requestdispatcher` (13/20),
+`spec.errorpage` (4/4), `spec.serverpush` (accepted gap: 7 of 8 skipped through
+`servlet.tck.support.http2Push=false` — chappe has no h2c Upgrade nor PUSH_PROMISE writer, and push is
+deprecated in Servlet 6.1 in favour of 103 Early Hints; `newPushBuilder()` returns `null`), `spec.welcomefiles` (2/2), `spec.requestdispatcher` (13/20),
 `spec.srlistener` (5/13), `spec.i18n.encoding` (2/3), `compat.LeadingSlash`
 (2/2), `HttpUpgradeHandler` (1/1), plus singles visible in the per-class log.
 

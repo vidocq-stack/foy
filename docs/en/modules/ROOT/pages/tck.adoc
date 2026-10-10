@@ -10,6 +10,7 @@ This is a **measurement**, not a conformance claim. At the latest full run (`jak
 
 * **1714** tests run, **1649** passed, 0 failures / 65 errors — **96.2 %** raw (Phase 3 exit: 1587; Phase 2 exit: 928);
 * Phase 4 added the container default servlet and welcome files, `HttpServletMapping`, the dispatcher semantics, servlet-name filter mappings, request path canonicalisation, sessions and legacy descriptors; no class regressed and 25 improved;
+* HTTP/2 server push is an accepted gap: chappe has no h2c Upgrade nor PUSH_PROMISE writer and push is deprecated in Servlet 6.1 in favour of 103 Early Hints. `HttpServletRequest.newPushBuilder()` returns `null`, and the TCK switch `servlet.tck.support.http2Push=false` (surefire system property of the `tck` profile) turns the `ServerPushTests` errors into skipped tests.
 * the 65 remaining errors are security (37: FORM, BASIC, client certificate, deny-uncovered), streaming and non-blocking I/O (10: `ReadListener`, `WriteListener`, HTTP Upgrade, response trailers, `flushBuffer`), multipart (8), HTTP/2 server push (7) and JSP-dependent tests (3).
 
 Per-family breakdown:

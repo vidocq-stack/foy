@@ -738,6 +738,17 @@ public final class HttpServletRequestImpl implements HttpServletRequest {
         parsedParts = io.vidocq.foy.internal.http.MultipartParser.parse(
                 chappe.body().asInputStream(), boundary);
     }
+    /**
+     * Server push is not supported: chappe emits no PUSH_PROMISE frame, and push is deprecated in
+     * Servlet 6.1 in favour of 103 Early Hints. Returning {@code null} is the contract for
+     * "push unavailable" (HTTP/1.x, push disabled by the peer, or no support in the container).
+     *
+     * @return always {@code null}
+     */
+    @Override public jakarta.servlet.http.PushBuilder newPushBuilder() {
+        return null;
+    }
+
     @Override public <T extends HttpUpgradeHandler> T upgrade(Class<T> handlerClass) {
         throw new UnsupportedOperationException("upgrade not implemented");
     }

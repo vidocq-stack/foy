@@ -184,6 +184,7 @@
                             <useFile>false</useFile>
                             <systemPropertyVariables>
                                 <webServerHost>127.0.0.1</webServerHost>
+                                <servlet.tck.support.http2Push>false</servlet.tck.support.http2Push>
                                 <webServerPort>8080</webServerPort>
                                 <ts_home>${project.build.directory}/test-classes</ts_home>
                             </systemPropertyVariables>
