@@ -291,6 +291,8 @@ Add `foy-processor` to the compiler's annotation processor path. It generates, a
 [IMPORTANT]
 ====
 Foy does **not** (yet) expose `ServletContext`, `HttpServletRequest` or `HttpSession` as injectable CDI beans — there are no `@ApplicationScoped` / `@RequestScoped` / `@SessionScoped` producers for the Servlet API objects. Use the request/response parameters passed to `service()`/`doGet()`.
+
+[.tag-new]#NEW# Your own `@RequestScoped` beans do work: Foy activates the CDI request context for each request, under Vauban or any other CDI container. `@SessionScoped` beans do not: the session context is not activated (xref:reference.adoc#other-containers[Other CDI containers]).
 ====
 
 Servlet, Filter and Listener instances **are** resolved through the `BeanManager`, so they can `@Inject` your application beans:

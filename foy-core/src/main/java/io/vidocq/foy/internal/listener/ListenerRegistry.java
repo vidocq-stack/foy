@@ -76,6 +76,16 @@ public final class ListenerRegistry {
         programmatic.put(listener, isProgrammatic);
     }
 
+    /**
+     * Registers a request listener of the container itself, ahead of the application's: it sees a
+     * request first and is told last that it ended (destroyed events run in reverse order). Used for
+     * the CDI request context ({@link CdiRequestScopeListener}). Call it before the deployment
+     * serves requests.
+     */
+    public void addFirst(ServletRequestListener listener) {
+        requestListeners.add(0, listener);
+    }
+
     public boolean isProgrammatic(EventListener l) {
         return Boolean.TRUE.equals(programmatic.get(l));
     }

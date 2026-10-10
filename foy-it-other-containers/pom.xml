@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>io.vidocq.foy</groupId>
+        <artifactId>foy-parent</artifactId>
+        <version>0.4.0-SNAPSHOT</version>
+    </parent>
+
+    <artifactId>foy-it-other-containers</artifactId>
+    <packaging>pom</packaging>
+    <name>Foy :: Integration tests on other CDI containers</name>
+    <description>Portability proofs: the Foy jars, unchanged, on CDI containers other than Vauban
+        (vidocq-workspace#15).</description>
+
+    <properties>
+        <!-- Test vehicles: never released. -->
+        <maven.deploy.skip>true</maven.deploy.skip>
+        <maven.javadoc.skip>true</maven.javadoc.skip>
+        <maven.source.skip>true</maven.source.skip>
+        <gpg.skip>true</gpg.skip>
+    </properties>
+
+    <modules>
+        <module>foy-it-weld</module>
+    </modules>
+
+    <build>
+        <plugins>
+            <!-- The release profile publishes through central-publishing, which ignores
+                 maven.deploy.skip: without this, a release would push these modules to Central. -->
+            <plugin>
+                <groupId>org.sonatype.central</groupId>
+                <artifactId>central-publishing-maven-plugin</artifactId>
+                <configuration>
+                    <skipPublishing>true</skipPublishing>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
+</project>

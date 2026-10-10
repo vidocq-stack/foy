@@ -393,3 +393,23 @@ Statuts : `OPEN` → `INVESTIGATING` → `FIXED` (commit hash) → `CLOSED`.
 - **Investigations** :
   - 2026-10-09 (Phase 4 final review) : found in review. Fix direction: claim the state change
     under the lock, fire the listener after releasing it, with a state flag replacing the lock.
+
+## BUG-20261010-01 — the CDI request context is never active for a servlet request
+
+- **Date** : 2026-10-10
+- **Statut** : FIXED (branch `feat/foy-request-scope-weld`, foy#18)
+- **Module touché** : `foy-core`, `foy-chappe`
+- **Symptôme** : a `@RequestScoped` bean injected into a servlet fails on first use:
+  `WELD-001303: No active contexts for scope type jakarta.enterprise.context.RequestScoped` under Weld,
+  and the same under Vauban; no `@Initialized(RequestScoped.class)` event fires.
+- **Reproduction minimale** : `foy-it-weld`, `WeldPortabilityTest.requestScopedBeanIsOnePerRequest`
+  and `requestContextEventsFire` on `main`.
+- **Hypothèse de cause** : nothing in Foy activated the request context; a Servlet container must make it
+  active during `service()` and the request listeners (CDI 4.1 §6.7.1). Every test used `@Dependent` or
+  `@ApplicationScoped` beans only.
+- **Correction** : `CdiRequestScopeListener` (foy-core) activates the context through
+  `RequestContextController` and deactivates it at the end of the request, on the same thread;
+  `FoyChappeBoot` registers it ahead of the application's request listeners
+  (`ListenerRegistry.addFirst`) whenever a `BeanManager` is given. A `BeanManager` that cannot supply a
+  controller leaves the request without a context, as before. The session context is still not activated
+  (no portable API).

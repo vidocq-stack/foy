@@ -39,6 +39,7 @@ import io.vidocq.foy.internal.webxml.FragmentMerger;
 import io.vidocq.foy.internal.webxml.FragmentOrderer;
 import io.vidocq.foy.internal.webxml.WebAppDescriptor;
 import io.vidocq.foy.internal.webxml.WebXmlParser;
+import io.vidocq.foy.internal.listener.CdiRequestScopeListener;
 import jakarta.enterprise.inject.spi.BeanManager;
 import jakarta.servlet.ServletException;
 
@@ -284,6 +285,11 @@ public final class FoyChappeBoot {
                         .withVirtualServerName(virtualServerName));
             } catch (RuntimeException e) {
                 throw new ServletException("Foy deployment failed: " + e.getMessage(), e);
+            }
+
+            if (beanManager != null) {
+                // The CDI request context, active for each request under any container (foy#18).
+                deployment.listeners().addFirst(new CdiRequestScopeListener(beanManager));
             }
 
             String mountPrefix = "/".equals(path) ? "" : path;

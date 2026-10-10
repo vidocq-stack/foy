@@ -81,6 +81,7 @@ Form-based and Digest authentication are **not implemented** (the `spec.security
 
 * `Servlet`/`Filter`/`Listener` instances are resolved through the `BeanManager`, so they can carry `@Inject` for application beans.
 * `ServletContext`, `HttpServletRequest` and `HttpSession` are **not** exposed as CDI beans yet — no `@ApplicationScoped`/`@RequestScoped`/`@SessionScoped` producers exist for them.
+* [.tag-new]#NEW# The CDI request context is active for each request, under any container, so your own `@RequestScoped` beans work; the session context is not activated (xref:reference.adoc#other-containers[Other CDI containers]).
 
 Resolution is fully build-time through Vauban — no dynamic proxy, no hot-path reflection, AOT-friendly (GraalVM, Leyden CDS).
 

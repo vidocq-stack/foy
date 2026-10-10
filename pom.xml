@@ -82,6 +82,7 @@
         <module>foy-core</module>
         <module>foy-cdi-vauban</module>
         <module>foy-chappe</module>
+        <module>foy-it-other-containers</module>
     </modules>
 
     <dependencyManagement>

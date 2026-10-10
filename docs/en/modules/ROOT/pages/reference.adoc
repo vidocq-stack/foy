@@ -127,7 +127,7 @@ The `io.vidocq.foy.internal.*` packages are exported to allow advanced integrati
 | Returns a fresh `Builder`.
 
 | `Builder.beanManager(BeanManager bm)`
-| **Required.** Vauban `BeanManager` from which `@WebServlet` / `@WebFilter` / `@WebListener` beans will be resolved.
+| **Required.** The `BeanManager` of the CDI container — Vauban's, Weld's, any CDI 4 container's — from which `@WebServlet` / `@WebFilter` / `@WebListener` beans will be resolved. [.tag-new]#NEW# With it, Foy also activates the CDI request context for each request; see <<other-containers>>.
 
 | `Builder.contextPath(String path)`
 | URL prefix served by this container. Default: `"/"`.
@@ -235,6 +235,7 @@ The `io.vidocq.foy.internal.*` packages are exported to allow advanced integrati
 
 | `<jsp-config>`, `<resource-ref>`, `<env-entry>` and the other Jakarta EE environment elements
 | ignored
+| no JSP engine and no naming environment in Foy
 |===
 
 The `version` and `metadata-complete` attributes of `<web-app>` and `<web-fragment>` are honoured. A DOCTYPE (Servlet 2.2 and 2.3 descriptors) is accepted without being resolved: the public id sets the version, a version before 2.5 implies `metadata-complete`, and an entity reference is rejected (see xref:usage.adoc#legacy-deployment-descriptors[Legacy deployment descriptors]).
@@ -379,11 +380,22 @@ On a forward the mapping is that of the target; `jakarta.servlet.forward.mapping
 | Not supported, not planned.
 |===
 
+[#other-containers]
+== Other CDI containers [.tag-new]#NEW#
+
+Foy does not need Vauban: give `FoyChappeBoot` the `BeanManager` of any CDI 4 container (`CDI.current().getBeanManager()`). Without `foy-cdi-vauban`'s build-time index, Foy finds the web components by walking the container's `Servlet`, `Filter` and `EventListener` beans (foy#18).
+
+* **The request context is active for each request** — Foy activates it through the standard `RequestContextController` before the application's request listeners, and deactivates it after them, on the thread that served the request (an asynchronous request included: Foy waits for it). `@RequestScoped` beans work in servlets, filters and listeners, and the container fires `@Initialized(RequestScoped.class)` and `@Destroyed(RequestScoped.class)`. If the context is already active (an embedding runtime activated it), Foy leaves it alone. Up to {release-version}, Foy activated it under no container, Vauban included (BUG-20261010-01).
+* **No session context yet** — `@SessionScoped` has no portable activation API: CDI leaves the session context to the container, and each one has its own mechanism. Foy does not activate it; use `HttpSession` attributes.
+
+`foy-it-weld`, part of every build and never published, runs Foy on Chappe with Weld SE 6.0 (CDI 4.1) on a class path, without `foy-cdi-vauban`: a servlet, a filter and a listener get an injected bean, a `@RequestScoped` bean is one instance per request, and the request context events fire. No Open Liberty module: on a server, use the server's own Servlet container.
+
 == Compatibility
 
 * Java 25 (LTS)
 * Maven 3.9.16
 * Jakarta Servlet 6.1
+* Any CDI 4 container (Vauban, Weld) — see <<other-containers>>
 * Strict Java Modules, virtual threads (one VT per request)
 * AOT-friendly (no reflection, no dynamic proxy)
 
