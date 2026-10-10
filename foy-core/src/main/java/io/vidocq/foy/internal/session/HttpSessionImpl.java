@@ -257,9 +257,14 @@ public final class HttpSessionImpl implements HttpSession {
         return witness == null ? created : witness;
     }
 
-    /** Detaches the CDI session context's state, for its destruction; {@code null} when none. */
-    public Object takeScopeState() {
-        return scopeState.getAndSet(null);
+    /**
+     * Detaches the CDI session context's state for its destruction, leaving {@code tombstone} in its
+     * place in one atomic step, so that a later {@link #scopeState(Supplier)} cannot install new
+     * state on a session whose state was destroyed. Returns the detached state, or whatever was
+     * there ({@code null} when none).
+     */
+    public Object takeScopeState(Object tombstone) {
+        return scopeState.getAndSet(tombstone);
     }
 
     private void checkValid() {

@@ -20,6 +20,7 @@
 package io.vidocq.foy.internal.cdi;
 
 import io.vidocq.foy.internal.session.HttpSessionImpl;
+import jakarta.enterprise.context.ContextNotActiveException;
 import jakarta.enterprise.context.spi.Contextual;
 import jakarta.enterprise.context.spi.CreationalContext;
 
@@ -55,11 +56,32 @@ final class SessionBeanStore {
     /** In creation order; destroyed in reverse. Guarded by {@link #lock}. */
     private final Map<Contextual<?>, Entry<?>> entries = new LinkedHashMap<>();
 
+    /**
+     * Left in the session's slot by {@link #take}: the beans of that session were destroyed, and
+     * {@link #of} refuses to create a store, and an instance nobody would destroy, in their place.
+     */
+    private static final Object DESTROYED = new Object() {
+        @Override public String toString() { return "destroyed session beans"; }
+    };
+
     private SessionBeanStore() {}
 
-    /** The store of {@code session}, created on first use. */
+    /**
+     * The store of {@code session}, created on first use.
+     *
+     * @throws ContextNotActiveException when the beans of {@code session} were already destroyed
+     *         ({@link #take}): a {@code @PreDestroy} callback or a late request resolving a session
+     *         bean not yet created in that session. Creating it would leak an instance that is never
+     *         destroyed; the refusal is logged at WARNING.
+     */
     static SessionBeanStore of(HttpSessionImpl session) {
-        return (SessionBeanStore) session.scopeState(SessionBeanStore::new);
+        Object state = session.scopeState(SessionBeanStore::new);
+        if (state instanceof SessionBeanStore store) return store;
+        LOG.log(System.Logger.Level.WARNING,
+                "a session-scoped bean was requested after the beans of session {0} were destroyed",
+                session.getId());
+        throw new ContextNotActiveException("the session-scoped beans of session " + session.getId()
+                + " were already destroyed");
     }
 
     /** The store of {@code session}, or {@code null} when no session bean was created in it. */
@@ -67,9 +89,12 @@ final class SessionBeanStore {
         return session.scopeState() instanceof SessionBeanStore store ? store : null;
     }
 
-    /** Detaches the store of {@code session} for its destruction; {@code null} when none. */
+    /**
+     * Detaches the store of {@code session} for its destruction; {@code null} when none. From then
+     * on, {@link #of} refuses to create another store for that session.
+     */
     static SessionBeanStore take(HttpSessionImpl session) {
-        return session.takeScopeState() instanceof SessionBeanStore store ? store : null;
+        return session.takeScopeState(DESTROYED) instanceof SessionBeanStore store ? store : null;
     }
 
     /** The instance of {@code contextual} in this session, or {@code null}. */

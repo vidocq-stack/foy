@@ -23,6 +23,7 @@ import io.vidocq.foy.internal.LogCapture;
 import io.vidocq.foy.internal.cdi.CdiFakes.FakeBean;
 import io.vidocq.foy.internal.session.HttpSessionImpl;
 import io.vidocq.foy.internal.session.SessionManager;
+import jakarta.enterprise.context.ContextNotActiveException;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
@@ -81,5 +82,18 @@ class SessionBeanStoreTest {
             assertTrue(log.warnings().getFirst().contains("FakeBean[failing]"), log.warnings()::toString);
         }
         assertEquals(List.of("failing#1", "healthy#1"), order);
+    }
+
+    @Test
+    void aDetachedStoreIsNotRecreated() {
+        HttpSessionImpl session = manager.createNew();
+        SessionBeanStore.of(session);
+        SessionBeanStore.take(session).destroyAll();
+        try (var log = LogCapture.of(SessionBeanStore.class.getName())) {
+            assertThrows(ContextNotActiveException.class, () -> SessionBeanStore.of(session));
+            assertEquals(1, log.warnings().size(), log.warnings()::toString);
+        }
+        assertNull(SessionBeanStore.existing(session));
+        assertNull(SessionBeanStore.take(session));
     }
 }
