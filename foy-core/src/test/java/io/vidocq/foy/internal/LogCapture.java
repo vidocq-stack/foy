@@ -58,6 +58,10 @@ public final class LogCapture implements AutoCloseable {
                     .toList();
         }
 
+        List<Throwable> thrown() {
+            return records.stream().map(LogRecord::getThrown).filter(java.util.Objects::nonNull).toList();
+        }
+
         void close() {
             logger.removeHandler(handler);
             logger.setUseParentHandlers(useParentHandlers);
@@ -82,6 +86,11 @@ public final class LogCapture implements AutoCloseable {
     /** @return the formatted messages logged at WARNING */
     public List<String> warnings() {
         return jul.warnings();
+    }
+
+    /** @return the throwables attached to the captured records, in order */
+    public List<Throwable> thrown() {
+        return jul.thrown();
     }
 
     @Override

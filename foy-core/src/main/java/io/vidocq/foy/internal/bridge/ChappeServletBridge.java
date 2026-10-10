@@ -391,15 +391,17 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
             }
 
             registry.fireRequestInitialized(servletContext, req);
+            // On every way out: the CDI request and session scope listeners unbind in requestDestroyed.
             Exception thrown = null;
             try {
                 new VidocqFilterChain(filters, null).doFilter(req, res);
             } catch (ServletException | IOException | RuntimeException e) {
                 thrown = e;
-            } finally {
-                // On every way out: the CDI request and session scope listeners unbind here.
-                registry.fireRequestDestroyed(servletContext, req);
+            } catch (Error e) {
+                endRequest(registry, req, e);
+                throw e;
             }
+            endRequest(registry, req, thrown);
             return thrown != null ? failed(res, req, thrown) : completed(req, res);
         }
 
@@ -470,8 +472,26 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
             // Section 2.3.3.3: onComplete closes the whole async processing, error dispatch included.
             if (lastCycle != null) lastCycle.endCycle();
             return failure != null ? failed(res, req, failure) : completed(req, res);
-        } finally {
-            if (!requestDestroyed) registry.fireRequestDestroyed(servletContext, req);
+        } catch (Throwable t) {
+            // An Error, or a failure of the container's own code: requestDestroyed must not mask it.
+            if (!requestDestroyed) endRequest(registry, req, t);
+            throw t;
+        }
+    }
+
+    /**
+     * Fires {@code requestDestroyed}. With a failure in flight, a {@code RuntimeException} of the
+     * listeners is suppressed in it rather than replacing it; without one it propagates.
+     */
+    private void endRequest(ListenerRegistry registry, HttpServletRequestImpl req, Throwable inFlight) {
+        if (inFlight == null) {
+            registry.fireRequestDestroyed(servletContext, req);
+            return;
+        }
+        try {
+            registry.fireRequestDestroyed(servletContext, req);
+        } catch (RuntimeException e) {
+            inFlight.addSuppressed(e);
         }
     }
 
@@ -498,8 +518,14 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
      */
     private Response upgraded(HttpServletRequestImpl req, HttpServletResponseImpl res, HttpUpgradeHandler handler,
                               ListenerRegistry registry) {
-        req.endNonBlockingIo();
-        req.handBackInput();
+        try {
+            req.endNonBlockingIo();
+            req.handBackInput();
+        } catch (Throwable t) {
+            // The caller counts on this method to fire requestDestroyed: it fires even then.
+            endRequest(registry, req, t);
+            throw t;
+        }
         registry.fireRequestDestroyed(servletContext, req);
         if (res.isStreaming()) {
             LOG.log(System.Logger.Level.WARNING,
