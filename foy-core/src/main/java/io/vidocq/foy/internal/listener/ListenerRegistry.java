@@ -160,18 +160,50 @@ public final class ListenerRegistry {
 
     // ---- Request lifecycle ----
 
+    /**
+     * {@code requestInitialized} in registration order. When a listener throws a
+     * {@code RuntimeException}, the listeners already initialized are destroyed, in reverse order,
+     * before it is rethrown (with the failures of that cleanup suppressed): the container listeners
+     * registered first (the CDI request and session scopes) must not stay bound to the thread.
+     */
     public void fireRequestInitialized(ServletContext ctx, ServletRequest req) {
         if (requestListeners.isEmpty()) return;
         var evt = new ServletRequestEvent(ctx, req);
-        for (var l : requestListeners) l.requestInitialized(evt);
+        for (int i = 0; i < requestListeners.size(); i++) {
+            try {
+                requestListeners.get(i).requestInitialized(evt);
+            } catch (RuntimeException e) {
+                throw destroyRequest(evt, i - 1, e);
+            }
+        }
     }
 
+    /**
+     * {@code requestDestroyed} in reverse registration order. Every listener runs: the container
+     * listeners (CDI request and session scopes) sit outermost and must still unbind when an
+     * application listener throws. The first {@code RuntimeException} is rethrown at the end with
+     * the later ones suppressed; an {@code Error} propagates at once.
+     */
     public void fireRequestDestroyed(ServletContext ctx, ServletRequest req) {
         if (requestListeners.isEmpty()) return;
-        var evt = new ServletRequestEvent(ctx, req);
-        for (int i = requestListeners.size() - 1; i >= 0; i--) {
-            requestListeners.get(i).requestDestroyed(evt);
+        RuntimeException failure = destroyRequest(new ServletRequestEvent(ctx, req), requestListeners.size() - 1, null);
+        if (failure != null) throw failure;
+    }
+
+    /**
+     * Destroys listeners {@code from} down to 0. Returns {@code failure}, or the first failure of
+     * these listeners when it is {@code null}, with every later failure suppressed in it.
+     */
+    private RuntimeException destroyRequest(ServletRequestEvent evt, int from, RuntimeException failure) {
+        for (int i = from; i >= 0; i--) {
+            try {
+                requestListeners.get(i).requestDestroyed(evt);
+            } catch (RuntimeException e) {
+                if (failure == null) failure = e;
+                else failure.addSuppressed(e);
+            }
         }
+        return failure;
     }
 
     public void fireRequestAttributeAdded(ServletContext ctx, ServletRequest req, String n, Object v) {
