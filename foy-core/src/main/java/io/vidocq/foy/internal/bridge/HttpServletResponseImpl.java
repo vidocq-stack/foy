@@ -47,6 +47,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
+import java.util.function.Consumer;
 import java.util.function.Supplier;
 import java.util.regex.Pattern;
 
@@ -485,8 +486,17 @@ public final class HttpServletResponseImpl implements HttpServletResponse {
     }
     @Override public int getBufferSize() { return bufferSize; }
     @Override public void flushBuffer() throws IOException {
-        drainWriter();
-        flushToClient();
+        var lock = outputStream.lock();
+        lock.lock();
+        try {
+            if (!outputStream.writableByCurrentThread()) {
+                throw new IOException("the async cycle ended: this thread may no longer flush the response");
+            }
+            drainWriter();
+            flushToClient();
+        } finally {
+            lock.unlock();
+        }
     }
 
     /**
@@ -553,8 +563,14 @@ public final class HttpServletResponseImpl implements HttpServletResponse {
 
     /** End of the request for a live body: what is left is pushed, then the client sees EOF. */
     void finishBody() throws IOException {
-        drainWriter();
-        outputStream.finish();
+        var lock = outputStream.lock();
+        lock.lock();
+        try {
+            drainWriter();
+            outputStream.finish();
+        } finally {
+            lock.unlock();
+        }
     }
 
     /** Abnormal end of a live body: chappe drops the connection instead of ending the body. */
@@ -678,8 +694,42 @@ public final class HttpServletResponseImpl implements HttpServletResponse {
 
     private void drainWriter() {
         if (writer == null) return;
-        internalFlush = true;
-        try { writer.flush(); } finally { internalFlush = false; }
+        var lock = outputStream.lock();
+        lock.lock();
+        try {
+            internalFlush = true;
+            try { writer.flush(); } finally { internalFlush = false; }
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    // ---- Async cycles and threads (BUG-20261010-01) ----
+
+    /** Fails the current async cycle when a pipe write fails; {@code null} outside a cycle. */
+    private volatile Consumer<? super IOException> asyncWriteFailure;
+
+    /**
+     * A new async cycle started: any thread may write the response again, and a write failing
+     * because the client is gone is reported to {@code writeFailure} (the cycle's {@code onError}).
+     */
+    void openOutput(Consumer<? super IOException> writeFailure) {
+        this.asyncWriteFailure = writeFailure;
+        outputStream.open();
+    }
+
+    /**
+     * The async cycle ended and the pipeline thread (the caller) resumes: from now on only it may
+     * write, flush or close the response. A write from any other thread, typically an async thread
+     * still running after a timeout, fails with an {@link IOException} on the output stream, and is
+     * discarded with {@link PrintWriter#checkError()} set on the writer. A write already in progress
+     * completes under the stream's lock, which every output operation of the pipeline thread takes
+     * too; the claim itself does not wait for it, so a writer blocked on a slow client cannot delay
+     * an abort of the body.
+     */
+    void claimOutput() {
+        this.asyncWriteFailure = null;
+        outputStream.claim();
     }
 
     /** The response side of {@link ServletOutputStreamImpl}. */
@@ -688,6 +738,10 @@ public final class HttpServletResponseImpl implements HttpServletResponse {
         @Override public void overflow() throws IOException { commit(); }
         @Override public void flushRequested() throws IOException {
             if (!internalFlush) flushToClient();
+        }
+        @Override public void writeFailed(IOException failure) {
+            var sink = asyncWriteFailure;
+            if (sink != null) sink.accept(failure);
         }
         @Override public void contentLengthReached() throws IOException {
             // Servlet 6.1 section 5.6: the declared amount of content is written, the response is
@@ -702,6 +756,11 @@ public final class HttpServletResponseImpl implements HttpServletResponse {
      * write, so the stream's byte count is exact at all times: the buffer threshold and the declared
      * Content-Length are enforced on the bytes actually encoded, and {@link #isCommitted()} needs no
      * draining. Only an application {@link #flush()} commits.
+     *
+     * <p>Every operation holds the output stream's lock (taken before the writer's own monitor, as
+     * {@link #drainWriter()} does), and a thread the stream refuses (see {@link #claimOutput()})
+     * never reaches the encoder: its characters are discarded and {@link #checkError()} reports it,
+     * so they cannot surface later in another thread's flush.</p>
      */
     private final class ResponseWriter extends PrintWriter {
         ResponseWriter(Writer out) { super(out, false); }
@@ -711,10 +770,29 @@ public final class HttpServletResponseImpl implements HttpServletResponse {
             try { super.flush(); } finally { internalFlush = false; }
         }
 
-        @Override public void write(int c) { super.write(c); drain(); }
-        @Override public void write(char[] buf, int off, int len) { super.write(buf, off, len); drain(); }
-        @Override public void write(String s, int off, int len) { super.write(s, off, len); drain(); }
-        @Override public void println() { super.println(); drain(); }
+        /** Whether the calling thread is refused; the refusal is recorded for {@link #checkError()}. */
+        private boolean refused() {
+            if (outputStream.writableByCurrentThread()) return false;
+            setError();
+            return true;
+        }
+
+        private void locked(Runnable action) {
+            var lock = outputStream.lock();
+            lock.lock();
+            try {
+                if (!refused()) action.run();
+            } finally {
+                lock.unlock();
+            }
+        }
+
+        @Override public void write(int c) { locked(() -> { super.write(c); drain(); }); }
+        @Override public void write(char[] buf, int off, int len) { locked(() -> { super.write(buf, off, len); drain(); }); }
+        @Override public void write(String s, int off, int len) { locked(() -> { super.write(s, off, len); drain(); }); }
+        @Override public void println() { locked(() -> { super.println(); drain(); }); }
+        @Override public void flush() { locked(super::flush); }
+        @Override public void close() { locked(super::close); }
     }
 
     /**

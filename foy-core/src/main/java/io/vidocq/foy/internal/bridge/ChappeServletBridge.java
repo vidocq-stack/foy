@@ -376,6 +376,7 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
 
         registry.fireRequestInitialized(servletContext, req);
         Throwable thrown = null;
+        AsyncContextImpl lastCycle = null;
         try {
             var enforcer = new SecurityConstraintEnforcer(
                     servletContext.securityProvider());
@@ -384,22 +385,36 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
                 return completed(req, res);
             }
             invoke(target, req, res, DispatcherType.REQUEST, requestChain);
-            thrown = awaitAsyncIfStarted(req, res);
+            AsyncEnd end = awaitAsyncIfStarted(req, res);
+            if (end != null) {
+                thrown = end.thrown();
+                lastCycle = end.lastCycle();
+            }
         } catch (ServletException | IOException | RuntimeException e) {
             thrown = e;
+            // The servlet threw after startAsync: the cycle ends here, its threads lose the response.
+            lastCycle = req.asyncContextInternal();
+            if (lastCycle != null) res.claimOutput();
         }
         registry.fireRequestDestroyed(servletContext, req);
 
+        Throwable failure = null;
         try {
             maybeHandleError(req, res, thrown, target.servletName());
         } catch (ServletException e) {
-            return failed(res, req, e);
+            failure = e;
         }
-        if (thrown != null && !errorPageHandled(req)) {
-            return failed(res, req, thrown);
-        }
-        return completed(req, res);
+        if (failure == null && thrown != null && !errorPageHandled(req)) failure = thrown;
+        // Section 2.3.3.3: onComplete closes the whole async processing, error dispatch included.
+        if (lastCycle != null) lastCycle.endCycle();
+        return failure != null ? failed(res, req, failure) : completed(req, res);
     }
+
+    /**
+     * How the async processing of a request ended: the last cycle (whose listeners hear
+     * {@code onComplete}) and the failure to hand the error machinery, or {@code null}.
+     */
+    private record AsyncEnd(AsyncContextImpl lastCycle, Throwable thrown) {}
 
     private static boolean isContainerDefault(Optional<ServletDispatcher.Mapping> match) {
         return match.isPresent()
@@ -518,18 +533,42 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
     }
 
     /**
-     * If the servlet started async, blocks until complete/dispatch/timeout. In case of
-     * dispatch, re-resolve and re-execute the chain under {@link DispatcherType#ASYNC}.
-     * Returns a {@link Throwable} if a timeout occurred and was not handled by listener.
+     * If the servlet started async, waits for each async cycle to end (Servlet 6.1 section 2.3.3.3)
+     * on this pipeline thread and acts on how it ended:
+     * <ul>
+     *   <li>{@code complete()}: done;</li>
+     *   <li>{@code dispatch()}: the target runs under {@link DispatcherType#ASYNC}; when it opens a
+     *       new cycle ({@code startAsync}) that cycle is awaited in turn, otherwise done;</li>
+     *   <li>timeout (no listener completed or dispatched): an error dispatch with status 500
+     *       ({@code sendError(500)}, then {@link #maybeHandleError} dispatches the error page, or the
+     *       plain 500 stands); a live body cannot carry an error page and is aborted;</li>
+     *   <li>error ({@link AsyncContextImpl#fail}): the failure is returned for the error machinery
+     *       (an error page or a 500, an aborted body once committed).</li>
+     * </ul>
+     * <p>When a cycle ends, the response output is claimed by this thread first, so a thread of the
+     * cycle still writing fails instead of racing the listeners and the error dispatch
+     * (BUG-20261010-01). The caller fires {@code onComplete} on {@link AsyncEnd#lastCycle()} once the
+     * error dispatch is over. Returns {@code null} when the servlet did not start async.</p>
      */
-    private Throwable awaitAsyncIfStarted(HttpServletRequestImpl req, HttpServletResponseImpl res) {
+    private AsyncEnd awaitAsyncIfStarted(HttpServletRequestImpl req, HttpServletResponseImpl res) {
         AsyncContextImpl ac = req.asyncContextInternal();
         if (ac == null) return null;
-        // Boucle : le servlet re-dispatché peut appeler startAsync+dispatch à nouveau
-        // (§2.3.3.3 startAsyncAgainTest*). Max 16 dispatches pour éviter les boucles.
-        for (int i = 0; i < 16; i++) {
-            ac.awaitCompletion();
-            if (!ac.hasDispatch()) break;
+        // A redispatched servlet may call startAsync + dispatch again (section 2.3.3.3,
+        // startAsyncAgainTest*); bounded to 16 dispatches against endless loops.
+        for (int i = 0; ; i++) {
+            switch (ac.awaitCycleEnd(res::claimOutput)) {
+                case COMPLETE -> { return new AsyncEnd(ac, null); }
+                case TIMEOUT -> {
+                    timeoutErrorDispatch(res);
+                    return new AsyncEnd(ac, null);
+                }
+                case ERROR -> { return new AsyncEnd(ac, ac.error()); }
+                case DISPATCH -> { /* below */ }
+            }
+            if (i >= 16) {
+                LOG.log(System.Logger.Level.WARNING, "more than 16 async dispatches; request completed");
+                return new AsyncEnd(ac, null);
+            }
             String dispatchPath = ac.dispatchPath();
             ServletContext targetCtx = ac.dispatchContext();
             try {
@@ -545,9 +584,9 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
                     if (q >= 0) { qs = relative.substring(q + 1); relative = relative.substring(0, q); }
                     var resolver = vctx.dispatchResolver();
                     var invoker = vctx.dispatchInvoker();
-                    if (resolver == null || invoker == null) break;
+                    if (resolver == null || invoker == null) return new AsyncEnd(ac, null);
                     var target = resolver.resolve(relative).orElse(null);
-                    if (target == null) break;
+                    if (target == null) return new AsyncEnd(ac, null);
                     if (qs != null) target = target.withQueryString(qs);
                     setAsyncAttributes(req);
                     var wrapped = new AsyncDispatchRequest(req, target, vctx, tgtCtxPath);
@@ -561,7 +600,7 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
                     int q = relative.indexOf('?');
                     if (q >= 0) { qs = relative.substring(q + 1); relative = relative.substring(0, q); }
                     var target = new DispatchResolver(dispatcher).resolve(relative).orElse(null);
-                    if (target == null) break;
+                    if (target == null) return new AsyncEnd(ac, null);
                     if (qs != null) target = target.withQueryString(qs);
                     setAsyncAttributes(req);
                     var wrapped = new AsyncDispatchRequest(req, target);
@@ -570,17 +609,30 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
                     invoke(target, wrapped, res, DispatcherType.ASYNC);
                 }
             } catch (ServletException | IOException | RuntimeException e) {
-                return e;
+                return new AsyncEnd(ac, e);
             }
-            // Le servlet re-dispatché a pu (ou non) appeler startAsync+dispatch à nouveau.
-            ac = req.asyncContextInternal();
-            if (ac == null) break;
+            // The redispatched target may have opened a new cycle.
+            AsyncContextImpl next = req.asyncContextInternal();
+            if (next == null) return new AsyncEnd(ac, null);
+            ac = next;
         }
-        if (ac != null && ac.timedOut() && !res.isCommitted() && !res.hasContent()) {
-            try { res.sendError(503, "async timeout"); }
-            catch (IOException ignored) {}
+    }
+
+    /**
+     * Section 2.3.3.3: a cycle timed out and no listener completed or dispatched it. The container
+     * performs an error dispatch with status 500 ({@link #maybeHandleError} runs next, without an
+     * exception); without an error page the plain 500 stands. A committed live body can no longer
+     * change: it is aborted, so the client cannot take it for a whole one.
+     */
+    private static void timeoutErrorDispatch(HttpServletResponseImpl res) {
+        if (res.isStreaming()) {
+            LOG.log(System.Logger.Level.WARNING, "async timeout after the response was committed; connection aborted");
+            res.abortBody(new IOException("async timeout"));
+            return;
         }
-        return null;
+        if (res.isCommitted()) return; // closed by the application (sendError, redirect): it stands
+        try { res.sendError(500); }
+        catch (IOException ignored) { /* the response is buffered: sendError cannot fail on I/O */ }
     }
 
     /**

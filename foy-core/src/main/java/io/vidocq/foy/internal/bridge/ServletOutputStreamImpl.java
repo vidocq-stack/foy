@@ -25,6 +25,7 @@ import jakarta.servlet.WriteListener;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.util.Objects;
+import java.util.concurrent.locks.ReentrantLock;
 
 /**
  * The response body stream: a bounded buffer of {@code bufferSize} bytes, then a live body.
@@ -40,6 +41,16 @@ import java.util.Objects;
  * <p>Bytes beyond a declared {@code Content-Length} are dropped; reaching it is reported to the
  * owner, which commits the response (Servlet 6.1 section 5.6).</p>
  *
+ * <p>Threads (BUG-20261010-01). The stream may be written from the pipeline thread and from
+ * async threads in turn; one {@link ReentrantLock} ({@link #lock()}) serialises every operation on
+ * the buffer and the pipe (write, flush, close, push, finish, reset), and the response writer takes
+ * it too. The lock is held while a push waits for room in the pipe; {@link #abort} wakes such a
+ * writer before taking it. At the end of an async cycle the pipeline thread {@linkplain #claim
+ * claims} the stream: from then on a write, flush or close from any other thread fails with an
+ * {@link IOException} (so a stale loop stops), until a new cycle {@linkplain #open opens} it again.
+ * A pipe write that fails (the client is gone) is reported to the owner, which fails the current
+ * async cycle ({@code onError}).</p>
+ *
  * <p><em>Non-blocking I/O is not implemented in this milestone.</em></p>
  */
 public final class ServletOutputStreamImpl extends ServletOutputStream {
@@ -54,6 +65,8 @@ public final class ServletOutputStreamImpl extends ServletOutputStream {
         void flushRequested() throws IOException;
         /** The declared Content-Length has been written in full. */
         void contentLengthReached() throws IOException;
+        /** A write into the pipe failed (the client is gone). */
+        default void writeFailed(IOException failure) {}
     }
 
     /** Exposes the internal array, so pushing the buffer into the pipe does not copy it. */
@@ -68,15 +81,39 @@ public final class ServletOutputStreamImpl extends ServletOutputStream {
         @Override public void contentLengthReached() {}
     };
 
+    private final ReentrantLock lock = new ReentrantLock();
+    /** The only thread allowed to write once claimed; {@code null} while any thread may. */
+    private volatile Thread claimant;
     private final Buffer buffer = new Buffer();
     private Owner owner = DETACHED;
     private int limit = 8192;
     /** Body bytes accepted so far (buffered or already pushed). */
     private long written;
-    private ResponsePipe pipe;
-    private boolean suppressed;
+    private volatile ResponsePipe pipe;
+    private volatile boolean suppressed;
     private boolean closed;
     private boolean discarding;
+
+    /** The lock serialising every buffer and pipe operation (shared with the response writer). */
+    ReentrantLock lock() { return lock; }
+
+    /** From now on only the calling thread may write (end of an async cycle). */
+    void claim() { this.claimant = Thread.currentThread(); }
+
+    /** Any thread may write again (a new async cycle started). */
+    void open() { this.claimant = null; }
+
+    /** Whether the calling thread may write: no claim, or the claiming thread. */
+    boolean writableByCurrentThread() {
+        Thread c = claimant;
+        return c == null || c == Thread.currentThread();
+    }
+
+    private void checkWritable() throws IOException {
+        if (!writableByCurrentThread()) {
+            throw new IOException("the async cycle ended: this thread may no longer write the response");
+        }
+    }
 
     void setOwner(Owner owner) { this.owner = owner == null ? DETACHED : owner; }
 
@@ -102,8 +139,13 @@ public final class ServletOutputStreamImpl extends ServletOutputStream {
 
     /** The committed response carries no body on the wire: every byte is dropped from now on. */
     void suppress() {
-        this.suppressed = true;
-        buffer.reset();
+        lock.lock();
+        try {
+            this.suppressed = true;
+            buffer.reset();
+        } finally {
+            lock.unlock();
+        }
     }
 
     @Override
@@ -127,6 +169,16 @@ public final class ServletOutputStreamImpl extends ServletOutputStream {
     @Override
     public void write(byte[] b, int off, int len) throws IOException {
         Objects.checkFromIndexSize(off, len, b.length);
+        lock.lock();
+        try {
+            checkWritable();
+            writeLocked(b, off, len);
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    private void writeLocked(byte[] b, int off, int len) throws IOException {
         if (discarding || len == 0) return;
         if (closed) throw new IOException("stream closed");
         long declared = owner.declaredLength();
@@ -143,7 +195,7 @@ public final class ServletOutputStreamImpl extends ServletOutputStream {
         } else if (pipe != null) {
             if (buffer.size() + len > limit) {
                 push();
-                if (len >= limit) pipe.write(b, off, len);
+                if (len >= limit) pipeWrite(b, off, len);
                 else buffer.write(b, off, len);
             } else {
                 buffer.write(b, off, len);
@@ -161,32 +213,64 @@ public final class ServletOutputStreamImpl extends ServletOutputStream {
      * buffered whatever the threshold, since an error page may still replace it.
      */
     void writeBuffered(byte[] b) {
-        if (isStreaming()) return;
-        buffer.write(b, 0, b.length);
-        written += b.length;
+        lock.lock();
+        try {
+            if (isStreaming()) return;
+            buffer.write(b, 0, b.length);
+            written += b.length;
+        } finally {
+            lock.unlock();
+        }
     }
 
     @Override
     public void flush() throws IOException {
-        // Servlet 6.1 section 5.2: flushing commits the response and sends the buffered content.
-        owner.flushRequested();
+        lock.lock();
+        try {
+            checkWritable();
+            // Servlet 6.1 section 5.2: flushing commits the response and sends the buffered content.
+            owner.flushRequested();
+        } finally {
+            lock.unlock();
+        }
     }
 
     @Override
     public void close() throws IOException {
-        if (closed) return;
-        closed = true;
-        // A live body ends with the stream; a buffered one is sent whole at the end of the request.
-        if (pipe != null) finish();
+        lock.lock();
+        try {
+            checkWritable();
+            if (closed) return;
+            closed = true;
+            // A live body ends with the stream; a buffered one is sent whole at the end of the request.
+            if (pipe != null) finish();
+        } finally {
+            lock.unlock();
+        }
     }
 
     /** Pushes the buffered bytes into the pipe, when streaming. Blocks while the pipe is full. */
     void push() throws IOException {
-        if (pipe == null || buffer.size() == 0) return;
+        lock.lock();
         try {
-            pipe.write(buffer.array(), 0, buffer.size());
+            if (pipe == null || buffer.size() == 0) return;
+            try {
+                pipeWrite(buffer.array(), 0, buffer.size());
+            } finally {
+                buffer.reset();
+            }
         } finally {
-            buffer.reset();
+            lock.unlock();
+        }
+    }
+
+    /** Writes into the pipe; a failure (client gone, body aborted) is reported to the owner. */
+    private void pipeWrite(byte[] b, int off, int len) throws IOException {
+        try {
+            pipe.write(b, off, len);
+        } catch (IOException e) {
+            owner.writeFailed(e);
+            throw e;
         }
     }
 
@@ -195,40 +279,70 @@ public final class ServletOutputStreamImpl extends ServletOutputStream {
      * Content-Length cannot be framed correctly any more, so the connection is aborted instead.
      */
     void finish() throws IOException {
-        if (pipe == null || ended) return;
-        long declared = owner.declaredLength();
-        if (declared >= 0 && written < declared) {
-            abort(new IOException("response body shorter than its Content-Length ("
-                    + written + " < " + declared + ")"));
-            return;
+        lock.lock();
+        try {
+            if (pipe == null || ended) return;
+            long declared = owner.declaredLength();
+            if (declared >= 0 && written < declared) {
+                abort(new IOException("response body shorter than its Content-Length ("
+                        + written + " < " + declared + ")"));
+                return;
+            }
+            push();
+            ended = true;
+            pipe.finish();
+        } finally {
+            lock.unlock();
         }
-        push();
-        ended = true;
-        pipe.finish();
     }
 
-    /** Ends a live body abnormally: chappe drops the connection. Ignored once the body ended. */
+    /**
+     * Ends a live body abnormally: chappe drops the connection. Ignored once the body ended. The
+     * pipe is aborted before the lock is taken, so a writer blocked on a full pipe (holding the
+     * lock) wakes up with an {@link IOException} instead of making this call wait for the client.
+     */
     void abort(Throwable cause) {
-        if (pipe == null || ended) return;
+        ResponsePipe target = pipe;
+        if (target == null || ended) return;
         ended = true;
-        buffer.reset();
-        pipe.abort(cause);
+        target.abort(cause);
+        lock.lock();
+        try {
+            buffer.reset();
+        } finally {
+            lock.unlock();
+        }
     }
 
     /** Set once the live body ended, normally or not. */
-    private boolean ended;
+    private volatile boolean ended;
 
     public byte[] toByteArray() {
-        return buffer.toByteArray();
+        lock.lock();
+        try {
+            return buffer.toByteArray();
+        } finally {
+            lock.unlock();
+        }
     }
 
     /** Bytes currently buffered (not yet pushed). */
     public int size() {
-        return buffer.size();
+        lock.lock();
+        try {
+            return buffer.size();
+        } finally {
+            lock.unlock();
+        }
     }
 
     public void resetBuffer() {
-        buffer.reset();
-        written = 0;
+        lock.lock();
+        try {
+            buffer.reset();
+            written = 0;
+        } finally {
+            lock.unlock();
+        }
     }
 }

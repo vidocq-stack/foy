@@ -761,9 +761,18 @@ public final class HttpServletRequestImpl implements HttpServletRequest {
         if (res instanceof HttpServletResponseImpl impl) impl.bindRequest(this);
     }
     public io.vidocq.foy.internal.async.AsyncContextImpl asyncContextInternal() { return asyncContext; }
+    /**
+     * The cycle that ended with an ASYNC dispatch, kept until the dispatched target either opens a
+     * new cycle ({@code onStartAsync} on its listeners) or returns (the bridge ends it).
+     */
+    private io.vidocq.foy.internal.async.AsyncContextImpl previousAsyncContext;
+
     /** Resets async state, used by the bridge between two async dispatches so
      *  startAsync in a redispatched servlet creates a new context. */
-    public void clearAsyncContext() { this.asyncContext = null; }
+    public void clearAsyncContext() {
+        this.previousAsyncContext = asyncContext;
+        this.asyncContext = null;
+    }
 
     private boolean asyncSupported = true;
     /** Fixed if the chain (servlet + filters) supports async — propagated by the bridge. */
@@ -787,9 +796,17 @@ public final class HttpServletRequestImpl implements HttpServletRequest {
             throw new IllegalStateException("async already started on this request");
         }
         boolean original = (req == this && res == boundResponse);
-        this.asyncContext = new io.vidocq.foy.internal.async.AsyncContextImpl(
-                req, res, servletContext, original);
-        return asyncContext;
+        var started = new io.vidocq.foy.internal.async.AsyncContextImpl(req, res, servletContext, original);
+        this.asyncContext = started;
+        // A new cycle may write the response from any thread again; a write failing because the
+        // client is gone fails the cycle (onError).
+        if (boundResponse instanceof HttpServletResponseImpl impl) impl.openOutput(started::fail);
+        // Section 2.3.3.3: startAsync after an ASYNC dispatch fires onStartAsync on the previous
+        // cycle's listeners, which are not carried over.
+        var previous = previousAsyncContext;
+        previousAsyncContext = null;
+        if (previous != null) previous.handOverTo(started);
+        return started;
     }
     @Override public boolean isAsyncStarted() {
         // §2.3.3.3 : true tant que le servlet (ou son dispatch) est encore en cours —

@@ -417,7 +417,7 @@ Statuts : `OPEN` → `INVESTIGATING` → `FIXED` (commit hash) → `CLOSED`.
 ## BUG-20261010-01 — async timeout lets the pipeline thread and an async thread write the response concurrently
 
 - **Date** : 2026-10-10
-- **Statut** : OPEN (carried into Phase 5 Task 5.6)
+- **Statut** : FIXED (Phase 5 Task 5.6 commit `fix(core): async timeout error dispatch and listener event order`)
 - **Module touché** : `foy-core` (`ChappeServletBridge.runPipeline`, `ServletOutputStreamImpl`, `ResponsePipe`)
 - **Symptôme** : after an `AsyncContext` timeout, `awaitAsyncIfStarted` returns while the async
   thread (`AsyncContext.start`) may still be writing. The pipeline thread then runs
@@ -438,3 +438,14 @@ Statuts : `OPEN` → `INVESTIGATING` → `FIXED` (commit hash) → `CLOSED`.
     Task 5.6 (async lifecycle: timeout → error dispatch, onComplete at the end of the cycle) owns it.
     Fix direction: after a timeout, fence the response (writes from the stale async thread fail or
     are dropped) before the pipeline touches the stream, or serialise stream access.
+  - 2026-10-10 (Task 5.6) : fixed with both. (1) One `ReentrantLock` in `ServletOutputStreamImpl`
+    serialises write/flush/close/push/finish/reset/toByteArray; the response writer and
+    `flushBuffer`/`finishBody` take it too (before the writer's monitor). `abort` aborts the pipe
+    before taking the lock, so a writer blocked on a full pipe wakes up. (2) When an async cycle
+    ends (complete, dispatch, timeout, error), `AsyncContextImpl.awaitCycleEnd` lets the pipeline
+    thread claim the output (`HttpServletResponseImpl.claimOutput`) before any listener runs: from
+    then on a write/flush/close from another thread fails with `IOException` (a stale loop stops);
+    through the `PrintWriter` the characters are discarded and `checkError()` turns true. A new
+    `startAsync` re-opens the output (`openOutput`). Tests: `ResponseOutputFenceTest`,
+    `ServletAsyncEndToEndTest.lateAsyncWritesFailOnceTheTimeoutFired` and
+    `aCommittedResponseTimingOutStopsTheStaleWriter` (writer looping past the timeout, latch-driven).

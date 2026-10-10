@@ -1,0 +1,118 @@
+/*
+ * Copyright (c) 2026 Yann Blazart, Antoine Sabot-Durand and the Vidocq contributors
+ *
+ * This program and the accompanying materials are made available under the
+ * terms of the Eclipse Public License 2.0 which is available at
+ * https://www.eclipse.org/legal/epl-2.0/
+ *
+ * This Source Code may also be made available under the following Secondary
+ * Licenses when the conditions for such availability set forth in the Eclipse
+ * Public License, v. 2.0 are satisfied: GNU General Public License, version 2
+ * or any later version, which is available at
+ * https://www.gnu.org/licenses/old-licenses/gpl-2.0.html
+ *
+ * It is also made available under the European Union Public Licence v. 1.2,
+ * which is available at
+ * https://joinup.ec.europa.eu/collection/eupl/eupl-text-eupl-12
+ *
+ * SPDX-License-Identifier: EPL-2.0 OR EUPL-1.2 OR GPL-2.0-or-later
+ */
+package io.vidocq.foy.internal.bridge;
+
+import org.junit.jupiter.api.Test;
+
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
+
+import static org.junit.jupiter.api.Assertions.*;
+
+/**
+ * BUG-20261010-01: once the pipeline thread claims the response output at the end of an async
+ * cycle, another thread's writes fail instead of racing it, until a new cycle opens the output.
+ */
+class ResponseOutputFenceTest {
+
+    private static String body(HttpServletResponseImpl res) {
+        return new String(res.bodyBytes(), StandardCharsets.ISO_8859_1);
+    }
+
+    /** Runs {@code action} on another thread and returns what it threw, or {@code null}. */
+    private static Throwable onOtherThread(ThrowingRunnable action) throws Exception {
+        var outcome = new CompletableFuture<Throwable>();
+        Thread.ofVirtual().start(() -> {
+            try { action.run(); outcome.complete(null); }
+            catch (Throwable t) { outcome.complete(t); }
+        });
+        return outcome.get(5, TimeUnit.SECONDS);
+    }
+
+    @FunctionalInterface
+    private interface ThrowingRunnable { void run() throws Exception; }
+
+    @Test
+    void anotherThreadsStreamWriteFailsOnceTheOutputIsClaimed() throws Exception {
+        var res = new HttpServletResponseImpl();
+        var out = res.getOutputStream();
+        out.write('a');
+        res.claimOutput();
+
+        assertInstanceOf(IOException.class, onOtherThread(() -> out.write('b')));
+        assertInstanceOf(IOException.class, onOtherThread(out::flush));
+        out.write('c'); // the claiming thread keeps writing
+        assertEquals("ac", body(res));
+    }
+
+    @Test
+    void anotherThreadsWriterWriteIsDiscardedAndReportedThroughCheckError() throws Exception {
+        var res = new HttpServletResponseImpl();
+        var writer = res.getWriter();
+        writer.write("a");
+        res.claimOutput();
+
+        var error = new AtomicReference<Boolean>();
+        assertNull(onOtherThread(() -> { writer.write("stale"); error.set(writer.checkError()); }));
+        assertTrue(error.get(), "a fenced writer write must set checkError()");
+        writer.write("b");
+        assertEquals("ab", body(res), "the stale characters must not reach the body later");
+    }
+
+    @Test
+    void openingANewCycleLiftsTheFence() throws Exception {
+        var res = new HttpServletResponseImpl();
+        var out = res.getOutputStream();
+        res.claimOutput();
+        res.openOutput(_ -> {});
+        assertNull(onOtherThread(() -> out.write('z')));
+        assertEquals("z", body(res));
+    }
+
+    @Test
+    void writersOnTwoThreadsAreSerialised() throws Exception {
+        var res = new HttpServletResponseImpl();
+        res.setBufferSize(1 << 20);
+        var out = res.getOutputStream();
+        int perThread = 20_000;
+        var go = new CountDownLatch(1);
+        var a = new CompletableFuture<Throwable>();
+        var b = new CompletableFuture<Throwable>();
+        for (var pair : new Object[][] {{a, (byte) 'a'}, {b, (byte) 'b'}}) {
+            @SuppressWarnings("unchecked") var done = (CompletableFuture<Throwable>) pair[0];
+            byte value = (Byte) pair[1];
+            Thread.ofVirtual().start(() -> {
+                try {
+                    go.await();
+                    for (int i = 0; i < perThread; i++) out.write(value);
+                    done.complete(null);
+                } catch (Throwable t) { done.complete(t); }
+            });
+        }
+        go.countDown();
+        assertNull(a.get(5, TimeUnit.SECONDS));
+        assertNull(b.get(5, TimeUnit.SECONDS));
+        assertEquals(2 * perThread, res.bodyBytes().length, "no byte may be lost to a racing write");
+    }
+}
