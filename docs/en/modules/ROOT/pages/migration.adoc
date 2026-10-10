@@ -146,6 +146,14 @@ The streaming, async and non-blocking I/O work (Servlet 6.1 sections 2.3.3, 3.7 
 * **A connection whose upload the application stopped reading is closed after the response.** When a `ReadListener` still waits for upload bytes at the end of the request, the response is delivered and the connection is then closed rather than kept alive.
 * **An exception after the commit aborts the response.** Once the response is streaming, a late exception can no longer turn into an error page: it is logged and the body is aborted (connection aborted on HTTP/1.x, stream reset with `RST_STREAM` `INTERNAL_ERROR` on HTTP/2), so the client sees a truncated body.
 
+=== Request listeners
+
+The request listener hardening changes these behaviours for embedders:
+
+* **Every `requestDestroyed` runs, even when one throws.** The listeners are still called in reverse registration order; the first `RuntimeException` is rethrown once they have all run, with the later ones added as suppressed exceptions (an `Error` still propagates at once).
+* **A failed `requestInitialized` is unwound.** When a listener throws from `requestInitialized`, the listeners already initialized get `requestDestroyed`, in reverse order, before the exception propagates.
+* **A filter failure on a path no servlet maps ends like any other failure.** A `RuntimeException` or `IOException` thrown by a filter there (before, only a `ServletException`) is answered with Foy's generic `500` and the request listeners get `requestDestroyed`.
+
 == Common pitfalls
 
 * **`ServletContainerInitializer`s and fragments are discovered at boot.** `ApplicationSources` loads the initializers through `ServiceLoader` (`META-INF/services` or `provides`) and the `META-INF/web-fragment.xml` of every root, then orders them per §8.2.2 and §8.2.4. Component classes themselves are still never scanned.

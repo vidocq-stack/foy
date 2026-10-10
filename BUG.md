@@ -539,3 +539,56 @@ Statuts : `OPEN` → `INVESTIGATING` → `FIXED` (commit hash) → `CLOSED`.
 - **Fix envisagé** : throw `IllegalStateException` from `upgrade()` when the dispatcher type is
   `ASYNC` (or whenever an async cycle exists), mirroring "upgrade() after startAsync()". No TCK
   test exercises this path.
+
+## BUG-20261010-07 — no CDI context on AsyncContext.start() threads nor in AsyncListener.onComplete
+
+- **Date** : 2026-10-10
+- **Statut** : OPEN (documented gap; by code reading, not pinned by a test)
+- **Module touché** : `foy-core` (`AsyncContextImpl`, `ChappeServletBridge`)
+- **Symptôme** : a `@RequestScoped` or `@SessionScoped` bean used from the `Runnable` given to
+  `AsyncContext.start()`, or from `AsyncListener.onComplete`, fails with `ContextNotActiveException`.
+  Async dispatches are not affected: `ChappeServletBridge.runAsyncCycles` runs them on the pipeline
+  thread, which keeps the contexts bound until `fireRequestDestroyed`. `onTimeout` and `onError` fire on
+  the pipeline thread before `fireRequestDestroyed` (`AsyncContextImpl.awaitCycleEnd`), so the contexts
+  are active there; `onComplete` fires after it (`lastCycle.endCycle()` in `ChappeServletBridge.handle`),
+  so no context is active in `onComplete`; `onStartAsync` runs on the thread that calls `startAsync()`,
+  without contexts when that is an `AsyncContext.start()` thread. The `SessionScoped` Javadoc requires the
+  session context to be active when the container calls an `AsyncListener`.
+- **Reproduction minimale** : under Weld (`foy-it-weld`), a servlet calls `startAsync()`, then
+  `AsyncContext.start(() -> { requestScopedBean.ping(); ac.complete(); })`: the async thread gets
+  `ContextNotActiveException`. Under Vauban the same holds for a `@SessionScoped` bean
+  (`foy-cdi-vauban`); Vauban's request context is never active anyway (vauban#147).
+- **Hypothèse de cause** : the CDI contexts are bound per thread by the request listeners Foy registers
+  first when given a `BeanManager` — `CdiRequestScopeListener` (foy#18, through
+  `RequestContextController`) and the `CdiContextListeners` services (foy#21; on Vauban
+  `VaubanWebContextsListener`, a `ThreadLocal` in `vauban-webcontexts`). They bind on the pipeline thread
+  in `requestInitialized` and unbind in `requestDestroyed`. `AsyncContextImpl.start` runs the `Runnable`
+  on a new virtual thread and propagates no context to it; `onComplete` runs after `requestDestroyed`.
+- **Fix envisagé** : activate the contexts around the `Runnable` in `AsyncContextImpl.start` (needs a
+  per-thread hook in the `CdiContextListeners` contract and a request context per thread), and fire
+  `onComplete` before the request listeners are destroyed, or bind the contexts around it.
+
+## BUG-20261010-08 — error pages run without the CDI request and session contexts
+
+- **Date** : 2026-10-10
+- **Statut** : OPEN (the fix changes the listener order of every error dispatch and needs a full official
+  TCK run)
+- **Module touché** : `foy-core` (`ChappeServletBridge`)
+- **Symptôme** : an error page (a `<error-page>` location dispatched after an exception, after
+  `sendError(...)`, or after an async timeout) runs with no CDI context driven by Foy's request
+  listeners active: a `@RequestScoped` bean (Weld) or a `@SessionScoped` bean (Vauban) used there fails
+  with `ContextNotActiveException`.
+- **Reproduction minimale** : by code reading (not pinned by a test): a servlet calls `resp.sendError(404)`
+  (or throws); a `<error-page>` maps that status (or exception) to a servlet that injects a
+  `@RequestScoped` bean; under Weld (`foy-it-weld`) the error page fails with
+  `ContextNotActiveException`. Requests that reach no listener at all have the same gap: the
+  unmapped-path 404 branch and `rejected(...)` dispatch their error page without `fireRequestInitialized`.
+- **Hypothèse de cause** : on the mapped path, `ChappeServletBridge.handle` fires `requestDestroyed`
+  (where `CdiRequestScopeListener` deactivates the request context and the `CdiContextListeners`
+  listeners unbind the session) before `maybeHandleError` dispatches the error page; the async timeout's
+  error page goes through the same `maybeHandleError`. The order dates from foy#18 (request listeners
+  added before the CDI work); Tomcat fires request-destroyed after its error pages (`StandardHostValve`).
+- **Fix envisagé** : fire `requestDestroyed` after the error handling (after `maybeHandleError`, still
+  before `onComplete`), and initialise the request listeners around the unmapped-path error dispatch;
+  needs a full official Servlet TCK run (`run-official-tck-servlet6.1.sh --all`) since every error
+  dispatch changes order.
