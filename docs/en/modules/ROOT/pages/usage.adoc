@@ -393,13 +393,13 @@ Add `foy-processor` to the compiler's annotation processor path. It generates, a
 
 == CDI integration through Vauban
 
-`foy-cdi-vauban` is a thin bridge: its single class, `FoyVaubanBootstrap`, hands the current Vauban `BeanManager` to `FoyChappeBoot`.
+`foy-cdi-vauban` is a thin bridge of three classes: `FoyVaubanBootstrap` hands the current Vauban `BeanManager` to `FoyChappeBoot`; `FoyWebExtension`, a build compatible extension, indexes the web components and registers Foy's session context; `CdiWebComponentsCreator` builds the synthetic `CdiWebComponents` bean listing them.
 
 [IMPORTANT]
 ====
 Foy does **not** (yet) expose `ServletContext`, `HttpServletRequest` or `HttpSession` as injectable CDI beans — there are no `@ApplicationScoped` / `@RequestScoped` / `@SessionScoped` producers for the Servlet API objects. Use the request/response parameters passed to `service()`/`doGet()`.
 
-[.tag-new]#NEW# Your own `@SessionScoped` beans do work under Vauban or any other CDI container: Foy activates its own session context for each request, one instance per HTTP session. Your `@RequestScoped` beans work when the container provides `RequestContextController` (Weld does): Foy then activates the CDI request context for each request. Vauban 0.4 provides none, so under Vauban `@RequestScoped` beans still fail with `ContextNotActiveException`. On Weld, make session beans `Serializable`; threads started with `AsyncContext.start()` have neither context (xref:reference.adoc#other-containers[Other CDI containers]).
+[.tag-new]#NEW# Your own `@SessionScoped` beans do work under Vauban or any other CDI container: Foy activates its own session context for each request, one instance per HTTP session. One exception on Vauban: when every bean archive of the application was processed by `vauban-processor` at build time (what the processor set-up shown above produces when no unprocessed bean archive remains), Vauban drops Foy's session context and `@SessionScoped` beans fail with `ContextNotActiveException` (BUG-20261010-08, a Vauban issue; see the limits in xref:reference.adoc#other-containers[Other CDI containers]). Your `@RequestScoped` beans work when the container provides `RequestContextController` (Weld does): Foy then activates the CDI request context for each request. Vauban 0.4 provides none, so under Vauban `@RequestScoped` beans still fail with `ContextNotActiveException`. On Weld, make session beans `Serializable`; threads started with `AsyncContext.start()` have neither context (xref:reference.adoc#other-containers[Other CDI containers]).
 ====
 
 Servlet, Filter and Listener instances **are** resolved through the `BeanManager`, so they can `@Inject` your application beans:

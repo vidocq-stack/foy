@@ -154,7 +154,7 @@ The CDI session context (foy#21) changes these behaviours for embedders:
 * **Request listener order.** When `FoyChappeBoot` is given a `BeanManager`, Foy's CDI request context listener is the outermost request listener, then its session context listener, then the application's listeners; `requestDestroyed` runs in reverse order. An application listener therefore sees both contexts active.
 * **Every `requestDestroyed` runs.** A listener that throws no longer stops the ones after it: the first failure is rethrown once all have run, the others suppressed in it. When a `requestInitialized` throws, the listeners already initialized get their `requestDestroyed`, in reverse order, before the failure propagates.
 * **A filter that throws on a path no servlet maps answers Foy's generic `500`** and the request listeners are destroyed; before, the exception escaped to Chappe, which answered its own `500`, and `requestDestroyed` did not run.
-* **`@SessionScoped` beans now work**, where they failed with `ContextNotActiveException`. On Weld they must be `Serializable` (passivating scope); see xref:reference.adoc#other-containers[Other CDI containers] for the limits.
+* **`@SessionScoped` beans now work**, where they failed with `ContextNotActiveException`. On Weld they must be `Serializable` (passivating scope); on Vauban they still fail when every bean archive was processed at build time (BUG-20261010-08); see xref:reference.adoc#other-containers[Other CDI containers] for the limits.
 
 == Common pitfalls
 

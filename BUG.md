@@ -551,16 +551,22 @@ Statuts : `OPEN` → `INVESTIGATING` → `FIXED` (commit hash) → `CLOSED`.
 - **Statut** : OPEN (documented gap, parity with the request context of BUG-20261010-01)
 - **Module touché** : `foy-core` (`CdiSessionScopeListener`, `AsyncContextImpl`)
 - **Symptôme** : a `@SessionScoped` bean used from the `Runnable` given to `AsyncContext.start()` fails
-  with `ContextNotActiveException`; the same holds for the threads that run an async dispatch. The
-  `SessionScoped` Javadoc requires the session context to be active when the container calls an
-  `AsyncListener`, and the request context has the same gap.
+  with `ContextNotActiveException`; the request context has the same gap. Async dispatches are not
+  affected: `ChappeServletBridge` runs them on the pipeline thread, which keeps both contexts bound until
+  `fireRequestDestroyed`. The `SessionScoped` Javadoc also requires the session context to be active when
+  the container calls an `AsyncListener`. By code reading (not pinned by a test): `onTimeout` and
+  `onError` fire on the pipeline thread before `fireRequestDestroyed` (`AsyncContextImpl.awaitCycleEnd`),
+  so the contexts are active there; `onComplete` fires after it (`lastCycle.endCycle()` in
+  `ChappeServletBridge`), so neither context is active in `onComplete`; `onStartAsync` runs on the thread
+  that calls `startAsync()`, without contexts when that is an `AsyncContext.start()` thread.
 - **Reproduction minimale** : `foy-it-weld`, `WeldPortabilityTest.asyncThreadHasNoSessionContext` (pins the
   gap: the async thread answers `ContextNotActiveException`).
-- **Hypothèse de cause** : the binding is a `ThreadLocal` set by `CdiSessionScopeListener` on the request
-  thread; Foy starts asynchronous work on new virtual threads and propagates neither the session nor the
-  request context to them.
-- **Fix envisagé** : bind both contexts around the `Runnable` in `AsyncContextImpl.start` and around the
-  `AsyncListener` callbacks fired off the request thread, with the request's session source.
+- **Hypothèse de cause** : the binding is a `ThreadLocal` set by `CdiSessionScopeListener` on the pipeline
+  thread; `AsyncContextImpl.start` runs the `Runnable` on a new virtual thread and propagates neither the
+  session nor the request context to it.
+- **Fix envisagé** : bind both contexts around the `Runnable` in `AsyncContextImpl.start`, with the
+  request's session source, and fire `onComplete` before the request listeners are destroyed or bind the
+  contexts around it.
 
 ## BUG-20261010-08 — @SessionScoped fails on Vauban when every bean archive was processed at build time
 
