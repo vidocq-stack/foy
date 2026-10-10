@@ -50,8 +50,12 @@ class ConformanceAsyncTest {
         }
     }
 
+    /**
+     * §2.3.3.3: when no listener completes or dispatches on timeout, the container raises an error
+     * dispatch with status 500 (no error page here, so the bare 500 is sent).
+     */
     @Test
-    void timeoutWithoutCompleteYields503() throws Exception {
+    void timeoutWithoutCompleteYields500() throws Exception {
         HttpServlet s = new HttpServlet() {
             @Override protected void doGet(HttpServletRequest req, HttpServletResponse resp) {
                 AsyncContext ac = req.startAsync();
@@ -59,7 +63,7 @@ class ConformanceAsyncTest {
             }
         };
         try (var h = ServletTestHarness.builder().servlet("/t", s).start()) {
-            assertEquals(503, h.get("/t").statusCode());
+            assertEquals(500, h.get("/t").statusCode());
         }
     }
 }
