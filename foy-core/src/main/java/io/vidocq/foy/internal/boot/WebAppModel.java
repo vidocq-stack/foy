@@ -71,7 +71,8 @@ import java.util.function.Supplier;
  * @param trackingModes          session tracking modes, empty for the container default
  * @param securityConstraints    security constraints (stored only, enforced from Phase 6)
  * @param loginConfig            login configuration (stored only, enforced from Phase 6), may be {@code null}
- * @param securityRoles          declared security roles (stored only)
+ * @param securityRoles          declared roles: {@code <security-role>} and {@code @DeclareRoles} (Phase 6)
+ * @param securityRoleRefs       servlet name to its {@code security-role-ref}s (role-name to role-link)
  */
 public record WebAppModel(String contextPath,
                           String displayName,
@@ -97,6 +98,7 @@ public record WebAppModel(String contextPath,
                           List<SecurityConstraintDef> securityConstraints,
                           LoginConfigDef loginConfig,
                           List<String> securityRoles,
+                          Map<String, Map<String, String>> securityRoleRefs,
                           jakarta.servlet.descriptor.JspConfigDescriptor jspConfigDescriptor) {
 
     public WebAppModel {
@@ -117,6 +119,9 @@ public record WebAppModel(String contextPath,
                 : Collections.unmodifiableSet(EnumSet.copyOf(trackingModes));
         securityConstraints = List.copyOf(securityConstraints);
         securityRoles = List.copyOf(securityRoles);
+        var refs = new LinkedHashMap<String, Map<String, String>>();
+        securityRoleRefs.forEach((servlet, m) -> refs.put(servlet, copyOf(m)));
+        securityRoleRefs = Collections.unmodifiableMap(refs);
         jspConfigDescriptor = io.vidocq.foy.internal.webxml.JspDescriptors.copy(jspConfigDescriptor);
     }
 
@@ -132,7 +137,8 @@ public record WebAppModel(String contextPath,
         this(contextPath, displayName, contextParams, servlets, filters, filterMappings, listeners, initializers,
                 errorPages, sessionTimeoutMinutes, localeEncodingMappings, effectiveMajorVersion, effectiveMinorVersion,
                 welcomeFiles, mimeMappings, requestCharacterEncoding, responseCharacterEncoding, defaultContextPath,
-                denyUncoveredHttpMethods, cookieConfig, trackingModes, securityConstraints, loginConfig, securityRoles, null);
+                denyUncoveredHttpMethods, cookieConfig, trackingModes, securityConstraints, loginConfig, securityRoles,
+                Map.of(), null);
     }
 
     /**
@@ -315,6 +321,7 @@ public record WebAppModel(String contextPath,
         private List<SecurityConstraintDef> securityConstraints = List.of();
         private LoginConfigDef loginConfig;
         private List<String> securityRoles = List.of();
+        private final Map<String, Map<String, String>> securityRoleRefs = new LinkedHashMap<>();
         private jakarta.servlet.descriptor.JspConfigDescriptor jspConfigDescriptor;
         public Builder jspConfigDescriptor(jakarta.servlet.descriptor.JspConfigDescriptor descriptor) {
             jspConfigDescriptor = descriptor; return this;
@@ -435,6 +442,12 @@ public record WebAppModel(String contextPath,
             return this;
         }
 
+        /** The {@code security-role-ref}s (role-name to role-link) of the servlet {@code servletName}. */
+        public Builder securityRoleRefs(String servletName, Map<String, String> refs) {
+            securityRoleRefs.put(Objects.requireNonNull(servletName, "servletName"), Map.copyOf(refs));
+            return this;
+        }
+
         /**
          * Builds the model.
          *
@@ -465,7 +478,7 @@ public record WebAppModel(String contextPath,
                     localeEncodingMappings, effectiveMajorVersion, effectiveMinorVersion, welcomeFiles,
                     mimeMappings, requestCharacterEncoding, responseCharacterEncoding, defaultContextPath,
                     denyUncoveredHttpMethods, cookieConfig, trackingModes, securityConstraints, loginConfig,
-                    securityRoles, jspConfigDescriptor);
+                    securityRoles, securityRoleRefs, jspConfigDescriptor);
         }
     }
 }

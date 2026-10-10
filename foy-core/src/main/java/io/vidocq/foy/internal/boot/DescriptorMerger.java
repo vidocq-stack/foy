@@ -41,6 +41,7 @@ import java.util.EnumSet;
 import java.util.EventListener;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -270,17 +271,22 @@ public final class DescriptorMerger {
         target.trackingModes(webXml.trackingModes());
         target.securityConstraints(webXml.securityConstraints());
         target.loginConfig(webXml.loginConfig());
-        target.securityRoles(webXml.securityRoles());
         target.jspConfigDescriptor(webXml.jspConfigDescriptor());
 
-        mergeServlets(webXml, ann, factory, target);
+        // Declared roles (§13.3, §13.4): <security-role> and the merged servlets' @DeclareRoles.
+        Set<String> roles = new LinkedHashSet<>(webXml.securityRoles());
+        roles.addAll(mergeServlets(webXml, ann, factory, target));
+        target.securityRoles(List.copyOf(roles));
+
         mergeFilters(webXml, ann, factory, target);
         mergeListeners(webXml, ann, factory, target);
     }
 
-    private static void mergeServlets(WebAppDescriptor webXml, AnnotatedComponents ann,
-                                      ComponentFactory factory, WebAppModel.Builder target)
+    /** Merges the servlets into {@code target}; returns the roles their {@code @DeclareRoles} declare. */
+    private static Set<String> mergeServlets(WebAppDescriptor webXml, AnnotatedComponents ann,
+                                             ComponentFactory factory, WebAppModel.Builder target)
             throws ServletException {
+        Set<String> declared = new LinkedHashSet<>();
         Map<String, ServletDecl> annotatedByName = new LinkedHashMap<>();
         for (ServletDecl s : ann.servlets()) annotatedByName.put(s.name(), s);
 
@@ -312,6 +318,8 @@ public final class DescriptorMerger {
             // (unless metadata-complete turns annotation processing off, §8.1).
             var classDescriptor = webXml.metadataComplete() ? null
                     : descriptor(factory, type, "servlet", def.name());
+            if (!def.securityRoleRefs().isEmpty()) target.securityRoleRefs(def.name(), def.securityRoleRefs());
+            if (classDescriptor != null) declared.addAll(classDescriptor.declaredRoles());
             var security = classDescriptor == null ? null : classDescriptor.servletSecurity();
             // §8.2.3: a descriptor <multipart-config> overrides the class's @MultipartConfig.
             var multipart = def.multipartConfig() != null ? multipartElement(def.multipartConfig())
@@ -321,11 +329,14 @@ public final class DescriptorMerger {
         }
         for (ServletDecl a : ann.servlets()) {
             if (done.contains(a.name())) continue;
+            // ann is empty under metadata-complete, so these are annotated servlets being processed.
+            declared.addAll(descriptor(factory, a.type(), "servlet", a.name()).declaredRoles());
             List<String> xmlPatterns = webXml.patternsFor(a.name());
             target.servlet(xmlPatterns.isEmpty() ? a : new ServletDecl(a.name(), a.type(), a.factory(),
                     xmlPatterns, a.initParams(), a.loadOnStartup(), a.asyncSupported(), a.servletSecurity(),
                     a.multipartConfig(), a.enabled()));
         }
+        return declared;
     }
 
     private static MultipartConfigElement multipartElement(WebAppDescriptor.MultipartConfigDef d) {

@@ -43,6 +43,19 @@ class WebXmlParserSchemaTest {
     }
 
     @Test
+    void securityRoleRefsAreParsed() throws IOException {
+        var d = parse("""
+                <servlet><servlet-name>s</servlet-name><servlet-class>a.S</servlet-class>
+                  <security-role-ref><role-name>MGR</role-name><role-link>Administrator</role-link></security-role-ref>
+                  <security-role-ref><role-name>EMP</role-name></security-role-ref>
+                </servlet>
+                <servlet><servlet-name>p</servlet-name><servlet-class>a.P</servlet-class></servlet>
+                """);
+        assertEquals(Map.of("MGR", "Administrator", "EMP", "EMP"), d.servlets().get(0).securityRoleRefs());
+        assertEquals(Map.of(), d.servlets().get(1).securityRoleRefs());
+    }
+
+    @Test
     void welcomeMimeEncodingsContextPathAndDenyUncovered() throws IOException {
         var d = parse("""
                 <default-context-path>/app</default-context-path>

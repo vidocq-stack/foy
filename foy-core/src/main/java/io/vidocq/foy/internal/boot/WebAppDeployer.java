@@ -219,6 +219,8 @@ public final class WebAppDeployer {
         options.reservedFilterNames().forEach(ctx::reserveFilterName);
         options.reservedUrlPatterns().forEach(ctx::reserveUrlPattern);
         ctx.setSecuritySettings(options.security());
+        ctx.setRoleMapping(new io.vidocq.foy.internal.security.RoleMapping(
+                Set.copyOf(model.securityRoles()), model.securityRoleRefs()));
         ctx.setComponentFactory(options.componentFactory());
         return ctx;
     }

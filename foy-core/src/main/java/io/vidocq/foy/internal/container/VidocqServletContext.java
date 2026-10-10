@@ -273,6 +273,16 @@ public final class VidocqServletContext implements ServletContext {
 
     public io.vidocq.foy.spi.security.IdentityStore identityStore() { return securitySettings.identityStore(); }
 
+    private volatile io.vidocq.foy.internal.security.RoleMapping roleMapping =
+            io.vidocq.foy.internal.security.RoleMapping.EMPTY;
+
+    /** Declared roles and {@code security-role-ref}s of this application (§13.3). */
+    public io.vidocq.foy.internal.security.RoleMapping roleMapping() { return roleMapping; }
+
+    public void setRoleMapping(io.vidocq.foy.internal.security.RoleMapping mapping) {
+        this.roleMapping = java.util.Objects.requireNonNull(mapping, "mapping");
+    }
+
     private volatile io.vidocq.foy.internal.boot.ComponentFactory componentFactory;
 
     /** Sets the factory behind {@code createServlet/createFilter/createListener/addListener}. */

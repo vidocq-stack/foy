@@ -85,10 +85,15 @@ public final class WebAppDescriptor {
     public record ServletDef(String name, String className, Map<String, String> initParams,
                              Boolean asyncSupported, int loadOnStartup,
                              MultipartConfigDef multipartConfig, boolean enabled,
-                             String runAs, String jspFile) {
+                             String runAs, String jspFile, Map<String, String> securityRoleRefs) {
+        /** {@code securityRoleRefs}: role-name to role-link, never {@code null}. */
+        public ServletDef {
+            securityRoleRefs = securityRoleRefs == null ? Map.of()
+                    : Collections.unmodifiableMap(new LinkedHashMap<>(securityRoleRefs));
+        }
         public ServletDef(String name, String className, Map<String, String> initParams,
                           Boolean asyncSupported, int loadOnStartup) {
-            this(name, className, initParams, asyncSupported, loadOnStartup, null, true, null, null);
+            this(name, className, initParams, asyncSupported, loadOnStartup, null, true, null, null, Map.of());
         }
         public ServletDef(String name, String className, Map<String, String> initParams,
                           Boolean asyncSupported) {

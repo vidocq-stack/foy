@@ -149,6 +149,21 @@ public final class HttpServletRequestImpl implements HttpServletRequest {
 
     public Identity identity() { return identity; }
 
+    private String currentServletName;
+
+    /**
+     * Marks {@code servletName} as the servlet now executing, for {@code security-role-ref}
+     * resolution (section 13.3), and returns the previous one for {@link #leaveServlet}.
+     */
+    public String enterServlet(String servletName) {
+        String previous = currentServletName;
+        currentServletName = servletName;
+        return previous;
+    }
+
+    /** Restores the servlet that {@link #enterServlet} returned. */
+    public void leaveServlet(String previous) { currentServletName = previous; }
+
     // ---- Request line & URI ----
 
     @Override public String getAuthType() { return authType; }
@@ -669,7 +684,11 @@ public final class HttpServletRequestImpl implements HttpServletRequest {
         return parsedCookies.length == 0 ? null : parsedCookies;
     }
     @Override public String getRemoteUser() { return identity == null ? null : identity.name(); }
-    @Override public boolean isUserInRole(String role) { return identity != null && identity.hasRole(role); }
+    @Override public boolean isUserInRole(String role) {
+        var roles = servletContext instanceof VidocqServletContext v ? v.roleMapping()
+                : io.vidocq.foy.internal.security.RoleMapping.EMPTY;
+        return roles.isUserInRole(currentServletName, identity, role);
+    }
     @Override public Principal getUserPrincipal() { return identity == null ? null : identity.principal(); }
     private String urlSessionId;
     public void setUrlSessionId(String id) { this.urlSessionId = id; }

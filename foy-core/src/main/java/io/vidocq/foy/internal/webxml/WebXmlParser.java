@@ -301,7 +301,20 @@ public final class WebXmlParser {
                 parseMultipart(e),
                 !Boolean.FALSE.equals(xsdBoolean(firstText(e, "enabled"), "<enabled> of servlet " + name)),
                 runAs(e),
-                firstText(e, "jsp-file"));
+                firstText(e, "jsp-file"),
+                parseRoleRefs(e));
+    }
+
+    /** {@code <security-role-ref>}s of a servlet: role-name -> role-link (the role-name itself when no link). */
+    private static Map<String, String> parseRoleRefs(Element servlet) {
+        Map<String, String> refs = new LinkedHashMap<>();
+        for (Element r : childrenByTag(servlet, "security-role-ref")) {
+            String name = firstText(r, "role-name");
+            if (name == null) continue;
+            String link = firstText(r, "role-link");
+            refs.putIfAbsent(name, link == null ? name : link);
+        }
+        return refs;
     }
 
     private static String runAs(Element e) {

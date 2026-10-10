@@ -134,6 +134,18 @@ class FragmentMergerTest {
     }
 
     @Test
+    void securityRoleRefsWebXmlWinsPerRoleNameAndFragmentsAddTheOthers() throws Exception {
+        var m = FragmentMerger.merge(web(servlet("s", "a.S", roleRef("MGR", "A"))), List.of(
+                frag("F1", servlet("s", "a.S", roleRef("MGR", "B") + roleRef("EMP", "E")))));
+        assertEquals(Map.of("MGR", "A", "EMP", "E"), servletNamed(m, "s").securityRoleRefs());
+    }
+
+    private static String roleRef(String name, String link) {
+        return "<security-role-ref><role-name>" + name + "</role-name><role-link>" + link
+                + "</role-link></security-role-ref>";
+    }
+
+    @Test
     void initParamConflictBetweenFragmentsFails() throws Exception {
         var e = assertThrows(ServletException.class, () -> FragmentMerger.merge(web(""), List.of(
                 frag("F1", servlet("s", "a.S", param("k", "1"))),

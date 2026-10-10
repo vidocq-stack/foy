@@ -61,6 +61,7 @@ final class ComponentMerger {
         boolean enabled = true;
         String runAs;
         String jspFile;
+        final Map<String, String> roleRefs = new LinkedHashMap<>();
 
         Component(String kind, String name, boolean inWebXml) {
             this.kind = kind;
@@ -106,6 +107,7 @@ final class ComponentMerger {
             c.enabled = d.enabled();
             c.runAs = d.runAs();
             c.jspFile = d.jspFile();
+            c.roleRefs.putAll(d.securityRoleRefs());
         }
         for (Fragment f : ordered) {
             for (ServletDef d : f.descriptor().servlets()) {
@@ -115,6 +117,8 @@ final class ComponentMerger {
                 if (c.multipart == null) c.multipart = d.multipartConfig();
                 if (c.runAs == null) c.runAs = d.runAs();
                 if (c.jspFile == null) c.jspFile = d.jspFile();
+                // web.xml wins per role-name; fragments add the role-names it does not reference.
+                d.securityRoleRefs().forEach(c.roleRefs::putIfAbsent);
                 // web.xml decides <enabled>; between fragments, one "false" disables the servlet.
                 // Approximation: the parser keeps <enabled> as a plain boolean (absent = true), so an
                 // explicit <enabled>true</enabled> in a fragment cannot override another's false.
@@ -124,7 +128,7 @@ final class ComponentMerger {
         var out = new ArrayList<ServletDef>();
         for (Component c : byName.values()) {
             out.add(new ServletDef(c.name, c.className, c.params(), c.async, c.loadOnStartup,
-                    c.multipart, c.enabled, c.runAs, c.jspFile));
+                    c.multipart, c.enabled, c.runAs, c.jspFile, c.roleRefs));
         }
         return out;
     }

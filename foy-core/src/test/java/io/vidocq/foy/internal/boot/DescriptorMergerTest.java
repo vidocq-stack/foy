@@ -91,6 +91,39 @@ class DescriptorMergerTest {
 
     private static final String HEAD = "<web-app xmlns=\"https://jakarta.ee/xml/ns/jakartaee\" version=\"6.1\"";
 
+    @jakarta.annotation.security.DeclareRoles("auditor")
+    public static class Audited extends HttpServlet {}
+
+    private static String auditedWebXml(String attrs) {
+        return HEAD + attrs + """
+                >
+                  <servlet><servlet-name>audited</servlet-name><servlet-class>%s</servlet-class>
+                    <security-role-ref><role-name>A</role-name><role-link>auditor</role-link></security-role-ref>
+                  </servlet>
+                  <security-role><role-name>admin</role-name></security-role>
+                </web-app>""".formatted(Audited.class.getName());
+    }
+
+    @Test
+    void roleRefsAndDeclaredRolesReachTheModel() throws Exception {
+        var m = merge(auditedWebXml(""), AnnotatedComponents.none());
+        assertEquals(Map.of("A", "auditor"), m.securityRoleRefs().get("audited"));
+        assertTrue(m.securityRoles().containsAll(List.of("admin", "auditor")), m.securityRoles().toString());
+
+        var complete = merge(auditedWebXml(" metadata-complete=\"true\""), AnnotatedComponents.none());
+        assertEquals(Map.of("A", "auditor"), complete.securityRoleRefs().get("audited"));
+        assertTrue(complete.securityRoles().contains("admin"), complete.securityRoles().toString());
+        assertFalse(complete.securityRoles().contains("auditor"), complete.securityRoles().toString());
+    }
+
+    @Test
+    void declareRolesOfAnAnnotatedOnlyServletAreDeclared() throws Exception {
+        var ann = new AnnotatedComponents(List.of(new ServletDecl("audited", Audited.class, Audited::new,
+                List.of("/a"), Map.of(), Integer.MIN_VALUE, false)), List.of(), List.of(), List.of());
+        var m = merge(HEAD + "></web-app>", ann);
+        assertEquals(List.of("auditor"), m.securityRoles());
+    }
+
     @Test
     void metadataCompleteIgnoresAnnotations() throws Exception {
         var m = merge(HEAD + " metadata-complete=\"true\"></web-app>",
