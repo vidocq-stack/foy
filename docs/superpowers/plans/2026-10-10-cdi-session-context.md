@@ -503,7 +503,7 @@ module io.vidocq.foy.cdi {
 **Interfaces:**
 - Consumes: `FoySessionContext` (Task 1); `SessionManager(SessionStore, ServletContext, int)`, `SessionManager.createNew()`, `SessionManager.changeSessionId(HttpSessionImpl)`, `HttpSessionImpl.invalidate()`, `HttpSessionImpl.isInvalidated()`, `HttpServletRequestImpl.getSession(boolean)`, `HttpServletRequestImpl.boundSession()` (existing).
 - Produces:
-  - `HttpSessionImpl`: `public Object scopeState()`, `public Object scopeState(java.util.function.Supplier<?> factory)` (get or atomically install), `public Object takeScopeState()` (detach and return, may be `null`).
+  - `HttpSessionImpl`: `public Object scopeState()`, `public Object scopeState(java.util.function.Supplier<?> factory)` (get or atomically install), `public Object takeScopeState(Object tombstone)` (detach and return, may be `null`; leaves `tombstone` in place, so the context creates no instance for a session being destroyed — the plan code below predates this argument).
   - `public final class SessionBeanStore`: `static SessionBeanStore of(HttpSessionImpl)` (create on first use), `static SessionBeanStore existing(HttpSessionImpl)` (may be `null`), `static SessionBeanStore take(HttpSessionImpl)` (detach, may be `null`), `<T> T get(Contextual<T>)`, `<T> T getOrCreate(Contextual<T>, CreationalContext<T>)`, `void destroy(Contextual<?>)`, `void destroyAll()` (reverse creation order, logs each failure at WARNING and goes on), `boolean isEmpty()`.
   - `public final class SessionContextBinding`:
     - nested `public interface SessionSource { HttpSessionImpl session(boolean create); HttpSessionImpl current(); static SessionSource of(HttpServletRequestImpl request); }`
@@ -3552,3 +3552,15 @@ EOF
 **Impact today.** Harmless while a scope has one context (Foy's session context is the only `@SessionScoped` context on Vauban; it throws `ContextNotActiveException` itself when inactive). It breaks as soon as two contexts are registered for one scope and the first one is inactive.
 
 **Proposal.** Resolve through the same active-context lookup as `getContext`, and throw `IllegalStateException` when two contexts of the scope are active.
+
+### A.3 No `RequestContextController` bean: the request context cannot be activated portably
+
+**Summary.** CDI 4.1 ("Activating the request context") requires the container to provide a built-in `RequestContextController` bean (`@Dependent`), so that code that is not a Java EE component can activate the request context. Vauban 0.4 provides none: `BeanManager.createInstance().select(RequestContextController.class)` is unresolvable, and Vauban's `RequestContext` (`vauban-core/.../context/RequestContext.java`) is activated only imperatively (`activate()`, `deactivate()`, `runInScope(Runnable)`), through a Vauban-specific type.
+
+**Impact.** Foy activates the request context for each servlet request through `RequestContextController` (`CdiRequestScopeListener`, foy#18), and for the destruction of session beans (`CdiSessionScopeListener`, foy#21). Under Vauban neither happens: a `@RequestScoped` bean used by a servlet, a filter or a listener fails with `ContextNotActiveException`, and a `@PreDestroy` method of a session bean cannot use request-scoped beans. Foy's docs state this limit (`reference.adoc#other-containers`) and BUG-20261010-01 stays open for Vauban.
+
+**Reproduction.** Any application on `foy-cdi-vauban` with a `@RequestScoped` bean injected into a servlet; `FoySessionScopeVaubanTest` documents why its `Cart` fixture has no request-scoped probe in `@PreDestroy`.
+
+**Expected.** `RequestContextController` resolves; `activate()` returns `true` and activates the request context on the calling thread when it was not active (`false` otherwise), `deactivate()` deactivates it and destroys its instances, and `@Initialized` / `@Destroyed(RequestScoped.class)` fire.
+
+**Proposal.** Register a built-in `@Dependent` `RequestContextController` bean backed by `RequestContext.activate()` / `deactivate()`, remembering per controller instance whether it activated the context, and throwing `ContextNotActiveException` from `deactivate()` when it did not.

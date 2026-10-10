@@ -20,7 +20,7 @@ Consolidated technical reference. Use this page as an anchor for external links 
 | Bootstrap on the xref:chappe::index.adoc[Chappe] transport (`FoyChappeBoot`, which builds the `foy-core` bridge).
 
 | `io.vidocq.foy:foy-cdi-vauban:{project-version}`
-| CDI bridge to xref:vauban::index.adoc[Vauban] (`FoyVaubanBootstrap`).
+| CDI bridge to xref:vauban::index.adoc[Vauban] (`FoyVaubanBootstrap`, `FoyWebExtension`). [.tag-new]#NEW# Depends on `foy-core` (and through it on `chappe-api`) for Foy's session context (foy#21), on the class path and on the `vauban-processor` annotation processor path alike.
 
 | `io.vidocq.foy:foy-processor:{project-version}`
 | **Build-time** annotation processor (no runtime role, never shipped in the application). Generates the `X$$FoyComponent` companions and the `META-INF` indexes. Zero dependency: it requires only the JDK `java.compiler` Java Module. Put it on `annotationProcessorPaths`, not on the class path.
@@ -55,9 +55,14 @@ module io.vidocq.foy.core {
     requires static java.net.http;
     requires io.vidocq.chappe.api;        // M1 coupling — will become an SPI in M2
 
+    // foy#21: Foy's session context, for CDI Full containers (Weld)
+    provides jakarta.enterprise.inject.spi.Extension
+            with io.vidocq.foy.internal.cdi.FoySessionScopeExtension;
+
     exports io.vidocq.foy.internal.async;
     exports io.vidocq.foy.internal.boot;
     exports io.vidocq.foy.internal.bridge;
+    exports io.vidocq.foy.internal.cdi;       // session context (foy-cdi-vauban, foy-chappe)
     exports io.vidocq.foy.internal.container;
     exports io.vidocq.foy.internal.dispatcher;
     exports io.vidocq.foy.internal.error;
@@ -86,10 +91,14 @@ module io.vidocq.foy.chappe {
 ----
 module io.vidocq.foy.cdi.vauban {
     requires transitive io.vidocq.foy.api;
+    requires io.vidocq.foy.core;          // foy#21: Foy's session context
     requires jakarta.cdi;
     requires io.vidocq.vauban.core;
 
     exports io.vidocq.foy.cdi.vauban;     // FoyVaubanBootstrap
+
+    provides jakarta.enterprise.inject.build.compatible.spi.BuildCompatibleExtension
+            with io.vidocq.foy.cdi.vauban.FoyWebExtension;
 }
 ----
 
@@ -114,7 +123,7 @@ The `io.vidocq.foy.internal.*` packages are exported to allow advanced integrati
 == Build-time code generation
 
 * **`foy-processor`** is a build-time annotation processor with a single requirement, `java.compiler`. It generates `X$$FoyComponent` for `@WebServlet`, `@WebFilter`, `@WebListener`, for unannotated `Servlet` / `Filter` / listener classes and for `ServletContainerInitializer` (with its `@HandlesTypes`), carries `@MultipartConfig`, `@ServletSecurity`, `@DeclareRoles` and `@RunAs` metadata, and writes `META-INF/services/io.vidocq.foy.spi.gen.WebComponent` plus `META-INF/foy/class-index.list`. Spec misuse is a compile error; a class that cannot be generated is reported as a note.
-* **`FoyWebExtension`** (in `foy-cdi-vauban`) is a CDI Build Compatible Extension. It runs inside `vauban-processor`, which is itself **build-time only**: unscoped web components become `@Dependent`, duplicate servlet or filter names fail the build, and a synthetic `@Singleton` `io.vidocq.foy.spi.cdi.CdiWebComponents` bean lists the components for `WebAppDiscovery`, which merges the beans of the application and of every library archive. A web-annotated `Servlet`, `Filter` or `EventListener` bean missing from every index (its archive was built without `foy-cdi-vauban` on the processor path) is still discovered, with one `WARNING` per class.
+* **`FoyWebExtension`** (in `foy-cdi-vauban`) is a CDI Build Compatible Extension. It runs inside `vauban-processor`, which is itself **build-time only**: unscoped web components become `@Dependent`, duplicate servlet or filter names fail the build, and a synthetic `@Singleton` `io.vidocq.foy.spi.cdi.CdiWebComponents` bean lists the components for `WebAppDiscovery`, which merges the beans of the application and of every library archive. A web-annotated `Servlet`, `Filter` or `EventListener` bean missing from every index (its archive was built without `foy-cdi-vauban` on the processor path) is still discovered, with one `WARNING` per class. [.tag-new]#NEW# It also registers Foy's session context for `@SessionScoped` in `@Discovery` (foy#21); on the processor path it therefore needs `foy-core` and `chappe-api` next to it, which Maven resolves from `foy-cdi-vauban`'s dependencies.
 * See xref:internals.adoc#component-resolution-tiers[Component resolution tiers] for the runtime side and xref:usage.adoc#build-time-code-generation[Usage] for the setup.
 
 == Public API: `FoyChappeBoot`
@@ -405,10 +414,19 @@ On a forward the mapping is that of the target; `jakarta.servlet.forward.mapping
 
 Foy does not need Vauban: give `FoyChappeBoot` the `BeanManager` of any CDI 4 container (`CDI.current().getBeanManager()`). Without `foy-cdi-vauban`'s build-time index, Foy finds the web components by walking the container's `Servlet`, `Filter` and `EventListener` beans (foy#18).
 
-* **The request context is active for each request** — Foy activates it through the standard `RequestContextController` before the application's request listeners, and deactivates it after them, on the thread that served the request (an asynchronous request included: Foy waits for it). `@RequestScoped` beans work in servlets, filters and listeners, and the container fires `@Initialized(RequestScoped.class)` and `@Destroyed(RequestScoped.class)`. If the context is already active (an embedding runtime activated it), Foy leaves it alone. Up to {release-version}, Foy activated it under no container, Vauban included (BUG-20261010-01).
-* **No session context yet** — `@SessionScoped` has no portable activation API: CDI leaves the session context to the container, and each one has its own mechanism. Foy does not activate it; use `HttpSession` attributes.
+* **The request context is active for each request** — Foy activates it through the standard `RequestContextController` before the application's request listeners, and deactivates it after them, on the thread that served the request (an asynchronous request included: Foy waits for it). `@RequestScoped` beans work in servlets, filters and listeners, and the container fires `@Initialized(RequestScoped.class)` and `@Destroyed(RequestScoped.class)`. If the context is already active (an embedding runtime activated it), Foy leaves it alone. Up to {release-version}, Foy activated it under no container (BUG-20261010-01). This needs a container that provides `RequestContextController`, as Weld does; Vauban 0.4 does not, so under Vauban Foy activates no request context and a `@RequestScoped` bean still fails with `ContextNotActiveException`.
+* [.tag-new]#NEW# **The session context is active for each request** — Foy registers its own context for `@SessionScoped` (foy#21): on CDI Full containers such as Weld through a portable extension of foy-core (`FoySessionScopeExtension`, found through `META-INF/services` or the module's `provides`), on Vauban through `foy-cdi-vauban`'s build compatible extension. The context is active in servlets, filters, request listeners and `HttpSessionListener`s, one instance per HTTP session. A session bean creates the session on first use; a mere lookup never does. After `invalidate()`, the request keeps the old instances until it ends, then they are destroyed; the beans of an expired session are destroyed after the application's `sessionDestroyed` listeners, by the reaper or at undeploy. During that destruction a request context is active only when the container provides `RequestContextController` (Weld; not Vauban), so a `@PreDestroy` method can use `@RequestScoped` beans on Weld only. A `@PreDestroy` method that resolves a session bean not yet created in that session gets `ContextNotActiveException`, logged as a failed destruction: the context no longer creates instances for a session being destroyed. Foy fires `@Initialized`, `@BeforeDestroyed` and `@Destroyed(SessionScoped.class)` with the `HttpSession` as payload. If another session context is already active when a request starts (an embedding runtime), Foy leaves it alone.
+* **Listener order** — when a `BeanManager` is given, Foy's request context listener runs first, then its session context listener, then the application's request listeners (`requestDestroyed` in reverse order). Every `requestDestroyed` runs even when one throws: the first failure is rethrown at the end, the others suppressed in it. When a `requestInitialized` throws, the listeners already initialized are destroyed, in reverse order, before the failure propagates, so the CDI contexts never stay bound to the thread.
+* **Session context limits** —
+** Threads started with `AsyncContext.start()` have no session context, as they have no request context (BUG-20261010-07).
+** On Weld, `@SessionScoped` beans must be `Serializable`: the scope is passivating, and Weld refuses to deploy a bean that is not passivation capable.
+** On Vauban, the context is installed only when Vauban runs the build compatible extensions at boot. In an application whose every bean archive was processed by vauban-processor at build time, Vauban drops it and `@SessionScoped` beans fail with `ContextNotActiveException` (BUG-20261010-08, a Vauban issue).
+** On Vauban, no request context is active while session beans are destroyed: Vauban provides no `RequestContextController`, so a `@PreDestroy` method of a session bean must not use `@RequestScoped` beans.
+** Vauban's client proxies call the first context registered for a scope; Foy's is the only session context on Vauban, so this is harmless today.
+** A CDI Lite container other than Vauban, without `foy-cdi-vauban`, has no session context: `@SessionScoped` beans fail with `ContextNotActiveException`, as before.
+** Foy sessions live in memory and are never serialized: session beans are not passivated.
 
-`foy-it-weld`, part of every build and never published, runs Foy on Chappe with Weld SE 6.0 (CDI 4.1) on a class path, without `foy-cdi-vauban`: a servlet, a filter and a listener get an injected bean, a `@RequestScoped` bean is one instance per request, and the request context events fire. No Open Liberty module: on a server, use the server's own Servlet container.
+`foy-it-weld`, part of every build and never published, runs Foy on Chappe with Weld SE 6.0 (CDI 4.1) on a class path, without `foy-cdi-vauban`: a servlet, a filter and a listener get an injected bean, a `@RequestScoped` bean is one instance per request, a `@SessionScoped` bean one instance per HTTP session (a new one after `invalidate()`, destroyed on expiry), and the request and session context events fire. No Open Liberty module: on a server, use the server's own Servlet container.
 
 == Compatibility
 

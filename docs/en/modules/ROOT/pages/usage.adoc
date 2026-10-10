@@ -385,6 +385,7 @@ Add `foy-processor` to the compiler's annotation processor path. It generates, a
 
 * Only the first `path` is needed without CDI. The `vauban-processor` and `foy-cdi-vauban` paths are for applications using `foy-cdi-vauban`; they are build-time only.
 * `foy-cdi-vauban` must be on the processor path too, not only on the compile class path: once `annotationProcessorPaths` is set, javac looks for processors and their service providers on those entries alone, so vauban-processor finds the `FoyWebExtension` build compatible extension only there. Without it the extension never runs: unscoped web components do not become `@Dependent` beans, so Foy never sees them, and the others get no `CdiWebComponents` index entry. Foy still discovers such a bean by walking the `Servlet`, `Filter` and `EventListener` beans, but logs one `WARNING` per class when another archive does carry an index.
+* [.tag-new]#NEW# The `foy-cdi-vauban` path brings `foy-core` and `chappe-api` with it (resolved transitively): `FoyWebExtension` registers Foy's session context, which lives in `foy-core` (foy#21).
 * In a named Java Module, the processor suggests (as a compiler note) the `provides io.vidocq.foy.spi.gen.WebComponent with ...` clause to add to your `module-info.java`.
 * Spec misuse (for example a `@WebServlet` class that is not a `Servlet`) fails the compilation.
 * In a named module, the name-based companion lookup uses `publicLookup`: either declare `provides io.vidocq.foy.spi.gen.WebComponent with ...` (as the processor note suggests; no export needed) or export the package. Otherwise resolution falls to the Class-File tier, which then needs `opens`.
@@ -398,7 +399,7 @@ Add `foy-processor` to the compiler's annotation processor path. It generates, a
 ====
 Foy does **not** (yet) expose `ServletContext`, `HttpServletRequest` or `HttpSession` as injectable CDI beans — there are no `@ApplicationScoped` / `@RequestScoped` / `@SessionScoped` producers for the Servlet API objects. Use the request/response parameters passed to `service()`/`doGet()`.
 
-[.tag-new]#NEW# Your own `@RequestScoped` beans do work: Foy activates the CDI request context for each request, under Vauban or any other CDI container. `@SessionScoped` beans do not: the session context is not activated (xref:reference.adoc#other-containers[Other CDI containers]).
+[.tag-new]#NEW# Your own `@SessionScoped` beans do work under Vauban or any other CDI container: Foy activates its own session context for each request, one instance per HTTP session. Your `@RequestScoped` beans work when the container provides `RequestContextController` (Weld does): Foy then activates the CDI request context for each request. Vauban 0.4 provides none, so under Vauban `@RequestScoped` beans still fail with `ContextNotActiveException`. On Weld, make session beans `Serializable`; threads started with `AsyncContext.start()` have neither context (xref:reference.adoc#other-containers[Other CDI containers]).
 ====
 
 Servlet, Filter and Listener instances **are** resolved through the `BeanManager`, so they can `@Inject` your application beans:

@@ -397,7 +397,9 @@ Statuts : `OPEN` → `INVESTIGATING` → `FIXED` (commit hash) → `CLOSED`.
 ## BUG-20261010-01 — the CDI request context is never active for a servlet request
 
 - **Date** : 2026-10-10
-- **Statut** : FIXED (branch `feat/foy-request-scope-weld`, foy#18)
+- **Statut** : FIXED for containers that provide `RequestContextController` (Weld; branch
+  `feat/foy-request-scope-weld`, foy#18) — still OPEN under Vauban 0.4, which provides none (upstream;
+  issue text in `docs/superpowers/plans/2026-10-10-cdi-session-context.md`, Appendix A.3)
 - **Module touché** : `foy-core`, `foy-chappe`
 - **Symptôme** : a `@RequestScoped` bean injected into a servlet fails on first use:
   `WELD-001303: No active contexts for scope type jakarta.enterprise.context.RequestScoped` under Weld,
@@ -411,8 +413,11 @@ Statuts : `OPEN` → `INVESTIGATING` → `FIXED` (commit hash) → `CLOSED`.
   `RequestContextController` and deactivates it at the end of the request, on the same thread;
   `FoyChappeBoot` registers it ahead of the application's request listeners
   (`ListenerRegistry.addFirst`) whenever a `BeanManager` is given. A `BeanManager` that cannot supply a
-  controller leaves the request without a context, as before. The session context is still not activated
-  (no portable API).
+  controller leaves the request without a context, as before. That is the case of Vauban 0.4: it
+  provides no `RequestContextController`, so under Vauban the request context is still not active for a
+  servlet request (2026-10-10 correction, foy#21: this entry first said "and the same under Vauban" was
+  fixed too).
+  The session context, out of scope here, was added by foy#21 (`FoySessionContext`, `CdiSessionScopeListener`): resolved.
 
 ## BUG-20261010-02 — async timeout lets the pipeline thread and an async thread write the response concurrently
 
@@ -539,3 +544,37 @@ Statuts : `OPEN` → `INVESTIGATING` → `FIXED` (commit hash) → `CLOSED`.
 - **Fix envisagé** : throw `IllegalStateException` from `upgrade()` when the dispatcher type is
   `ASYNC` (or whenever an async cycle exists), mirroring "upgrade() after startAsync()". No TCK
   test exercises this path.
+
+## BUG-20261010-07 — the CDI session context is not active on AsyncContext.start threads
+
+- **Date** : 2026-10-10
+- **Statut** : OPEN (documented gap, parity with the request context of BUG-20261010-01)
+- **Module touché** : `foy-core` (`CdiSessionScopeListener`, `AsyncContextImpl`)
+- **Symptôme** : a `@SessionScoped` bean used from the `Runnable` given to `AsyncContext.start()` fails
+  with `ContextNotActiveException`; the same holds for the threads that run an async dispatch. The
+  `SessionScoped` Javadoc requires the session context to be active when the container calls an
+  `AsyncListener`, and the request context has the same gap.
+- **Reproduction minimale** : `foy-it-weld`, `WeldPortabilityTest.asyncThreadHasNoSessionContext` (pins the
+  gap: the async thread answers `ContextNotActiveException`).
+- **Hypothèse de cause** : the binding is a `ThreadLocal` set by `CdiSessionScopeListener` on the request
+  thread; Foy starts asynchronous work on new virtual threads and propagates neither the session nor the
+  request context to them.
+- **Fix envisagé** : bind both contexts around the `Runnable` in `AsyncContextImpl.start` and around the
+  `AsyncListener` callbacks fired off the request thread, with the request's session source.
+
+## BUG-20261010-08 — @SessionScoped fails on Vauban when every bean archive was processed at build time
+
+- **Date** : 2026-10-10
+- **Statut** : OPEN (upstream Vauban; issue text in `docs/superpowers/plans/2026-10-10-cdi-session-context.md`, Appendix A.1)
+- **Module touché** : `foy-cdi-vauban` (symptom); cause in `vauban-core` / `vauban-processor`
+- **Symptôme** : with `foy-cdi-vauban` on the annotation processor path and every bean archive processed, a
+  `@SessionScoped` request answers 500 with `ContextNotActiveException` ("No context registered for scope
+  jakarta.enterprise.context.SessionScoped"); the same application compiled without processing works.
+- **Reproduction minimale** : `foy-cdi-vauban`, `FoyWebExtensionTest.sessionScopedBeanThroughAProcessedBuild`
+  (`@Disabled` citing this entry; confirmed failing by foy#21 Task 6).
+- **Hypothèse de cause** : `VaubanContainerBuilder.build` skips the BCE discovery when every source carries
+  `META-INF/vauban-bce-processed` (`allSourcesProcessed`, `VaubanContainerBuilder.java:546-556`) and installs
+  `MetaAnnotations.addContext` contexts only from that discovery (`:916`); `VaubanProcessor.applyDiscoveryResult`
+  does not persist `getCustomContexts()` at build time. Mansart's `@TransactionScoped` is exposed the same way.
+- **Fix envisagé** : upstream in Vauban (record the custom contexts at build time, or always run the
+  `@Discovery` phase); re-enable the pinning test once it lands.
