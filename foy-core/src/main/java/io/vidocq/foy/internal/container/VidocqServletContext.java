@@ -72,8 +72,8 @@ public final class VidocqServletContext implements ServletContext {
     private RequestDispatcherImpl.Invoker dispatchInvoker;
     private io.vidocq.foy.internal.error.ErrorPageRegistry errorPages =
             new io.vidocq.foy.internal.error.ErrorPageRegistry();
-    private io.vidocq.foy.spi.security.SecurityProvider securityProvider =
-            new io.vidocq.foy.internal.security.AnonymousSecurityProvider();
+    private volatile io.vidocq.foy.internal.security.SecuritySettings securitySettings =
+            io.vidocq.foy.internal.security.SecuritySettings.DEFAULTS;
     private boolean initialized;
     private boolean programmaticListenerActive;
     private Map<String, String> localeEncodingMappings = Map.of();
@@ -265,13 +265,13 @@ public final class VidocqServletContext implements ServletContext {
         this.errorPages = errorPages;
     }
 
-    public io.vidocq.foy.spi.security.SecurityProvider securityProvider() {
-        return securityProvider;
+    public io.vidocq.foy.internal.security.SecuritySettings securitySettings() { return securitySettings; }
+
+    public void setSecuritySettings(io.vidocq.foy.internal.security.SecuritySettings settings) {
+        this.securitySettings = java.util.Objects.requireNonNull(settings, "settings");
     }
 
-    public void setSecurityProvider(io.vidocq.foy.spi.security.SecurityProvider provider) {
-        this.securityProvider = java.util.Objects.requireNonNull(provider);
-    }
+    public io.vidocq.foy.spi.security.IdentityStore identityStore() { return securitySettings.identityStore(); }
 
     private volatile io.vidocq.foy.internal.boot.ComponentFactory componentFactory;
 

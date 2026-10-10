@@ -218,7 +218,7 @@ public final class WebAppDeployer {
         options.reservedServletNames().forEach(ctx::reserveServletName);
         options.reservedFilterNames().forEach(ctx::reserveFilterName);
         options.reservedUrlPatterns().forEach(ctx::reserveUrlPattern);
-        if (options.securityProvider() != null) ctx.setSecurityProvider(options.securityProvider());
+        ctx.setSecuritySettings(options.security());
         ctx.setComponentFactory(options.componentFactory());
         return ctx;
     }

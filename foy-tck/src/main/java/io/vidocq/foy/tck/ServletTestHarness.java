@@ -32,7 +32,7 @@ import io.vidocq.foy.internal.boot.WebAppModel.ServletDecl;
 import io.vidocq.foy.internal.container.VidocqServletContext;
 import io.vidocq.foy.internal.gen.RegistryComponentFactory;
 import io.vidocq.foy.internal.gen.WebComponentRegistry;
-import io.vidocq.foy.spi.security.SecurityProvider;
+import io.vidocq.foy.spi.security.IdentityStore;
 import jakarta.servlet.DispatcherType;
 import jakarta.servlet.Filter;
 import jakarta.servlet.Servlet;
@@ -139,7 +139,7 @@ public final class ServletTestHarness implements AutoCloseable {
         private final List<FilterMappingDecl> filterMappings = new ArrayList<>();
         private final List<EventListener> listeners = new ArrayList<>();
         private String contextPath = "/";
-        private SecurityProvider securityProvider;
+        private IdentityStore identityStore;
         private WebAppModel.Builder model;
         private ComponentFactory componentFactory;
         private Set<String> reservedServletNames = Set.of();
@@ -266,7 +266,7 @@ public final class ServletTestHarness implements AutoCloseable {
         public Builder listener(EventListener listener) { listeners.add(listener); return this; }
 
         public Builder contextPath(String path) { this.contextPath = path; return this; }
-        public Builder securityProvider(SecurityProvider p) { this.securityProvider = p; return this; }
+        public Builder identityStore(IdentityStore s) { this.identityStore = s; return this; }
 
         private VidocqServletContext.ResourceProvider resourceProvider;
         public Builder resourceProvider(VidocqServletContext.ResourceProvider provider) {
@@ -297,7 +297,7 @@ public final class ServletTestHarness implements AutoCloseable {
             WebAppModel built = target.build();
             var options = DeployOptions.defaults(cl, reg)
                     .withComponentFactory(factory)
-                    .withSecurityProvider(securityProvider)
+                    .withIdentityStore(identityStore)
                     .withResourceProvider(resourceProvider)
                     .withReserved(reservedServletNames, reservedFilterNames, reservedUrlPatterns);
             if (handlesTypes != null) options = options.withHandlesTypes(handlesTypes);

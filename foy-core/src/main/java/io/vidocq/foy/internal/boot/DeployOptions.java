@@ -20,7 +20,8 @@
 package io.vidocq.foy.internal.boot;
 
 import io.vidocq.foy.internal.container.VidocqServletContext;
-import io.vidocq.foy.spi.security.SecurityProvider;
+import io.vidocq.foy.internal.security.SecuritySettings;
+import io.vidocq.foy.spi.security.IdentityStore;
 
 import java.nio.file.Path;
 import java.util.Objects;
@@ -30,7 +31,7 @@ import java.util.Set;
  * Container-side settings of a deployment, everything {@link WebAppDeployer} needs
  * besides the {@link WebAppModel} itself.
  *
- * @param securityProvider     security provider, {@code null} for none
+ * @param security             security settings; {@code null} gives {@link SecuritySettings#DEFAULTS}
  * @param resourceProvider     static resource provider, {@code null} for none
  * @param servletContextName   servlet context name; {@code null} falls back to the model display name
  * @param reservedServletNames servlet names a dynamic {@code addServlet} must not take
@@ -42,7 +43,7 @@ import java.util.Set;
  * @param tempDirRoot          directory under which the context temp dir is created; {@code null} gives
  *                             {@code java.io.tmpdir}
  */
-public record DeployOptions(SecurityProvider securityProvider,
+public record DeployOptions(SecuritySettings security,
                             VidocqServletContext.ResourceProvider resourceProvider,
                             String servletContextName,
                             Set<String> reservedServletNames,
@@ -54,6 +55,7 @@ public record DeployOptions(SecurityProvider securityProvider,
                             Path tempDirRoot) {
 
     public DeployOptions {
+        if (security == null) security = SecuritySettings.DEFAULTS;
         reservedServletNames = Set.copyOf(reservedServletNames);
         reservedFilterNames = Set.copyOf(reservedFilterNames);
         reservedUrlPatterns = Set.copyOf(reservedUrlPatterns);
@@ -62,7 +64,7 @@ public record DeployOptions(SecurityProvider securityProvider,
     }
 
     /** Without virtual server name and temp-dir root (their defaults apply). */
-    public DeployOptions(SecurityProvider securityProvider,
+    public DeployOptions(SecuritySettings security,
                          VidocqServletContext.ResourceProvider resourceProvider,
                          String servletContextName,
                          Set<String> reservedServletNames,
@@ -70,7 +72,7 @@ public record DeployOptions(SecurityProvider securityProvider,
                          Set<String> reservedUrlPatterns,
                          ComponentFactory componentFactory,
                          HandlesTypesResolver handlesTypes) {
-        this(securityProvider, resourceProvider, servletContextName, reservedServletNames, reservedFilterNames,
+        this(security, resourceProvider, servletContextName, reservedServletNames, reservedFilterNames,
                 reservedUrlPatterns, componentFactory, handlesTypes, null, null);
     }
 
@@ -116,48 +118,52 @@ public record DeployOptions(SecurityProvider securityProvider,
     }
 
     public DeployOptions withComponentFactory(ComponentFactory f) {
-        return new DeployOptions(securityProvider, resourceProvider, servletContextName,
+        return new DeployOptions(security, resourceProvider, servletContextName,
                 reservedServletNames, reservedFilterNames, reservedUrlPatterns, f, handlesTypes,
                 virtualServerName, tempDirRoot);
     }
 
     public DeployOptions withHandlesTypes(HandlesTypesResolver r) {
-        return new DeployOptions(securityProvider, resourceProvider, servletContextName,
+        return new DeployOptions(security, resourceProvider, servletContextName,
                 reservedServletNames, reservedFilterNames, reservedUrlPatterns, componentFactory, r,
                 virtualServerName, tempDirRoot);
     }
 
-    public DeployOptions withSecurityProvider(SecurityProvider p) {
-        return new DeployOptions(p, resourceProvider, servletContextName,
+    public DeployOptions withSecurity(SecuritySettings s) {
+        return new DeployOptions(s, resourceProvider, servletContextName,
                 reservedServletNames, reservedFilterNames, reservedUrlPatterns, componentFactory, handlesTypes,
                 virtualServerName, tempDirRoot);
     }
 
+    public DeployOptions withIdentityStore(IdentityStore store) {
+        return withSecurity(security.withIdentityStore(store));
+    }
+
     public DeployOptions withResourceProvider(VidocqServletContext.ResourceProvider p) {
-        return new DeployOptions(securityProvider, p, servletContextName,
+        return new DeployOptions(security, p, servletContextName,
                 reservedServletNames, reservedFilterNames, reservedUrlPatterns, componentFactory, handlesTypes,
                 virtualServerName, tempDirRoot);
     }
 
     public DeployOptions withServletContextName(String n) {
-        return new DeployOptions(securityProvider, resourceProvider, n,
+        return new DeployOptions(security, resourceProvider, n,
                 reservedServletNames, reservedFilterNames, reservedUrlPatterns, componentFactory, handlesTypes,
                 virtualServerName, tempDirRoot);
     }
 
     public DeployOptions withReserved(Set<String> servletNames, Set<String> filterNames, Set<String> urlPatterns) {
-        return new DeployOptions(securityProvider, resourceProvider, servletContextName,
+        return new DeployOptions(security, resourceProvider, servletContextName,
                 servletNames, filterNames, urlPatterns, componentFactory, handlesTypes,
                 virtualServerName, tempDirRoot);
     }
 
     public DeployOptions withVirtualServerName(String name) {
-        return new DeployOptions(securityProvider, resourceProvider, servletContextName, reservedServletNames,
+        return new DeployOptions(security, resourceProvider, servletContextName, reservedServletNames,
                 reservedFilterNames, reservedUrlPatterns, componentFactory, handlesTypes, name, tempDirRoot);
     }
 
     public DeployOptions withTempDirRoot(Path root) {
-        return new DeployOptions(securityProvider, resourceProvider, servletContextName, reservedServletNames,
+        return new DeployOptions(security, resourceProvider, servletContextName, reservedServletNames,
                 reservedFilterNames, reservedUrlPatterns, componentFactory, handlesTypes, virtualServerName, root);
     }
 }

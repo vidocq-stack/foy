@@ -19,55 +19,101 @@
  */
 package io.vidocq.foy.internal.security;
 
-import io.vidocq.foy.spi.security.AuthenticatedUser;
-import io.vidocq.foy.spi.security.SecurityProvider;
+import io.vidocq.foy.spi.security.Identity;
+import io.vidocq.foy.spi.security.IdentityStore;
 
+import java.nio.ByteBuffer;
+import java.nio.CharBuffer;
+import java.nio.charset.CharacterCodingException;
+import java.nio.charset.CodingErrorAction;
 import java.nio.charset.StandardCharsets;
+import java.util.Arrays;
 import java.util.Base64;
 import java.util.Objects;
 import java.util.Optional;
 
 /**
- * HTTP Basic Authentication (RFC 7617).
- * <p>Parse the {@code Authorization: Basic base64(user:pass)} header and delegate
- * authentication at {@link SecurityProvider}.</p>
+ * HTTP Basic authentication (RFC 7617, Servlet 6.1 section 13.6.1). The header is parsed strictly,
+ * and any deviation is a refusal, never an exception:
+ * <ul>
+ *   <li>the scheme is {@code Basic} (any case) followed by spaces, then one Base64 token and
+ *       nothing else;</li>
+ *   <li>the decoded bytes are strict UTF-8 with no control character;</li>
+ *   <li>the user-id is non-empty and ends at the first colon.</li>
+ * </ul>
+ * The password only ever lives in a {@code char[]} that is wiped after validation.
  */
 public final class BasicAuthenticator {
 
-    public static final String REALM_DEFAULT = "vidocq";
+    /** Realm sent when {@code login-config} names none: neutral, no product name. */
+    public static final String DEFAULT_REALM = "Restricted";
+    /** Longest accepted header value, in characters. */
+    static final int MAX_CREDENTIALS_LENGTH = 8192;
 
-    private final SecurityProvider provider;
+    private final IdentityStore store;
     private final String realm;
 
-    public BasicAuthenticator(SecurityProvider provider, String realm) {
-        this.provider = Objects.requireNonNull(provider);
-        this.realm = Objects.requireNonNull(realm);
+    public BasicAuthenticator(IdentityStore store, String realm) {
+        this.store = Objects.requireNonNull(store, "store");
+        this.realm = Objects.requireNonNull(realm, "realm");
     }
-
-    public BasicAuthenticator(SecurityProvider provider) { this(provider, REALM_DEFAULT); }
 
     public String realm() { return realm; }
 
-    /** Attempts authentication from a {@code Authorization} header. */
-    public Optional<AuthenticatedUser> tryAuthenticate(String authorizationHeader) {
-        if (authorizationHeader == null) return Optional.empty();
-        String prefix = "Basic ";
-        if (!authorizationHeader.regionMatches(true, 0, prefix, 0, prefix.length())) {
-            return Optional.empty();
-        }
-        String encoded = authorizationHeader.substring(prefix.length()).trim();
-        byte[] decoded;
-        try { decoded = Base64.getDecoder().decode(encoded); }
-        catch (IllegalArgumentException e) { return Optional.empty(); }
-        String raw = new String(decoded, StandardCharsets.UTF_8);
-        int colon = raw.indexOf(':');
-        if (colon < 0) return Optional.empty();
-        String user = raw.substring(0, colon);
-        String pass = raw.substring(colon + 1);
-        return provider.authenticate(user, pass);
+    /** The identity carried by an {@code Authorization} header value; empty when absent, malformed or refused. */
+    public Optional<Identity> tryAuthenticate(String authorizationHeader) {
+        UserPassword credentials = parse(authorizationHeader);
+        if (credentials == null) return Optional.empty();
+        return CredentialCheck.validate(store, credentials.user(), credentials.password());
     }
 
     public String challengeHeaderValue() {
-        return "Basic realm=\"" + realm + "\", charset=\"UTF-8\"";
+        return "Basic realm=\"" + realm.replace("\\", "\\\\").replace("\"", "\\\"") + "\", charset=\"UTF-8\"";
+    }
+
+    record UserPassword(String user, char[] password) {}
+
+    /** The user and password of a Basic header, or {@code null} when anything is off. */
+    static UserPassword parse(String header) {
+        if (header == null || header.length() > MAX_CREDENTIALS_LENGTH) return null;
+        if (header.length() < 6 || !header.regionMatches(true, 0, "Basic", 0, 5) || header.charAt(5) != ' ') {
+            return null;
+        }
+        int start = 5;
+        while (start < header.length() && header.charAt(start) == ' ') start++;
+        String token = header.substring(start);
+        if (token.isEmpty()) return null;
+        byte[] decoded;
+        try {
+            decoded = Base64.getDecoder().decode(token);
+        } catch (IllegalArgumentException e) {
+            return null;
+        }
+        char[] all = null;
+        try {
+            CharBuffer chars;
+            try {
+                chars = StandardCharsets.UTF_8.newDecoder()
+                        .onMalformedInput(CodingErrorAction.REPORT)
+                        .onUnmappableCharacter(CodingErrorAction.REPORT)
+                        .decode(ByteBuffer.wrap(decoded));
+            } catch (CharacterCodingException e) {
+                return null;
+            }
+            all = new char[chars.remaining()];
+            chars.get(all);
+            if (chars.hasArray()) Arrays.fill(chars.array(), '\0');
+            int colon = -1;
+            for (int i = 0; i < all.length; i++) {
+                char c = all[i];
+                if (c < 0x20 || c == 0x7f) return null;
+                if (colon < 0 && c == ':') colon = i;
+            }
+            if (colon <= 0) return null;
+            return new UserPassword(new String(all, 0, colon), Arrays.copyOfRange(all, colon + 1, all.length));
+        } finally {
+            Arrays.fill(decoded, (byte) 0);
+            if (all != null) Arrays.fill(all, '\0');
+        }
     }
 }

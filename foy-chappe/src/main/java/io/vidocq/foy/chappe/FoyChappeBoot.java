@@ -40,7 +40,10 @@ import io.vidocq.foy.internal.webxml.FragmentOrderer;
 import io.vidocq.foy.internal.webxml.WebAppDescriptor;
 import io.vidocq.foy.internal.webxml.WebXmlParser;
 import io.vidocq.foy.internal.listener.CdiRequestScopeListener;
+import io.vidocq.foy.internal.security.InMemoryIdentityStore;
+import io.vidocq.foy.internal.security.SecuritySettings;
 import io.vidocq.foy.spi.cdi.CdiContextListeners;
+import io.vidocq.foy.spi.security.IdentityStore;
 import jakarta.enterprise.inject.spi.BeanManager;
 import jakarta.servlet.ServletException;
 
@@ -121,6 +124,10 @@ public final class FoyChappeBoot {
         private final List<URL> applicationRoots = new ArrayList<>();
         private VidocqServletContext.ResourceProvider resourceProvider;
         private String virtualServerName = "vidocq";
+        private IdentityStore identityStore;
+        private InMemoryIdentityStore.Builder users;
+        private int confidentialPort = -1;
+        private boolean rotateSessionIdOnLogin = true;
 
         public Builder beanManager(BeanManager bm) { this.beanManager = bm; return this; }
 
@@ -189,6 +196,48 @@ public final class FoyChappeBoot {
         }
 
         /**
+         * The user base behind BASIC, FORM and {@code HttpServletRequest.login}. With neither this nor
+         * {@link #user}, every login fails. Exclusive with {@link #user}.
+         */
+        public Builder identityStore(IdentityStore store) {
+            this.identityStore = Objects.requireNonNull(store, "store");
+            return this;
+        }
+
+        /**
+         * Declares a user of Foy's in-memory identity store, with its application roles. The password is
+         * digested at once (salted SHA-256) and not kept: the caller may wipe the array afterwards.
+         */
+        public Builder user(String name, char[] password, String... roles) {
+            if (users == null) users = InMemoryIdentityStore.builder();
+            users.user(name, password, roles);
+            return this;
+        }
+
+        /**
+         * HTTPS port a CONFIDENTIAL/INTEGRAL constraint redirects plain HTTP to; by default ({@code -1})
+         * such a request gets 403.
+         *
+         * @throws IllegalArgumentException when {@code port} is neither {@code -1} nor a TCP port
+         */
+        public Builder confidentialPort(int port) {
+            this.confidentialPort = SecuritySettings.checkConfidentialPort(port);
+            return this;
+        }
+
+        /** Whether a successful login changes the session id (session fixation defence); {@code true} by default. */
+        public Builder rotateSessionIdOnLogin(boolean rotate) { this.rotateSessionIdOnLogin = rotate; return this; }
+
+        SecuritySettings securitySettings() {
+            if (identityStore != null && users != null) {
+                throw new IllegalStateException("identityStore(...) and user(...) are exclusive");
+            }
+            IdentityStore store = identityStore != null ? identityStore
+                    : users != null ? users.build() : IdentityStore.none();
+            return new SecuritySettings(store, confidentialPort, rotateSessionIdOnLogin);
+        }
+
+        /**
          * Discovers and deploys the application: web.xml, then the fragments ordered per
          * §8.2.2 ({@link FragmentOrderer}), merged with the annotated components per §8.2.3
          * (the annotations of jars whose fragment is excluded by the ordering or
@@ -200,8 +249,11 @@ public final class FoyChappeBoot {
          * jars that carry no fragment are not run (see {@link #applicationRoot}). Any retained
          * initializer on the path is enough for Foy to start, even without servlet, filter,
          * listener or descriptor.</p>
+         *
+         * @throws IllegalStateException when both {@link #identityStore} and {@link #user} were called
          */
         public Optional<Mounted> build() throws ServletException {
+            SecuritySettings security = securitySettings();
             ClassLoader loader = classLoader != null ? classLoader : FoyChappeBoot.class.getClassLoader();
             // One registry for discovery, web.xml classes, dynamic registrations and @HandlesTypes.
             WebComponentRegistry registry = WebComponentRegistry.forClassLoader(loader);
@@ -285,7 +337,7 @@ public final class FoyChappeBoot {
                 deployment = WebAppDeployer.deploy(model, DeployOptions
                         .defaults(loader, registry, ApplicationSources.scanRoots(scanRoots), excluded)
                         .withComponentFactory(factory).withResourceProvider(resources)
-                        .withVirtualServerName(virtualServerName));
+                        .withVirtualServerName(virtualServerName).withSecurity(security));
             } catch (RuntimeException e) {
                 throw new ServletException("Foy deployment failed: " + e.getMessage(), e);
             }

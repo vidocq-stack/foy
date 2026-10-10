@@ -25,8 +25,8 @@ import io.vidocq.foy.internal.container.VidocqServletContext;
 import io.vidocq.foy.internal.dispatcher.FilterRegistry;
 import io.vidocq.foy.internal.dispatcher.ServletDispatcher;
 import io.vidocq.foy.internal.dispatcher.UrlPatternMatcher;
-import io.vidocq.foy.spi.security.AuthenticatedUser;
-import io.vidocq.foy.spi.security.SecurityProvider;
+import io.vidocq.foy.internal.security.InMemoryIdentityStore;
+import io.vidocq.foy.internal.security.SecuritySettings;
 import io.vidocq.foy.internal.gen.ClassFileDescriptorReader;
 import io.vidocq.foy.spi.gen.WebComponentDescriptor;
 import jakarta.servlet.annotation.HttpConstraint;
@@ -46,9 +46,6 @@ import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.Base64;
 import java.util.List;
-import java.util.Map;
-import java.util.Optional;
-import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -60,16 +57,10 @@ class ServletSecurityEndToEndTest {
     @AfterEach
     void tearDown() { if (server != null) server.stop(); }
 
-    private static final SecurityProvider USERS = (user, pass) -> {
-        Map<String, String> db = Map.of("alice", "a-secret", "bob", "b-secret");
-        Map<String, Set<String>> roles = Map.of(
-                "alice", Set.of("admin"),
-                "bob", Set.of("user")
-        );
-        return db.getOrDefault(user, "").equals(pass)
-                ? Optional.of(new AuthenticatedUser(user, roles.get(user)))
-                : Optional.empty();
-    };
+    private static final InMemoryIdentityStore USERS = InMemoryIdentityStore.builder()
+            .user("alice", "a-secret".toCharArray(), "admin")
+            .user("bob", "b-secret".toCharArray(), "user")
+            .build();
 
     @ServletSecurity(@HttpConstraint(rolesAllowed = "admin"))
     public static final class AdminOnlyServlet extends HttpServlet {
@@ -157,7 +148,7 @@ class ServletSecurityEndToEndTest {
 
     private void startWith(HttpServlet servlet, String pattern) {
         var ctx = new VidocqServletContext("/");
-        ctx.setSecurityProvider(USERS);
+        ctx.setSecuritySettings(SecuritySettings.DEFAULTS.withIdentityStore(USERS));
         var bridge = new ChappeServletBridge(
                 new ServletDispatcher(List.of(new ServletDispatcher.Mapping(
                         UrlPatternMatcher.of(pattern), servlet, "S", true,

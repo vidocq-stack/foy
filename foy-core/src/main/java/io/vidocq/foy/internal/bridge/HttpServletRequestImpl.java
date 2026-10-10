@@ -24,6 +24,7 @@ import io.vidocq.foy.internal.container.VidocqServletContext;
 import io.vidocq.foy.internal.http.CookieCodec;
 import io.vidocq.foy.internal.session.HttpSessionImpl;
 import io.vidocq.foy.internal.session.SessionManager;
+import io.vidocq.foy.spi.security.Identity;
 import jakarta.servlet.AsyncContext;
 import jakarta.servlet.DispatcherType;
 import jakarta.servlet.RequestDispatcher;
@@ -93,7 +94,7 @@ public final class HttpServletRequestImpl implements HttpServletRequest {
         this.sessionManager = sessionManager;
     }
 
-    private io.vidocq.foy.spi.security.AuthenticatedUser currentUser;
+    private Identity identity;
     private String authType;
     private String canonicalPath;
 
@@ -140,15 +141,13 @@ public final class HttpServletRequestImpl implements HttpServletRequest {
         return rest.isEmpty() ? "/" : rest;
     }
 
-    public void bindAuthenticated(io.vidocq.foy.spi.security.AuthenticatedUser user,
-                                  String authType) {
-        this.currentUser = user;
-        this.authType = authType;
+    /** Binds (or, with {@code null}, clears) the caller identity of this request and its auth type. */
+    public void bindIdentity(Identity identity, String authType) {
+        this.identity = identity;
+        this.authType = identity == null ? null : authType;
     }
 
-    public io.vidocq.foy.spi.security.AuthenticatedUser currentUser() {
-        return currentUser;
-    }
+    public Identity identity() { return identity; }
 
     // ---- Request line & URI ----
 
@@ -669,11 +668,9 @@ public final class HttpServletRequestImpl implements HttpServletRequest {
         }
         return parsedCookies.length == 0 ? null : parsedCookies;
     }
-    @Override public String getRemoteUser() { return currentUser == null ? null : currentUser.name(); }
-    @Override public boolean isUserInRole(String role) {
-        return currentUser != null && currentUser.hasRole(role);
-    }
-    @Override public Principal getUserPrincipal() { return currentUser; }
+    @Override public String getRemoteUser() { return identity == null ? null : identity.name(); }
+    @Override public boolean isUserInRole(String role) { return identity != null && identity.hasRole(role); }
+    @Override public Principal getUserPrincipal() { return identity == null ? null : identity.principal(); }
     private String urlSessionId;
     public void setUrlSessionId(String id) { this.urlSessionId = id; }
 
@@ -782,34 +779,30 @@ public final class HttpServletRequestImpl implements HttpServletRequest {
     }
 
     @Override public boolean authenticate(jakarta.servlet.http.HttpServletResponse response) throws IOException {
-        if (currentUser != null) return true;
-        var provider = resolveSecurityProvider();
-        var basic = new io.vidocq.foy.internal.security.BasicAuthenticator(provider);
-        var user = basic.tryAuthenticate(getHeader("Authorization")).orElse(null);
-        if (user == null) {
+        if (identity != null) return true;
+        var basic = new io.vidocq.foy.internal.security.BasicAuthenticator(identityStore(),
+                io.vidocq.foy.internal.security.BasicAuthenticator.DEFAULT_REALM);
+        var found = basic.tryAuthenticate(getHeader("Authorization"));
+        if (found.isEmpty()) {
             response.setHeader("WWW-Authenticate", basic.challengeHeaderValue());
-            response.sendError(401, "Unauthorized");
+            response.sendError(401);
             return false;
         }
-        bindAuthenticated(user, "BASIC");
+        bindIdentity(found.get(), BASIC_AUTH);
         return true;
     }
     @Override public void login(String username, String password) throws ServletException {
-        if (currentUser != null) throw new ServletException("already authenticated");
-        var user = resolveSecurityProvider().authenticate(username, password).orElse(null);
-        if (user == null) throw new ServletException("invalid credentials");
-        bindAuthenticated(user, "BASIC");
+        if (identity != null) throw new ServletException("an identity is already established for this request");
+        Identity found = io.vidocq.foy.internal.security.CredentialCheck.validate(identityStore(), username,
+                password == null ? null : password.toCharArray()).orElse(null);
+        if (found == null) throw new ServletException("login failed");
+        bindIdentity(found, BASIC_AUTH);
     }
-    @Override public void logout() {
-        currentUser = null;
-        authType = null;
-    }
+    @Override public void logout() { bindIdentity(null, null); }
 
-    private io.vidocq.foy.spi.security.SecurityProvider resolveSecurityProvider() {
-        if (servletContext instanceof VidocqServletContext v) {
-            return v.securityProvider();
-        }
-        return new io.vidocq.foy.internal.security.AnonymousSecurityProvider();
+    private io.vidocq.foy.spi.security.IdentityStore identityStore() {
+        return servletContext instanceof VidocqServletContext v ? v.identityStore()
+                : io.vidocq.foy.spi.security.IdentityStore.none();
     }
 
     private java.util.List<io.vidocq.foy.internal.http.PartImpl> parsedParts;

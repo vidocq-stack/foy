@@ -19,7 +19,7 @@
  */
 package io.vidocq.foy.tck.conformance;
 
-import io.vidocq.foy.spi.security.AuthenticatedUser;
+import io.vidocq.foy.internal.security.InMemoryIdentityStore;
 import io.vidocq.foy.tck.ServletTestHarness;
 import jakarta.servlet.annotation.HttpConstraint;
 import jakarta.servlet.annotation.ServletSecurity;
@@ -31,9 +31,6 @@ import org.junit.jupiter.api.Test;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.Base64;
-import java.util.Map;
-import java.util.Optional;
-import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -51,16 +48,10 @@ class ConformanceSecurityTest {
     void adminConstraintRejectsNonAdminAndAnonymous() throws Exception {
         try (var h = ServletTestHarness.builder()
                 .servlet("/admin", new AdminServlet())
-                .securityProvider((user, pass) -> {
-                    Map<String, Set<String>> db = Map.of(
-                            "alice:admin", Set.of("admin"),
-                            "bob:user", Set.of("user"));
-                    return db.entrySet().stream()
-                            .filter(e -> e.getKey().equals(user + ":" + pass))
-                            .findFirst()
-                            .map(e -> new AuthenticatedUser(user,
-                                    e.getValue()));
-                })
+                .identityStore(InMemoryIdentityStore.builder()
+                        .user("alice", "admin".toCharArray(), "admin")
+                        .user("bob", "user".toCharArray(), "user")
+                        .build())
                 .start()) {
             assertEquals(401, h.get("/admin").statusCode());
             assertEquals(401, withAuth(h, "/admin", "alice", "wrong").statusCode());
@@ -78,7 +69,4 @@ class ConformanceSecurityTest {
                         .encodeToString((user + ":" + pass).getBytes(StandardCharsets.UTF_8)))
                 .GET().build());
     }
-
-    @SuppressWarnings("unused")
-    private static Optional<AuthenticatedUser> unused() { return Optional.empty(); }
 }

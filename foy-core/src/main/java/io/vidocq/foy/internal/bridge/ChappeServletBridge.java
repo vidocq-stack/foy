@@ -432,7 +432,7 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
             Throwable thrown = null;
             try {
                 var enforcer = new SecurityConstraintEnforcer(
-                        servletContext.securityProvider());
+                        servletContext.identityStore());
                 if (!enforcer.enforce(m.security(), req, res)) {
                     requestDestroyed = true;
                     registry.fireRequestDestroyed(servletContext, req);

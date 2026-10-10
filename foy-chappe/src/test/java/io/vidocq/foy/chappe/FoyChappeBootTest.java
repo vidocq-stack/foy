@@ -105,6 +105,31 @@ class FoyChappeBootTest {
     }
 
     @Test
+    void usersDeclaredOnTheBuilderReachTheContext() throws Exception {
+        try (var mounted = plainApp(null).contextPath("/").user("alice", "a-secret".toCharArray(), "admin")
+                .build().orElseThrow()) {
+            var store = mounted.servletContext().identityStore();
+            assertEquals(Set.of("admin"), store.validate("alice", "a-secret".toCharArray()).orElseThrow().roles());
+            assertTrue(store.validate("alice", "wrong".toCharArray()).isEmpty());
+        }
+    }
+
+    @Test
+    void identityStoreAndUsersAreExclusive() {
+        var b = plainApp(null).contextPath("/").identityStore(io.vidocq.foy.spi.security.IdentityStore.none())
+                .user("alice", "a".toCharArray());
+        assertThrows(IllegalStateException.class, b::build);
+    }
+
+    @Test
+    void anInvalidConfidentialPortIsRejectedAtTheCallSite() {
+        var b = plainApp(null);
+        assertThrows(IllegalArgumentException.class, () -> b.confidentialPort(0));
+        assertThrows(IllegalArgumentException.class, () -> b.confidentialPort(65_536));
+        b.confidentialPort(-1).confidentialPort(8443);
+    }
+
+    @Test
     void virtualServerNameIsConfigurableAndDefaultsToVidocq() throws Exception {
         try (var mounted = plainApp(null).contextPath("/").build().orElseThrow()) {
             assertEquals("vidocq", mounted.servletContext().getVirtualServerName());

@@ -19,75 +19,52 @@
  */
 package io.vidocq.foy.internal.security;
 
-import io.vidocq.foy.spi.security.AuthenticatedUser;
-import io.vidocq.foy.spi.security.SecurityProvider;
-
 import org.junit.jupiter.api.Test;
 
 import java.nio.charset.StandardCharsets;
 import java.util.Base64;
-import java.util.Optional;
-import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.*;
 
 class BasicAuthenticatorTest {
 
+    private static final InMemoryIdentityStore USERS = InMemoryIdentityStore.builder()
+            .user("alice", "pa:ss".toCharArray(), "admin").build();
+    private final BasicAuthenticator basic = new BasicAuthenticator(USERS, "Corp");
+
+    private static String b64(byte[] raw) { return Base64.getEncoder().encodeToString(raw); }
+    private static String b64(String raw) { return b64(raw.getBytes(StandardCharsets.UTF_8)); }
+
     @Test
-    void parsesCorrectCredentialsAndDelegates() {
-        SecurityProvider provider = (u, p) ->
-                "alice".equals(u) && "s3cret".equals(p)
-                        ? Optional.of(new AuthenticatedUser("alice", Set.of("admin")))
-                        : Optional.empty();
-        var auth = new BasicAuthenticator(provider, "test");
-        String header = "Basic " + Base64.getEncoder().encodeToString(
-                "alice:s3cret".getBytes(StandardCharsets.UTF_8));
-        var user = auth.tryAuthenticate(header);
-        assertTrue(user.isPresent());
-        assertEquals("alice", user.get().getName());
-        assertTrue(user.get().hasRole("admin"));
+    void validHeaderAuthenticatesAndSplitsOnTheFirstColon() {
+        assertEquals("alice", basic.tryAuthenticate("Basic " + b64("alice:pa:ss")).orElseThrow().name());
+        assertEquals("alice", basic.tryAuthenticate("basic " + b64("alice:pa:ss")).orElseThrow().name());
     }
 
     @Test
-    void rejectsBadCredentials() {
-        SecurityProvider provider = (u, p) -> Optional.empty();
-        var auth = new BasicAuthenticator(provider);
-        String header = "Basic " + Base64.getEncoder().encodeToString("x:y".getBytes());
-        assertTrue(auth.tryAuthenticate(header).isEmpty());
+    void malformedHeadersAreRefusedWithoutException() {
+        String[] bad = {
+                null, "", "Basic", "Basic ", "Bearer " + b64("alice:pa:ss"), "Basic\t" + b64("alice:pa:ss"),
+                "Basic %%%%", "Basic " + b64("alice"), "Basic " + b64(":pa:ss"),
+                "Basic " + b64("ali\u0001ce:pa:ss"), "Basic " + b64("alice:pa\nss"),
+                "Basic " + b64(new byte[] {(byte) 0xC3, (byte) 0x28, ':', 'x'}),
+                "Basic " + "A".repeat(BasicAuthenticator.MAX_CREDENTIALS_LENGTH),
+                "Basic " + b64("alice:pa:ss") + " trailing"
+        };
+        for (String h : bad) assertNull(BasicAuthenticator.parse(h), String.valueOf(h));
+        for (String h : bad) assertTrue(basic.tryAuthenticate(h).isEmpty(), String.valueOf(h));
     }
 
     @Test
-    void rejectsMalformedBase64() {
-        var auth = new BasicAuthenticator((u, p) -> Optional.empty());
-        assertTrue(auth.tryAuthenticate("Basic !!!notbase64!!!").isEmpty());
+    void wrongPasswordIsRefused() {
+        assertTrue(basic.tryAuthenticate("Basic " + b64("alice:nope")).isEmpty());
     }
 
     @Test
-    void rejectsWhenNoColon() {
-        var auth = new BasicAuthenticator((u, p) -> Optional.empty());
-        String header = "Basic " + Base64.getEncoder().encodeToString("nocolon".getBytes());
-        assertTrue(auth.tryAuthenticate(header).isEmpty());
-    }
-
-    @Test
-    void ignoresNonBasicSchemes() {
-        var auth = new BasicAuthenticator((u, p) -> Optional.empty());
-        assertTrue(auth.tryAuthenticate("Bearer xyz").isEmpty());
-        assertTrue(auth.tryAuthenticate(null).isEmpty());
-    }
-
-    @Test
-    void challengeExposesRealmAndCharset() {
-        var auth = new BasicAuthenticator((u, p) -> Optional.empty(), "my-realm");
-        assertEquals("Basic realm=\"my-realm\", charset=\"UTF-8\"", auth.challengeHeaderValue());
-    }
-
-    @Test
-    void schemePrefixIsCaseInsensitive() {
-        SecurityProvider provider = (u, p) ->
-                Optional.of(new AuthenticatedUser(u, Set.of()));
-        var auth = new BasicAuthenticator(provider);
-        String header = "basic " + Base64.getEncoder().encodeToString("x:y".getBytes());
-        assertTrue(auth.tryAuthenticate(header).isPresent());
+    void challengeQuotesTheRealm() {
+        assertEquals("Basic realm=\"Corp\", charset=\"UTF-8\"", basic.challengeHeaderValue());
+        assertEquals("Basic realm=\"a\\\"b\\\\c\", charset=\"UTF-8\"",
+                new BasicAuthenticator(USERS, "a\"b\\c").challengeHeaderValue());
+        assertEquals("Restricted", BasicAuthenticator.DEFAULT_REALM);
     }
 }

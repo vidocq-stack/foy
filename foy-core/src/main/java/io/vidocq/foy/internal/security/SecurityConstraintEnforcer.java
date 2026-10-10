@@ -19,8 +19,8 @@
  */
 package io.vidocq.foy.internal.security;
 
-import io.vidocq.foy.spi.security.AuthenticatedUser;
-import io.vidocq.foy.spi.security.SecurityProvider;
+import io.vidocq.foy.spi.security.Identity;
+import io.vidocq.foy.spi.security.IdentityStore;
 
 import io.vidocq.foy.internal.bridge.HttpServletRequestImpl;
 import jakarta.servlet.HttpConstraintElement;
@@ -51,8 +51,8 @@ public final class SecurityConstraintEnforcer {
 
     private final BasicAuthenticator authenticator;
 
-    public SecurityConstraintEnforcer(SecurityProvider provider) {
-        this.authenticator = new BasicAuthenticator(provider);
+    public SecurityConstraintEnforcer(IdentityStore store) {
+        this.authenticator = new BasicAuthenticator(store, BasicAuthenticator.DEFAULT_REALM);
     }
 
     /**
@@ -75,10 +75,10 @@ public final class SecurityConstraintEnforcer {
         }
 
         // Non-empty roles: authentication is required.
-        if (req instanceof HttpServletRequestImpl impl && impl.currentUser() == null) {
+        if (req instanceof HttpServletRequestImpl impl && impl.identity() == null) {
             tryBasicAuth(impl);
         }
-        AuthenticatedUser user = extractUser(req);
+        Identity user = extractUser(req);
         if (user == null) {
             res.setHeader("WWW-Authenticate", authenticator.challengeHeaderValue());
             res.sendError(HttpServletResponse.SC_UNAUTHORIZED, "Unauthorized");
@@ -95,13 +95,11 @@ public final class SecurityConstraintEnforcer {
         String header = req.getHeader("Authorization");
         if (header == null) return;
         authenticator.tryAuthenticate(header)
-                .ifPresent(u -> req.bindAuthenticated(u, "BASIC"));
+                .ifPresent(u -> req.bindIdentity(u, HttpServletRequest.BASIC_AUTH));
     }
 
-    private static AuthenticatedUser extractUser(HttpServletRequest req) {
-        if (req instanceof HttpServletRequestImpl impl) return impl.currentUser();
-        var p = req.getUserPrincipal();
-        return p instanceof AuthenticatedUser u ? u : null;
+    private static Identity extractUser(HttpServletRequest req) {
+        return req instanceof HttpServletRequestImpl impl ? impl.identity() : null;
     }
 
     private static HttpConstraintElement resolveEffective(ServletSecurityElement security, String method) {
