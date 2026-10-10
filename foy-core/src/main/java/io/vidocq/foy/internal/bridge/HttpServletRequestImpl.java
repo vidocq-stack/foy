@@ -338,10 +338,10 @@ public final class HttpServletRequestImpl implements HttpServletRequest {
     /** A dispatch is running: listener callbacks wait. Guarded by {@link #callbacksMonitor}. */
     private boolean callbacksHeld = true;
     /**
-     * Non-blocking input is allowed once async started (an upgraded connection gets its own
+     * Non-blocking input and output are allowed once async started (an upgraded connection gets its own
      * streams, see {@link #upgrade}); failures fail the open cycle.
      */
-    private final ServletInputStreamImpl.NonBlockingHost nonBlockingHost = new ServletInputStreamImpl.NonBlockingHost() {
+    private final NonBlockingHost nonBlockingHost = new NonBlockingHost() {
         @Override public boolean nonBlockingAllowed() { return isAsyncStarted(); }
         @Override public CallbackSerializer callbacks() { return callbackSerializer(); }
         @Override public void failed(Throwable t) {
@@ -349,6 +349,9 @@ public final class HttpServletRequestImpl implements HttpServletRequest {
             if (cycle != null) cycle.fail(t);
         }
     };
+
+    /** The non-blocking I/O host shared by the request body and the response output. */
+    NonBlockingHost nonBlockingHost() { return nonBlockingHost; }
 
     /** The request's listener callback serializer, run with the application's class loader. */
     CallbackSerializer callbackSerializer() {

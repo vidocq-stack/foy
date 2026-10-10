@@ -32,6 +32,7 @@ import jakarta.servlet.DispatcherType;
 import jakarta.servlet.ReadListener;
 import jakarta.servlet.ServletInputStream;
 import jakarta.servlet.ServletOutputStream;
+import jakarta.servlet.WriteListener;
 import jakarta.servlet.http.HttpServlet;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
@@ -398,6 +399,147 @@ class ServletNonBlockingIoEndToEndTest {
         assertTrue(readError >= 0 && asyncError > readError, events.toString());
         assertEquals("async.onComplete", events.get(events.size() - 1), events.toString());
         assertFalse(events.contains("read.onAllDataRead"), events.toString());
+    }
+
+    /** The TCK's WriteListenerTests.nioOutputTest scenario. */
+    @Test
+    void onWritePossibleIsCalled() throws Exception {
+        start(new HttpServlet() {
+            @Override
+            protected void doGet(HttpServletRequest req, HttpServletResponse resp) throws IOException {
+                AsyncContext ac = req.startAsync();
+                ServletOutputStream out = resp.getOutputStream();
+                out.setWriteListener(new WriteListener() {
+                    @Override public void onWritePossible() throws IOException {
+                        out.write("=onWritePossible".getBytes(StandardCharsets.US_ASCII));
+                        ac.complete();
+                    }
+                    @Override public void onError(Throwable t) { ac.complete(); }
+                });
+            }
+        });
+        try (var client = new Client(port)) {
+            client.send("GET /nio HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n");
+            String response = client.readAll();
+            assertTrue(response.startsWith("HTTP/1.1 200"), response);
+            assertEquals(List.of("=onWritePossible"), tokens(response));
+        }
+    }
+
+    /**
+     * A listener writes 1 MiB while {@code isReady()} holds; a slow client reads 64 KiB every 50 ms.
+     * The writes never block, every byte arrives in order, and {@code onWritePossible} resumes the
+     * listener each time capacity frees up.
+     */
+    @Test
+    void largeNonBlockingWriteResumesOnCapacity() throws Exception {
+        int total = 1 << 20;
+        var calls = new AtomicInteger();
+        var errors = new CopyOnWriteArrayList<Throwable>();
+        start(new HttpServlet() {
+            @Override
+            protected void doGet(HttpServletRequest req, HttpServletResponse resp) throws IOException {
+                AsyncContext ac = req.startAsync();
+                ac.setTimeout(30_000);
+                resp.setContentLength(total);
+                ServletOutputStream out = resp.getOutputStream();
+                var next = new AtomicInteger();
+                out.setWriteListener(new WriteListener() {
+                    @Override public void onWritePossible() throws IOException {
+                        calls.incrementAndGet();
+                        while (out.isReady()) {
+                            int start = next.get();
+                            if (start == total) {
+                                ac.complete();
+                                return;
+                            }
+                            int n = Math.min(4096, total - start);
+                            byte[] chunk = new byte[n];
+                            for (int i = 0; i < n; i++) chunk[i] = (byte) ((start + i) % 251);
+                            out.write(chunk);
+                            next.addAndGet(n);
+                        }
+                    }
+                    @Override public void onError(Throwable t) {
+                        errors.add(t);
+                        ac.complete();
+                    }
+                });
+            }
+        });
+        try (var socket = new Socket()) {
+            socket.setReceiveBufferSize(64 * 1024);
+            socket.connect(new java.net.InetSocketAddress("127.0.0.1", port));
+            socket.setSoTimeout(10_000);
+            socket.getOutputStream().write(("GET /nio HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
+                    .getBytes(StandardCharsets.US_ASCII));
+            socket.getOutputStream().flush();
+            InputStream in = socket.getInputStream();
+            var received = new ByteArrayOutputStream();
+            byte[] buf = new byte[64 * 1024];
+            int n;
+            while ((n = in.read(buf)) != -1) {
+                received.write(buf, 0, n);
+                Thread.sleep(50); // part of the scenario: a slow client
+            }
+            byte[] all = received.toByteArray();
+            String text = new String(all, StandardCharsets.ISO_8859_1);
+            int bodyStart = text.indexOf("\r\n\r\n") + 4;
+            assertTrue(text.startsWith("HTTP/1.1 200"), text.substring(0, Math.min(200, text.length())));
+            assertEquals(total, all.length - bodyStart);
+            for (int i = 0; i < total; i++) {
+                if (all[bodyStart + i] != (byte) (i % 251)) fail("byte " + i + " out of order");
+            }
+        }
+        assertEquals(List.of(), errors);
+        assertTrue(calls.get() > 1, "onWritePossible called " + calls.get() + " time(s)");
+    }
+
+    /**
+     * The response writer in non-blocking mode: a print while {@code isReady()} last answered
+     * {@code false} throws {@link IllegalStateException} and none of its characters is sent.
+     */
+    @Test
+    void writerPrintWhenNotReadyThrowsIseAndSendsNothing() throws Exception {
+        String block = "a".repeat(4096);
+        var refused = new AtomicBoolean();
+        start(new HttpServlet() {
+            @Override
+            protected void doGet(HttpServletRequest req, HttpServletResponse resp) throws IOException {
+                AsyncContext ac = req.startAsync();
+                ac.setTimeout(30_000);
+                ServletOutputStream nio = resp.getOutputStream();
+                // resetBuffer() lets the application switch to the writer: the listener stays set.
+                resp.resetBuffer();
+                var writer = resp.getWriter();
+                var blocks = new AtomicInteger();
+                nio.setWriteListener(new WriteListener() {
+                    @Override public void onWritePossible() {
+                        if (refused.get()) {
+                            ac.complete();
+                            return;
+                        }
+                        while (nio.isReady()) {
+                            writer.print(block);
+                            blocks.incrementAndGet();
+                        }
+                        try {
+                            writer.print("!");
+                        } catch (IllegalStateException expected) {
+                            refused.set(true);
+                        }
+                    }
+                    @Override public void onError(Throwable t) { ac.complete(); }
+                });
+            }
+        });
+        try (var client = new Client(port)) {
+            client.send("GET /nio HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n");
+            String response = client.readAll();
+            assertTrue(response.startsWith("HTTP/1.1 200"), response.substring(0, 100));
+            assertTrue(refused.get());
+            assertFalse(response.contains("!"), "a refused print sends nothing");
+        }
     }
 
     // ---- helpers ----

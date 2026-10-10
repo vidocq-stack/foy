@@ -239,7 +239,11 @@ public final class HttpServletResponseImpl implements HttpServletResponse {
     }
 
     private HttpServletRequest boundRequest;
-    public void bindRequest(HttpServletRequest req) { this.boundRequest = req; }
+    public void bindRequest(HttpServletRequest req) {
+        this.boundRequest = req;
+        // Non-blocking output (WriteListener) follows the request's async state and callbacks.
+        if (req instanceof HttpServletRequestImpl impl) outputStream.setHost(impl.nonBlockingHost());
+    }
 
     // ---- Trailer fields ----
 
@@ -739,6 +743,8 @@ public final class HttpServletResponseImpl implements HttpServletResponse {
     void claimOutput(Collection<Thread> cycleThreads) {
         this.asyncWriteFailure = null;
         outputStream.claim(cycleThreads);
+        // The cycle that allowed a WriteListener is over: the output is blocking again.
+        outputStream.endNonBlocking();
     }
 
     /** The response side of {@link ServletOutputStreamImpl}. */
@@ -770,6 +776,11 @@ public final class HttpServletResponseImpl implements HttpServletResponse {
      * {@link #drainWriter()} does), and a thread the stream refuses (see {@link #claimOutput()})
      * never reaches the encoder: its characters are discarded and {@link #checkError()} reports it,
      * so they cannot surface later in another thread's flush.</p>
+     *
+     * <p>In non-blocking mode (a {@code WriteListener} is set) an application operation is checked
+     * once, before anything is encoded: while the stream is not ready it throws
+     * {@link IllegalStateException} and no character reaches the encoder. An internal drain is
+     * never refused.</p>
      */
     private final class ResponseWriter extends PrintWriter {
         ResponseWriter(Writer out) { super(out, false); }
@@ -790,7 +801,18 @@ public final class HttpServletResponseImpl implements HttpServletResponse {
             var lock = outputStream.lock();
             lock.lock();
             try {
-                if (!refused()) action.run();
+                if (refused()) return;
+                try {
+                    outputStream.beginWriterOperation(!internalFlush);
+                } catch (IOException e) {
+                    setError();
+                    return;
+                }
+                try {
+                    action.run();
+                } finally {
+                    outputStream.endWriterOperation();
+                }
             } finally {
                 lock.unlock();
             }

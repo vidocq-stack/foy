@@ -50,16 +50,6 @@ import java.util.concurrent.locks.ReentrantLock;
  */
 public final class ServletInputStreamImpl extends ServletInputStream {
 
-    /** What non-blocking mode needs from the owner of the stream (a request or an upgraded connection). */
-    interface NonBlockingHost {
-        /** Whether a {@link ReadListener} may be set now (async started, or upgraded). */
-        boolean nonBlockingAllowed();
-        /** The owner's callback serializer. */
-        CallbackSerializer callbacks();
-        /** A read failure or a throwing callback, after {@code onError}: fails the owner (the async cycle). */
-        void failed(Throwable t);
-    }
-
     private static final System.Logger LOG = System.getLogger(ServletInputStreamImpl.class.getName());
 
     private final InputStream delegate;

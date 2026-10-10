@@ -39,7 +39,7 @@ import static org.junit.jupiter.api.Assertions.*;
 class ServletInputStreamImplTest {
 
     /** A host standing for an async-started request (or not). */
-    private static final class Host implements ServletInputStreamImpl.NonBlockingHost {
+    private static final class Host implements NonBlockingHost {
         final boolean allowed;
         final CallbackSerializer callbacks = new CallbackSerializer(Host.class.getClassLoader());
         final List<Throwable> failures = new CopyOnWriteArrayList<>();

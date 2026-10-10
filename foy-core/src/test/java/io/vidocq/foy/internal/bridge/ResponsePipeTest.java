@@ -182,4 +182,33 @@ class ResponsePipeTest {
         pipe.onCapacity(fired::incrementAndGet);
         assertEquals(1, fired.get());
     }
+
+    @Test
+    void aSecondPendingCapacityCallbackIsRefused() throws Exception {
+        var pipe = new ResponsePipe(4);
+        pipe.write(bytes("abcd"), 0, 4);
+        pipe.onCapacity(() -> {});
+        assertThrows(IllegalStateException.class, () -> pipe.onCapacity(() -> {}));
+    }
+
+    @Test
+    void finishFiresAPendingCapacityCallback() throws Exception {
+        var pipe = new ResponsePipe(4);
+        pipe.write(bytes("abcd"), 0, 4);
+        var fired = new AtomicInteger();
+        pipe.onCapacity(fired::incrementAndGet);
+        pipe.finish();
+        assertEquals(1, fired.get());
+    }
+
+    @Test
+    void offerTakesWhatFitsWithoutBlocking() throws Exception {
+        var pipe = new ResponsePipe(4);
+        assertEquals(3, pipe.offer(bytes("abc"), 0, 3));
+        assertEquals(1, pipe.offer(bytes("defg"), 0, 4));
+        assertEquals(0, pipe.offer(bytes("x"), 0, 1));
+        assertEquals("abcd", new String(pipe.reader().readNBytes(4), StandardCharsets.US_ASCII));
+        pipe.reader().close();
+        assertThrows(IOException.class, () -> pipe.offer(bytes("x"), 0, 1));
+    }
 }

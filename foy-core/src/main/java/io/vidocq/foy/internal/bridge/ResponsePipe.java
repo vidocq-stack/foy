@@ -86,7 +86,36 @@ final class ResponsePipe {
         }
     }
 
-    /** Non-blocking readiness used by WriteListener (Task 5.8): true when at least one byte fits. */
+    /**
+     * Non-blocking write: copies as many bytes as fit now and returns that count ({@code 0} when
+     * the pipe is full). Fails like {@link #write} once the reader is gone, the pipe aborted or the
+     * body finished.
+     */
+    int offer(byte[] b, int off, int len) throws IOException {
+        Objects.checkFromIndexSize(off, len, b.length);
+        lock.lock();
+        try {
+            if (broken) throw new IOException("client disconnected");
+            if (aborted != null) throw new IOException("response aborted", aborted);
+            if (finished) throw new IOException("response body already ended");
+            int done = 0;
+            while (len > 0 && count < ring.length) {
+                int tail = (head + count) % ring.length;
+                int n = Math.min(len, Math.min(ring.length - count, ring.length - tail));
+                System.arraycopy(b, off, ring, tail, n);
+                count += n;
+                off += n;
+                len -= n;
+                done += n;
+            }
+            if (done > 0) readable.signalAll();
+            return done;
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    /** Non-blocking readiness used by WriteListener: true when at least one byte fits. */
     boolean hasCapacity() {
         lock.lock();
         try {
@@ -97,14 +126,18 @@ final class ResponsePipe {
     }
 
     /**
-     * Registers a one-shot callback fired when capacity frees up (Task 5.8). It runs at once, on
-     * the calling thread, when the pipe already has room or the reader is gone (the next write
-     * then reports the failure); otherwise on the reader's thread, outside the lock.
+     * Registers a one-shot callback fired when capacity frees up, or when the pipe ends (finished,
+     * aborted, reader gone: the next write then reports why). It runs at once, on the calling
+     * thread, when the pipe already has room or has ended; otherwise on the thread that frees the
+     * room (chappe's reader) or ends the pipe, outside the lock, so it must not block. At most one
+     * callback may be pending: a second registration is a caller bug ({@link IllegalStateException}).
      */
     void onCapacity(Runnable r) {
+        Objects.requireNonNull(r, "callback");
         lock.lock();
         try {
-            if (count == ring.length && !broken && aborted == null) {
+            if (count == ring.length && !broken && aborted == null && !finished) {
+                if (capacityCallback != null) throw new IllegalStateException("a capacity callback is already pending");
                 capacityCallback = r;
                 return;
             }
@@ -116,14 +149,17 @@ final class ResponsePipe {
 
     /** Normal end of body: the reader sees EOF after the buffered bytes. Idempotent. */
     void finish() {
+        Runnable callback;
         lock.lock();
         try {
             finished = true;
             readable.signalAll();
             writable.signalAll();
+            callback = takeCallback();
         } finally {
             lock.unlock();
         }
+        if (callback != null) callback.run();
     }
 
     /** Abnormal end: the reader's next read throws IOException, which makes chappe drop the connection. */
