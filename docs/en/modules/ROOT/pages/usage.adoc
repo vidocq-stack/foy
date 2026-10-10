@@ -78,7 +78,7 @@ The async lifecycle follows Servlet 6.1 section 2.3.3.3:
 * **One cycle at a time.** A cycle ends with `complete()`, a `dispatch(...)`, a timeout or an error; `onStartAsync` fires on the listeners when a dispatched target calls `startAsync()` again, and `onComplete` fires once, when the last cycle ends.
 * **Timeout.** The default timeout is 30 s (`setTimeout(0)` disables it). On timeout the listeners get `onTimeout`; if none of them calls `complete()` or `dispatch(...)`, the container raises an error dispatch with status `500`, which goes through the `<error-page>` mechanism, then completes the request.
 * **Errors.** An exception escaping the servlet after `startAsync()`, or an async dispatch target, reaches the listeners' `onError` and then the error dispatch, as for a timeout.
-* **One writer at a time.** When a cycle ends, the container takes the response output back before any listener runs: a thread started by `AsyncContext.start` that keeps writing afterwards gets an `IOException` (through the `PrintWriter`, the characters are dropped and `checkError()` turns true). A thread the application manages itself (its own executor) is not known to the container and cannot be fenced the same way (BUG-20261010-01, partial).
+* **One writer at a time.** When a cycle ends, the container takes the response output back before any listener runs: a thread started by `AsyncContext.start` that keeps writing afterwards gets an `IOException` (through the `PrintWriter`, the characters are dropped and `checkError()` turns true). A thread the application manages itself (its own executor) is not known to the container and cannot be fenced the same way (BUG-20261010-02, partial).
 
 [NOTE]
 ====
@@ -138,7 +138,7 @@ public class UploadServlet extends HttpServlet {
 Limits:
 
 * A `WriteListener` is not resumed after an `AsyncContext.dispatch(...)`: the dispatched target runs with a blocking stream (the listener stays set, but `onWritePossible` is not called again). Set the listener in the cycle that writes.
-* When a cycle ends with bytes still waiting for the client, the container sends them in blocking mode at the end of the request, in order. Foy sets no bound of its own on that wait: a client that never reads keeps the request thread until chappe's write timeout (30 s per blocked write by default) closes the connection (BUG-20261010-02).
+* When a cycle ends with bytes still waiting for the client, the container sends them in blocking mode at the end of the request, in order. Foy sets no bound of its own on that wait: a client that never reads keeps the request thread until chappe's write timeout (30 s per blocked write by default) closes the connection (BUG-20261010-03).
 * If a `ReadListener` is still waiting for upload bytes when the request ends (the client went silent mid-body), the response is sent first and the connection is then closed instead of being kept alive: the unread part of the body cannot be skipped safely. An unread body that the client keeps sending is drained by Chappe as before.
 
 == Response trailers

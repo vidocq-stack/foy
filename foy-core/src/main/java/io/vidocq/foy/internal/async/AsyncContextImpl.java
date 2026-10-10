@@ -183,7 +183,7 @@ public final class AsyncContextImpl implements AsyncContext {
     /**
      * Runs {@code run} on a new virtual thread, registered before it starts: when the cycle ends,
      * the bridge refuses that thread's later writes for good, also after a new cycle re-opens the
-     * response (BUG-20261010-01). A throwing runnable fails the cycle.
+     * response (BUG-20261010-02). A throwing runnable fails the cycle.
      */
     @Override public void start(Runnable run) {
         Thread thread = Thread.ofVirtual().name("foy-async-" + ASYNC_THREADS.incrementAndGet()).unstarted(() -> {
@@ -222,7 +222,7 @@ public final class AsyncContextImpl implements AsyncContext {
      * Blocks the pipeline thread until the cycle ends (see the class description) and reports how.
      * {@code onResume} runs as soon as the wait is over, before any listener: the bridge claims the
      * response output there, so a thread of this cycle still writing cannot race the listeners or
-     * the error dispatch (BUG-20261010-01).
+     * the error dispatch (BUG-20261010-02).
      */
     public CycleEnd awaitCycleEnd(Runnable onResume) {
         boolean signalled = waitForSignal();

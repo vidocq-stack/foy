@@ -414,7 +414,7 @@ Statuts : `OPEN` → `INVESTIGATING` → `FIXED` (commit hash) → `CLOSED`.
   controller leaves the request without a context, as before. The session context is still not activated
   (no portable API).
 
-## BUG-20261010-01 — async timeout lets the pipeline thread and an async thread write the response concurrently
+## BUG-20261010-02 — async timeout lets the pipeline thread and an async thread write the response concurrently
 
 - **Date** : 2026-10-10
 - **Statut** : PARTIAL — data race FIXED (Task 5.6 + fix round 1); residual gap below (threads the application manages itself)
@@ -463,7 +463,7 @@ Statuts : `OPEN` → `INVESTIGATING` → `FIXED` (commit hash) → `CLOSED`.
     the output; it is not known to the container, so it cannot be retired. Memory safety holds
     (every output operation takes the lock); only the logical interleaving of bytes is the app's.
 
-## BUG-20261010-02 — kept non-blocking bytes are sent blocking at the end of a cycle, with no Foy-side bound
+## BUG-20261010-03 — kept non-blocking bytes are sent blocking at the end of a cycle, with no Foy-side bound
 
 - **Date** : 2026-10-10
 - **Statut** : OPEN (documented limit, Phase 5 exit)
@@ -487,7 +487,7 @@ Statuts : `OPEN` → `INVESTIGATING` → `FIXED` (commit hash) → `CLOSED`.
 
 ---
 
-## BUG-20261010-03 — startAsync() accepted after upgrade(); a live body pump could race chappe's upgrade drain
+## BUG-20261010-04 — startAsync() accepted after upgrade(); a live body pump could race chappe's upgrade drain
 
 - **Date** : 2026-10-10
 - **Statut** : FIXED (commit `fix(core): close the upgrade gaps of the Phase 5 final review`)
@@ -508,7 +508,7 @@ Statuts : `OPEN` → `INVESTIGATING` → `FIXED` (commit hash) → `CLOSED`.
 
 ---
 
-## BUG-20261010-04 — WebConnection.close() cut a non-blocking write still in flight
+## BUG-20261010-05 — WebConnection.close() cut a non-blocking write still in flight
 
 - **Date** : 2026-10-10
 - **Statut** : FIXED (commit `fix(core): close the upgrade gaps of the Phase 5 final review`)
@@ -522,7 +522,7 @@ Statuts : `OPEN` → `INVESTIGATING` → `FIXED` (commit hash) → `CLOSED`.
   `WebConnectionImpl.CLOSE_WRITE_GRACE` (2 s); past it the connection closes anyway
   (`#closeAfterANonBlockingWriteIsBoundedOnAStalledPeer`).
 
-## BUG-20261010-05 — upgrade() called during an ASYNC dispatch is silently dropped
+## BUG-20261010-06 — upgrade() called during an ASYNC dispatch is silently dropped
 
 - **Date** : 2026-10-10
 - **Statut** : OPEN (found by the Phase 5 final fix-wave review)

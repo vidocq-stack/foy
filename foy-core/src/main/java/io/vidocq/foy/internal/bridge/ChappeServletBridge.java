@@ -642,7 +642,7 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
      * Ends every async cycle of the request (Servlet 6.1 section 2.3.3.3) on this pipeline thread,
      * in one place for the REQUEST dispatch and every ASYNC dispatch. Each cycle is awaited through
      * {@link AsyncContextImpl#awaitCycleEnd}, which first claims the response output for this thread
-     * (the cycle's threads lose it for good: BUG-20261010-01), then acts on how it ended:
+     * (the cycle's threads lose it for good: BUG-20261010-02), then acts on how it ended:
      * <ul>
      *   <li>{@code complete()}: done;</li>
      *   <li>{@code dispatch()}: the target runs under {@link DispatcherType#ASYNC}; when it opens a

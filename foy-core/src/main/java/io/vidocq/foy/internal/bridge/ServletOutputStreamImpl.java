@@ -46,7 +46,7 @@ import java.util.concurrent.locks.ReentrantLock;
  * <p>Bytes beyond a declared {@code Content-Length} are dropped; reaching it is reported to the
  * owner, which commits the response (Servlet 6.1 section 5.6).</p>
  *
- * <p>Threads (BUG-20261010-01). The stream may be written from the pipeline thread and from
+ * <p>Threads (BUG-20261010-02). The stream may be written from the pipeline thread and from
  * async threads in turn; one {@link ReentrantLock} ({@link #lock()}) serialises every operation on
  * the buffer and the pipe (write, flush, close, push, finish, reset), and the response writer takes
  * it too. The lock is held while a push waits for room in the pipe; {@link #abort} wakes such a

@@ -54,8 +54,8 @@ Remaining 48 errors and 7 skips, by class and by phase:
 `WARNING` with its stack trace (`AsyncListener.onComplete threw`). These lines are expected
 and are not failures.
 
-Open bugs: BUG-20261010-01 (PARTIAL: async writes from threads the application manages
-itself), BUG-20261010-02 (kept non-blocking bytes sent blocking at the end of a cycle, bounded
+Open bugs: BUG-20261010-02 (PARTIAL: async writes from threads the application manages
+itself), BUG-20261010-03 (kept non-blocking bytes sent blocking at the end of a cycle, bounded
 only by chappe's write timeout), plus the Phase 4 ones still open (-20261009-01, -03, -04,
 -09). Chappe: CHAPPE-008 (ordinary headers), CHAPPE-014 (lingering close skipped after an
 interrupted body read).

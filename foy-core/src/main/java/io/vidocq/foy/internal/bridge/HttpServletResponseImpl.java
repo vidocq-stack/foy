@@ -734,7 +734,7 @@ public final class HttpServletResponseImpl implements HttpServletResponse {
         }
     }
 
-    // ---- Async cycles and threads (BUG-20261010-01) ----
+    // ---- Async cycles and threads (BUG-20261010-02) ----
 
     /** Fails the current async cycle when a pipe write fails; {@code null} outside a cycle. */
     private volatile Consumer<? super IOException> asyncWriteFailure;

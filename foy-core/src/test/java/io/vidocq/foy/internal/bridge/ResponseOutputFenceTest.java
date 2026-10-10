@@ -32,7 +32,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * BUG-20261010-01: once the pipeline thread claims the response output at the end of an async
+ * BUG-20261010-02: once the pipeline thread claims the response output at the end of an async
  * cycle, another thread's writes fail instead of racing it, until a new cycle opens the output.
  */
 class ResponseOutputFenceTest {

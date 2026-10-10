@@ -237,7 +237,7 @@ The guard covers `foy-core` only: `foy-cdi-vauban`'s `CdiWebComponentsCreator` a
 * Security constraints are parsed, not enforced; `WEB-INF/lib` nested jars of a WAR are not opened; see xref:tck.adoc[].
 * HTTP/2 server push is not supported (`newPushBuilder()` returns `null`).
 * Response trailers: the supplier runs on Chappe's thread after `service()` (no request-scoped state); on HTTP/1.1 a `Content-Length` set after `setTrailerFields`, or a `Connection: close` response, drops the trailers silently; `reset()` keeps the supplier.
-* Non-blocking I/O: `ReadListener.onError` is not called on an async timeout; a `WriteListener` is not resumed after an `AsyncContext.dispatch`; bytes still waiting at the end of a cycle are sent in blocking mode, bounded only by Chappe's write timeout for a client that never reads (BUG-20261010-02).
+* Non-blocking I/O: `ReadListener.onError` is not called on an async timeout; a `WriteListener` is not resumed after an `AsyncContext.dispatch`; bytes still waiting at the end of a cycle are sent in blocking mode, bounded only by Chappe's write timeout for a client that never reads (BUG-20261010-03).
 * HTTP Upgrade: no idle timeout once upgraded — a handler that never reads nor closes keeps the connection until a write fails or the application is undeployed. HTTP/1.1 only.
 * A request whose `ReadListener` is still waiting for upload bytes when the request ends (a client gone silent mid-body) is answered first, then its connection is closed instead of being kept alive.
 * Chappe exposes no connection identity and no HTTP/2 stream id: `getServletConnection().getConnectionId()` can repeat and `getProtocolRequestId()` is empty on HTTP/2 (BUG-20261009-09).

@@ -378,7 +378,7 @@ class ServletAsyncEndToEndTest {
     }
 
     /**
-     * BUG-20261010-01: an async thread still writing when the timeout fires must not race the
+     * BUG-20261010-02: an async thread still writing when the timeout fires must not race the
      * pipeline thread. From the timeout on, the stale thread's writes fail; the error response is
      * clean.
      */
@@ -406,7 +406,7 @@ class ServletAsyncEndToEndTest {
         assertInstanceOf(IOException.class, writerDone.get(5, TimeUnit.SECONDS));
     }
 
-    /** BUG-20261010-01, committed variant: the live body is aborted and the stale writer stops. */
+    /** BUG-20261010-02, committed variant: the live body is aborted and the stale writer stops. */
     @Test
     void aCommittedResponseTimingOutStopsTheStaleWriter() throws Exception {
         var timedOut = new CountDownLatch(1);
