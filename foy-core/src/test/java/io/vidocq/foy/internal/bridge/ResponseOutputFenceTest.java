@@ -24,6 +24,7 @@ import org.junit.jupiter.api.Test;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
@@ -88,6 +89,27 @@ class ResponseOutputFenceTest {
         res.openOutput(_ -> {});
         assertNull(onOtherThread(() -> out.write('z')));
         assertEquals("z", body(res));
+    }
+
+    @Test
+    void aPipeWriteFailureIsReportedToTheOpenCycle() throws Exception {
+        var res = new HttpServletResponseImpl();
+        var pipe = new AtomicReference<ResponsePipe>();
+        res.bindCommitTarget(r -> pipe.set(r.startStreaming()));
+        var failures = new CopyOnWriteArrayList<IOException>();
+        res.openOutput(failures::add);
+        var out = res.getOutputStream();
+        out.write('a');
+        out.flush(); // commits: the body is live
+        pipe.get().reader().close(); // the client is gone
+
+        out.write('b');
+        assertThrows(IOException.class, out::flush);
+        assertEquals(1, failures.size(), "the cycle hears the failure (onError)");
+
+        res.claimOutput(); // the cycle ended: later failures are not reported to it
+        assertThrows(IOException.class, () -> { out.write('c'); out.flush(); });
+        assertEquals(1, failures.size());
     }
 
     @Test
