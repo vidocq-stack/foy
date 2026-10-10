@@ -940,6 +940,9 @@ public final class HttpServletRequestImpl implements HttpServletRequest {
         if (asyncContext != null) {
             throw new IllegalStateException("async already started on this request");
         }
+        // An upgraded request leaves the HTTP lifecycle when service() returns: it cannot also
+        // start an async cycle (mirror of upgrade() refusing an async-started request).
+        if (upgradeHandler != null) throw new IllegalStateException("startAsync() after upgrade()");
         boolean original = (req == this && res == boundResponse);
         var started = new io.vidocq.foy.internal.async.AsyncContextImpl(req, res, servletContext, original);
         this.asyncContext = started;

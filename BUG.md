@@ -484,3 +484,40 @@ Statuts : `OPEN` → `INVESTIGATING` → `FIXED` (commit hash) → `CLOSED`.
   - 2026-10-10 (Task 5.8 review, deferred minor; recorded at the Phase 5 exit, Task 5.10) : fix
     direction — bound the end-of-cycle drain with a container deadline (abort the body, so chappe
     drops the connection) or rely on a mandatory non-zero chappe write timeout.
+
+---
+
+## BUG-20261010-03 — startAsync() accepted after upgrade(); a live body pump could race chappe's upgrade drain
+
+- **Date** : 2026-10-10
+- **Statut** : FIXED (commit `fix(core): close the upgrade gaps of the Phase 5 final review`)
+- **Module touché** : `foy-core` (`HttpServletRequestImpl.startAsync`, `ChappeServletBridge.upgraded`)
+- **Symptôme** : `upgrade()` refused an async-started request, but `startAsync()` after `upgrade()`
+  was accepted. A `ReadListener` set then started a body pump still alive when the bridge returned
+  the `ConnectionUpgrade`: chappe drained the unread body while the pump read the same channel, and
+  the connection was upgraded although body bytes went to the pump.
+- **Reproduction minimale** : `ServletUpgradeEndToEndTest#startAsyncAfterUpgradeThrowsIse`
+  (`async accepted` before the fix). Pump race (experiment, `startAsync` guard removed): a servlet
+  calls `upgrade()`, `startAsync()`, sets a ReadListener on a `Content-Length: 10` body whose bytes
+  arrive after the upgrade; without the hand-back the client got `101 Switching Protocols`.
+- **Hypothèse de cause** : missing mirror of the `upgrade()`-after-`startAsync()` guard; `upgraded()`
+  only stopped the pump (`endNonBlockingIo`) without joining it.
+- **Fix** : `startAsync()` throws `IllegalStateException` once an upgrade handler is set; `upgraded()`
+  hands the body back (`handBackInput()`: interrupt + join a live pump) before returning the
+  `ConnectionUpgrade`.
+
+---
+
+## BUG-20261010-04 — WebConnection.close() cut a non-blocking write still in flight
+
+- **Date** : 2026-10-10
+- **Statut** : FIXED (commit `fix(core): close the upgrade gaps of the Phase 5 final review`)
+- **Module touché** : `foy-core` (`WebConnectionImpl`, `UpgradedOutputStream`)
+- **Symptôme** : `out.write(lastFrame); wc.close();` from `onWritePossible` lost the last frame: the
+  write runs on a writer thread and `close()` closed the connection under it.
+- **Reproduction minimale** : `ServletUpgradeEndToEndTest#closeDeliversTheNonBlockingWriteInFlight`
+  (0 of 4 MiB received before the fix).
+- **Hypothèse de cause** : close did not wait for the write in flight.
+- **Fix** : the connection closes once the write in flight is done, waiting at most
+  `WebConnectionImpl.CLOSE_WRITE_GRACE` (2 s); past it the connection closes anyway
+  (`#closeAfterANonBlockingWriteIsBoundedOnAStalledPeer`).

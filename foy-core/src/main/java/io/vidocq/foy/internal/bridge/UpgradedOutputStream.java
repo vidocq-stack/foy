@@ -67,6 +67,8 @@ final class UpgradedOutputStream extends ServletOutputStream {
     private final Runnable onClosed;
 
     private final ReentrantLock lock = new ReentrantLock();
+    /** Signalled whenever the write in flight is over (written or failed). */
+    private final java.util.concurrent.locks.Condition writeDone = lock.newCondition();
     private volatile WriteListener listener;
     /** Guarded by {@link #lock}: the bytes of the write in flight, or {@code null}. */
     private byte[] inFlight;
@@ -138,6 +140,7 @@ final class UpgradedOutputStream extends ServletOutputStream {
         lock.lock();
         try {
             inFlight = null;
+            writeDone.signalAll();
             if (ended) return;
             closeNow = closeWhenWritten;
             writePossible = notReady && !closed;
@@ -218,6 +221,30 @@ final class UpgradedOutputStream extends ServletOutputStream {
         }
     }
 
+    /**
+     * Waits until the non-blocking write in flight, if any, is on the wire (or failed), at most
+     * {@code timeout}: the connection may then close without cutting the application's last
+     * write. Returns at once in blocking mode or without a write in flight.
+     *
+     * @return whether no write is in flight any more
+     */
+    boolean awaitWriteInFlight(java.time.Duration timeout) {
+        long nanos = timeout.toNanos();
+        lock.lock();
+        try {
+            while (inFlight != null) {
+                if (nanos <= 0) return false;
+                nanos = writeDone.awaitNanos(nanos);
+            }
+            return true;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return inFlight == null;
+        } finally {
+            lock.unlock();
+        }
+    }
+
     /** The connection is over: no callback is submitted any more and writes fail. Idempotent. */
     void end() {
         lock.lock();
@@ -251,6 +278,7 @@ final class UpgradedOutputStream extends ServletOutputStream {
         lock.lock();
         try {
             inFlight = null;
+            writeDone.signalAll();
             if (ended || errored) return;
             errored = true;
             failure = e;

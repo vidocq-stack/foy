@@ -48,14 +48,16 @@ import java.util.concurrent.atomic.AtomicBoolean;
  *   <li>{@code init} throws;</li>
  *   <li>the context is undeployed ({@link VidocqServletContext#closeUpgradedConnections()}).</li>
  * </ul>
- * <p>Closing never waits on the peer: unless it runs inside a listener callback, the connection is
- * closed first, which wakes a read or a write blocked on it (chappe has no write timeout after an
- * upgrade); then callbacks stop (the one in progress returns) and {@link HttpUpgradeHandler#destroy()}
- * runs once. From a callback, callbacks stop first, then {@code destroy()}, then the connection
- * closes. {@code destroy()} only runs once {@code init} returned: a close during {@code init} (an
- * undeploy, or {@code init} itself) closes the connection at once and leaves {@code destroy()} to
- * the end of {@code init}; a connection whose context was undeployed before {@code init} only
- * closes.</p>
+ * <p>Closing never waits on the peer without bound: unless it runs inside a listener callback, the
+ * connection is closed first, which wakes a read or a write blocked on it (chappe has no write
+ * timeout after an upgrade); then callbacks stop (the one in progress returns) and
+ * {@link HttpUpgradeHandler#destroy()} runs once. From a callback, callbacks stop first, then
+ * {@code destroy()}, then the connection closes. Either way, a non-blocking write still in flight
+ * (the usual {@code out.write(lastFrame); wc.close();} from {@code onWritePossible}) gets up to
+ * {@link #CLOSE_WRITE_GRACE} to reach the wire before the connection closes; past it, it is cut.
+ * {@code destroy()} only runs once {@code init} returned: a close during {@code init} (an undeploy,
+ * or {@code init} itself) closes the connection at once and leaves {@code destroy()} to the end of
+ * {@code init}; a connection whose context was undeployed before {@code init} only closes.</p>
  *
  * <p>Chappe keeps an upgraded connection open until it is closed (no idle timeout, a half-close does
  * not close it). A handler that never reads nor closes keeps the connection, and its thread, until a
@@ -64,6 +66,14 @@ import java.util.concurrent.atomic.AtomicBoolean;
 final class WebConnectionImpl implements WebConnection {
 
     private static final System.Logger LOG = System.getLogger(WebConnectionImpl.class.getName());
+
+    /**
+     * How long closing the connection waits for a non-blocking write still in flight
+     * ({@code out.write(lastFrame); wc.close();} from {@code onWritePossible}), so the last bytes the
+     * application wrote are not cut. Bounded so a close never hangs on a stalled peer: past it, the
+     * connection closes anyway and the write fails.
+     */
+    static final java.time.Duration CLOSE_WRITE_GRACE = java.time.Duration.ofSeconds(2);
 
     private final UpgradedConnection connection;
     private final HttpUpgradeHandler handler;
@@ -158,9 +168,10 @@ final class WebConnectionImpl implements WebConnection {
         if (!closed.compareAndSet(false, true)) return;
         // Outside a callback, nothing may wait on the peer: the connection goes first.
         boolean inCallback = callbacks.isCallbackThread();
-        if (!inCallback) closeConnection();
-        input.endNonBlocking(false);
+        // No callback reports anything any more; a non-blocking write in flight goes on.
         output.end();
+        if (!inCallback) closeConnectionAfterWrite();
+        input.endNonBlocking(false);
         callbacks.shutdown();
         boolean destroyNow;
         synchronized (state) {
@@ -182,9 +193,21 @@ final class WebConnectionImpl implements WebConnection {
             LOG.log(System.Logger.Level.WARNING, "HttpUpgradeHandler.destroy failed", t);
         } finally {
             thread.setContextClassLoader(previous);
-            closeConnection();
+            closeConnectionAfterWrite();
             if (context != null) context.unregisterUpgradedConnection(undeployHook);
         }
+    }
+
+    /**
+     * Closes the connection once the non-blocking write in flight is on the wire, waiting at most
+     * {@link #CLOSE_WRITE_GRACE}. A blocking write never delays it: the close is what unblocks it.
+     */
+    private void closeConnectionAfterWrite() {
+        if (!output.awaitWriteInFlight(CLOSE_WRITE_GRACE)) {
+            LOG.log(System.Logger.Level.DEBUG,
+                    "a write still in flight after {0} ms is cut by the close", CLOSE_WRITE_GRACE.toMillis());
+        }
+        closeConnection();
     }
 
     private void closeConnection() {

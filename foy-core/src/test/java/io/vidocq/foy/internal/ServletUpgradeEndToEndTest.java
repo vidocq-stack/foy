@@ -41,6 +41,7 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
+import io.vidocq.foy.internal.LogCapture;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -83,6 +84,8 @@ class ServletUpgradeEndToEndTest {
         final AtomicInteger writePossibleCalls = new AtomicInteger();
         final AtomicReference<WebConnection> connection = new AtomicReference<>();
         final AtomicReference<Thread> callbackThread = new AtomicReference<>();
+        final java.util.concurrent.atomic.AtomicLong closeMillis = new java.util.concurrent.atomic.AtomicLong(-1);
+        final CountDownLatch closeReturned = new CountDownLatch(1);
 
         void destroy() {
             destroyCalls.incrementAndGet();
@@ -308,6 +311,101 @@ class ServletUpgradeEndToEndTest {
         assertEquals(0, probe.destroyCalls.get());
     }
 
+    @Test
+    void startAsyncAfterUpgradeThrowsIse() throws Exception {
+        start(new HttpServlet() {
+            @Override
+            protected void doPost(HttpServletRequest req, HttpServletResponse resp) throws IOException, ServletException {
+                resp.setStatus(101);
+                resp.setHeader("Upgrade", "YES");
+                resp.setHeader("Connection", "Upgrade");
+                req.upgrade(ClosingHandler.class);
+                try {
+                    req.startAsync();
+                    probe.events.add("async accepted");
+                } catch (IllegalStateException e) {
+                    probe.events.add("ise");
+                }
+            }
+        });
+        try (var client = new Client(port)) {
+            client.send(tckHead());
+            assertTrue(client.readHead().startsWith("HTTP/1.1 101 "));
+            assertEquals("bye", client.readAll());
+        }
+        assertEquals("ise", probe.events.getFirst());
+    }
+
+    /** {@code out.write(lastFrame); wc.close();} from onWritePossible: the last frame still goes out. */
+    @Test
+    void closeDeliversTheNonBlockingWriteInFlight() throws Exception {
+        start(upgradingServlet(LastFrameHandler.class));
+        try (var client = new Client(port)) {
+            client.send(tckHead());
+            assertTrue(client.readHead().startsWith("HTTP/1.1 101 "));
+            byte[] body = client.readAllBytes();
+            assertEquals(LastFrameHandler.SIZE, body.length, "the last frame was cut by the close");
+        }
+        assertTrue(probe.destroyed.await(5, TimeUnit.SECONDS));
+    }
+
+    /** The same close facing a peer that reads nothing: it waits a bounded time, then closes anyway. */
+    @Test
+    void closeAfterANonBlockingWriteIsBoundedOnAStalledPeer() throws Exception {
+        start(upgradingServlet(StalledLastFrameHandler.class));
+        try (var client = new Client(port)) {
+            client.send(tckHead());
+            assertTrue(client.readHead().startsWith("HTTP/1.1 101 "));
+            assertTrue(probe.closeReturned.await(10, TimeUnit.SECONDS), "close() never returned");
+            assertTrue(probe.destroyed.await(5, TimeUnit.SECONDS));
+        }
+        long closeMillis = probe.closeMillis.get();
+        assertTrue(closeMillis >= 0 && closeMillis < 5_000, "close() took " + closeMillis + " ms");
+    }
+
+    /** chappe refuses the upgrade head (invalid header): a 500, a WARNING naming it, no handler started. */
+    @Test
+    void anInvalidUpgradeHeaderIsA500AndAWarning() throws Exception {
+        start(new HttpServlet() {
+            @Override
+            protected void doPost(HttpServletRequest req, HttpServletResponse resp) throws IOException, ServletException {
+                resp.setStatus(101);
+                resp.setHeader("Upgrade", "YES");
+                resp.setHeader("Bad Name", "x");
+                req.upgrade(ClosingHandler.class);
+            }
+        });
+        try (var log = LogCapture.of(ChappeServletBridge.class.getName());
+             var client = new Client(port)) {
+            client.send(tckHead().replace("Connection: Upgrade", "Connection: close"));
+            String response = client.readAll();
+            assertTrue(response.startsWith("HTTP/1.1 500"), response);
+            assertTrue(log.warnings().stream().anyMatch(w -> w.contains("Bad Name")), log.warnings().toString());
+        }
+        assertEquals(List.of(), probe.events, "init never ran");
+        assertEquals(0, probe.destroyCalls.get(), "destroy never runs for a handler never initialised");
+    }
+
+    /** An upgrade with a status other than 101 still happens, with a WARNING. */
+    @Test
+    void anUpgradeWithAStatusOtherThan101Warns() throws Exception {
+        start(new HttpServlet() {
+            @Override
+            protected void doPost(HttpServletRequest req, HttpServletResponse resp) throws IOException, ServletException {
+                resp.setHeader("Upgrade", "YES");
+                resp.setHeader("Connection", "Upgrade");
+                req.upgrade(ClosingHandler.class);
+            }
+        });
+        try (var log = LogCapture.of(ChappeServletBridge.class.getName());
+             var client = new Client(port)) {
+            client.send(tckHead());
+            assertTrue(client.readHead().startsWith("HTTP/1.1 200 "));
+            assertEquals("bye", client.readAll());
+            assertTrue(log.warnings().stream().anyMatch(w -> w.contains("200")), log.warnings().toString());
+        }
+    }
+
     /**
      * The output is closed before the peer ends its side: the end of the input still reaches the
      * ReadListener ({@code onAllDataRead}), and only then does the connection close.
@@ -465,6 +563,53 @@ class ServletUpgradeEndToEndTest {
         public void destroy() {
             probe.destroy();
         }
+    }
+
+    /** From onWritePossible: one large non-blocking write, then {@code wc.close()} at once. */
+    abstract static class FrameThenCloseHandler implements HttpUpgradeHandler {
+        private final Probe probe = current;
+        private final int size;
+
+        FrameThenCloseHandler(int size) {
+            this.size = size;
+        }
+
+        @Override
+        public void init(WebConnection wc) {
+            try {
+                ServletOutputStream out = wc.getOutputStream();
+                out.setWriteListener(new WriteListener() {
+                    @Override public void onWritePossible() throws IOException {
+                        out.write(new byte[size]);
+                        long start = System.nanoTime();
+                        try { wc.close(); }
+                        catch (Exception e) { throw new IOException(e); }
+                        probe.closeMillis.set(TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - start));
+                        probe.closeReturned.countDown();
+                    }
+                    @Override public void onError(Throwable t) { probe.errored.countDown(); }
+                });
+            } catch (IOException e) {
+                throw new RuntimeException(e);
+            }
+        }
+
+        @Override
+        public void destroy() {
+            probe.destroy();
+        }
+    }
+
+    /** A last frame larger than the socket buffers: still in flight when close() is called. */
+    public static final class LastFrameHandler extends FrameThenCloseHandler {
+        static final int SIZE = 4 * 1024 * 1024;
+
+        public LastFrameHandler() { super(SIZE); }
+    }
+
+    /** A last frame no peer buffer can hold, sent to a peer that reads nothing. */
+    public static final class StalledLastFrameHandler extends FrameThenCloseHandler {
+        public StalledLastFrameHandler() { super(64 * 1024 * 1024); }
     }
 
     /** Writes "x" then throws from init. */

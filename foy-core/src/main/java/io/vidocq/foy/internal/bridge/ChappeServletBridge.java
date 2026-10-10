@@ -469,10 +469,23 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
      * which starts a {@link WebConnectionImpl} ({@code init}). {@code upgrade()} refuses a committed
      * response and switches the response to discard mode (no write, flush or overflow commits it), so
      * a streaming response here is a defensive case only: it ends as a regular response.
+     *
+     * <p>The request body goes back to chappe before the upgrade response does: a ReadListener pump
+     * still alive is interrupted and joined ({@link HttpServletRequestImpl#handBackInput()}), so
+     * chappe's drain of the unread body before the takeover never races it. A pump interrupted
+     * mid-read leaves the byte stream position unknown: chappe then closes the connection instead of
+     * upgrading it. ({@code startAsync()} is refused after {@code upgrade()}, so no pump is expected
+     * here; this is a defence in depth.)</p>
+     *
+     * <p>A status or a header chappe cannot put in the upgrade head (a {@link ConnectionUpgrade}
+     * refusing it with {@link IllegalArgumentException}) is logged at WARNING and answered with a
+     * 500; the handler was never initialised, so {@code destroy()} is not called either. A status
+     * other than 101 still upgrades, with a WARNING.</p>
      */
     private Response upgraded(HttpServletRequestImpl req, HttpServletResponseImpl res, HttpUpgradeHandler handler,
                               ListenerRegistry registry) {
         req.endNonBlockingIo();
+        req.handBackInput();
         registry.fireRequestDestroyed(servletContext, req);
         if (res.isStreaming()) {
             LOG.log(System.Logger.Level.WARNING,
@@ -485,8 +498,22 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
             for (String v : e.getValue()) headers.add(e.getKey(), v);
         }
         ClassLoader loader = req.applicationClassLoader();
-        return new ConnectionUpgrade(StatusCode.of(res.getStatus()), headers.build(),
-                connection -> new WebConnectionImpl(connection, handler, servletContext, loader).start());
+        int status = res.getStatus();
+        if (status != 101) {
+            LOG.log(System.Logger.Level.WARNING,
+                    "HTTP upgrade to {0} answered with status {1} instead of 101 (Switching Protocols)",
+                    handler.getClass().getName(), status);
+        }
+        try {
+            return new ConnectionUpgrade(StatusCode.of(status), headers.build(),
+                    connection -> new WebConnectionImpl(connection, handler, servletContext, loader).start());
+        } catch (IllegalArgumentException e) {
+            // The handler was never initialised: no destroy() is due.
+            LOG.log(System.Logger.Level.WARNING,
+                    "HTTP upgrade to {0} not performed, the upgrade response is invalid: {1}",
+                    handler.getClass().getName(), e.getMessage());
+            return plainInternalServerError();
+        }
     }
 
     /**
