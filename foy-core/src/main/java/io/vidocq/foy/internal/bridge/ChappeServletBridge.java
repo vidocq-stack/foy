@@ -22,6 +22,7 @@ package io.vidocq.foy.internal.bridge;
 import io.vidocq.chappe.api.Body;
 import io.vidocq.chappe.api.Handler;
 import io.vidocq.chappe.api.Request;
+import io.vidocq.chappe.api.RequestContext;
 import io.vidocq.chappe.api.Response;
 import io.vidocq.chappe.api.StatusCode;
 import io.vidocq.foy.internal.container.DefaultServlet;
@@ -104,19 +105,133 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
         this(dispatcher, new FilterRegistry(List.of()), servletContext, null, contextPath);
     }
 
+    /**
+     * Runs the servlet pipeline for {@code request} on its own virtual thread and parks chappe's
+     * thread until the response head is known.
+     *
+     * <p>Thread model: chappe's connection (or HTTP/2 stream) thread creates the response, starts
+     * the pipeline thread {@code foy-request-<n>} with chappe's {@link RequestContext#CURRENT}
+     * re-bound (a {@link ScopedValue} is not inherited by a plain thread) and waits on a
+     * {@link ResponseHead}. The head is settled exactly once:</p>
+     * <ul>
+     *   <li>at the first real commit (buffer overflow, flush), from whichever thread writes
+     *       (the pipeline thread or an async one): chappe gets the head and a body fed by a
+     *       {@link ResponsePipe}, and writes while the servlet keeps producing;</li>
+     *   <li>at the end of a pipeline that never committed: the whole buffered response, as before;</li>
+     *   <li>failed, when the pipeline throws before any commit: chappe answers its plain 500.</li>
+     * </ul>
+     * <p>A committed pipeline ends its body ({@code finishBody}) once the request is over, or
+     * aborts it when an exception escapes after the commit, so chappe drops the connection.</p>
+     */
     @Override
     public Response handle(Request request) throws Exception {
+        var head = new ResponseHead();
         var requests = new java.util.ArrayList<HttpServletRequestImpl>(1);
+        var res = new HttpServletResponseImpl();
+        res.setDefaultCharacterEncoding(servletContext.configuredResponseCharacterEncoding());
+        res.bindCommitTarget(r -> commitHead(request, requests, r, head));
+        Runnable pipeline = () -> runPipeline(request, requests, res, head);
+        RequestContext context = RequestContext.CURRENT.isBound() ? RequestContext.CURRENT.get() : null;
+        Thread.ofVirtual().name("foy-request-" + PIPELINE_THREADS.incrementAndGet()).start(context == null
+                ? pipeline
+                : () -> ScopedValue.where(RequestContext.CURRENT, context).run(pipeline));
+        return head.await();
+    }
+
+    private static final java.util.concurrent.atomic.AtomicLong PIPELINE_THREADS =
+            new java.util.concurrent.atomic.AtomicLong();
+
+    /** The pipeline thread's body: every way out settles the head or ends the live body. */
+    private void runPipeline(Request request, List<HttpServletRequestImpl> requests,
+                             HttpServletResponseImpl res, ResponseHead head) {
+        Response response = null;
+        Throwable failure = null;
         try {
-            return handle(request, requests);
+            response = handle(request, requests, res);
+        } catch (Throwable t) {
+            failure = t;
         } finally {
             // End of request processing (asynchronous processing included, awaited by handle):
             // the sessions used by the request become idle, and their last-accessed time moves.
-            for (HttpServletRequestImpl r : requests) r.endSessionAccess();
+            for (HttpServletRequestImpl r : requests) {
+                try { r.endSessionAccess(); }
+                catch (RuntimeException e) { LOG.log(System.Logger.Level.WARNING, "ending the session access failed", e); }
+            }
+        }
+        if (!res.isStreaming()) {
+            // Never committed: the whole response goes out now (or chappe's 500 on failure).
+            if (failure != null) head.fail(failure);
+            else if (response != null) head.complete(response);
+            else head.fail(new IllegalStateException("no response produced"));
+            return;
+        }
+        if (failure != null) {
+            LOG.log(System.Logger.Level.ERROR,
+                    "unhandled exception after the response was committed; connection aborted", failure);
+            res.abortBody(failure);
+            return;
+        }
+        try {
+            res.finishBody();
+        } catch (IOException e) {
+            // The client is gone while the rest of the body was pushed: nothing left to deliver.
+            res.abortBody(e);
         }
     }
 
-    private Response handle(Request request, List<HttpServletRequestImpl> requests) throws Exception {
+    /**
+     * The commit target: runs at the first real commit, on the committing thread. The session
+     * cookie is attached while the headers can still change, then the head is handed to chappe
+     * with a live body, or with none for a response that carries no body on the wire.
+     */
+    private void commitHead(Request request, List<HttpServletRequestImpl> requests,
+                            HttpServletResponseImpl res, ResponseHead head) {
+        if (!requests.isEmpty()) maybeAttachSessionCookie(requests.getLast(), res);
+        Body body;
+        ResponsePipe pipe = null;
+        int status = res.getStatus();
+        if (request.method() == io.vidocq.chappe.api.HttpMethod.HEAD || status == 204 || status == 304) {
+            res.suppressBody();
+            body = Body.of(java.io.InputStream.nullInputStream(), res.declaredContentLength());
+        } else {
+            pipe = res.startStreaming();
+            body = Body.of(pipe.reader(), res.declaredContentLength());
+        }
+        if (!head.complete(toChappeResponse(res, body)) && pipe != null) {
+            // chappe stopped waiting (server stop): fail the servlet's next write.
+            try { pipe.reader().close(); } catch (IOException ignored) {}
+        }
+    }
+
+    /**
+     * The single exit of {@link #handle(Request, List, HttpServletResponseImpl)}: a response
+     * committed for real already handed its head to chappe ({@code null} is returned and the
+     * pipeline ends the body); otherwise {@code uncommitted} builds the whole response.
+     */
+    private static Response respond(HttpServletResponseImpl res, java.util.function.Supplier<Response> uncommitted) {
+        return res.isStreaming() ? null : uncommitted.get();
+    }
+
+    /** {@link #respond} for a failure: the plain 500, or an aborted connection once committed. */
+    private Response failed(HttpServletResponseImpl res, HttpServletRequestImpl req, Throwable e) {
+        if (res.isStreaming()) {
+            LOG.log(System.Logger.Level.ERROR,
+                    "unhandled exception after the response was committed; connection aborted", e);
+            res.abortBody(e);
+        }
+        return respond(res, () -> error(req, e));
+    }
+
+    /** The end of a request that reached the application: session cookie, then the response. */
+    private Response completed(HttpServletRequestImpl req, HttpServletResponseImpl res) {
+        return respond(res, () -> {
+            maybeAttachSessionCookie(req, res);
+            return toChappeResponse(res);
+        });
+    }
+
+    private Response handle(Request request, List<HttpServletRequestImpl> requests,
+                            HttpServletResponseImpl res) throws Exception {
         String rawPath = request.path();
         // URL rewriting (§7.1) : extrait un jsessionid inline du path et le retire
         // du path utilisé pour le dispatching.
@@ -133,8 +248,6 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
             rawPath = rawPath.substring(0, sidx) + rawPath.substring(stop);
         }
         final String finalUrlSessionId = urlSessionId;
-        HttpServletResponseImpl res = new HttpServletResponseImpl();
-        res.setDefaultCharacterEncoding(servletContext.configuredResponseCharacterEncoding());
 
         String path;
         if ("*".equals(rawPath)) {
@@ -168,8 +281,7 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
                 redirected.setUrlSessionId(finalUrlSessionId);
                 redirected.accessRequestedSession();
                 try { res.sendRedirect(res.encodeRedirectURL(redirect)); } catch (IOException ignored) {}
-                maybeAttachSessionCookie(redirected, res);
-                return toChappeResponse(res);
+                return completed(redirected, res);
             }
             String welcome = path.endsWith("/") ? welcomeTarget(path) : null;
             if (welcome != null) {
@@ -196,9 +308,9 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
                 // Pas de mapping ni de filtre : 404 + error-page si mappée (§9.9.1).
                 try { res.sendError(404); } catch (IOException ignored) {}
                 try { maybeHandleError(req, res, null, null); }
-                catch (ServletException e) { return error(req, e); }
-                if (!errorPageHandled(req)) return notFound();
-                return toChappeResponse(res);
+                catch (ServletException e) { return failed(res, req, e); }
+                if (!errorPageHandled(req)) return respond(res, ChappeServletBridge::notFound);
+                return respond(res, () -> toChappeResponse(res));
             }
 
             registry.fireRequestInitialized(servletContext, req);
@@ -206,11 +318,10 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
                 new VidocqFilterChain(filters, null).doFilter(req, res);
             } catch (ServletException e) {
                 registry.fireRequestDestroyed(servletContext, req);
-                return error(req, e);
+                return failed(res, req, e);
             }
             registry.fireRequestDestroyed(servletContext, req);
-            maybeAttachSessionCookie(req, res);
-            return toChappeResponse(res);
+            return completed(req, res);
         }
 
         ServletDispatcher.Mapping m = match.get();
@@ -239,8 +350,7 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
                     servletContext.securityProvider());
             if (!enforcer.enforce(m.security(), req, res)) {
                 registry.fireRequestDestroyed(servletContext, req);
-                maybeAttachSessionCookie(req, res);
-                return toChappeResponse(res);
+                return completed(req, res);
             }
             invoke(target, req, res, DispatcherType.REQUEST, requestChain);
             thrown = awaitAsyncIfStarted(req, res);
@@ -252,13 +362,12 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
         try {
             maybeHandleError(req, res, thrown, target.servletName());
         } catch (ServletException e) {
-            return error(req, e);
+            return failed(res, req, e);
         }
         if (thrown != null && !errorPageHandled(req)) {
-            return error(req, thrown);
+            return failed(res, req, thrown);
         }
-        maybeAttachSessionCookie(req, res);
-        return toChappeResponse(res);
+        return completed(req, res);
     }
 
     private static boolean isContainerDefault(Optional<ServletDispatcher.Mapping> match) {
@@ -349,14 +458,14 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
         req.bindResponse(res);
         try { res.sendError(status); } catch (IOException ignored) {}
         try { maybeHandleError(req, res, null, null); }
-        catch (ServletException e) { return error(null, e); }
-        if (errorPageHandled(req)) return toChappeResponse(res);
-        if (status == 404) return notFound();
-        return Response.builder()
+        catch (ServletException e) { return failed(res, null, e); }
+        if (errorPageHandled(req)) return respond(res, () -> toChappeResponse(res));
+        if (status == 404) return respond(res, ChappeServletBridge::notFound);
+        return respond(res, () -> Response.builder()
                 .status(StatusCode.of(status))
                 .header("Content-Type", "text/plain")
                 .body(Body.of("Bad Request".getBytes(java.nio.charset.StandardCharsets.US_ASCII)))
-                .build();
+                .build());
     }
 
     /**
@@ -436,7 +545,7 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
             ac = req.asyncContextInternal();
             if (ac == null) break;
         }
-        if (ac != null && ac.timedOut() && !res.isCommitted() && res.bodyBytes().length == 0) {
+        if (ac != null && ac.timedOut() && !res.isCommitted() && !res.hasContent()) {
             try { res.sendError(503, "async timeout"); }
             catch (IOException ignored) {}
         }
@@ -467,6 +576,9 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
             LOG.log(System.Logger.Level.ERROR,
                     "exception after the response was committed; no error page dispatched", thrown);
             req.setAttribute("jakarta.servlet.error.handled", Boolean.TRUE);
+            // A live body cannot end normally: the client would take a partial body for a whole
+            // one. Abort it, so chappe drops the connection.
+            if (res.isStreaming()) res.abortBody(thrown);
             return;
         }
         ErrorPageRegistry pages = servletContext.errorPages();
@@ -629,13 +741,29 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
         return CookieCodec.serializeSetCookie(c);
     }
 
+    /** A response that never committed: its whole buffered body, sent at once. */
     static Response toChappeResponse(HttpServletResponseImpl res) {
+        return toChappeResponse(res, Body.of(res.bodyBytes()));
+    }
+
+    /**
+     * The single place where a servlet response becomes a chappe {@link Response} (buffered at
+     * the end of the request, or live at the first commit). Framing is the container's: an
+     * application {@code Transfer-Encoding} is never passed on (chappe would then send the body
+     * unframed), and a streamed body carries its declared length as the body length rather than as
+     * a {@code Content-Length} header, which chappe would otherwise send next to its own chunking.
+     */
+    static Response toChappeResponse(HttpServletResponseImpl res, Body body) {
         var builder = Response.builder()
                 .status(StatusCode.of(res.getStatus()))
-                .body(Body.of(res.bodyBytes()));
+                .body(body);
+        boolean streamed = res.isStreaming();
         for (Map.Entry<String, List<String>> e : res.allHeaders().entrySet()) {
+            String name = e.getKey();
+            if ("Transfer-Encoding".equalsIgnoreCase(name)) continue;
+            if (streamed && "Content-Length".equalsIgnoreCase(name)) continue;
             for (String v : e.getValue()) {
-                builder.header(e.getKey(), v);
+                builder.header(name, v);
             }
         }
         return builder.build();

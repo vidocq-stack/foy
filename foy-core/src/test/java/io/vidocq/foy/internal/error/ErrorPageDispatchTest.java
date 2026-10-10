@@ -172,7 +172,7 @@ class ErrorPageDispatchTest {
     }
 
     @Test
-    void exceptionAfterCommitKeepsCommittedContentAndDispatchesNoPage() throws Exception {
+    void exceptionAfterCommitKeepsCommittedContentDispatchesNoPageAndAbortsTheBody() throws Exception {
         pages.register(500, "/err");
         pages.register(RuntimeException.class, "/err");
         start(reporter(), thrower((q, r) -> {
@@ -180,9 +180,23 @@ class ErrorPageDispatchTest {
             r.flushBuffer();
             throw new IllegalStateException("late");
         }));
-        var res = get("/t");
+        // The committed head and content reached the client; the body then ends abnormally (the
+        // connection is dropped), since a normal end would pass a partial body off as a whole one.
+        var res = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(2)).build()
+                .send(HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port + "/t"))
+                        .timeout(Duration.ofSeconds(5)).GET().build(),
+                        HttpResponse.BodyHandlers.ofInputStream());
         assertEquals(200, res.statusCode());
-        assertEquals("committed-content", res.body());
+        var received = new java.io.ByteArrayOutputStream();
+        try (var in = res.body()) {
+            byte[] buf = new byte[256];
+            int n;
+            while ((n = in.read(buf)) != -1) received.write(buf, 0, n);
+            org.junit.jupiter.api.Assertions.fail("the body must not end normally, got: " + received);
+        } catch (IOException expected) {
+            // truncated chunked body
+        }
+        assertEquals("committed-content", received.toString(java.nio.charset.StandardCharsets.UTF_8));
     }
 
     @Test

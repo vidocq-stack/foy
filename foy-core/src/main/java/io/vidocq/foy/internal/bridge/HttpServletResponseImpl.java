@@ -38,8 +38,11 @@ import java.util.Set;
 import java.util.TreeMap;
 
 /**
- * {@link HttpServletResponse} which accumulates the state (status, headers, body) and materializes
- * in {@link io.vidocq.chappe.api.Response Response} Immutable trap at the end of dispatch.
+ * {@link HttpServletResponse} which accumulates the state (status, headers, body) up to its first
+ * commit. A response that never commits is materialised as one immutable
+ * {@link io.vidocq.chappe.api.Response Response} at the end of the request; a response committed
+ * earlier (buffer overflow, flush) hands its head to chappe through the commit target bound by the
+ * bridge ({@link #bindCommitTarget}) and streams the rest of its body through a {@link ResponsePipe}.
  */
 public final class HttpServletResponseImpl implements HttpServletResponse {
 
@@ -54,10 +57,15 @@ public final class HttpServletResponseImpl implements HttpServletResponse {
     private final ServletOutputStreamImpl outputStream = new ServletOutputStreamImpl();
     /** True while the response itself drains the writer into the buffer: that is not a commit. */
     private boolean internalFlush;
-    { outputStream.setFlushListener(() -> { if (!internalFlush) committed = true; }); }
+    { outputStream.setOwner(new StreamOwner()); }
     private PrintWriter writer;
     private boolean streamAcquired;
+    /** Committed as the application sees it ({@link #isCommitted()}): status and headers are frozen. */
     private boolean committed;
+    /** Committed for real: the head was handed to chappe and the body is live. Implies {@link #committed}. */
+    private volatile boolean headSent;
+    /** Receives the response at its first real commit; {@code null} for a detached response (unit tests). */
+    private java.util.function.Consumer<HttpServletResponseImpl> onCommit;
     /** Declared Content-Length, or -1 when none. */
     private long contentLength = -1;
     private boolean errorTriggered;
@@ -88,7 +96,8 @@ public final class HttpServletResponseImpl implements HttpServletResponse {
         String safeMsg = msg == null ? "" : msg;
         String body = "<html><head><title>HTTP Error " + sc + "</title></head><body>"
                 + "<h1>HTTP Status " + sc + " - " + safeMsg + "</h1></body></html>";
-        outputStream.write(body.getBytes(charset()));
+        // Kept in the buffer whatever its size: an error page may still replace it.
+        outputStream.writeBuffered(body.getBytes(charset()));
         committed = true;
         outputStream.setDiscarding(true);
     }
@@ -110,7 +119,8 @@ public final class HttpServletResponseImpl implements HttpServletResponse {
     public void clearErrorState() {
         this.errorTriggered = false;
         this.errorMessage = null;
-        this.committed = false;
+        // A response whose head is on the wire stays committed.
+        this.committed = headSent;
         outputStream.setDiscarding(false);
     }
     @Override public void sendRedirect(String location) throws IOException {
@@ -230,9 +240,8 @@ public final class HttpServletResponseImpl implements HttpServletResponse {
 
     /**
      * Bridge-internal header append which, unlike the public API, is not blocked by commit.
-     * Used for the session cookie, which the buffered model can still attach after the servlet
-     * flushed. When Phase 5 introduces real streaming, this header must be emitted before the
-     * first flush instead.
+     * Used for the session cookie, which the bridge attaches at the first real commit (before the
+     * head is handed to chappe) or at the end of a request that never committed.
      */
     void addHeaderInternal(String name, String value) { appendHeader(name, value); }
 
@@ -280,6 +289,10 @@ public final class HttpServletResponseImpl implements HttpServletResponse {
         if ("Content-Length".equalsIgnoreCase(name)) {
             try { this.contentLength = Long.parseLong(value.trim()); }
             catch (RuntimeException e) { this.contentLength = -1; }
+            // Declared after the content was written: the response is complete already.
+            if (contentLength >= 0 && outputStream.hasContent() && outputStream.written() >= contentLength) {
+                committed = true;
+            }
         }
         if ("Content-Type".equalsIgnoreCase(name)) {
             this.contentType = value;
@@ -400,7 +413,7 @@ public final class HttpServletResponseImpl implements HttpServletResponse {
                 characterEncoding = defaultCharacterEncoding != null ? defaultCharacterEncoding : "ISO-8859-1";
             }
             charsetLocked = true;
-            writer = new PrintWriter(new java.io.OutputStreamWriter(outputStream, charset()), false);
+            writer = new ResponseWriter(new java.io.OutputStreamWriter(outputStream, charset()));
             refreshContentTypeHeader();
         }
         return writer;
@@ -414,19 +427,85 @@ public final class HttpServletResponseImpl implements HttpServletResponse {
 
     // ---- Buffer / commit ----
 
-    // Nominal buffer size exposed to the servlet: everything is buffered in memory,
-    // so the effective capacity is unbounded, but a usual value is exposed
-    // (8 KiB) conforme aux attentes des tests TCK.
+    /** The minimum capacity of the pipe that carries a committed body to chappe. */
+    private static final int MIN_PIPE_CAPACITY = 8192;
+
+    /**
+     * The buffer threshold: content up to this size stays buffered (and can still be reset); the
+     * write that would exceed it commits the response and the body goes to the client live.
+     */
     private int bufferSize = 8192;
     @Override public void setBufferSize(int size) {
-        if (outputStream.size() > 0) throw new IllegalStateException("content already written");
+        if (outputStream.hasContent() || headSent) throw new IllegalStateException("content already written");
         this.bufferSize = size;
+        outputStream.setLimit(size);
     }
     @Override public int getBufferSize() { return bufferSize; }
-    @Override public void flushBuffer() {
-        if (writer != null) writer.flush();
-        committed = true;
+    @Override public void flushBuffer() throws IOException {
+        drainWriter();
+        flushToClient();
     }
+
+    /**
+     * An application flush: commits the response for real and pushes the buffered content to the
+     * client. A response the container closed (sendError, sendRedirect, end of a forward) is only
+     * committed logically: its buffered content is sent whole at the end of the request, so an
+     * error page can still replace a sendError body.
+     */
+    private void flushToClient() throws IOException {
+        if (!headSent) {
+            if (outputStream.isDiscarding()) {
+                committed = true;
+                return;
+            }
+            commit();
+        }
+        outputStream.push();
+    }
+
+    /**
+     * The single commit point. Status, headers and cookies are frozen from here on; when the
+     * bridge bound a commit target, the response head is handed to chappe at once (the session
+     * cookie included, attached by the target) and the body becomes live. A detached response
+     * only records the commit.
+     */
+    void commit() {
+        if (headSent) return;
+        committed = true;
+        if (onCommit == null) return;
+        headSent = true;
+        onCommit.accept(this);
+    }
+
+    /** Called by the bridge: {@code target} receives this response at its first real commit. */
+    void bindCommitTarget(java.util.function.Consumer<HttpServletResponseImpl> target) {
+        this.onCommit = target;
+    }
+
+    /** Whether the head was handed to chappe at a commit: the body is then live. */
+    boolean isStreaming() { return headSent; }
+
+    /** The declared Content-Length, or -1. */
+    long declaredContentLength() { return contentLength; }
+
+    /** Connects the live body to a new pipe (called by the commit target) and returns it. */
+    ResponsePipe startStreaming() {
+        var pipe = new ResponsePipe(Math.max(MIN_PIPE_CAPACITY, bufferSize));
+        outputStream.streamTo(pipe);
+        return pipe;
+    }
+
+    /** The committed response carries no body on the wire (HEAD, 204, 304): drop every byte. */
+    void suppressBody() { outputStream.suppress(); }
+
+    /** End of the request for a live body: what is left is pushed, then the client sees EOF. */
+    void finishBody() throws IOException {
+        drainWriter();
+        outputStream.finish();
+    }
+
+    /** Abnormal end of a live body: chappe drops the connection instead of ending the body. */
+    void abortBody(Throwable cause) { outputStream.abort(cause); }
     /** Drops the declared Content-Length, which no longer describes a cleared body. */
     private void clearContentLength() {
         contentLength = -1;
@@ -440,12 +519,8 @@ public final class HttpServletResponseImpl implements HttpServletResponse {
         streamAcquired = false;
     }
     @Override public boolean isCommitted() {
-        // Servlet 6.1 §5.1/§5.2 (setContentLength Javadoc): once the amount of content written
-        // reaches the declared content length, the response is committed and closed.
-        if (!committed && contentLength >= 0) {
-            drainWriter();
-            if (outputStream.size() > 0 && outputStream.size() >= contentLength) committed = true;
-        }
+        // Side-effect free: commits happen where bytes are written (overflow, flush, declared
+        // Content-Length reached — see StreamOwner) or where the response is closed.
         return committed;
     }
     @Override public void reset() {
@@ -554,6 +629,41 @@ public final class HttpServletResponseImpl implements HttpServletResponse {
         try { writer.flush(); } finally { internalFlush = false; }
     }
 
+    /** The response side of {@link ServletOutputStreamImpl}. */
+    private final class StreamOwner implements ServletOutputStreamImpl.Owner {
+        @Override public long declaredLength() { return contentLength; }
+        @Override public void overflow() { commit(); }
+        @Override public void flushRequested() throws IOException {
+            if (!internalFlush) flushToClient();
+        }
+        @Override public void contentLengthReached() throws IOException {
+            // Servlet 6.1 section 5.6: the declared amount of content is written, the response is
+            // committed and closed. A live body sends it at once; a buffered one at the end.
+            committed = true;
+            if (headSent) outputStream.push();
+        }
+    }
+
+    /**
+     * The response writer. The encoder's own buffer is drained into the output stream after every
+     * write, so the stream's byte count is exact at all times: the buffer threshold and the declared
+     * Content-Length are enforced on the bytes actually encoded, and {@link #isCommitted()} needs no
+     * draining. Only an application {@link #flush()} commits.
+     */
+    private final class ResponseWriter extends PrintWriter {
+        ResponseWriter(java.io.Writer out) { super(out, false); }
+
+        private void drain() {
+            internalFlush = true;
+            try { super.flush(); } finally { internalFlush = false; }
+        }
+
+        @Override public void write(int c) { super.write(c); drain(); }
+        @Override public void write(char[] buf, int off, int len) { super.write(buf, off, len); drain(); }
+        @Override public void write(String s, int off, int len) { super.write(s, off, len); drain(); }
+        @Override public void println() { super.println(); drain(); }
+    }
+
     /**
      * Whether the body is already started: content buffered, or the writer obtained. The default
      * servlet declares a Content-Length only on a response whose body it writes alone, as bytes;
@@ -562,7 +672,13 @@ public final class HttpServletResponseImpl implements HttpServletResponse {
      */
     public boolean bodyStarted() {
         drainWriter();
-        return writer != null || outputStream.size() > 0;
+        return writer != null || headSent || outputStream.hasContent();
+    }
+
+    /** Whether any body byte was written since the last reset (the writer is drained per write). */
+    boolean hasContent() {
+        drainWriter();
+        return outputStream.hasContent();
     }
 
     public byte[] bodyBytes() {

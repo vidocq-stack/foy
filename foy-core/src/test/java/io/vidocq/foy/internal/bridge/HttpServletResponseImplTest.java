@@ -141,7 +141,7 @@ class HttpServletResponseImplTest {
     }
 
     @Test
-    void headersIgnoredAfterFlushBuffer() {
+    void headersIgnoredAfterFlushBuffer() throws IOException {
         var res = new HttpServletResponseImpl();
         res.setHeader("h0", "0");
         res.flushBuffer();
@@ -163,7 +163,7 @@ class HttpServletResponseImplTest {
     }
 
     @Test
-    void sendErrorAfterCommitThrows() {
+    void sendErrorAfterCommitThrows() throws IOException {
         var res = new HttpServletResponseImpl();
         res.flushBuffer();
         assertThrows(IllegalStateException.class, () -> res.sendError(500));
@@ -171,7 +171,7 @@ class HttpServletResponseImplTest {
     }
 
     @Test
-    void resetAfterCommitThrows() {
+    void resetAfterCommitThrows() throws IOException {
         var res = new HttpServletResponseImpl();
         res.flushBuffer();
         assertThrows(IllegalStateException.class, res::reset);
@@ -249,7 +249,7 @@ class HttpServletResponseImplTest {
     }
 
     @Test
-    void setLocaleAfterCommitDoesNothing() {
+    void setLocaleAfterCommitDoesNothing() throws IOException {
         var res = new HttpServletResponseImpl();
         res.setLocale(Locale.FRANCE);
         res.flushBuffer();
