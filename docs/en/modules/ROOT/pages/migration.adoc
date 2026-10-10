@@ -144,7 +144,7 @@ The streaming, async and non-blocking I/O work (Servlet 6.1 sections 2.3.3, 3.7 
 * **An async timeout answers `500` through the error-page mechanism instead of a bare `503`.** When no `AsyncListener` completes or dispatches in `onTimeout`, the container raises an error dispatch with status `500`; an `<error-page>` for `500` now renders it.
 * **`newPushBuilder()` returns `null`.** Code that pushed resources must check for `null` (the specification allows it); 103 Early Hints are the replacement.
 * **A connection whose upload the application stopped reading is closed after the response.** When a `ReadListener` still waits for upload bytes at the end of the request, the response is delivered and the connection is then closed rather than kept alive.
-* **An exception after the commit aborts the connection.** Once the response is streaming, a late exception can no longer turn into an error page: it is logged and the connection is dropped, so the client sees a truncated body.
+* **An exception after the commit aborts the response.** Once the response is streaming, a late exception can no longer turn into an error page: it is logged and the body is aborted (connection aborted on HTTP/1.x, stream reset with `RST_STREAM` `INTERNAL_ERROR` on HTTP/2), so the client sees a truncated body.
 
 == Common pitfalls
 

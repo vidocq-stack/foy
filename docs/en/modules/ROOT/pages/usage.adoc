@@ -97,7 +97,7 @@ The response is committed, and its head sent, at the first of:
 
 From then on the body goes to the client while the servlet keeps writing: small writes are coalesced in the buffer and pushed when it fills, on a flush, and at the end of the request. Without a declared `Content-Length`, an HTTP/1.1 body is sent chunked; on HTTP/2 it is sent as DATA frames. A client that reads slowly slows the writing servlet down (the pipe between the servlet and the connection is bounded): memory stays bounded whatever the body size.
 
-An exception that escapes after the commit cannot change the response any more: it is logged and the connection is aborted, so the client sees a truncated body rather than a complete-looking one.
+An exception that escapes after the commit cannot change the response any more: it is logged and the body is aborted (connection aborted on HTTP/1.x, stream reset with `RST_STREAM` `INTERNAL_ERROR` on HTTP/2), so the client sees a truncated body rather than a complete-looking one.
 
 == Non-blocking I/O (`ReadListener`, `WriteListener`)
 
@@ -171,9 +171,11 @@ public class EchoUpgradeServlet extends HttpServlet {
 ----
 
 * The handler is instantiated by the container, through the same component factory as servlets, filters and listeners (CDI included); an instantiation failure is a `ServletException`.
-* `upgrade` throws `IOException` on HTTP/1.0 and HTTP/2, and `IllegalStateException` after `startAsync()` or when called twice.
+* `upgrade` throws `IOException` on HTTP/1.0 and HTTP/2, and `IllegalStateException` after `startAsync()` or when called twice; `startAsync()` after `upgrade()` throws `IllegalStateException` too.
+* A status other than `101` is sent as set, with a warning in the log. A status or header that cannot go into the upgrade head (an invalid header name or value) is logged as a warning and answered with a `500`; the handler is then never initialised, and `destroy()` is not called.
 * `WebConnection.getInputStream()` and `getOutputStream()` are blocking by default and support `ReadListener` and `WriteListener`.
 * `destroy()` is called once, when the connection ends: `WebConnection.close()`, a read or write error, or the undeployment of the application (which closes every upgraded connection it still holds).
+* `WebConnection.close()` lets a non-blocking write still in flight reach the wire first (the usual `out.write(lastFrame); connection.close();` from `onWritePossible`), waiting at most 2 seconds: past that, a peer that does not read gets the connection closed anyway.
 * A handler that neither reads nor closes keeps the connection open until a write fails or the application is undeployed: there is no idle timeout once a connection is upgraded.
 
 WebSocket is not built on top of this yet (Jakarta WebSocket is not implemented).
