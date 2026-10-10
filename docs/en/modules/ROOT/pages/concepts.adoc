@@ -82,7 +82,7 @@ Form-based and Digest authentication are **not implemented** (the `spec.security
 
 == CDI: a single BeanManager
 
-`foy-cdi-vauban` connects Foy to xref:vauban::index.adoc[Vauban] through a single class: `FoyVaubanBootstrap`, which returns the current `VaubanContainer`'s `BeanManager` for `FoyChappeBoot`.
+`foy-cdi-vauban` connects Foy to xref:vauban::index.adoc[Vauban] through three classes: `FoyVaubanBootstrap` returns the current `VaubanContainer`'s `BeanManager` for `FoyChappeBoot`; `FoyWebExtension`, a build compatible extension, indexes the web components and registers Foy's session context; `CdiWebComponentsCreator` builds the synthetic `CdiWebComponents` bean listing them.
 
 * `Servlet`/`Filter`/`Listener` instances are resolved through the `BeanManager`, so they can carry `@Inject` for application beans.
 * `ServletContext`, `HttpServletRequest` and `HttpSession` are **not** exposed as CDI beans yet — no `@ApplicationScoped`/`@RequestScoped`/`@SessionScoped` producers exist for them.

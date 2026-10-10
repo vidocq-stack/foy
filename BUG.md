@@ -584,3 +584,29 @@ Statuts : `OPEN` → `INVESTIGATING` → `FIXED` (commit hash) → `CLOSED`.
   does not persist `getCustomContexts()` at build time. Mansart's `@TransactionScoped` is exposed the same way.
 - **Fix envisagé** : upstream in Vauban (record the custom contexts at build time, or always run the
   `@Discovery` phase); re-enable the pinning test once it lands.
+
+## BUG-20261010-09 — error pages run without the CDI request and session contexts
+
+- **Date** : 2026-10-10
+- **Statut** : OPEN (ordering kept by the foy#21 final review: the fix changes the listener order of every
+  error dispatch and needs a full official TCK run)
+- **Module touché** : `foy-core` (`ChappeServletBridge`)
+- **Symptôme** : an error page (a `<error-page>` location dispatched after an exception, or after
+  `sendError(404)` and other `sendError` statuses) runs with neither the CDI request context nor the CDI
+  session context active: a `@RequestScoped` or `@SessionScoped` bean used there fails with
+  `ContextNotActiveException`. When the request invalidated its session, the beans of that session are
+  destroyed before the error page runs.
+- **Reproduction minimale** : by code reading (not pinned by a test): a servlet calls
+  `resp.sendError(404)` (or throws), a `<error-page>` maps that status (or exception) to a servlet that
+  injects a `@SessionScoped` bean; under Weld (`foy-it-weld`) the error page answers 500 with
+  `ContextNotActiveException`. The same holds on the unmapped-path 404 branch, which dispatches its error
+  page before `fireRequestInitialized`.
+- **Hypothèse de cause** : on the mapped path, `ChappeServletBridge` fires `requestDestroyed` (where
+  `CdiSessionScopeListener` unbinds the session context and destroys the beans of a session invalidated
+  in the request, and foy#18's request listener deactivates the request context) before
+  `maybeHandleError` dispatches the error page. The order dates from foy#18 (request listeners before the
+  CDI work); Tomcat fires request-destroyed after its error pages (`StandardHostValve`).
+- **Fix envisagé** : fire `requestDestroyed` after the error handling (after `maybeHandleError`, still
+  before `onComplete`), and initialise the request listeners around the unmapped-path error dispatch;
+  needs a full official Servlet TCK run (`run-official-tck-servlet6.1.sh --all`) since every error
+  dispatch changes order.
