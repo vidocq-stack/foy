@@ -386,8 +386,10 @@ public final class HttpServletRequestImpl implements HttpServletRequest {
 
     /**
      * The async processing is over: no listener callback runs any more (the one in progress
-     * finishes first), and the body pump stops, its current read returned, so chappe can drain the
-     * unread body alone. Idempotent.
+     * finishes first) and the body pump stops after its current read. Never waits for that read: a
+     * silent client must not hold the response back. On HTTP/2 the read (a DATA queue) is
+     * interrupted; on HTTP/1.x it cannot be (that would close the connection), so the bridge waits
+     * for it in {@link #awaitInputHandBack()} once the response is delivered. Idempotent.
      */
     void endNonBlockingIo() {
         CallbackSerializer s;
@@ -397,7 +399,27 @@ public final class HttpServletRequestImpl implements HttpServletRequest {
         }
         if (s != null) s.close();
         var body = trackedBody;
-        if (body != null) body.endNonBlocking();
+        if (body != null) body.endNonBlocking(chappe.version() == io.vidocq.chappe.api.HttpVersion.HTTP_2);
+    }
+
+    /**
+     * Whether chappe must wait for the body pump before it reads the body itself (HTTP/1.x: the
+     * unread body is drained on the connection after the response; HTTP/2 needs no hand-back).
+     */
+    boolean needsInputHandBack() {
+        if (chappe.version() == io.vidocq.chappe.api.HttpVersion.HTTP_2) return false;
+        var body = trackedBody;
+        return body != null && body.pumpAlive();
+    }
+
+    /**
+     * Waits until the body pump is gone, so chappe drains the unread body alone; called once the
+     * response is delivered (its body released). No-op without a pump.
+     */
+    void awaitInputHandBack() {
+        if (chappe.version() == io.vidocq.chappe.api.HttpVersion.HTTP_2) return;
+        var body = trackedBody;
+        if (body != null) body.awaitPumpExit();
     }
 
     @Override public ServletInputStream getInputStream() throws IOException {

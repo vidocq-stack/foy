@@ -143,7 +143,6 @@ final class CallbackSerializer {
     }
 
     private void drain() {
-        Thread.currentThread().setContextClassLoader(applicationLoader);
         while (true) {
             Task task;
             lock.lock();
@@ -162,10 +161,13 @@ final class CallbackSerializer {
         }
     }
 
-    private static void runOne(Task task) {
+    private void runOne(Task task) {
+        // Per callback: a callback may change the TCCL, the next one still gets the application's.
+        Thread.currentThread().setContextClassLoader(applicationLoader);
         try {
             task.callback().run();
         } catch (Throwable t) {
+            Thread.currentThread().setContextClassLoader(applicationLoader);
             try {
                 task.onError().accept(t);
             } catch (Throwable e) {

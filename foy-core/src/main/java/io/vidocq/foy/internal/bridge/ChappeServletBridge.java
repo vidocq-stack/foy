@@ -22,6 +22,7 @@ package io.vidocq.foy.internal.bridge;
 import io.vidocq.chappe.api.Body;
 import io.vidocq.chappe.api.Handler;
 import io.vidocq.chappe.api.HttpMethod;
+import io.vidocq.chappe.api.HttpVersion;
 import io.vidocq.chappe.api.Request;
 import io.vidocq.chappe.api.RequestContext;
 import io.vidocq.chappe.api.Response;
@@ -170,7 +171,7 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
             // End of request processing (asynchronous processing included, awaited by handle):
             // the sessions used by the request become idle, and their last-accessed time moves.
             for (HttpServletRequestImpl r : requests) {
-                // Last guard (idempotent): the body pump must be gone before chappe drains the body.
+                // Last guard (idempotent): no ReadListener callback any more, the body pump stops.
                 r.endNonBlockingIo();
                 try { r.endSessionAccess(); }
                 catch (RuntimeException e) { LOG.log(System.Logger.Level.WARNING, "ending the session access failed", e); }
@@ -179,8 +180,15 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
         try {
             if (!res.isStreaming()) {
                 // Never committed: the whole response goes out now (or chappe's 500 on failure).
-                if (failure != null) head.fail(failure);
-                else if (response != null) head.complete(response);
+                // A body pump still blocked on a read (a silent client) must not hold the response
+                // back: chappe waits for it only once the response is delivered.
+                boolean handBack = requests.stream().anyMatch(HttpServletRequestImpl::needsInputHandBack);
+                if (failure != null) {
+                    if (handBack) head.complete(handBack(plainInternalServerError(), requests));
+                    else head.fail(failure);
+                } else if (response != null) {
+                    head.complete(handBack ? handBack(response, requests) : response);
+                }
                 return;
             }
             if (failure != null) {
@@ -231,10 +239,34 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
             res.abortBody(failure);
             throw failure;
         }
+        // A ReadListener may still be set after the commit: on HTTP/1.x the body's release waits for
+        // its pump, after the response went out and before chappe drains the request body.
+        if (request.version() != HttpVersion.HTTP_2) response = handBack(response, requests);
         if (!head.complete(response) && pipe != null) {
             // chappe stopped waiting (server stop): fail the servlet's next write.
             try { pipe.reader().close(); } catch (IOException ignored) {}
         }
+    }
+
+    /**
+     * {@code response}, whose body's release waits for the request body pumps of {@code requests}
+     * ({@link HttpServletRequestImpl#awaitInputHandBack()}): chappe releases the body after the
+     * response was written and before it drains the unread request body, so a silent client never
+     * holds the response back and chappe never reads the body concurrently with a pump.
+     */
+    private static Response handBack(Response response, List<HttpServletRequestImpl> requests) {
+        return new InputHandBackResponse(response, () -> {
+            for (HttpServletRequestImpl r : List.copyOf(requests)) r.awaitInputHandBack();
+        });
+    }
+
+    /** Chappe's own answer to a failed handler, built here when the response must carry a hand-back. */
+    private static Response plainInternalServerError() {
+        return Response.builder()
+                .status(StatusCode.INTERNAL_SERVER_ERROR)
+                .header("Content-Type", "text/plain")
+                .body(Body.of("Internal Server Error".getBytes(StandardCharsets.US_ASCII)))
+                .build();
     }
 
     /**
@@ -394,7 +426,8 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
         AsyncEnd end = runAsyncCycles(req, res, thrown);
         AsyncContextImpl lastCycle = null;
         if (end != null) {
-            // No ReadListener callback after the async processing; chappe gets the body back.
+            // No ReadListener callback after the async processing; the body pump stops (chappe gets
+            // the body back once the response is delivered, see handBack).
             req.endNonBlockingIo();
             thrown = end.thrown();
             lastCycle = end.lastCycle();
@@ -573,7 +606,10 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
             AsyncContextImpl cycle = ac;
             // The dispatch that opened the cycle returned: non-blocking I/O callbacks may run. Once
             // the cycle ends they wait again (the one in progress finishes first), so they never
-            // overlap the async listeners, the error dispatch or a new ASYNC dispatch.
+            // overlap the async listeners, the error dispatch or a new ASYNC dispatch. The output is
+            // claimed before the callbacks are held: a callback still running at the cycle end sees
+            // its later writes fail with an IOException (a write already blocked on a slow client
+            // still delays the hold until it ends).
             req.releaseCallbacks();
             CycleEnd outcome = cycle.awaitCycleEnd(() -> {
                 res.claimOutput(cycle.startedThreads());

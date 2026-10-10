@@ -80,7 +80,7 @@ class ServletInputStreamImplTest {
             in.setReadListener(NOOP);
             assertThrows(IllegalStateException.class, () -> in.setReadListener(NOOP));
         } finally {
-            in.endNonBlocking();
+            end(in);
         }
     }
 
@@ -114,7 +114,7 @@ class ServletInputStreamImplTest {
             assertThrows(IllegalStateException.class, () -> in.read(ByteBuffer.allocate(4)));
         } finally {
             pipe.close(); // EOF: the pump's blocked read returns
-            in.endNonBlocking();
+            end(in);
         }
     }
 
@@ -152,7 +152,7 @@ class ServletInputStreamImplTest {
             assertTrue(in.isFinished());
             assertTrue(host.failures.isEmpty());
         } finally {
-            in.endNonBlocking();
+            end(in);
         }
     }
 
@@ -175,7 +175,7 @@ class ServletInputStreamImplTest {
             assertEquals(List.of(broken), List.copyOf(received));
         } finally {
             host.callbacks.close(); // waits for the callback in progress
-            in.endNonBlocking();
+            end(in);
         }
         assertEquals(List.of(broken), List.copyOf(host.failures));
         assertFalse(in.isReady());
@@ -197,9 +197,82 @@ class ServletInputStreamImplTest {
             assertTrue(done.await(5, TimeUnit.SECONDS));
         } finally {
             host.callbacks.close(); // waits for the callback in progress
-            in.endNonBlocking();
+            end(in);
         }
         assertEquals(List.of(boom), List.copyOf(received));
         assertEquals(List.of(boom), List.copyOf(host.failures));
+    }
+    /** {@code source}, counting {@code reading} down when a read starts. */
+    private static InputStream signalOnRead(InputStream source, CountDownLatch reading) {
+        return new java.io.FilterInputStream(source) {
+            @Override public int read(byte[] b, int off, int len) throws IOException {
+                reading.countDown();
+                return super.read(b, off, len);
+            }
+        };
+    }
+
+    /** Stops non-blocking mode and waits for the pump, as the bridge does once the response is out. */
+    private static void end(ServletInputStreamImpl in) {
+        in.endNonBlocking(false);
+        in.awaitPumpExit();
+    }
+
+    /** A listener may read straight away in onDataAvailable: data is buffered, no isReady() needed. */
+    @Test
+    void onDataAvailableMayReadWithoutCallingIsReadyFirst() throws Exception {
+        var host = new Host(true);
+        var in = new ServletInputStreamImpl(bytes("Hello"), host);
+        var got = new CopyOnWriteArrayList<String>();
+        var done = new CountDownLatch(1);
+        try {
+            in.setReadListener(new ReadListener() {
+                @Override public void onDataAvailable() throws IOException {
+                    byte[] buf = new byte[16];
+                    int n = in.read(buf);
+                    got.add(new String(buf, 0, n, StandardCharsets.US_ASCII));
+                }
+                @Override public void onAllDataRead() { got.add("EOF"); done.countDown(); }
+                @Override public void onError(Throwable t) { got.add("onError:" + t); done.countDown(); }
+            });
+            assertTrue(done.await(5, TimeUnit.SECONDS));
+        } finally {
+            host.callbacks.close();
+            end(in);
+        }
+        assertEquals(List.of("Hello", "EOF"), List.copyOf(got));
+        assertTrue(host.failures.isEmpty());
+    }
+
+    /** Ending non-blocking mode never waits for a blocked read; joining the pump does, until the read returns. */
+    @Test
+    void endNonBlockingWithThePumpBlockedOnARead() throws Exception {
+        var pipe = new PipedOutputStream();
+        var reading = new CountDownLatch(1);
+        var in = new ServletInputStreamImpl(signalOnRead(new PipedInputStream(pipe), reading), new Host(true));
+        in.setReadListener(NOOP);
+        assertTrue(reading.await(5, TimeUnit.SECONDS));
+        in.endNonBlocking(false); // returns at once although the pump is blocked on the pipe
+        var joiner = Thread.ofVirtual().start(in::awaitPumpExit);
+        assertFalse(joiner.join(java.time.Duration.ofMillis(200)), "the pump's read is still blocked");
+        pipe.close(); // the blocked read returns
+        assertTrue(joiner.join(java.time.Duration.ofSeconds(5)));
+    }
+
+    /** A source that honours interrupts (HTTP/2 DATA queue) is released at once by an interrupting stop. */
+    @Test
+    void anInterruptingStopReleasesTheBlockedRead() throws Exception {
+        var pipe = new PipedOutputStream();
+        var reading = new CountDownLatch(1);
+        var in = new ServletInputStreamImpl(signalOnRead(new PipedInputStream(pipe), reading), new Host(true));
+        try {
+            in.setReadListener(NOOP);
+            assertTrue(reading.await(5, TimeUnit.SECONDS));
+            in.endNonBlocking(true);
+            var joiner = Thread.ofVirtual().start(in::awaitPumpExit);
+            assertTrue(joiner.join(java.time.Duration.ofSeconds(5)));
+        } finally {
+            pipe.close();
+        }
     }
 }

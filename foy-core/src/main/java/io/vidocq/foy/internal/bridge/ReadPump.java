@@ -36,9 +36,10 @@ import java.util.concurrent.locks.ReentrantLock;
  * stream, read failure) is reported once to the {@link Listener}, from the pump thread, outside
  * the pump's lock.</p>
  *
- * <p>{@link #stop()} ends the pump after its current read, which cannot be interrupted;
- * {@link #awaitExit()} waits for that read to return, so the owner can hand the source back to
- * chappe (which drains an unread body) without two threads ever reading it at once.</p>
+ * <p>{@link #stop(boolean)} ends the pump after its current read, which a socket-backed source
+ * cannot interrupt; {@link #awaitExit()} waits for that read to return, so the owner can hand the
+ * source back to chappe (which drains an unread body) without two threads ever reading it at
+ * once.</p>
  */
 final class ReadPump {
 
@@ -123,15 +124,31 @@ final class ReadPump {
         }
     }
 
-    /** Stops the pump after its current read; it reports nothing more. Idempotent. */
-    void stop() {
+    /**
+     * Stops the pump after its current read; it reports nothing more. Idempotent, never waits.
+     *
+     * @param interruptRead also interrupt a blocked read: only for a source whose reads end cleanly
+     *        on an interrupt (HTTP/2's DATA queue). Never for a socket-backed source: interrupting a
+     *        virtual thread blocked on a channel closes the channel, hence the connection.
+     */
+    void stop(boolean interruptRead) {
+        Thread t;
         lock.lock();
         try {
             stopped = true;
             drained.signalAll();
+            t = thread;
         } finally {
             lock.unlock();
         }
+        if (interruptRead && t != null) t.interrupt();
+    }
+
+    /** Whether the pump thread is still running (a read may be in progress). */
+    boolean isAlive() {
+        lock.lock();
+        try { return thread != null && thread.isAlive(); }
+        finally { lock.unlock(); }
     }
 
     /** Waits for the pump thread to end (its current read, if any, must return first). */
@@ -166,6 +183,12 @@ final class ReadPump {
             int n;
             try {
                 n = source.read(chunk, 0, CAPACITY);
+                if (n == 0) {
+                    // A source may return 0 without data: block on a single byte rather than spin.
+                    int b = source.read();
+                    if (b < 0) n = -1;
+                    else { chunk[0] = (byte) b; n = 1; }
+                }
             } catch (IOException e) {
                 if (record(e)) listener.failed(e);
                 return;
@@ -185,7 +208,6 @@ final class ReadPump {
                 listener.endOfStream();
                 return;
             }
-            if (n == 0) continue;
             lock.lock();
             try {
                 if (stopped) return;

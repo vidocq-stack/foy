@@ -108,13 +108,17 @@ class ServletNonBlockingIoEndToEndTest {
 
     /**
      * Callbacks run one at a time and never while the dispatch that set the listener is still in
-     * progress (the whole body is sent up front, so data is available at once).
+     * progress: the dispatch waits until the body is buffered (so a callback is due) and only then
+     * returns; the first callback must start after that.
      */
     @Test
     void callbacksNeverOverlap() throws Exception {
         var inside = new AtomicBoolean();
         var overlap = new AtomicBoolean();
         var callbacks = new AtomicInteger();
+        var dataReadyDuringDispatch = new AtomicBoolean();
+        var dispatchReturned = new AtomicBoolean();
+        var callbackDuringDispatch = new AtomicBoolean();
         start(new HttpServlet() {
             @Override
             protected void doPost(HttpServletRequest req, HttpServletResponse resp) throws IOException {
@@ -124,6 +128,7 @@ class ServletNonBlockingIoEndToEndTest {
                     ServletInputStream in = req.getInputStream();
                     in.setReadListener(new ReadListener() {
                         @Override public void onDataAvailable() throws IOException {
+                            if (!dispatchReturned.get()) callbackDuringDispatch.set(true);
                             enter(inside, overlap);
                             try {
                                 callbacks.incrementAndGet();
@@ -146,9 +151,14 @@ class ServletNonBlockingIoEndToEndTest {
                         }
                         @Override public void onError(Throwable t) { ac.complete(); }
                     });
-                    pause(); // the dispatch keeps running while data is already there
+                    // Bounded wait until the pump buffered the body: a callback is now due.
+                    long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+                    while (!in.isReady() && System.nanoTime() < deadline) Thread.onSpinWait();
+                    dataReadyDuringDispatch.set(in.isReady());
+                    pause(); // the dispatch keeps running while the callback is due
                 } finally {
                     inside.set(false);
+                    dispatchReturned.set(true);
                 }
             }
         });
@@ -160,7 +170,67 @@ class ServletNonBlockingIoEndToEndTest {
             String body = client.readAll();
             assertTrue(body.contains("overlap=false callbacks>0=true"), body);
         }
+        assertTrue(dataReadyDuringDispatch.get(), "the body was buffered while the dispatch ran");
+        assertFalse(callbackDuringDispatch.get(), "a callback started before the dispatch returned");
         assertFalse(overlap.get());
+    }
+
+    /**
+     * An async timeout with a listener waiting for a body the client never finishes: the 500 is
+     * delivered at once; the silent client does not hold it back.
+     */
+    @Test
+    void timeoutWithAnActiveListenerAnswersWhileTheClientIsSilent() throws Exception {
+        start(new HttpServlet() {
+            @Override
+            protected void doPost(HttpServletRequest req, HttpServletResponse resp) throws IOException {
+                AsyncContext ac = req.startAsync();
+                ac.setTimeout(300);
+                ServletInputStream in = req.getInputStream();
+                in.setReadListener(new ReadListener() {
+                    @Override public void onDataAvailable() throws IOException {
+                        byte[] buf = new byte[64];
+                        while (in.isReady() && in.read(buf) != -1) { /* drain */ }
+                    }
+                    @Override public void onAllDataRead() { ac.complete(); }
+                    @Override public void onError(Throwable t) {}
+                });
+            }
+        });
+
+        try (var client = new Client(port)) {
+            client.send(head());
+            client.send("5\r\nHello\r\n"); // then silence: the body never ends
+            assertEquals("HTTP/1.1 500", client.statusLine().substring(0, 12));
+        }
+    }
+
+    /** complete() before the body ends (an early rejection): the response goes out at once. */
+    @Test
+    void anEarlyCompleteAnswersWhileTheClientIsSilent() throws Exception {
+        start(new HttpServlet() {
+            @Override
+            protected void doPost(HttpServletRequest req, HttpServletResponse resp) throws IOException {
+                AsyncContext ac = req.startAsync();
+                ServletInputStream in = req.getInputStream();
+                in.setReadListener(new ReadListener() {
+                    @Override public void onDataAvailable() throws IOException {
+                        byte[] buf = new byte[64];
+                        while (in.isReady() && in.read(buf) != -1) { /* drain */ }
+                        resp.setStatus(413);
+                        ac.complete();
+                    }
+                    @Override public void onAllDataRead() {}
+                    @Override public void onError(Throwable t) {}
+                });
+            }
+        });
+
+        try (var client = new Client(port)) {
+            client.send(head());
+            client.send("5\r\nHello\r\n"); // then silence
+            assertEquals("HTTP/1.1 413", client.statusLine().substring(0, 12));
+        }
     }
 
     @Test
@@ -275,7 +345,7 @@ class ServletNonBlockingIoEndToEndTest {
 
         Client(int port) throws IOException {
             socket = new Socket("127.0.0.1", port);
-            socket.setSoTimeout(10_000);
+            socket.setSoTimeout(5_000);
             in = socket.getInputStream();
             out = socket.getOutputStream();
         }
@@ -283,6 +353,14 @@ class ServletNonBlockingIoEndToEndTest {
         void send(String s) throws IOException {
             out.write(s.getBytes(StandardCharsets.US_ASCII));
             out.flush();
+        }
+
+        /** The status line, read within the socket timeout (5 s). */
+        String statusLine() throws IOException {
+            var line = new StringBuilder();
+            int c;
+            while ((c = in.read()) != -1 && c != '\n') line.append((char) c);
+            return line.toString().trim();
         }
 
         String readAll() throws IOException {

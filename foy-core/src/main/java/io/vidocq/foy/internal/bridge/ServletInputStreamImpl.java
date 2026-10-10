@@ -39,8 +39,9 @@ import java.util.concurrent.locks.ReentrantLock;
  * async-started or upgraded). A {@link ReadPump} reads the source on its own virtual thread into a
  * buffer; {@link #isReady()} is {@code true} while buffered bytes remain, or while the end of the
  * stream is buffered and not yet reported by a read; otherwise it is {@code false} and arms the next
- * {@code onDataAvailable}. Reading after {@code isReady()} returned {@code false}, or when nothing is
- * buffered, throws {@link IllegalStateException}. {@code onDataAvailable} runs when bytes arrive and
+ * {@code onDataAvailable}. A read when the stream is not ready at that moment (nothing buffered, so
+ * {@code isReady()} would answer {@code false}) throws {@link IllegalStateException}; a read with
+ * data buffered succeeds, also without a prior {@code isReady()}. {@code onDataAvailable} runs when bytes arrive and
  * the listener is armed (it is armed from the start, and again whenever a read drains the buffer);
  * {@code onAllDataRead} runs once at the end of the stream; a read failure, or an exception thrown
  * by {@code onDataAvailable}/{@code onAllDataRead}, goes to {@code onError} and then
@@ -71,8 +72,6 @@ public final class ServletInputStreamImpl extends ServletInputStream {
     private ReadPump pump;
     /** The next arrival of bytes submits onDataAvailable. */
     private boolean armed;
-    /** What isReady() last answered. */
-    private boolean lastReady;
     private boolean eofReported;
     private boolean allDataReadFired;
     /** onError was (or is about to be) delivered: no other callback runs. */
@@ -137,13 +136,10 @@ public final class ServletInputStreamImpl extends ServletInputStream {
         try {
             IOException error = pump.error();
             if (error != null) throw new IOException(error.getMessage(), error);
-            if (!lastReady) throw new IllegalStateException("isReady() returned false");
             if (len == 0) return 0;
             int n = pump.take(b, off, len);
-            if (n == 0) {
-                lastReady = false;
-                throw new IllegalStateException("no data available; call isReady() first");
-            }
+            // Not ready at the moment of the read (isReady() would answer false): the read would block.
+            if (n == 0) throw new IllegalStateException("no data available: isReady() is false");
             if (n == -1) {
                 eofReported = true;
                 return -1;
@@ -167,16 +163,9 @@ public final class ServletInputStreamImpl extends ServletInputStream {
         if (listener == null) return true;
         lock.lock();
         try {
-            if (errored || pump.error() != null) {
-                lastReady = false;
-                return false;
-            }
-            if (pump.buffered() > 0 || (pump.atEof() && !eofReported)) {
-                lastReady = true;
-                return true;
-            }
+            if (errored || pump.error() != null) return false;
+            if (pump.buffered() > 0 || (pump.atEof() && !eofReported)) return true;
             armed = true;
-            lastReady = false;
             return false;
         } finally {
             lock.unlock();
@@ -207,11 +196,13 @@ public final class ServletInputStreamImpl extends ServletInputStream {
     }
 
     /**
-     * Ends non-blocking mode: no callback is submitted any more, the pump stops after its current
-     * read, and this call waits for that read to return, so the source can go back to its owner
-     * (chappe drains an unread body). Idempotent; no-op in blocking mode.
+     * Ends non-blocking mode: no callback is submitted any more and the pump stops after its current
+     * read. Never waits: {@link #awaitPumpExit()} does, once the response is delivered.
+     * Idempotent; no-op in blocking mode.
+     *
+     * @param interruptRead interrupt a blocked read too (see {@link ReadPump#stop(boolean)})
      */
-    void endNonBlocking() {
+    void endNonBlocking(boolean interruptRead) {
         ReadPump p;
         lock.lock();
         try {
@@ -220,9 +211,26 @@ public final class ServletInputStreamImpl extends ServletInputStream {
         } finally {
             lock.unlock();
         }
-        if (p == null) return;
-        p.stop();
-        p.awaitExit();
+        if (p != null) p.stop(interruptRead);
+    }
+
+    /**
+     * Waits for the pump to exit (its current read, if any, must return first), so the source can
+     * go back to its owner: chappe drains an unread body. No-op in blocking mode.
+     */
+    void awaitPumpExit() {
+        ReadPump p;
+        lock.lock();
+        try { p = pump; }
+        finally { lock.unlock(); }
+        if (p != null) p.awaitExit();
+    }
+
+    /** Whether a pump still runs (a read may be in progress). */
+    boolean pumpAlive() {
+        lock.lock();
+        try { return pump != null && pump.isAlive(); }
+        finally { lock.unlock(); }
     }
 
     /** Submits {@code callback} unless the stream is over or failed. Caller holds {@link #lock}. */
@@ -318,7 +326,7 @@ public final class ServletInputStreamImpl extends ServletInputStream {
             lock.lock();
             try { ended = true; }
             finally { lock.unlock(); }
-            pump.stop();
+            pump.stop(false);
             return;
         }
         delegate.close();
