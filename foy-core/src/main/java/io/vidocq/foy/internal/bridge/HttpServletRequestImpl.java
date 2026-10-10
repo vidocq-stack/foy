@@ -388,8 +388,9 @@ public final class HttpServletRequestImpl implements HttpServletRequest {
      * The async processing is over: no listener callback runs any more (the one in progress
      * finishes first) and the body pump stops after its current read. Never waits for that read: a
      * silent client must not hold the response back. On HTTP/2 the read (a DATA queue) is
-     * interrupted; on HTTP/1.x it cannot be (that would close the connection), so the bridge waits
-     * for it in {@link #handBackInput()} once the response is delivered. Idempotent.
+     * interrupted now. On HTTP/1.x it is not interrupted yet, since that closes the connection,
+     * which must first deliver the response: {@link #handBackInput()} does it once the response is
+     * written. Idempotent.
      */
     void endNonBlockingIo() {
         CallbackSerializer s;

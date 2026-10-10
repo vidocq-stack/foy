@@ -36,10 +36,9 @@ import java.util.concurrent.locks.ReentrantLock;
  * stream, read failure) is reported once to the {@link Listener}, from the pump thread, outside
  * the pump's lock.</p>
  *
- * <p>{@link #stop(boolean)} ends the pump after its current read, which a socket-backed source
- * cannot interrupt; {@link #awaitExit()} waits for that read to return, so the owner can hand the
- * source back to chappe (which drains an unread body) without two threads ever reading it at
- * once.</p>
+ * <p>{@link #stop(boolean)} ends the pump after its current read, or interrupts that read;
+ * {@link #awaitExit()} waits for the pump thread to end, so the owner can hand the source back to
+ * chappe (which drains an unread body) without two threads ever reading it at once.</p>
  */
 final class ReadPump {
 
@@ -127,9 +126,10 @@ final class ReadPump {
     /**
      * Stops the pump after its current read; it reports nothing more. Idempotent, never waits.
      *
-     * @param interruptRead also interrupt a blocked read: only for a source whose reads end cleanly
-     *        on an interrupt (HTTP/2's DATA queue). Never for a socket-backed source: interrupting a
-     *        virtual thread blocked on a channel closes the channel, hence the connection.
+     * @param interruptRead also interrupt a blocked read. On HTTP/2's DATA queue the read just ends.
+     *        On a socket-backed source, interrupting a virtual thread blocked on a channel read
+     *        closes the channel, hence the connection: do it only once the response is delivered
+     *        (the hand-back); chappe then closes the connection and never reuses its buffer.
      */
     void stop(boolean interruptRead) {
         Thread t;
