@@ -34,9 +34,16 @@ module io.vidocq.foy.core {
     uses io.vidocq.foy.spi.gen.WebComponent;
     uses jakarta.servlet.ServletContainerInitializer;
 
+    // foy#21: CDI Full containers find Foy's session context through this portable extension.
+    // jakarta.cdi stays `requires static`: the JDK resolver accepts a `provides` whose service
+    // module is an absent static dependency (OptionalCdiModuleTest proves it).
+    provides jakarta.enterprise.inject.spi.Extension
+            with io.vidocq.foy.internal.cdi.FoySessionScopeExtension;
+
     exports io.vidocq.foy.internal.async;
     exports io.vidocq.foy.internal.boot;
     exports io.vidocq.foy.internal.bridge;
+    exports io.vidocq.foy.internal.cdi;
     exports io.vidocq.foy.internal.container;
     exports io.vidocq.foy.internal.dispatcher;
     exports io.vidocq.foy.internal.error;
