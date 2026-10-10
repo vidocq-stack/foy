@@ -183,6 +183,7 @@ public class VidocqDeployableContainer implements DeployableContainer<VidocqCont
                 .model(model)
                 .registry(registry)
                 .componentFactory(factory)
+                .identityStore(TckIdentities.store())
                 .reserved(reservedServlets, reservedFilters, reservedPatterns)
                 // @HandlesTypes over the war's own classes (TCK wars carry no class index).
                 .handlesTypes(IndexedHandlesTypesResolver.scanOnly(registry, cl,

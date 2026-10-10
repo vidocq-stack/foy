@@ -184,6 +184,12 @@
                             <useFile>false</useFile>
                             <systemPropertyVariables>
                                 <webServerHost>127.0.0.1</webServerHost>
+                                <!-- Users of the security tests (TckIdentities). DenyUncoveredTests and
+                                     MetaDataCompleteTests read them without defaults. -->
+                                <user>j2ee</user>
+                                <password>j2ee</password>
+                                <authuser>javajoe</authuser>
+                                <authpassword>javajoe</authpassword>
                                 <!-- HTTP/2 server push is an accepted gap (no h2c Upgrade nor PUSH_PROMISE
                                      in chappe; push is deprecated in Servlet 6.1): the TCK's own switch
                                      skips the ServerPushTests that need it (7 of 8), reported as skipped. -->
