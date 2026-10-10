@@ -521,3 +521,21 @@ Statuts : `OPEN` → `INVESTIGATING` → `FIXED` (commit hash) → `CLOSED`.
 - **Fix** : the connection closes once the write in flight is done, waiting at most
   `WebConnectionImpl.CLOSE_WRITE_GRACE` (2 s); past it the connection closes anyway
   (`#closeAfterANonBlockingWriteIsBoundedOnAStalledPeer`).
+
+## BUG-20261010-05 — upgrade() called during an ASYNC dispatch is silently dropped
+
+- **Date** : 2026-10-10
+- **Statut** : OPEN (found by the Phase 5 final fix-wave review)
+- **Module touché** : `foy-core` (`HttpServletRequestImpl.upgrade`, `ChappeServletBridge`)
+- **Symptôme** : a servlet reached by `AsyncContext.dispatch()` that calls `upgrade(...)` gets no
+  exception, the response switches to discard mode, and the client receives an empty plain HTTP
+  response (possibly carrying the 101 status and `Upgrade` headers set by the application). The
+  handler instance is never initialised nor destroyed.
+- **Reproduction minimale** : servlet A calls `startAsync()` then `dispatch("/b")`; servlet B calls
+  `setStatus(101)`, `setHeader("Upgrade", "x")`, `upgrade(Handler.class)`.
+- **Hypothèse de cause** : `upgrade()` only refuses when `isAsyncStarted()`, which is false during
+  the ASYNC dispatch; the bridge reads `upgradeHandler()` only on the REQUEST exit, never after an
+  async cycle.
+- **Fix envisagé** : throw `IllegalStateException` from `upgrade()` when the dispatcher type is
+  `ASYNC` (or whenever an async cycle exists), mirroring "upgrade() after startAsync()". No TCK
+  test exercises this path.
