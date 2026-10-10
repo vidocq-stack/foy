@@ -32,7 +32,9 @@ import java.util.ArrayList;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class FoySessionContextTest {
 
@@ -54,6 +56,23 @@ class FoySessionContextTest {
         assertThrows(ContextNotActiveException.class, () -> context.get(BEAN));
         assertThrows(ContextNotActiveException.class, () -> context.get(BEAN, null));
         assertThrows(ContextNotActiveException.class, () -> context.destroy(BEAN));
+    }
+
+    @Test
+    void whenBoundTheContextDelegatesToTheBinding() {
+        var manager = CdiFakes.manager();
+        var binding = SessionContextBinding.bind(new CdiFakes.FakeRequestSessions(manager));
+        try {
+            var bean = new CdiFakes.FakeBean("delegated");
+            assertTrue(context.isActive());
+            Object instance = context.get(bean, CdiFakes.creationalContext());
+            assertSame(instance, context.get(bean));
+            context.destroy(bean);
+            assertEquals(java.util.List.of(instance), bean.destroyed);
+        } finally {
+            binding.unbind();
+            manager.close();
+        }
     }
 
     @Test

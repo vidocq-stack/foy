@@ -29,6 +29,8 @@ import java.util.Collections;
 import java.util.Enumeration;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Supplier;
 
 /**
  * Thread-safe in-memory implementation of {@link HttpSession}.
@@ -63,6 +65,11 @@ public final class HttpSessionImpl implements HttpSession {
     /** Requests currently using the session; guarded by {@code this}. */
     private int accessCount;
     private final ConcurrentMap<String, Object> attributes = new ConcurrentHashMap<>();
+    /**
+     * Foy-internal state of the CDI session context (foy#21): never an attribute, so the
+     * application does not see it, no attribute listener fires, and an id change keeps it.
+     */
+    private final AtomicReference<Object> scopeState = new AtomicReference<>();
 
     public HttpSessionImpl(String id, ServletContext ctx, SessionManager manager, int maxInactiveSeconds) {
         this.id = id;
@@ -219,6 +226,25 @@ public final class HttpSessionImpl implements HttpSession {
     @Override public boolean isNew() { checkValid(); return newSession; }
 
     public boolean isInvalidated() { return invalidated; }
+
+    /** The CDI session context's state of this session, or {@code null}. */
+    public Object scopeState() {
+        return scopeState.get();
+    }
+
+    /** The CDI session context's state of this session, installed from {@code factory} on first use. */
+    public Object scopeState(Supplier<?> factory) {
+        Object current = scopeState.get();
+        if (current != null) return current;
+        Object created = factory.get();
+        Object witness = scopeState.compareAndExchange(null, created);
+        return witness == null ? created : witness;
+    }
+
+    /** Detaches the CDI session context's state, for its destruction; {@code null} when none. */
+    public Object takeScopeState() {
+        return scopeState.getAndSet(null);
+    }
 
     private void checkValid() {
         if (invalidated) throw new IllegalStateException("session invalidated");

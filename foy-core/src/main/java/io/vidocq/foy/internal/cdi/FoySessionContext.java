@@ -19,7 +19,6 @@
  */
 package io.vidocq.foy.internal.cdi;
 
-import jakarta.enterprise.context.ContextNotActiveException;
 import jakarta.enterprise.context.SessionScoped;
 import jakarta.enterprise.context.spi.AlterableContext;
 import jakarta.enterprise.context.spi.Contextual;
@@ -34,6 +33,8 @@ import java.lang.annotation.Annotation;
  * <p>Public, with a public no-argument constructor, and not a bean: containers instantiate it
  * themselves. It is stateless — several containers or deployments may create one each, and Weld
  * hands out a wrapper of it — so every call reads the state of the calling thread.</p>
+ *
+ * <p>Active while a {@code SessionContextBinding} exists on the calling thread.</p>
  */
 public final class FoySessionContext implements AlterableContext {
 
@@ -47,25 +48,21 @@ public final class FoySessionContext implements AlterableContext {
 
     @Override
     public <T> T get(Contextual<T> contextual, CreationalContext<T> creationalContext) {
-        throw notActive();
+        return SessionContextBinding.get(contextual, creationalContext);
     }
 
     @Override
     public <T> T get(Contextual<T> contextual) {
-        throw notActive();
+        return SessionContextBinding.get(contextual);
     }
 
     @Override
     public boolean isActive() {
-        return false;
+        return SessionContextBinding.isActive();
     }
 
     @Override
     public void destroy(Contextual<?> contextual) {
-        throw notActive();
-    }
-
-    private static ContextNotActiveException notActive() {
-        return new ContextNotActiveException("the Foy session context is not active on " + Thread.currentThread());
+        SessionContextBinding.destroy(contextual);
     }
 }
