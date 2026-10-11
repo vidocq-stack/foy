@@ -286,29 +286,72 @@ public final class HttpServletRequestImpl implements HttpServletRequest {
 
     // ---- Parameters (query string, then form body — Servlet 6.1 §3.1) ----
     //
-    // On reparse chappe.query() nous-mêmes pour préserver les valeurs multiples
-    // (?p=a&p=b retourne {"p": ["a","b"]}), ce que chappe.queryParams() ne
-    // fait pas (map de String→String, une seule valeur par clé).
+    // chappe.query() is parsed here rather than read from chappe.queryParams() to keep multiple
+    // values (?p=a&p=b gives {"p": ["a","b"]}); queryParams() is a String-to-String map, one value
+    // per key.
 
     private Map<String, List<String>> parsedParams;
-    /** True once the form body was consumed by parameter parsing (§3.1.1). */
-    private boolean bodyConsumedByParameters;
+    /**
+     * True once the container consumed the body itself (form parameters, and multipart parts):
+     * getInputStream()/getReader() then return an empty stream (section 3.1.1).
+     */
+    private boolean bodyConsumedByContainer;
 
+    /**
+     * The request parameters: the query string first, then the body (section 3.1.1). The map is
+     * settled before the body is read, so a refused or failed body read propagates once and leaves
+     * the query-string parameters; the body is never read a second time.
+     */
     private Map<String, List<String>> parameters() {
         if (parsedParams != null) return parsedParams;
         var out = new java.util.LinkedHashMap<String, List<String>>();
         decodeInto(out, chappe.query(), StandardCharsets.UTF_8);
-        if (isFormPost() && inputStream == null && reader == null) {
-            try {
-                byte[] raw = chappe.body().asInputStream().readAllBytes();
-                bodyConsumedByParameters = true;
-                Charset cs = formBodyCharset();
-                decodeInto(out, new String(raw, StandardCharsets.ISO_8859_1), cs);
-            } catch (IOException e) {
-                throw new java.io.UncheckedIOException("cannot read form body", e);
-            }
+        parsedParams = out;
+        if (inputStream != null || reader != null || bodyConsumedByContainer) return out;
+        if (isFormPost()) decodeInto(out, readFormBody(), formBodyCharset());
+        return out;
+    }
+
+    /**
+     * Hands the body to the container (form parameters, parts) through the tracked stream, so trailer
+     * readiness and the end-of-request hand-back see the read. From now on the application's
+     * getInputStream()/getReader() get an empty stream (section 3.1.1) and the request encoding no
+     * longer changes (section 3.12).
+     */
+    private ServletInputStreamImpl containerBody() {
+        bodyConsumedByContainer = true;
+        encodingLocked = true;
+        trackedBody = new ServletInputStreamImpl(bodySource(), nonBlockingHost);
+        return trackedBody;
+    }
+
+    /**
+     * The urlencoded body as ISO-8859-1 text (the percent-decoding applies the request charset),
+     * bounded by {@link RequestLimits#maxFormBodySize()}: a declared Content-Length above it is refused
+     * without reading, a chunked body once it passes it.
+     *
+     * @throws IllegalStateException when the body exceeds maxFormBodySize
+     * @throws java.io.UncheckedIOException when the body cannot be read
+     */
+    private String readFormBody() {
+        long cap = limits().maxFormBodySize();
+        long declared = getContentLengthLong();
+        if (cap >= 0 && declared > cap) {
+            bodyConsumedByContainer = true;
+            throw new IllegalStateException("the form body (" + declared + " bytes) exceeds maxFormBodySize ("
+                    + cap + " bytes)");
         }
-        return parsedParams = out;
+        byte[] raw;
+        try {
+            java.io.InputStream in = containerBody();
+            raw = cap < 0 ? in.readAllBytes() : in.readNBytes((int) Math.min(cap + 1, Integer.MAX_VALUE - 8L));
+        } catch (IOException e) {
+            throw new java.io.UncheckedIOException("cannot read the form body", e);
+        }
+        if (cap >= 0 && raw.length > cap) {
+            throw new IllegalStateException("the form body exceeds maxFormBodySize (" + cap + " bytes)");
+        }
+        return new String(raw, StandardCharsets.ISO_8859_1);
     }
 
     /** Body charset for form parameters; unknown or illegal names fall back to ISO-8859-1. */
@@ -492,7 +535,7 @@ public final class HttpServletRequestImpl implements HttpServletRequest {
     @Override public ServletInputStream getInputStream() throws IOException {
         if (reader != null) throw new IllegalStateException("getReader() already called");
         if (inputStream == null) {
-            java.io.InputStream source = bodyConsumedByParameters
+            java.io.InputStream source = bodyConsumedByContainer
                     ? java.io.InputStream.nullInputStream()
                     : bodySource();
             trackedBody = new ServletInputStreamImpl(source, nonBlockingHost);
@@ -509,10 +552,10 @@ public final class HttpServletRequestImpl implements HttpServletRequest {
             try {
                 cs = enc == null ? StandardCharsets.UTF_8 : Charset.forName(enc);
             } catch (RuntimeException e) {
-                // Servlet 6.1 §3.11 : encoding invalide → UnsupportedEncodingException.
+                // Servlet 6.1 section 3.11: an invalid encoding gives UnsupportedEncodingException.
                 throw new java.io.UnsupportedEncodingException(enc);
             }
-            java.io.InputStream source = bodyConsumedByParameters
+            java.io.InputStream source = bodyConsumedByContainer
                     ? java.io.InputStream.nullInputStream()
                     : bodySource();
             trackedBody = new ServletInputStreamImpl(source, nonBlockingHost);
@@ -546,7 +589,7 @@ public final class HttpServletRequestImpl implements HttpServletRequest {
     }
     @Override public String getCharacterEncoding() {
         if (characterEncoding != null) return characterEncoding;
-        // Servlet 6.1 §3.11 : si l'en-tête Content-Type contient "charset=", c'est lui.
+        // Servlet 6.1 section 3.11: a "charset=" in the Content-Type header wins.
         String ct = getHeader("Content-Type");
         if (ct != null) {
             int idx = ct.toLowerCase(Locale.ROOT).indexOf("charset=");
@@ -566,7 +609,7 @@ public final class HttpServletRequestImpl implements HttpServletRequest {
                 ? v.configuredRequestCharacterEncoding() : null;
     }
     @Override public void setCharacterEncoding(String env) throws java.io.UnsupportedEncodingException {
-        // Servlet 6.1 §3.11 : appel après getReader()/getInputStream() est un no-op.
+        // Servlet 6.1 section 3.12: a no-op once the body was read (getReader(), getInputStream(), form parameters).
         if (encodingLocked) return;
         if (env != null && !Charset.isSupported(env)) {
             throw new java.io.UnsupportedEncodingException(env);

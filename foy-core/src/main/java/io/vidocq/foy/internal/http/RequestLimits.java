@@ -28,7 +28,9 @@ package io.vidocq.foy.internal.http;
  *                                   fails with {@link RequestBodyTooLargeException}; a body with a
  *                                   Content-Length is bounded by chappe ({@code ServerConfig.maxRequestSize})
  * @param maxFormBodySize            bytes of an {@code application/x-www-form-urlencoded} body parsed into
- *                                   parameters; beyond, {@code getParameter} throws {@link IllegalStateException}
+ *                                   parameters; beyond, the first {@code getParameter*} call throws
+ *                                   {@link IllegalStateException} and later calls see the query-string
+ *                                   parameters only
  * @param maxMultipartParts          parts in one {@code multipart/form-data} body; beyond, the parse fails
  *                                   with {@code MultipartLimitException}
  * @param maxMultipartPartHeaderSize bytes of the header section of one part (CRLFs included); beyond,
