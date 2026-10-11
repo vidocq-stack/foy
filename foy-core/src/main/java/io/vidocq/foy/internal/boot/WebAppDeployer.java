@@ -54,6 +54,7 @@ import java.util.Comparator;
 import java.util.EventListener;
 import java.util.HashSet;
 import java.util.IdentityHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -123,8 +124,11 @@ public final class WebAppDeployer {
             // (RegistrationTests.servletRegistrationsTest).
             registerStatic(ctx, model, servlets, filters);
             for (ServletDecl d : model.servlets()) {
-                if (!d.enabled() && d.type() != null) ctx.registerStaticServlet(d.name(), d.type(), d.urlPatterns(), d.initParams(),
+                if (d.enabled() || d.type() == null) continue;
+                var reg = ctx.registerStaticServlet(d.name(), d.type(), d.urlPatterns(), d.initParams(),
                         d.asyncSupported());
+                String runAs = model.runAsRoles().get(d.name());
+                if (runAs != null) reg.setRunAsRole(runAs);
             }
             // <context-param> init params (web.xml) — must be set before markInitialized.
             if (engine != null) {
@@ -157,6 +161,7 @@ public final class WebAppDeployer {
             // configuration methods must throw IllegalStateException.
             ctx.markInitialized();
             // Constraints are compiled once the configuration is final (setServletSecurity, declareRoles).
+            ctx.setRoleMapping(ctx.roleMapping().withDeclaredRoles(ctx.programmaticDeclaredRoles()));
             ctx.setSecurity(buildSecurity(model, ctx, servlets));
             // The session timeout is read once the initializers and the context listeners ran:
             // ServletContext.setSessionTimeout is honoured from both (section 4.4.1).
@@ -191,8 +196,8 @@ public final class WebAppDeployer {
 
     /**
      * Compiles the application's constraints: the descriptor's first, then each servlet's
-     * {@code ServletSecurityElement} (annotation, or {@code setServletSecurity} for a dynamic
-     * servlet) on its patterns (section 13.4.1). {@code *} names every declared role:
+     * {@code ServletSecurityElement} ({@code setServletSecurity} on its registration, static or
+     * dynamic, else its annotation) on its patterns (section 13.4.1). {@code *} names every declared role:
      * {@code security-role}, {@code @DeclareRoles} and {@code ServletContext.declareRoles}, all
      * gathered in the context's role mapping. Without {@code <deny-uncovered-http-methods/>},
      * every uncovered method is reported at WARNING (section 13.8.4).
@@ -203,7 +208,10 @@ public final class WebAppDeployer {
                 .denyUncoveredHttpMethods(model.denyUncoveredHttpMethods());
         model.securityConstraints().forEach(table::descriptor);
         for (ServletUnit s : servlets) {
-            if (s.security() != null) table.servlet(s.patterns(), s.security());
+            // setServletSecurity (on a static or a dynamic registration) overrides @ServletSecurity.
+            ServletSecurityElement element = ctx.registeredServletSecurity(s.name());
+            if (element == null) element = s.security();
+            if (element != null) table.servlet(s.patterns(), element);
         }
         ConstraintTable built = table.build();
         if (!model.denyUncoveredHttpMethods()) {
@@ -251,6 +259,10 @@ public final class WebAppDeployer {
         options.reservedFilterNames().forEach(ctx::reserveFilterName);
         options.reservedUrlPatterns().forEach(ctx::reserveUrlPattern);
         ctx.setSecuritySettings(options.security());
+        // setServletSecurity reports, and leaves alone, the patterns a descriptor constraint targets (section 13.4.2).
+        Set<String> constrained = new LinkedHashSet<>();
+        for (var c : model.securityConstraints()) for (var col : c.collections()) constrained.addAll(col.urlPatterns());
+        ctx.setDescriptorConstrainedPatterns(constrained);
         ctx.setRoleMapping(new io.vidocq.foy.internal.security.RoleMapping(
                 Set.copyOf(model.securityRoles()), model.securityRoleRefs()));
         ctx.setComponentFactory(options.componentFactory());
@@ -284,8 +296,10 @@ public final class WebAppDeployer {
     private static void registerStatic(VidocqServletContext ctx, WebAppModel model, List<ServletUnit> servlets,
                                        List<FilterUnit> filters) {
         for (ServletUnit s : servlets) {
-            ctx.registerStaticServlet(s.name(), s.type(), s.patterns(), s.initParams(),
+            var reg = ctx.registerStaticServlet(s.name(), s.type(), s.patterns(), s.initParams(),
                     s.asyncSupported());
+            String runAs = model.runAsRoles().get(s.name());
+            if (runAs != null) reg.setRunAsRole(runAs);
         }
         for (FilterUnit f : filters) {
             var registration = ctx.registerStaticFilter(f.name(), f.type(), f.initParams(), f.asyncSupported());

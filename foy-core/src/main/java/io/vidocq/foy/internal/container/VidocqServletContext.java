@@ -853,7 +853,33 @@ public final class VidocqServletContext implements ServletContext {
     }
     @Override public JspConfigDescriptor getJspConfigDescriptor() { return jspConfigDescriptor; }
     @Override public ClassLoader getClassLoader() { return Thread.currentThread().getContextClassLoader(); }
-    @Override public void declareRoles(String... roleNames) {}
+    /** The url-patterns a descriptor {@code security-constraint} targets exactly (section 13.4.2). */
+    private volatile Set<String> descriptorConstrainedPatterns = Set.of();
+    public void setDescriptorConstrainedPatterns(Set<String> patterns) {
+        this.descriptorConstrainedPatterns = Set.copyOf(patterns);
+    }
+    public boolean isDescriptorConstrained(String pattern) { return descriptorConstrainedPatterns.contains(pattern); }
+
+    /** The element given to {@code setServletSecurity} on the registration of {@code servletName}, else {@code null}. */
+    public jakarta.servlet.ServletSecurityElement registeredServletSecurity(String servletName) {
+        var d = dynamicServlets.get(servletName);
+        if (d != null && d.getServletSecurity() != null) return d.getServletSecurity();
+        var s = staticServlets.get(servletName);
+        return s == null ? null : s.getServletSecurity();
+    }
+
+    /** Roles given to {@link #declareRoles}; {@code *} covers them once the constraints are compiled. */
+    private final Set<String> programmaticDeclaredRoles = new java.util.LinkedHashSet<>();
+    public Set<String> programmaticDeclaredRoles() { return Set.copyOf(programmaticDeclaredRoles); }
+
+    @Override public void declareRoles(String... roleNames) {
+        if (programmaticListenerActive) throw programmaticForbidden();
+        if (initialized) throw alreadyInitialized();
+        for (String r : roleNames) {
+            if (r == null || r.isEmpty()) throw new IllegalArgumentException("a role name is null or empty");
+        }
+        programmaticDeclaredRoles.addAll(java.util.List.of(roleNames));
+    }
     private volatile String virtualServerName = "vidocq";
     @Override public String getVirtualServerName() { return virtualServerName; }
     /** Deploy-time setting ({@code FoyChappeBoot.Builder.virtualServerName}); {@code null} keeps {@code "vidocq"}. */

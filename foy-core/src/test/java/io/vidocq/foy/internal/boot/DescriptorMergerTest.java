@@ -116,6 +116,31 @@ class DescriptorMergerTest {
         assertFalse(complete.securityRoles().contains("auditor"), complete.securityRoles().toString());
     }
 
+    @jakarta.annotation.security.RunAs("y")
+    public static class RunsAsY extends HttpServlet {}
+
+    @Test
+    void runAsComesFromTheDescriptorThenTheAnnotation() throws Exception {
+        String xml = """
+                >
+                  <servlet><servlet-name>A</servlet-name><servlet-class>%s</servlet-class>
+                    <run-as><role-name>x</role-name></run-as>
+                  </servlet>
+                  <servlet><servlet-name>B</servlet-name><servlet-class>%s</servlet-class></servlet>
+                </web-app>""".formatted(RunsAsY.class.getName(), RunsAsY.class.getName());
+        var m = merge(HEAD + xml, AnnotatedComponents.none());
+        assertEquals("x", m.runAsRoles().get("A"), "the descriptor's run-as wins over @RunAs");
+        assertEquals("y", m.runAsRoles().get("B"), "@RunAs applies without a descriptor run-as");
+
+        var annotatedOnly = merge(HEAD + "></web-app>", new AnnotatedComponents(List.of(new ServletDecl("C",
+                RunsAsY.class, RunsAsY::new, List.of("/c"), Map.of(), Integer.MIN_VALUE, false)),
+                List.of(), List.of(), List.of()));
+        assertEquals(Map.of("C", "y"), annotatedOnly.runAsRoles());
+
+        var complete = merge(HEAD + " metadata-complete=\"true\"" + xml, AnnotatedComponents.none());
+        assertEquals(Map.of("A", "x"), complete.runAsRoles(), "metadata-complete ignores @RunAs");
+    }
+
     @Test
     void declareRolesOfAnAnnotatedOnlyServletAreDeclared() throws Exception {
         var ann = new AnnotatedComponents(List.of(new ServletDecl("audited", Audited.class, Audited::new,

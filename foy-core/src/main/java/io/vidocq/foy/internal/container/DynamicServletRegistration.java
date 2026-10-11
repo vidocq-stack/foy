@@ -115,9 +115,21 @@ public final class DynamicServletRegistration implements ServletRegistration.Dyn
 
     @Override public void setLoadOnStartup(int loadOnStartup) { this.loadOnStartup = loadOnStartup; }
     public int getLoadOnStartup() { return loadOnStartup; }
+    /**
+     * Section 13.4.2 and the {@code ServletRegistration.Dynamic} Javadoc. The element applies to
+     * this servlet's mappings, including ones added later, and overrides its {@code @ServletSecurity}.
+     * The returned patterns are already the exact target of a descriptor {@code security-constraint}
+     * and are left unaffected.
+     */
     @Override public Set<String> setServletSecurity(ServletSecurityElement constraint) {
+        if (constraint == null) throw new IllegalArgumentException("constraint is null");
+        if (owner != null && owner.isInitializedInternal()) {
+            throw new IllegalStateException("the ServletContext is already initialized");
+        }
         this.security = constraint;
-        return Collections.emptySet();
+        Set<String> conflicts = new LinkedHashSet<>();
+        if (owner != null) for (String p : mappings) if (owner.isDescriptorConstrained(p)) conflicts.add(p);
+        return conflicts;
     }
     public ServletSecurityElement getServletSecurity() { return security; }
     @Override public void setMultipartConfig(MultipartConfigElement multipartConfig) {

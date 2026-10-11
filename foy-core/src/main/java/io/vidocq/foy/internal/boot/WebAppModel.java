@@ -73,6 +73,7 @@ import java.util.function.Supplier;
  * @param loginConfig            login configuration (stored only, enforced from Phase 6), may be {@code null}
  * @param securityRoles          declared roles: {@code <security-role>} and {@code @DeclareRoles} (Phase 6)
  * @param securityRoleRefs       servlet name to its {@code security-role-ref}s (role-name to role-link)
+ * @param runAsRoles             servlet name to its run-as role ({@code <run-as>}, else {@code @RunAs})
  */
 public record WebAppModel(String contextPath,
                           String displayName,
@@ -99,6 +100,7 @@ public record WebAppModel(String contextPath,
                           LoginConfigDef loginConfig,
                           List<String> securityRoles,
                           Map<String, Map<String, String>> securityRoleRefs,
+                          Map<String, String> runAsRoles,
                           jakarta.servlet.descriptor.JspConfigDescriptor jspConfigDescriptor) {
 
     public WebAppModel {
@@ -122,6 +124,7 @@ public record WebAppModel(String contextPath,
         var refs = new LinkedHashMap<String, Map<String, String>>();
         securityRoleRefs.forEach((servlet, m) -> refs.put(servlet, copyOf(m)));
         securityRoleRefs = Collections.unmodifiableMap(refs);
+        runAsRoles = copyOf(runAsRoles);
         jspConfigDescriptor = io.vidocq.foy.internal.webxml.JspDescriptors.copy(jspConfigDescriptor);
     }
 
@@ -138,7 +141,7 @@ public record WebAppModel(String contextPath,
                 errorPages, sessionTimeoutMinutes, localeEncodingMappings, effectiveMajorVersion, effectiveMinorVersion,
                 welcomeFiles, mimeMappings, requestCharacterEncoding, responseCharacterEncoding, defaultContextPath,
                 denyUncoveredHttpMethods, cookieConfig, trackingModes, securityConstraints, loginConfig, securityRoles,
-                Map.of(), null);
+                Map.of(), Map.of(), null);
     }
 
     /**
@@ -322,6 +325,7 @@ public record WebAppModel(String contextPath,
         private LoginConfigDef loginConfig;
         private List<String> securityRoles = List.of();
         private final Map<String, Map<String, String>> securityRoleRefs = new LinkedHashMap<>();
+        private final Map<String, String> runAsRoles = new LinkedHashMap<>();
         private jakarta.servlet.descriptor.JspConfigDescriptor jspConfigDescriptor;
         public Builder jspConfigDescriptor(jakarta.servlet.descriptor.JspConfigDescriptor descriptor) {
             jspConfigDescriptor = descriptor; return this;
@@ -448,6 +452,12 @@ public record WebAppModel(String contextPath,
             return this;
         }
 
+        /** The run-as role of the servlet {@code servletName}, reported by its registration. */
+        public Builder runAsRole(String servletName, String role) {
+            runAsRoles.put(Objects.requireNonNull(servletName, "servletName"), Objects.requireNonNull(role, "role"));
+            return this;
+        }
+
         /**
          * Builds the model.
          *
@@ -478,7 +488,7 @@ public record WebAppModel(String contextPath,
                     localeEncodingMappings, effectiveMajorVersion, effectiveMinorVersion, welcomeFiles,
                     mimeMappings, requestCharacterEncoding, responseCharacterEncoding, defaultContextPath,
                     denyUncoveredHttpMethods, cookieConfig, trackingModes, securityConstraints, loginConfig,
-                    securityRoles, securityRoleRefs, jspConfigDescriptor);
+                    securityRoles, securityRoleRefs, runAsRoles, jspConfigDescriptor);
         }
     }
 }

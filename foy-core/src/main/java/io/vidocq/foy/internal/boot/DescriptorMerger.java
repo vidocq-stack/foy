@@ -320,6 +320,9 @@ public final class DescriptorMerger {
                     : descriptor(factory, type, "servlet", def.name());
             if (!def.securityRoleRefs().isEmpty()) target.securityRoleRefs(def.name(), def.securityRoleRefs());
             if (classDescriptor != null) declared.addAll(classDescriptor.declaredRoles());
+            // A descriptor <run-as> overrides the class's @RunAs.
+            String runAs = def.runAs() != null ? def.runAs() : classDescriptor == null ? null : classDescriptor.runAs();
+            if (runAs != null) target.runAsRole(def.name(), runAs);
             var security = classDescriptor == null ? null : classDescriptor.servletSecurity();
             // §8.2.3: a descriptor <multipart-config> overrides the class's @MultipartConfig.
             var multipart = def.multipartConfig() != null ? multipartElement(def.multipartConfig())
@@ -330,7 +333,9 @@ public final class DescriptorMerger {
         for (ServletDecl a : ann.servlets()) {
             if (done.contains(a.name())) continue;
             // ann is empty under metadata-complete, so these are annotated servlets being processed.
-            declared.addAll(descriptor(factory, a.type(), "servlet", a.name()).declaredRoles());
+            var classDescriptor = descriptor(factory, a.type(), "servlet", a.name());
+            declared.addAll(classDescriptor.declaredRoles());
+            if (classDescriptor.runAs() != null) target.runAsRole(a.name(), classDescriptor.runAs());
             List<String> xmlPatterns = webXml.patternsFor(a.name());
             target.servlet(xmlPatterns.isEmpty() ? a : new ServletDecl(a.name(), a.type(), a.factory(),
                     xmlPatterns, a.initParams(), a.loadOnStartup(), a.asyncSupported(), a.servletSecurity(),
