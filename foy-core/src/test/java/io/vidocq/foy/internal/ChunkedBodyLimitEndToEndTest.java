@@ -33,8 +33,15 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
 import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.io.OutputStream;
+import java.net.Socket;
+import java.net.SocketException;
 import java.net.URI;
+import java.nio.charset.StandardCharsets;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
@@ -94,6 +101,63 @@ class ChunkedBodyLimitEndToEndTest {
         start(1024);
         assertEquals("1000",
                 post(HttpRequest.BodyPublishers.ofInputStream(() -> new ByteArrayInputStream(new byte[1000]))));
+    }
+
+    @Test
+    void anEndlessChunkedBodyIsCutOffAfterTheAnswer() throws Exception {
+        start(1024);
+        var written = new AtomicLong();
+        var writerDone = new AtomicBoolean();
+        Thread writer = null;
+        Socket socket = new Socket("127.0.0.1", port);
+        try {
+            socket.setSoTimeout(15_000);
+            OutputStream out = socket.getOutputStream();
+            out.write("POST /body HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n"
+                    .getBytes(StandardCharsets.US_ASCII));
+            out.flush();
+            byte[] chunk = chunk();
+            writer = Thread.ofVirtual().start(() -> {
+                try {
+                    while (true) {
+                        out.write(chunk);
+                        out.flush();
+                        written.addAndGet(chunk.length);
+                    }
+                } catch (IOException cutOff) {
+                    // a clean close or a reset both mean the server cut the upload off
+                } finally {
+                    writerDone.set(true);
+                }
+            });
+
+            var response = new ByteArrayOutputStream();
+            try {
+                socket.getInputStream().transferTo(response);
+            } catch (SocketException reset) {
+                // a reset instead of a clean EOF also counts as cut off
+            }
+            String text = response.toString(StandardCharsets.ISO_8859_1);
+            assertTrue(text.startsWith("HTTP/1.1 200"), text);
+            assertTrue(text.contains("RequestBodyTooLargeException"), text);
+
+            assertTrue(writer.join(Duration.ofSeconds(15)), "the writer must stop once the server closes");
+            assertTrue(writerDone.get());
+            // chappe's default maxDrainSize is 1 MiB; this bound only rules out an unbounded drain, it is not exact.
+            assertTrue(written.get() < 10L * 1024 * 1024, "wrote " + written.get() + " bytes");
+        } finally {
+            socket.close();
+            if (writer != null) writer.interrupt();
+        }
+    }
+
+    private static byte[] chunk() {
+        var head = "1000\r\n".getBytes(StandardCharsets.US_ASCII);
+        byte[] chunk = new byte[head.length + 4096 + 2];
+        System.arraycopy(head, 0, chunk, 0, head.length);
+        chunk[chunk.length - 2] = '\r';
+        chunk[chunk.length - 1] = '\n';
+        return chunk;
     }
 
     @Test

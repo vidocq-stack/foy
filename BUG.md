@@ -764,7 +764,8 @@ Statuts : `OPEN` → `INVESTIGATING` → `FIXED` (commit hash) → `CLOSED`.
 ## BUG-20261011-11 — chappe drains an over-cap request body without bound
 
 - **Date**: 2026-10-11
-- **Status**: OPEN (chappe follow-up; found in Phase 7)
+- **Status**: FIXED by chappe#28 (CHAPPE-020 chunked cap, CHAPPE-021 maxDrainSize); pinned by
+  ChunkedBodyLimitEndToEndTest.anEndlessChunkedBodyIsCutOffAfterTheAnswer (found in Phase 7)
 - **Module**: chappe (`chappe-http`, `HttpBodyReader.drain`); seen from `foy-core`
 - **Symptom**: once `maxChunkedRequestBodySize` trips, Foy stops reading the body and answers, but
   chappe's `HttpBodyReader.drain` still reads the rest of a chunked body before the next request on
