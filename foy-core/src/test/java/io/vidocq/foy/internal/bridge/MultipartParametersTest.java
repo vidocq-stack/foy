@@ -139,6 +139,50 @@ class MultipartParametersTest {
     }
 
     @Test
+    void aFieldMergeFailureLeavesGetPartsWorkingAndTheFieldsOut() throws Exception {
+        ctx.setRequestLimits(RequestLimits.DEFAULTS.withMaxFormBodySize(4));
+        var req = request(HttpMethod.PUT, "q=1", CONFIG, field("a", "too-long") + end());
+        assertEquals("1", req.getParameter("q"), "parameters cached, query string only");
+        assertEquals(1, req.getParts().size(), "no exception: the parse succeeded");
+        assertEquals(1, req.getParts().size());
+        assertNull(req.getParameter("a"), "the merge failed and stays failed");
+        assertEquals("1", req.getParameter("q"));
+        req.releaseParts();
+    }
+
+    @Test
+    void multipartFieldsCountAgainstMaxFormBodySizeBeforeAnyIsRead() throws Exception {
+        ctx.setRequestLimits(RequestLimits.DEFAULTS.withMaxFormBodySize(4));
+        var req = request(HttpMethod.POST, "q=1", CONFIG, field("a", "too-long") + end());
+        assertThrows(IllegalStateException.class, () -> req.getParameter("a"),
+                "getParameter parses the body and refuses fields above maxFormBodySize");
+        assertNull(req.getParameter("a"), "thrown once, then the query string only");
+        assertEquals("1", req.getParameter("q"));
+        assertEquals(1, req.getParts().size(), "the parts are unaffected");
+        req.releaseParts();
+    }
+
+    @Test
+    void fileUploadsDoNotCountAgainstMaxFormBodySize() {
+        ctx.setRequestLimits(RequestLimits.DEFAULTS.withMaxFormBodySize(4));
+        var req = request(HttpMethod.POST, null, CONFIG, field("a", "1234") + file("f", "f.txt", "a large file") + end());
+        assertEquals("1234", req.getParameter("a"));
+        req.releaseParts();
+    }
+
+    @Test
+    void aFieldThatCannotBeReadFailsGetParameterOnceThenLeavesTheQueryString() throws Exception {
+        var req = request(HttpMethod.POST, "q=1", CONFIG, field("a", "1") + end());
+        var parts = req.getParts();
+        parts.iterator().next().delete();
+        assertThrows(java.io.UncheckedIOException.class, () -> req.getParameter("a"));
+        assertNull(req.getParameter("a"));
+        assertEquals("1", req.getParameter("q"));
+        assertEquals(1, req.getParts().size());
+        req.releaseParts();
+    }
+
+    @Test
     void parametersAfterGetInputStreamIgnoreTheBody() throws Exception {
         var req = request(HttpMethod.POST, "q=1", CONFIG, field("a", "1") + end());
         req.getInputStream();

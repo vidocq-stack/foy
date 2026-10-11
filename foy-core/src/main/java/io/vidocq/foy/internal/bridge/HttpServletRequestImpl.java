@@ -349,8 +349,9 @@ public final class HttpServletRequestImpl implements HttpServletRequest {
     }
 
     private Map<String, List<String>> publishParams(Map<String, List<String>> complete) {
-        parsedParams = complete;
+        // The plain flag before the volatile publish: a reader that sees the map sees the flag.
         if (parsedParts != null) partFieldsMerged = true;
+        parsedParams = complete;
         return complete;
     }
 
@@ -1062,7 +1063,17 @@ public final class HttpServletRequestImpl implements HttpServletRequest {
             bodyConsumedByContainer = true;
             throw e;
         }
-        if (parsedParams != null) mergePartFields();
+        if (parsedParams != null) {
+            try {
+                mergePartFields();
+            } catch (IOException | RuntimeException e) {
+                // The parse succeeded and stays so: getParts()/getPart() keep returning the parts.
+                // The fields stay out of the parameters for good, as when the first getParameter*
+                // call cannot read them.
+                paramsBodyFailed = true;
+                partFieldsMerged = true;
+            }
+        }
         return parsedParts;
     }
 
@@ -1072,20 +1083,40 @@ public final class HttpServletRequestImpl implements HttpServletRequest {
     /**
      * Section 3.2: the parameters cached before getParts() ran (a PUT, a request whose body was
      * not parsed) gain the fields, after the query string. A new map is published: one handed out
-     * earlier never changes under its reader. Once, and only once it succeeded.
+     * earlier never changes under its reader. Attempted once: a failure leaves the fields out for
+     * good, and a body failure already reported through getParameter*() is never healed.
      */
     private void mergePartFields() throws IOException {
         var current = parsedParams;
-        if (partFieldsMerged || current == null) return;
+        if (partFieldsMerged || paramsBodyFailed || current == null) return;
         var merged = new java.util.LinkedHashMap<String, List<String>>();
         current.forEach((k, v) -> merged.put(k, new ArrayList<>(v)));
         appendPartFields(merged);
-        parsedParams = merged;
+        // The plain flag before the volatile publish: a reader that sees the map sees the flag.
         partFieldsMerged = true;
+        parsedParams = merged;
     }
 
-    /** Appends to {@code out} the value of every part without a file name, in part order. */
+    /**
+     * Appends to {@code out} the value of every part without a file name, in part order. The fields
+     * are read whole into memory, so their total size is checked against
+     * {@link RequestLimits#maxFormBodySize()} before any of them is read.
+     *
+     * @throws IllegalStateException when the fields exceed maxFormBodySize, as an oversized form body
+     */
     private void appendPartFields(Map<String, List<String>> out) throws IOException {
+        long cap = limits().maxFormBodySize();
+        if (cap >= 0) {
+            long total = 0;
+            for (PartImpl p : parsedParts) {
+                if (p.getSubmittedFileName() != null) continue;
+                total += p.getSize();
+                if (total > cap) {
+                    throw new IllegalStateException("the multipart form fields exceed maxFormBodySize ("
+                            + cap + " bytes)");
+                }
+            }
+        }
         Charset fallback = fieldFallbackCharset();
         var fields = new java.util.LinkedHashMap<String, List<String>>();
         for (PartImpl p : parsedParts) {
