@@ -50,8 +50,42 @@ class CertificateIdentityTest {
     @Test
     void aDnMatchesWhateverItsSpacing() {
         var store = InMemoryIdentityStore.builder()
-                .certificateUser("cn=alice example,ou=Foy Tests,o=Vidocq,c=FR", "admin").build();
+                .certificateUser("CN=Alice Example,OU=Foy Tests ,  O=Vidocq,C=FR", "admin").build();
         assertTrue(store.validate(new X509Certificate[] {CERTS.certificate("alice")}).isPresent());
+    }
+
+    @Test
+    void aDnMatchesWhateverItsCase() {
+        var store = InMemoryIdentityStore.builder()
+                .certificateUser("cn=ALICE EXAMPLE, ou=foy tests, o=VIDOCQ, c=fr", "admin").build();
+        assertTrue(store.validate(new X509Certificate[] {CERTS.certificate("alice")}).isPresent());
+    }
+
+    private static final String ADMIN_DN = "CN=admin, O=Example, C=FR";
+
+    private static boolean accepts(String declared, String presented) {
+        var store = InMemoryIdentityStore.builder().certificateUser(declared, "admin").build();
+        return store.validate(new X509Certificate[] {CERTS.issue(presented)}).isPresent();
+    }
+
+    @Test
+    void theIssuedSubjectItselfMatches() {
+        assertTrue(accepts(ADMIN_DN, ADMIN_DN));
+    }
+
+    @Test
+    void aFullwidthLookalikeSubjectIsRefused() {
+        assertFalse(accepts(ADMIN_DN, "CN=ａdmin, O=Example, C=FR"));
+    }
+
+    @Test
+    void aDotlessILookalikeSubjectIsRefused() {
+        assertFalse(accepts(ADMIN_DN, "CN=admın, O=Example, C=FR"));
+    }
+
+    @Test
+    void reorderedRdnsAreRefused() {
+        assertFalse(accepts(ADMIN_DN, "O=Example, CN=admin, C=FR"));
     }
 
     @Test

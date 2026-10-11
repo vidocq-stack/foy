@@ -38,9 +38,9 @@ Per-family breakdown (passing / run):
 
 | `spec.*` (behavioral, including security)
 | 207
-| 196
+| 198
 | 7
-| 95.7 %
+| 95.7 % (198 / 207)
 | ✅ Security 57/59 (2 FORM tests need JSP); server push skipped (7)
 
 | `compat.*`

@@ -23,8 +23,10 @@ import java.security.cert.X509Certificate;
 import java.util.Optional;
 
 /**
- * Validates a user name and a password against the embedder's user base: the container "realm"
- * of Servlet 6.1 section 13.6. Foy calls it for BASIC, FORM and {@code HttpServletRequest.login}.
+ * Validates a user name and a password, or a TLS client certificate chain, against the embedder's
+ * user base: the container "realm" of Servlet 6.1 section 13.6. Foy calls the password method for
+ * BASIC, FORM and {@code HttpServletRequest.login}, and {@link #validate(X509Certificate[])} for
+ * CLIENT-CERT.
  *
  * <p>Implementations must:</p>
  * <ul>
@@ -49,6 +51,11 @@ public interface IdentityStore {
      * TLS layer has already checked it against the server's trust material). CLIENT-CERT calls it.
      * The default refuses every chain: a store that only knows passwords never authenticates a
      * certificate.
+     *
+     * <p>The rules above apply here too: return {@link Optional#empty()} on any refusal, never
+     * {@code null}; Foy treats an exception or a {@code null} result as a refusal, and an
+     * {@link Error} escapes. Foy passes a copy of the array, so the implementation may keep or
+     * modify it.</p>
      *
      * @param chain the client chain, leaf first; never empty when called by Foy
      * @return the identity of the leaf certificate's subject, or empty to refuse it

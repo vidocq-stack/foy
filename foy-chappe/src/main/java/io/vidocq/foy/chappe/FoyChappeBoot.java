@@ -253,10 +253,12 @@ public final class FoyChappeBoot {
 
         /**
          * Declares a certificate user of Foy's in-memory identity store: CLIENT-CERT authenticates a
-         * TLS client whose leaf certificate has this subject DN, with these roles. Exclusive with
-         * {@link #identityStore}.
+         * TLS client whose leaf certificate has this subject DN, with these roles. Spacing and the case
+         * of attribute names and values are ignored; otherwise the DN must be the same string: no
+         * Unicode folding, and the same RDN order. Exclusive with {@link #identityStore}.
          *
          * @throws IllegalArgumentException when the DN is malformed or declared twice
+         * @throws NullPointerException when the DN or a role is {@code null}
          */
         public Builder certificateUser(String subjectDn, String... roles) {
             if (users == null) users = InMemoryIdentityStore.builder();

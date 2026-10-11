@@ -54,10 +54,13 @@ public final class TlsTestCertificates {
     }
 
     private final Path dir;
+    private int issued;
 
     private TlsTestCertificates() {
         try {
             dir = Files.createTempDirectory("foy-tls");
+            var root = dir;
+            Runtime.getRuntime().addShutdownHook(new Thread(() -> deleteTree(root)));
             genKeyPair("server", "CN=localhost, O=Foy Tests", "SAN=ip:127.0.0.1,dns:localhost");
             genKeyPair("alice", ALICE_DN, null);
             genKeyPair("bob", BOB_DN, null);
@@ -84,6 +87,22 @@ public final class TlsTestCertificates {
     private void importCert(String store, String alias) {
         keytool(List.of("-importcert", "-noprompt", "-alias", alias, "-file", dir.resolve(alias + ".pem").toString(),
                 "-keystore", dir.resolve(store).toString(), "-storetype", "PKCS12", "-storepass", "changeit"));
+    }
+
+    /** A self-signed certificate for an arbitrary subject DN, issued with keytool like the others. */
+    public synchronized X509Certificate issue(String dn) {
+        String alias = "issued" + issued++;
+        genKeyPair(alias, dn, null);
+        export(alias);
+        return certificate(alias);
+    }
+
+    private static void deleteTree(Path root) {
+        try (var walk = Files.walk(root)) {
+            walk.sorted(java.util.Comparator.reverseOrder()).forEach(p -> p.toFile().delete());
+        } catch (IOException | RuntimeException ignored) {
+            // best effort: the directory lives under java.io.tmpdir
+        }
     }
 
     public SSLContext serverContext() { return context(dir.resolve("server.p12"), dir.resolve("server-trust.p12")); }

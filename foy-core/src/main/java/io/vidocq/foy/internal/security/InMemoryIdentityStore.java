@@ -32,6 +32,7 @@ import java.security.cert.X509Certificate;
 import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
@@ -57,9 +58,12 @@ public final class InMemoryIdentityStore implements IdentityStore {
     private final byte[] decoySalt = salt();
     private final byte[] decoyDigest = digest(decoySalt, new char[] {'\0'});
 
-    private final Map<X500Principal, Set<String>> certificateUsers;
+    /** A declared subject: its roles, and its RFC 2253 form lower-cased, the strict comparison key. */
+    private record CertificateUser(Set<String> roles, String strictName) {}
 
-    private InMemoryIdentityStore(Map<String, User> users, Map<X500Principal, Set<String>> certificateUsers) {
+    private final Map<X500Principal, CertificateUser> certificateUsers;
+
+    private InMemoryIdentityStore(Map<String, User> users, Map<X500Principal, CertificateUser> certificateUsers) {
         this.users = Map.copyOf(users);
         this.certificateUsers = Map.copyOf(certificateUsers);
     }
@@ -83,9 +87,15 @@ public final class InMemoryIdentityStore implements IdentityStore {
     public Optional<Identity> validate(X509Certificate[] chain) {
         if (chain == null || chain.length == 0 || chain[0] == null) return Optional.empty();
         X500Principal subject = chain[0].getSubjectX500Principal();
-        Set<String> roles = certificateUsers.get(subject);
-        return roles == null ? Optional.empty()
-                : Optional.of(new Identity(new Identity.NamedPrincipal(subject.getName(X500Principal.RFC1779)), roles));
+        // The map lookup compares the canonical form, which also folds Unicode compatibility characters
+        // (NFKD): the strict form must agree too, so two distinct subjects never share one identity.
+        CertificateUser declared = certificateUsers.get(subject);
+        if (declared == null || !declared.strictName().equals(strict(subject))) return Optional.empty();
+        return Optional.of(new Identity(new Identity.NamedPrincipal(subject.getName(X500Principal.RFC1779)), declared.roles()));
+    }
+
+    private static String strict(X500Principal dn) {
+        return dn.getName(X500Principal.RFC2253).toLowerCase(Locale.ROOT);
     }
 
     private static byte[] salt() {
@@ -115,7 +125,7 @@ public final class InMemoryIdentityStore implements IdentityStore {
     public static final class Builder {
         private final Map<String, User> users = new LinkedHashMap<>();
 
-        private final Map<X500Principal, Set<String>> certificateUsers = new LinkedHashMap<>();
+        private final Map<X500Principal, CertificateUser> certificateUsers = new LinkedHashMap<>();
 
         private Builder() {}
 
@@ -131,15 +141,18 @@ public final class InMemoryIdentityStore implements IdentityStore {
 
         /**
          * Declares a certificate user: a TLS client whose leaf certificate has this subject is
-         * authenticated by CLIENT-CERT with these roles. The DN is compared in its canonical form,
-         * so spacing and attribute-value case do not matter.
+         * authenticated by CLIENT-CERT with these roles. Spacing and the case of attribute names and
+         * values are ignored; otherwise the DN must be the same string: no Unicode folding (a
+         * fullwidth or dotless letter is a different letter), and the same RDN order.
          *
          * @throws IllegalArgumentException when the DN is malformed or declared twice
+         * @throws NullPointerException when the DN or a role is {@code null}
          */
         public Builder certificateUser(String subjectDn, String... roles) {
             Objects.requireNonNull(subjectDn, "subjectDn");
             X500Principal subject = new X500Principal(subjectDn);
-            if (certificateUsers.putIfAbsent(subject, Set.copyOf(List.of(roles))) != null) {
+            var declared = new CertificateUser(Set.copyOf(List.of(roles)), strict(subject));
+            if (certificateUsers.putIfAbsent(subject, declared) != null) {
                 throw new IllegalArgumentException("certificate user '" + subjectDn + "' declared twice");
             }
             return this;

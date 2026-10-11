@@ -574,14 +574,21 @@ A descriptor constraint on exactly the same url-pattern wins over the annotation
 
 *Trust.* The trust material is the `SSLContext`'s. Pass a `TrustManager` built from your client CA: `init(keyManagers, null, ...)` trusts the JDK's default public CAs, which is almost never what a client-certificate listener wants.
 
-*Identities.* Map a certificate to an identity with `FoyChappeBoot.Builder.certificateUser(subjectDn, roles...)`, or plug an `IdentityStore` that overrides `validate(X509Certificate[] chain)` (the chain is the one the peer sent, leaf first). Foy compares the leaf subject with the declared DN canonically: spacing and the case of attribute values do not matter. The principal name is the leaf subject in RFC 1779 form, for example `CN=CTS, OU=Java Software, O=Sun Microsystems Inc., L=Burlington, ST=MA, C=US`. `certificateUser` is exclusive with `identityStore`.
+*Identities.* Map a certificate to an identity with `FoyChappeBoot.Builder.certificateUser(subjectDn, roles...)`, or plug an `IdentityStore` that overrides `validate(X509Certificate[] chain)` (the chain is the one the peer sent, leaf first). Foy compares the leaf subject with the declared DN strictly: spacing and the case of attribute names and values are ignored, but otherwise the DN must be the same string. There is no Unicode folding (a fullwidth or dotless letter is a different letter) and the RDN order must be the same. Only the leaf subject is compared, never its issuer: every CA the listener trusts can vouch for any mapped DN, so trust only the CAs that issue your client certificates. Subjects whose values are encoded as BMPString or TeletexString never match a declared DN; they need a custom `IdentityStore`. The principal name is the leaf subject in RFC 1779 form, for example `CN=CTS, OU=Java Software, O=Sun Microsystems Inc., L=Burlington, ST=MA, C=US`. `certificateUser` is exclusive with `identityStore`.
 
 [source,java]
 ----
+// The server key and the CA(s) that issue client certificates, from your own key stores.
+KeyStore serverKeys = KeyStore.getInstance(Path.of("server.p12").toFile(), "changeit".toCharArray());
+KeyStore clientCas = KeyStore.getInstance(Path.of("client-cas.p12").toFile(), "changeit".toCharArray());
+KeyManagerFactory kmf = KeyManagerFactory.getInstance(KeyManagerFactory.getDefaultAlgorithm());
+kmf.init(serverKeys, "changeit".toCharArray());
+TrustManagerFactory tmf = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
+tmf.init(clientCas);
 SSLContext tls = SSLContext.getInstance("TLS");
-tls.init(serverKeyManagers, clientCaTrustManagers, null);
+tls.init(kmf.getKeyManagers(), tmf.getTrustManagers(), null);
 var mounted = FoyChappeBoot.builder()
-        .webXml(webXml)
+        .webXml(Files.newInputStream(Path.of("WEB-INF/web.xml")))
         .certificateUser("CN=Alice Example, OU=Ops, O=Example, C=FR", "admin")
         .build().orElseThrow();
 Server server = Server.builder().port(8443).tls(tls, ClientAuth.WANT)
