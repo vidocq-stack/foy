@@ -30,6 +30,15 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class TldListenerLifecycleTest {
     @Test
+    void factoryTypesMustIdentifyTheExactConstructedClassForDeduplication() {
+        var events = new ArrayList<String>();
+        var descriptor = new JspEngine.Listener(ServletContextListener.class, () -> new TestListener(events, true));
+        assertThrows(IllegalArgumentException.class, () -> WebAppDeployer.deploy(WebAppModel.builder("/tld").build(),
+                DeployOptions.defaults(getClass().getClassLoader()), ModuleLayer.boot(), engine(List.of(descriptor), events)));
+        assertEquals(List.of("close"), events);
+    }
+
+    @Test
     void invalidFactoriesFailDeploymentAndStillCloseTheEngine() {
         var events = new ArrayList<String>();
         var descriptor = new JspEngine.Listener(TestListener.class, () -> null);

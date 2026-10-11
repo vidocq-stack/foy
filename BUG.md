@@ -1,5 +1,14 @@
 # BUG.md — foy
 
+## FOY-TLD-001 · 2026-10-11 · A factory can hide its actual listener class
+
+- Symptom: an interface/base descriptor type bypasses deduplication by actual
+  listener class when its factory constructs a subtype.
+- Minimal repro: `TldListenerLifecycleTest.factoryTypesMustIdentifyTheExactConstructedClassForDeduplication`.
+- Cause: `type.isInstance` accepts subtypes while the container deduplicates by
+  the declared type before constructing listeners.
+- Status: FIXED; factories must return the exact declared class.
+
 ## BUG-20261011-01 — duplicate JSP taglib fields overwrite earlier values
 
 - Date: 2026-10-11.

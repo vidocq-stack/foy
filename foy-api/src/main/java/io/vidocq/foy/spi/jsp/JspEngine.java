@@ -30,12 +30,12 @@ import java.util.function.Supplier;
 /** Optional, container-neutral binding for precompiled or translated page engines. */
 @FunctionalInterface
 public interface JspEngine {
-    /** Constructor-based TLD listener; Foy can deduplicate by type before construction. */
+    /** Constructor-based TLD listener; the type is the exact factory class, deduplicated before construction. */
     record Listener(Class<? extends EventListener> type, Supplier<? extends EventListener> factory) {
         public Listener { Objects.requireNonNull(type, "type"); Objects.requireNonNull(factory, "factory"); }
         public EventListener createListener() {
             var listener = Objects.requireNonNull(factory.get(), "Listener factory returned null");
-            if (!type.isInstance(listener)) throw new IllegalArgumentException("Listener factory returned the wrong type");
+            if (listener.getClass() != type) throw new IllegalArgumentException("Listener factory must return its exact declared class");
             return listener;
         }
     }
