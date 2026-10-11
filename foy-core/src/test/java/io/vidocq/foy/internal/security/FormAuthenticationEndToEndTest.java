@@ -234,6 +234,25 @@ class FormAuthenticationEndToEndTest {
     }
 
     @Test
+    void aConfidentialApplicationWithAnHttpsPortRedirectsTheLoginActionWithoutValidating() throws Exception {
+        // S-6 with a redirect: the client is sent to HTTPS, the plain-HTTP credentials are dropped unread.
+        var calls = new AtomicInteger();
+        IdentityStore counting = (user, password) -> {
+            calls.incrementAndGet();
+            return SecureApp.USERS.validate(user, password);
+        };
+        var model = formModel(List.of(
+                constraint(List.of("/*"), List.of(), List.of(), null, "CONFIDENTIAL")));
+        var settings = SecuritySettings.DEFAULTS.withIdentityStore(counting).withConfidentialPort(8443);
+        try (var app = new SecureApp(model, settings)) {
+            var r = app.postForm("/j_security_check", "j_username=alice&j_password=a-secret");
+            assertEquals(302, r.statusCode());
+            assertEquals("https://127.0.0.1:8443/j_security_check", r.headers().firstValue("Location").orElse(""));
+            assertEquals(0, calls.get(), "credentials sent over plain HTTP are never validated");
+        }
+    }
+
+    @Test
     void passwordNeverLogged() throws Exception {
         // Every Foy logger (bridge, deployer, CredentialCheck, WebSecurity), every level's attached exception.
         try (var log = LogCapture.of("io.vidocq.foy"); var app = formApp()) {

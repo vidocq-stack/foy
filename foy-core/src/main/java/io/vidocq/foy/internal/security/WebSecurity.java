@@ -104,7 +104,7 @@ public final class WebSecurity {
      * when the request proceeds; otherwise the response is produced (401 challenge, 403, or the
      * mechanism's challenge) and {@code false} is returned. Any exception fails closed: the caller
      * does not invoke the target. Order: the identity cached in the session (FORM) is restored, a
-     * CONFIDENTIAL constraint on a plain request is refused, then a FORM login action is handled
+     * CONFIDENTIAL constraint on a plain request is refused or redirected to HTTPS, then a FORM login action is handled
      * (whatever its access rule), then the access rule applies.
      */
     public boolean admit(HttpServletRequestImpl req, HttpServletResponse res, String canonicalPath)
@@ -118,7 +118,7 @@ public final class WebSecurity {
         // The transport guarantee comes first, the login action included: a confidential
         // application never accepts credentials over plain HTTP.
         if (decision.confidential() && !req.isSecure()) {
-            res.sendError(HttpServletResponse.SC_FORBIDDEN);
+            refuseInsecure(req, res);
             return false;
         }
         if (authenticator instanceof FormAuthenticator form && form.isLoginAction(canonicalPath)) {
@@ -140,6 +140,51 @@ public final class WebSecurity {
         if (!decision.permits(req.identity())) {
             res.sendError(HttpServletResponse.SC_FORBIDDEN);
             return false;
+        }
+        return true;
+    }
+
+    /**
+     * A CONFIDENTIAL/INTEGRAL constraint on a plain request (section 13.8). With a configured HTTPS
+     * port, the client is redirected to the same URI over HTTPS, whatever the method (a request
+     * body is not carried over). Otherwise, or when the Host header is not a plain host name, the
+     * request is refused with 403: a hostile Host header never steers the redirect.
+     */
+    private void refuseInsecure(HttpServletRequestImpl req, HttpServletResponse res) throws IOException {
+        int port = settings.confidentialPort();
+        String host = req.getServerName();
+        String uri = req.getRequestURI();
+        String query = req.getQueryString();
+        // The path must start with '/', or "https://host:port" + "@evil/x" would make the host userinfo.
+        if (port < 0 || !isPlainHost(host) || uri == null || !uri.startsWith("/")
+                || !isPrintable(uri) || (query != null && !isPrintable(query))) {
+            res.sendError(HttpServletResponse.SC_FORBIDDEN);
+            return;
+        }
+        res.sendRedirect("https://" + host + (port == 443 ? "" : ":" + port) + uri
+                + (query == null ? "" : "?" + query));
+    }
+
+    /** No space, control character or non-ASCII character: the raw URI is copied into a header as is. */
+    private static boolean isPrintable(String s) {
+        for (int i = 0; i < s.length(); i++) {
+            char c = s.charAt(i);
+            if (c <= 0x20 || c >= 0x7f) return false;
+        }
+        return true;
+    }
+
+    /**
+     * Letters, digits, {@code '.'} and {@code '-'} only, at most 253 characters: no userinfo, path,
+     * port, bracketed IPv6 literal, space or CR/LF can reach a {@code Location} header.
+     */
+    static boolean isPlainHost(String host) {
+        if (host == null || host.isEmpty() || host.length() > 253) return false;
+        for (int i = 0; i < host.length(); i++) {
+            char c = host.charAt(i);
+            boolean ok = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')
+                    || c == '.' || c == '-';
+            if (!ok) return false;
         }
         return true;
     }
