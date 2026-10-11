@@ -214,16 +214,26 @@
                                             <arg line="-genkeypair -alias foy-tck -keyalg RSA -keysize 2048 -validity 3650"/>
                                             <arg value="-dname"/><arg value="CN=localhost, O=Foy TCK"/>
                                             <arg value="-ext"/><arg value="SAN=ip:127.0.0.1,dns:localhost"/>
-                                            <arg line="-keystore ${tls.dir}/server.p12 -storetype PKCS12 -storepass changeit -keypass changeit"/>
+                                            <arg value="-keystore"/><arg value="${tls.dir}/server.p12"/>
+                                            <arg line="-storetype PKCS12 -storepass changeit -keypass changeit"/>
                                         </exec>
                                         <exec executable="${keytool}" failonerror="true">
-                                            <arg line="-exportcert -rfc -alias foy-tck -keystore ${tls.dir}/server.p12 -storepass changeit -file ${tls.dir}/server.pem"/>
+                                            <arg line="-exportcert -rfc -alias foy-tck"/>
+                                            <arg value="-keystore"/><arg value="${tls.dir}/server.p12"/>
+                                            <arg line="-storepass changeit"/>
+                                            <arg value="-file"/><arg value="${tls.dir}/server.pem"/>
                                         </exec>
                                         <exec executable="${keytool}" failonerror="true">
-                                            <arg line="-importcert -noprompt -alias foy-tck -file ${tls.dir}/server.pem -keystore ${tls.dir}/client-trust.p12 -storetype PKCS12 -storepass changeit"/>
+                                            <arg line="-importcert -noprompt -alias foy-tck"/>
+                                            <arg value="-file"/><arg value="${tls.dir}/server.pem"/>
+                                            <arg value="-keystore"/><arg value="${tls.dir}/client-trust.p12"/>
+                                            <arg line="-storetype PKCS12 -storepass changeit"/>
                                         </exec>
                                         <exec executable="${keytool}" failonerror="true">
-                                            <arg line="-importcert -noprompt -alias cts -file ${project.build.directory}/tck-certificates/certificates/cts_cert -keystore ${tls.dir}/server-trust.p12 -storetype PKCS12 -storepass changeit"/>
+                                            <arg line="-importcert -noprompt -alias cts"/>
+                                            <arg value="-file"/><arg value="${project.build.directory}/tck-certificates/certificates/cts_cert"/>
+                                            <arg value="-keystore"/><arg value="${tls.dir}/server-trust.p12"/>
+                                            <arg line="-storetype PKCS12 -storepass changeit"/>
                                         </exec>
                                     </target>
                                 </configuration>
