@@ -363,6 +363,7 @@ public final class WebAppDeployer {
             if (instance == null) continue;
             // setServletSecurity wins; otherwise the class's @ServletSecurity applies (§13.4.1).
             // setMultipartConfig wins; otherwise the class's @MultipartConfig applies (section 3.2).
+            // Deliberately, both annotations of an addServlet(Class) class are read even under metadata-complete.
             ServletSecurityElement security = reg.getServletSecurity();
             if (!jsp && (security == null || reg.getMultipartConfig() == null)) {
                 io.vidocq.foy.spi.gen.WebComponentDescriptor descriptor;

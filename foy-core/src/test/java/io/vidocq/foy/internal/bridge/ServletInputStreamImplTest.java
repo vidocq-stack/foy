@@ -181,6 +181,44 @@ class ServletInputStreamImplTest {
         assertFalse(in.isReady());
     }
 
+    /** A read after the pump failed rethrows the failure itself: a body cap stays identifiable. */
+    @Test
+    void aReadAfterTheBodyCapRethrowsTheCapError() throws Exception {
+        var cap = new io.vidocq.foy.internal.http.RequestBodyTooLargeException(8);
+        var host = new Host(true);
+        host.callbacks.hold(); // onError waits: the application's read meets the failure first
+        var in = new ServletInputStreamImpl(new InputStream() {
+            @Override public int read() throws IOException { throw cap; }
+        }, host);
+        var received = new CopyOnWriteArrayList<Throwable>();
+        try {
+            in.setReadListener(new ReadListener() {
+                @Override public void onDataAvailable() {}
+                @Override public void onAllDataRead() {}
+                @Override public void onError(Throwable t) { received.add(t); }
+            });
+            IOException thrown = null;
+            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+            while (thrown == null && System.nanoTime() < deadline) {
+                try {
+                    in.read();
+                    fail("no data");
+                } catch (IllegalStateException notYet) {
+                    Thread.onSpinWait(); // the pump has not failed yet
+                } catch (IOException e) {
+                    thrown = e;
+                }
+            }
+            assertSame(cap, thrown);
+            host.callbacks.release();
+            while (received.isEmpty() && System.nanoTime() < deadline) Thread.onSpinWait();
+        } finally {
+            host.callbacks.close(); // waits for the callback in progress
+            end(in);
+        }
+        assertEquals(List.of(cap), List.copyOf(received));
+    }
+
     @Test
     void aThrowingOnDataAvailableGoesToOnError() throws Exception {
         var boom = new IllegalStateException("boom");

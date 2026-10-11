@@ -178,6 +178,9 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
                 r.endNonBlockingIo();
                 try { r.endSessionAccess(); }
                 catch (RuntimeException e) { LOG.log(System.Logger.Level.WARNING, "ending the session access failed", e); }
+                // The container's temporary part files go with the request (section 3.2).
+                try { r.releaseParts(); }
+                catch (RuntimeException e) { LOG.log(System.Logger.Level.WARNING, "deleting the multipart files failed", e); }
             }
         }
         try {
@@ -875,6 +878,21 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
         req.setAttribute(AsyncContext.ASYNC_MAPPING, req.getHttpServletMapping());
     }
 
+    /**
+     * Whether {@code thrown} (or one of its causes) is a request body or multipart limit: the
+     * container's body cap, or a multipart-config / container multipart limit (answered with 413).
+     */
+    private static boolean bodyTooLarge(Throwable thrown) {
+        int depth = 0;
+        for (Throwable t = thrown; t != null && depth++ < 16; t = t.getCause()) {
+            if (t instanceof io.vidocq.foy.internal.http.RequestBodyTooLargeException
+                    || t instanceof io.vidocq.foy.internal.http.MultipartLimitException) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private void maybeHandleError(HttpServletRequestImpl req, HttpServletResponseImpl res,
                                   Throwable thrown, String servletName) throws ServletException {
         if (thrown != null && res.isCommitted() && !res.isErrorTriggered()) {
@@ -906,6 +924,8 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
             }
             if (root instanceof UnavailableException ue) {
                 errorStatus = ue.isPermanent() ? 404 : 503;
+            } else if (bodyTooLarge(thrown)) {
+                errorStatus = 413;
             } else {
                 errorStatus = 500;
             }
@@ -925,6 +945,14 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
                 res.clearErrorState();
                 res.resetBuffer();
                 try { res.sendError(errorStatus, thrown.getMessage()); }
+                catch (IOException ignored) {}
+                req.setAttribute("jakarta.servlet.error.handled", Boolean.TRUE);
+            } else if (thrown != null && errorStatus == 413) {
+                // A request body or multipart limit the application did not handle: the client's fault.
+                LOG.log(System.Logger.Level.DEBUG, "request body limit exceeded", thrown);
+                res.clearErrorState();
+                res.resetBuffer();
+                try { res.sendError(413); }
                 catch (IOException ignored) {}
                 req.setAttribute("jakarta.servlet.error.handled", Boolean.TRUE);
             }

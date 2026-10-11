@@ -131,7 +131,8 @@ public final class ServletInputStreamImpl extends ServletInputStream {
         lock.lock();
         try {
             IOException error = pump.error();
-            if (error != null) throw new IOException(error.getMessage(), error);
+            // Rethrown as is, so a body cap (RequestBodyTooLargeException) stays identifiable.
+            if (error != null) throw error;
             if (len == 0) return 0;
             int n = pump.take(b, off, len);
             // Not ready at the moment of the read (isReady() would answer false): the read would block.

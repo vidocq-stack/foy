@@ -23,6 +23,11 @@ import io.vidocq.chappe.api.Request;
 import io.vidocq.foy.internal.container.VidocqServletContext;
 import io.vidocq.foy.internal.http.BoundedInputStream;
 import io.vidocq.foy.internal.http.CookieCodec;
+import io.vidocq.foy.internal.http.MalformedMultipartException;
+import io.vidocq.foy.internal.http.MultipartLimitException;
+import io.vidocq.foy.internal.http.MultipartParser;
+import io.vidocq.foy.internal.http.PartImpl;
+import io.vidocq.foy.internal.http.PartStorage;
 import io.vidocq.foy.internal.http.RequestLimits;
 import io.vidocq.foy.internal.security.CredentialCheck;
 import io.vidocq.foy.internal.security.SecuritySettings;
@@ -32,6 +37,7 @@ import io.vidocq.foy.internal.session.SessionManager;
 import io.vidocq.foy.spi.security.Identity;
 import jakarta.servlet.AsyncContext;
 import jakarta.servlet.DispatcherType;
+import jakarta.servlet.MultipartConfigElement;
 import jakarta.servlet.RequestDispatcher;
 import jakarta.servlet.ServletConnection;
 import jakarta.servlet.ServletContext;
@@ -186,7 +192,7 @@ public final class HttpServletRequestImpl implements HttpServletRequest {
      * (as Tomcat does), so a Runnable passed to {@code AsyncContext.start} answers
      * {@code isUserInRole} deterministically whatever the dispatch thread is doing.
      */
-    private String roleRefServletName() {
+    private String executingServletName() {
         ServletScope scope = servletScope;
         if (scope != null && scope.thread() == Thread.currentThread()) return scope.servletName();
         String async = asyncServletName;
@@ -366,12 +372,15 @@ public final class HttpServletRequestImpl implements HttpServletRequest {
     }
 
     private boolean isFormPost() {
-        if (!"POST".equalsIgnoreCase(getMethod())) return false;
+        return "POST".equalsIgnoreCase(getMethod()) && "application/x-www-form-urlencoded".equalsIgnoreCase(mediaType());
+    }
+
+    /** The media type of the Content-Type (no parameter, trimmed), or {@code null}. */
+    private String mediaType() {
         String ct = getContentType();
-        if (ct == null) return false;
+        if (ct == null) return null;
         int semi = ct.indexOf(';');
-        String mime = (semi < 0 ? ct : ct.substring(0, semi)).trim();
-        return "application/x-www-form-urlencoded".equalsIgnoreCase(mime);
+        return (semi < 0 ? ct : ct.substring(0, semi)).trim();
     }
 
     private static void decodeInto(Map<String, List<String>> out, String encoded, Charset cs) {
@@ -777,7 +786,7 @@ public final class HttpServletRequestImpl implements HttpServletRequest {
     @Override public boolean isUserInRole(String role) {
         var roles = servletContext instanceof VidocqServletContext v ? v.roleMapping()
                 : io.vidocq.foy.internal.security.RoleMapping.EMPTY;
-        return roles.isUserInRole(roleRefServletName(), identity, role);
+        return roles.isUserInRole(executingServletName(), identity, role);
     }
     @Override public Principal getUserPrincipal() { return identity == null ? null : identity.principal(); }
     private String urlSessionId;
@@ -932,32 +941,113 @@ public final class HttpServletRequestImpl implements HttpServletRequest {
                 : WebSecurity.permitAll(SecuritySettings.DEFAULTS);
     }
 
-    private java.util.List<io.vidocq.foy.internal.http.PartImpl> parsedParts;
+    // ---- Multipart (Servlet 6.1 section 3.2) ----
 
-    @Override public Collection<Part> getParts() throws IOException {
-        ensurePartsParsed();
-        return new ArrayList<>(parsedParts);
+    private List<PartImpl> parsedParts;
+    /** The failure of the one parse attempt, rethrown by every later getParts()/getPart(). */
+    private Exception partsFailure;
+    /** Written on the thread that parses (possibly an async one), closed by the pipeline thread. */
+    private volatile PartStorage partStorage;
+    /** The request is over: its parts are gone and no new storage may be created. */
+    private volatile boolean partsReleased;
+
+    @Override public Collection<Part> getParts() throws IOException, ServletException {
+        return new ArrayList<>(parts());
     }
-    @Override public Part getPart(String name) throws IOException {
-        ensurePartsParsed();
-        for (var p : parsedParts) if (name.equals(p.getName())) return p;
+
+    @Override public Part getPart(String name) throws IOException, ServletException {
+        for (PartImpl p : parts()) if (p.getName().equals(name)) return p;
         return null;
     }
 
-    private void ensurePartsParsed() throws IOException {
-        if (parsedParts != null) return;
-        String ct = getContentType();
-        if (ct == null || !ct.toLowerCase(Locale.ROOT).startsWith("multipart/form-data")) {
-            parsedParts = List.of();
-            return;
+    /**
+     * Parses the parts once, through the tracked body. Checked in this order: the request not over
+     * yet, the media type ({@link ServletException}), the executing servlet's multipart
+     * configuration, then the body not already taken by getInputStream()/getReader() (all but the
+     * media type {@link IllegalStateException}). A parse failure (a limit:
+     * {@link MultipartLimitException}; malformed or I/O, the container's body cap included:
+     * {@link IOException}) is cached and rethrown as is: the body is never read twice. After a
+     * successful parse the rest of the body (the epilogue) is read to its end, within the same
+     * body caps, so the trailer fields of a chunked body are ready.
+     */
+    private List<PartImpl> parts() throws IOException, ServletException {
+        if (partsReleased) throw new IllegalStateException("the request is over: its parts were deleted");
+        if (parsedParts != null) return parsedParts;
+        if (partsFailure != null) throw rethrowParts(partsFailure);
+        if (!isMultipart()) {
+            throw new ServletException("not a multipart/form-data request (Content-Type: " + getContentType() + ")");
         }
-        String boundary = io.vidocq.foy.internal.http.MultipartParser.extractBoundary(ct);
-        if (boundary == null) { parsedParts = List.of(); return; }
-        // Interim until Task 7.6: unlimited and in memory, as before the streaming parser.
-        parsedParts = io.vidocq.foy.internal.http.MultipartParser.parse(chappe.body().asInputStream(), boundary,
-                new io.vidocq.foy.internal.http.MultipartParser.Limits(-1, -1, Integer.MAX_VALUE, -1, 64 * 1024),
-                new io.vidocq.foy.internal.http.PartStorage(null));
+        MultipartConfigElement config = multipartConfig();
+        if (config == null) {
+            throw new IllegalStateException("no @MultipartConfig or <multipart-config> for servlet "
+                    + executingServletName());
+        }
+        if (inputStream != null || reader != null) {
+            throw new IllegalStateException("the request body was already read through getInputStream() or getReader()");
+        }
+        try {
+            String boundary = MultipartParser.extractBoundary(getContentType());
+            if (boundary == null) throw new MalformedMultipartException("missing or invalid multipart boundary");
+            long declared = getContentLengthLong();
+            if (config.getMaxRequestSize() >= 0 && declared > config.getMaxRequestSize()) {
+                throw new MultipartLimitException("the request (" + declared + " bytes) exceeds maxRequestSize ("
+                        + config.getMaxRequestSize() + " bytes)");
+            }
+            var storage = new PartStorage(PartStorage.resolveLocation(config.getLocation(), contextTempDir()));
+            partStorage = storage;
+            // Both volatile: either releaseParts() sees this storage, or this thread sees the flag.
+            if (partsReleased) {
+                storage.close();
+                throw new IllegalStateException("the request is over: its parts were deleted");
+            }
+            ServletInputStreamImpl body = containerBody();
+            List<PartImpl> parts = MultipartParser.parse(body, boundary,
+                    MultipartParser.Limits.of(config, limits()), storage);
+            try {
+                body.transferTo(java.io.OutputStream.nullOutputStream());
+            } catch (IOException | RuntimeException e) {
+                storage.close();
+                throw e;
+            }
+            parsedParts = List.copyOf(parts);
+        } catch (IOException | RuntimeException e) {
+            partsFailure = e;
+            bodyConsumedByContainer = true;
+            throw e;
+        }
+        return parsedParts;
     }
+
+    private static RuntimeException rethrowParts(Exception failure) throws IOException {
+        if (failure instanceof IOException io) throw io;
+        if (failure instanceof RuntimeException runtime) throw runtime;
+        throw new IllegalStateException(failure);
+    }
+
+    private boolean isMultipart() {
+        return "multipart/form-data".equalsIgnoreCase(mediaType());
+    }
+
+    /** The multipart configuration of the servlet executing on the calling thread (section 3.2), or null. */
+    private MultipartConfigElement multipartConfig() {
+        return servletContext instanceof VidocqServletContext v ? v.multipartConfig(executingServletName()) : null;
+    }
+
+    private java.io.File contextTempDir() {
+        return servletContext.getAttribute(ServletContext.TEMPDIR) instanceof java.io.File f ? f : null;
+    }
+
+    /**
+     * The request is over (asynchronous processing included): the container's temporary part files
+     * are deleted; files the application wrote with {@code Part.write} stay. From now on
+     * getParts()/getPart() throw {@link IllegalStateException}. Idempotent.
+     */
+    void releaseParts() {
+        partsReleased = true;
+        var storage = partStorage;
+        if (storage != null) storage.close();
+    }
+
     /**
      * Server push is not supported: chappe emits no PUSH_PROMISE frame, and push is deprecated in
      * Servlet 6.1 in favour of 103 Early Hints. Returning {@code null} is the contract for
