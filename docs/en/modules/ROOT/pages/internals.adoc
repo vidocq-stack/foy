@@ -260,6 +260,25 @@ The guard covers `foy-core` only: `foy-cdi-vauban`'s `CdiWebComponentsCreator` a
 | `WebComponent` providers written by `foy-processor` are loaded with `ServiceLoader`; `ServletContainerInitializer`s are also loaded with `ServiceLoader` at boot (`ApplicationSources`), restricted to the roots the fragment ordering retains. Components themselves go through the generated index or the Vauban `BeanManager`.
 |===
 
+== Request body ownership
+
+A request body has exactly one owner, decided by the first reader: the application (`getInputStream()` or `getReader()`) or the container (the form parameters, or the multipart parts). The other side then gets an empty stream (the application) or an `IllegalStateException` (`getParts()` after the application took the body).
+
+* *The tracked stream.* Whoever owns it, the body is read through one `ServletInputStreamImpl` held as the request's tracked body, so trailer readiness (`isTrailerFieldsReady()`) and keep-alive follow the bytes actually read, by the application or by the container.
+* *`bodySource()`.* The tracked stream wraps Chappe's body stream. A body that declares no `Content-Length` is wrapped in a `BoundedInputStream` capped at `maxChunkedRequestBodySize` (10 MiB by default), which fails with `RequestBodyTooLargeException`; Chappe bounds `Content-Length` bodies itself (`maxRequestSize`).
+* *Parameters settled before the body read.* The parameter map is built locally, the query string first and then the body, and published once complete: a concurrent reader never sees a half-built map. A form body above `maxFormBodySize` is refused before any byte is read when its `Content-Length` says so, and while it streams otherwise.
+* *Failures.* A failed multipart parse is cached and rethrown as is by every later `getParts()`: the body is never read twice. A failed body read for the parameters propagates once; later `getParameter*` calls see the query-string parameters only.
+* *Encoding lock.* Once a body was parsed into parameters or parts, or handed to the application, `setCharacterEncoding` is a no-op (section 3.12).
+* *The servlet scope.* Read before any servlet runs (a request listener, a FORM login check), a multipart POST gives the query-string parameters without caching them, so the servlet later sees its fields. An async cycle stays in the scope of the servlet that started it (`asyncServletName`), so a `requestDestroyed` listener at the end of an async request counts as in scope.
+
+== Multipart
+
+* *Delimiter scan.* `MultipartParser` reads the body through a window and finds each `CRLF--boundary` delimiter in linear time (Knuth-Morris-Pratt), so a file that holds near-matches of the boundary costs no backtracking. Boundaries are at most 70 characters (RFC 2046); every line ends with CRLF, a bare LF is malformed. `maxRequestSize`, `maxFileSize`, the part count and the part header size are checked while streaming.
+* *`PartSink` and `PartStorage`.* Each part's content goes to a `PartSink`, in memory up to `fileSizeThreshold`, then into a temporary file created by the request's `PartStorage`: random `foy-part-*.tmp` names, owner-only permissions (0600) where the file system is POSIX, under the resolved `location`. A sink that does not finish deletes its file; `PartStorage.close()` deletes every file it still owns, and `Part.write` disowns the file it moves.
+* *Configuration.* The multipart configuration of each servlet is frozen with the registrations at `markInitialized`. A request resolves it for the servlet executing on the calling thread, recorded by `enterServlet` on each dispatch, so a forward to another servlet changes it. The annotations of a class given to `addServlet(Class)` (`@MultipartConfig`, `@ServletSecurity`) are read even under `metadata-complete`, deliberately: the application registered that class programmatically.
+* *Epilogue.* After a successful parse the tracked body is read to its end, within the same caps, so a chunked body's trailers are ready.
+* *Cleanup.* `releaseParts()` runs in the `finally` of `ChappeServletBridge.runPipeline`, after the whole request including its async cycle: the temporary files go with the request, and a `getParts()` after it throws `IllegalStateException`.
+
 == Known limits
 
 * `WEB-INF/lib` nested jars of a WAR are not opened; see xref:tck.adoc[].
@@ -271,7 +290,7 @@ The guard covers `foy-core` only: `foy-cdi-vauban`'s `CdiWebComponentsCreator` a
 * Chappe exposes no connection identity and no HTTP/2 stream id: `getServletConnection().getConnectionId()` can repeat and `getProtocolRequestId()` is empty on HTTP/2 (BUG-20261009-09).
 * `getRequestDispatcher` and cross-context lookup compare the context path with a plain prefix test (no segment boundary), so `/app` also matches `/application/x`.
 * Cross-context dispatch (`ServletContext.getContext`): **implemented** via `CrossContextRegistry` (strict contextPath match on the contexts deployed in the same JVM).
-* Multipart: fully buffered in memory, no streaming parse.
+* Multipart: the body parameters of a multipart request are decided by the servlet executing when the parameters are first read; the epilogue after the closing delimiter is read by Foy within the caps, and what a client sends after the response is left to Chappe's drain (BUG-20261011-11); no aggregate in-memory cap beyond the body size (each part stays under `fileSizeThreshold` in memory, the parts together under the body cap).
 * WebSocket Servlet 6.1: not implemented (planned, no date).
 * JSP: not supported by Foy itself; planned through a JSP-engine SPI that Ibarra (Jakarta Pages 4.0) plugs into.
 * Security: CLIENT-CERT is deferred and DIGEST is not supported (both fail closed with `403`); security constraints match url-patterns case-sensitively, which a resource served from a case-insensitive file system can bypass (BUG-20261011-05).

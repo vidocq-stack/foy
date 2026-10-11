@@ -184,6 +184,7 @@ WebSocket is not built on top of this yet (Jakarta WebSocket is not implemented)
 
 Not supported. `HttpServletRequest.newPushBuilder()` returns `null`, which Servlet 6.1 allows when push is unavailable; push is deprecated in Servlet 6.1 in favour of `103 Early Hints`. Chappe has neither an h2c Upgrade nor a PUSH_PROMISE writer.
 
+[#file-upload]
 == File upload (`@MultipartConfig`)
 
 [source,java]
@@ -193,24 +194,73 @@ import jakarta.servlet.annotation.WebServlet;
 import jakarta.servlet.http.*;
 
 @WebServlet("/upload")
-@MultipartConfig(maxFileSize = 10 * 1024 * 1024)
+@MultipartConfig(location = "uploads", fileSizeThreshold = 64 * 1024,
+        maxFileSize = 10 * 1024 * 1024, maxRequestSize = 20 * 1024 * 1024)
 public class UploadServlet extends HttpServlet {
     @Override
     protected void doPost(HttpServletRequest req, HttpServletResponse resp) throws Exception {
+        String title = req.getParameter("title"); // a form field of the same multipart body
         Part part = req.getPart("file");
-        try (var in = part.getInputStream()) {
-            in.transferTo(java.nio.file.Files.newOutputStream(
-                    java.nio.file.Path.of("/tmp", part.getSubmittedFileName())));
-        }
+        String submitted = part.getSubmittedFileName(); // raw client input: never trust it
+        String safe = java.nio.file.Path.of(submitted.replace('\\', '/')).getFileName().toString();
+        part.write(safe); // relative: resolved against the location
         resp.setStatus(204);
     }
 }
 ----
 
-[CAUTION]
-====
-Multipart parsing is **fully buffered in memory** (`MultipartParser` reads the whole body; no streaming parse, no temp-file spill to `location`). `@MultipartConfig` limit/threshold handling is partial: 8 of the 14 `PartTests`/`Part1Tests` TCK cases still fail (upload limits, thresholds) — see xref:tck.adoc[TCK status]. Keep uploads small.
-====
+The body is parsed while it streams in (RFC 7578): a part is held in memory up to `fileSizeThreshold`, then written to an owner-only temporary file. The first call to `getParts()`, `getPart(name)` or, on a POST, `getParameter*` parses it once; every later call sees the same parts.
+
+Configuration::
+A multipart configuration is required: `@MultipartConfig` on the servlet, `<multipart-config>` in its `web.xml` declaration, or `ServletRegistration.Dynamic.setMultipartConfig(...)` before the context is initialised. Without one, `getParts()` and `getPart()` throw `IllegalStateException`; on a request that is not `multipart/form-data` they throw `ServletException`. The configuration that applies is the one of the servlet executing the call, so a forward to another servlet changes it.
+
+`location`::
+Where the temporary files go and where a relative `Part.write` name is resolved. Empty (the default): the context temporary directory (`ServletContext.TEMPDIR`). Relative: under that directory. Absolute: used as is.
+
+`fileSizeThreshold`::
+The size up to which a part stays in memory. With `0` (the default), every non-empty part goes to disk.
+
+`maxFileSize` and `maxRequestSize`::
+Checked while the body streams in, and `maxRequestSize` also against a declared `Content-Length` before any byte is read. Exceeded, `getParts()` and `getPart()` throw `IllegalStateException`; the parts parsed so far are discarded, and their files deleted by the end of the request at the latest.
+
+Cleanup::
+Every temporary file is deleted at the end of the request, at the end of the async cycle when the request went asynchronous, and on a failed parse. A file moved by `Part.write` is no longer a temporary file: it belongs to the application.
+
+`Part.write(name)`::
+A relative name is resolved against the location; a name that leaves it (`..`, a symbolic link to elsewhere) is refused with an `IOException`. An absolute name is used as provided. `Part.delete()` deletes the part's temporary file.
+
+`getSubmittedFileName()`::
+Returned raw, as the client sent it: it can hold `..`, `/`, `\` or a full Windows path. Sanitise it before using it as a file name, as the example above does: replace `\` with `/`, then keep only `Path.of(name).getFileName()`.
+
+Form fields as parameters::
+The parts without a file name are request parameters, after the query-string parameters, on a POST to a servlet with a multipart configuration, or on any request once `getParts()` ran. A field's charset is the part's own `Content-Type` charset, else the request encoding (`setCharacterEncoding`, the request `Content-Type`, `request-character-encoding`), else the value of a `_charset_` field, else ISO-8859-1. Request listeners, which run before any servlet, see the query-string parameters only.
+
+Body ownership::
+The body is read once. After `getInputStream()` or `getReader()`, `getParts()` throws `IllegalStateException`; after `getParts()`, `getInputStream()` and `getReader()` return an empty stream.
+
+Strict framing::
+The boundary is at most 70 characters (RFC 2046) and every line must end with CRLF: bare LF line endings are not tolerated and make the body malformed. A malformed body makes `getParts()` throw an `IOException`; read through `getParameter*`, it surfaces as an unchecked exception and the client sees `500`, not `400`.
+
+Errors the application does not catch::
+A multipart limit (`maxFileSize`, `maxRequestSize`, the container limits below) or the container body cap thrown out of a servlet answers `413` on a synchronous dispatch. Thrown from a `Runnable` passed to `AsyncContext.start`, it still answers `500`. A form body above `maxFormBodySize` also answers `500` when uncaught.
+
+After a successful parse, the rest of the body (the epilogue after the closing delimiter) is read to its end, within the same limits, so the trailer fields of a chunked body are ready. A client that stalls after the closing delimiter of a `Content-Length` body therefore delays the return of `getParts()` until it sends the rest or the read times out.
+
+=== Container request body limits
+
+`FoyChappeBoot` sets four container ceilings that apply to every application it deploys, whatever their `@MultipartConfig`:
+
+[source,java]
+----
+FoyChappeBoot.builder()
+        .maxMultipartParts(20)              // default 50
+        .maxFormBodySize(512 * 1024)        // default 2 MiB
+        .maxChunkedRequestBodySize(-1)      // default 10 MiB; -1 lifts the ceiling
+        .maxMultipartPartHeaderSize(4096)   // default 8 KiB
+        // ...
+----
+
+See xref:reference.adoc#request-body-limits[Request body limits] for what each one bounds and what happens when it is exceeded.
 
 == Sessions
 

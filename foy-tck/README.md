@@ -155,4 +155,4 @@ into `target/jimage` (the whole JDK is extracted, which is slow and large on a c
 
 Build-time dependencies of the profile only: `jakarta.tck:sigtest-maven-plugin:2.5` (test scope, it
 provides `com.sun.tdk.signaturetest`) and `maven-dependency-plugin` (copies the API jar). The latest
-result is in `TCK.md`.
+result is in [`TCK.md`](../TCK.md).

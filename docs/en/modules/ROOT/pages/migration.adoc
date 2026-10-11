@@ -6,7 +6,7 @@ Foy honours the Jakarta Servlet 6.1 spec to the letter — your `web.xml`, your 
 
 [CAUTION]
 ====
-Foy is at **{project-version}** and the official TCK passes **98.7 %** over the full suite: 1692 passing / 1714 run, 7 skipped (`api.*` 848/859, `pluggability.*` 646/646, `spec.*` 196/207, `compat.*` 2/2); the remaining errors are multipart, CLIENT-CERT (deferred) and JSP (see xref:tck.adoc[TCK status]). Migration is not recommended in production until the listed gaps are closed.
+Foy is at **{project-version}** and the official TCK passes **99.2 %** over the full suite: 1700 passing / 1714 run, 7 skipped (`api.*` 856/859, `pluggability.*` 646/646, `spec.*` 196/207, `compat.*` 2/2); the remaining errors are CLIENT-CERT (deferred) and JSP (see xref:tck.adoc[TCK status]). Migration is not recommended in production until the listed gaps are closed.
 ====
 
 == From Tomcat
@@ -105,7 +105,6 @@ No real-world migration has been documented yet — the Tomcat and Jetty tables 
 * **WebSocket Servlet 6.1 / Jakarta WebSocket 2.2** — not implemented (planned, no date).
 * **JSP** — not supported by Foy itself; planned through a JSP-engine SPI that xref:ibarra::index.adoc[Ibarra] (Jakarta Pages 4.0) plugs into. For dynamic pages use xref:cassini::index.adoc[Cassini] (REST) or HTML-emitting Servlets.
 * **CLIENT-CERT deferred, DIGEST not supported** — both fail closed (`403`).
-* **Multipart** — fully buffered in memory; limit/threshold handling partial.
 
 Cross-context dispatch (`ServletContext.getContext`) **is implemented** via `CrossContextRegistry` — strict contextPath match on the contexts deployed in the same JVM.
 
@@ -188,6 +187,24 @@ FoyChappeBoot.builder().beanManager(bm).user("alice", password, "admin").build()
 === API narrowing
 
 * **`FoyChappeBoot.Mounted.servletContext()` returns `jakarta.servlet.ServletContext`**, no longer the internal `VidocqServletContext`. Code that called Foy-specific methods on it no longer compiles; standard Servlet methods (for example `getSessionTimeout()`) now work from a named module that does not read `io.vidocq.foy.core`.
+
+[#request-body-behaviour-changes]
+=== Request bodies and multipart
+
+The multipart and request body work (Servlet 6.1 sections 3.1, 3.2 and 3.12) changes these behaviours for embedders:
+
+* **`getParts()` and `getPart()` require a multipart configuration** (`@MultipartConfig`, `<multipart-config>` or `setMultipartConfig`) and throw `IllegalStateException` without one; they used to parse anyway. On a request that is not `multipart/form-data` they throw `ServletException`; they used to return no part.
+* **Multipart fields are request parameters**, on a POST to a servlet with a multipart configuration, or on any request once `getParts()` ran.
+* **`Part.write` resolves a relative name against the multipart `location`**, no longer against the working directory, and refuses a name that leaves it. `Part.delete()` deletes the part's file.
+* **Parts above `fileSizeThreshold` go to disk**, in owner-only temporary files deleted at the end of the request. The default threshold is `0`: every non-empty part goes to disk.
+* **Form bodies above 2 MiB make `getParameter*` throw `IllegalStateException`** (`maxFormBodySize`).
+* **Bodies without `Content-Length` above 10 MiB fail the read** (`maxChunkedRequestBodySize`), for the application stream and the container parsers alike.
+* **At most 50 parts and 8 KiB of headers per part** (`maxMultipartParts`, `maxMultipartPartHeaderSize`).
+* **An uncaught request body or multipart limit answers `413`** on a synchronous dispatch, instead of `500`.
+* **`setCharacterEncoding` after a body was parsed into parameters or parts is ignored.**
+* **`setMultipartConfig(null)` throws `IllegalArgumentException`**, and a call after the context is initialised throws `IllegalStateException`.
+
+See xref:usage.adoc#file-upload[File upload] and xref:reference.adoc#request-body-limits[Request body limits].
 
 == Common pitfalls
 

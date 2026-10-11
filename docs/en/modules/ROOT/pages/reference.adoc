@@ -26,7 +26,7 @@ Consolidated technical reference. Use this page as an anchor for external links 
 | **Build-time** annotation processor (no runtime role, never shipped in the application). Generates the `X$$FoyComponent` companions and the `META-INF` indexes. Zero dependency: it requires only the JDK `java.compiler` Java Module. Put it on `annotationProcessorPaths`, not on the class path.
 
 | `io.vidocq.foy:foy-tck`
-| Arquillian harness for the official TCK — **in-reactor, gated behind the `tck` Maven profile** (a plain `mvn install` neither downloads nor runs anything TCK-related; see xref:tck.adoc[TCK status]).
+| Arquillian harness for the official TCK — **in-reactor, gated behind the `tck` Maven profile** (a plain `mvn install` neither downloads nor runs anything TCK-related; see xref:tck.adoc[TCK status]). [.tag-new]#NEW# Its `sigtest` profile runs the TCK's API signature test with two build-time tools, never shipped: `jakarta.tck:sigtest-maven-plugin` 2.5 (test scope) and `maven-dependency-plugin` (copies the `jakarta.servlet-api` jar under test).
 |===
 
 == Java modules and exports
@@ -153,6 +153,18 @@ The `io.vidocq.foy.internal.*` packages are exported to allow advanced integrati
 | `Builder.rotateSessionIdOnLogin(boolean rotate)` [.tag-new]#NEW#
 | Whether a successful login changes the id of an existing session. Default `true`; `false` re-opens session fixation.
 
+| `Builder.maxChunkedRequestBodySize(long bytes)` [.tag-new]#NEW#
+| Ceiling on a request body that declares no `Content-Length`. See <<request-body-limits>>.
+
+| `Builder.maxFormBodySize(long bytes)` [.tag-new]#NEW#
+| Ceiling on a form body parsed into parameters. See <<request-body-limits>>.
+
+| `Builder.maxMultipartParts(int parts)` [.tag-new]#NEW#
+| Ceiling on the parts of one multipart body. See <<request-body-limits>>.
+
+| `Builder.maxMultipartPartHeaderSize(int bytes)` [.tag-new]#NEW#
+| Ceiling on the header section of one part. See <<request-body-limits>>.
+
 | `Builder.build()`
 | Deploys the web application through `WebAppDeployer`. Returns `Optional<Mounted>`. Empty if no Servlet/Filter/Listener bean was discovered.
 
@@ -168,6 +180,42 @@ The `io.vidocq.foy.internal.*` packages are exported to allow advanced integrati
 | `Mounted.close()`
 | Destroys servlets and filters and fires `ServletContextListener.contextDestroyed`. `contextInitialized` already fired during `build()`.
 |===
+
+[#request-body-limits]
+=== Request body limits [.tag-new]#NEW#
+
+Container ceilings, applied to every application of the deployment on top of each servlet's multipart configuration. For the size settings, `-1` lifts the ceiling; a value below `-1` (or `0` parts, or a header size below `1`) makes the setter throw `IllegalArgumentException`.
+
+[cols="2,1,3,3",options="header"]
+|===
+| Setting | Default | Applies to | Exceeded →
+
+| `maxChunkedRequestBodySize`
+| 10 MiB
+| A request body that declares no `Content-Length` (HTTP/1.1 chunked, HTTP/2 without `content-length`), whoever reads it: the application stream, the form parser or the multipart parser. A body with a `Content-Length` is bounded by Chappe (`Server.Builder.maxRequestSize`, 10 MiB by default) instead.
+| The read fails with an `IOException`. Uncaught out of a servlet on a synchronous dispatch: `413`.
+
+| `maxFormBodySize`
+| 2 MiB
+| An `application/x-www-form-urlencoded` body parsed into request parameters.
+| The first `getParameter*` call throws `IllegalStateException`; later calls see the query-string parameters only. Uncaught: `500`.
+
+| `maxMultipartParts`
+| 50
+| The parts of one `multipart/form-data` body, dropped parts included (CVE-2023-24998). `-1` lifts it.
+| `getParts()` / `getPart()` throw `IllegalStateException`. Uncaught on a synchronous dispatch: `413`.
+
+| `maxMultipartPartHeaderSize`
+| 8 KiB
+| The header section of one part, CRLFs included. Cannot be lifted.
+| `getParts()` / `getPart()` throw `IllegalStateException`. Uncaught on a synchronous dispatch: `413`.
+|===
+
+The same limits reach a deployment made without `FoyChappeBoot` through the internal `DeployOptions.withRequestLimits`.
+
+Two exception types of `foy-core` appear in stack traces: `MultipartLimitException`, an `IllegalStateException` (a multipart limit), and `MalformedMultipartException`, an `IOException` (a malformed body). Both live in `io.vidocq.foy.internal.http`, an internal package that is not part of the public API and may change without notice: catch `IllegalStateException` and `IOException`, the types the specification names.
+
+An uncaught limit thrown from a `Runnable` given to `AsyncContext.start` still answers `500`, not `413`.
 
 == Public SPI (`foy-api`)
 
@@ -269,7 +317,7 @@ The roles are application role names, used as they are by the constraints and by
 
 | `<servlet>`, `<servlet-mapping>` (`init-param`, `load-on-startup`, `async-supported`, `enabled`, `multipart-config`)
 | applied
-| `<enabled>false</enabled>` leaves the servlet unserved; `web.xml` multipart-config wins over `@MultipartConfig`
+| `<enabled>false</enabled>` leaves the servlet unserved; `web.xml` multipart-config wins over `@MultipartConfig`; `<multipart-config>` reaches the runtime (`getParts()`, form fields as parameters)
 
 | `<servlet>` with `<jsp-file>`
 | skipped
@@ -462,8 +510,8 @@ On a forward the mapping is that of the target; `jakarta.servlet.forward.mapping
 | Not supported: `newPushBuilder()` returns `null` (deprecated in Servlet 6.1).
 
 | Multipart (`@MultipartConfig`)
-| ⚠️
-| **Buffered in memory** — no streaming parse, no temp-file spill; limit/threshold handling partial (8 of 14 `PartTests`/`Part1Tests` still fail).
+| ✅
+| `@MultipartConfig`, `<multipart-config>`, `setMultipartConfig`. Streamed (RFC 7578), memory up to `fileSizeThreshold` then owner-only temporary files under `location`, deleted at the end of the request; `maxFileSize`/`maxRequestSize` and the container limits enforced while streaming (<<request-body-limits>>); form fields as request parameters. Boundary of at most 70 characters, CRLF line endings only. All 14 `PartTests`/`Part1Tests` pass.
 
 | Sessions
 | ✅

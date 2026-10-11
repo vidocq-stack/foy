@@ -744,7 +744,10 @@ Statuts : `OPEN` → `INVESTIGATING` → `FIXED` (commit hash) → `CLOSED`.
 ## BUG-20261011-10 — FoyVaubanBootstrap offers no way to configure an IdentityStore
 
 - **Date** : 2026-10-11
-- **Statut** : OPEN (final Phase 6 review, by code reading)
+- **Statut** : FIXED (2026-10-11), on the Vidocq side by vidocq#222 (merged 2026-10-11, closes
+  vidocq#220): the Vidocq Servlet extension passes an `IdentityStore` bean or the
+  `vidocq.servlet.users.*` configuration to `FoyChappeBoot`. Found by code reading in the final
+  Phase 6 review.
 - **Module touché** : `foy-cdi-vauban` (`FoyVaubanBootstrap`)
 - **Symptôme** : the identity store is configured through `FoyChappeBoot` only; an application booted
   with `FoyVaubanBootstrap` (CDI) cannot pass an `IdentityStore`, so its security settings keep the
@@ -756,3 +759,20 @@ Statuts : `OPEN` → `INVESTIGATING` → `FIXED` (commit hash) → `CLOSED`.
   Phase 6, not into the Vauban bootstrap.
 - **Fix envisagé** : accept an `IdentityStore` in the Vauban bootstrap builder, or resolve one as a CDI
   bean (an `IdentityStore` bean in the application), and pass it to the deploy options.
+
+## BUG-20261011-11 — chappe drains an over-cap request body without bound
+
+- **Date**: 2026-10-11
+- **Status**: OPEN (chappe follow-up; found in Phase 7)
+- **Module**: chappe (`chappe-http`, `HttpBodyReader.drain`); seen from `foy-core`
+- **Symptom**: once `maxChunkedRequestBodySize` trips, Foy stops reading the body and answers, but
+  chappe's `HttpBodyReader.drain` still reads the rest of a chunked body before the next request on
+  the connection or its close. Memory stays bounded (the bytes are discarded), but the connection and
+  its virtual thread are held for as long as the client keeps sending.
+- **Minimal repro**: `ChunkedBodyLimitEndToEndTest` (`foy-core`) with an endless
+  `HttpRequest.BodyPublishers.ofInputStream` publisher: Foy gives up at the cap, but the connection
+  keeps reading the upload (found by code reading; no committed test, since such a test never ends).
+- **Cause hypothesis**: chappe caps only `Content-Length` bodies (`ServerConfig.maxRequestSize`); a
+  chunked body is drained to its end whatever its size.
+- **Planned fix**: in chappe, cap chunked bodies at `maxRequestSize` and close the connection instead of
+  draining past the cap.

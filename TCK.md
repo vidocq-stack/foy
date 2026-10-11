@@ -5,7 +5,60 @@ First full-suite measurement run. Unlike cassini/champollion/vauban, this is a
 Vidocq runtime to serve Cassini-style stacks, and several spec chapters are not
 implemented yet. This report quantifies exactly which ones.
 
-## 0. Phase 6 exit: security (2026-10-11)
+## 0. Phase 7 exit: multipart and request body limits (2026-10-11)
+
+`pr/ybl/servlet-completion-phase7` @ `6ac5daa` (chappe 0.4.0-SNAPSHOT),
+`./run-official-tck-servlet6.1.sh --all`: 1714 run, **1700 passing / 1714 run, 7 skipped**
+(99.2 %), 7 errors, 0 failures, 11 min 31 s (Phase 6: 1692 passing, +8). Surefire's own
+summary: `Tests run: 1714, Failures: 0, Errors: 7, Skipped: 7`.
+
+Per family (passing / run, skipped):
+
+| Family | Phase 7 | Phase 6 |
+|---|---|---|
+| `api.*` | 856 / 859, 0 skipped | 848 / 859 |
+| `pluggability.*` | 646 / 646, 0 skipped | 646 / 646 |
+| `spec.*` | 196 / 207, 7 skipped | 196 / 207 |
+| `compat.*` | 2 / 2, 0 skipped | 2 / 2 |
+
+`--family api` (`--no-install`) also runs `GetServletRegistrationsTest`, which passes:
+`Tests run: 860, Failures: 0, Errors: 3, Skipped: 0`, so `api.*` 857 / 860 in family mode (115
+`tiers=Stats` lines, all `reflection=0`).
+
+The tally (`foy-tck/tck-tally.sh`) was joined with `LC_ALL=C join` against the Phase 6
+`foy-tck/tck-baseline.txt`: zero class regression, `join -v` empty on both sides (207 classes
+each), 2 classes improved (8 tests): `api.jakarta_servlet_http.part.PartTests` 4 → 0 and
+`api.jakarta_servlet_http.part1.Part1Tests` 4 → 0 (failures + errors), both now `7 0 0`. Every
+other class equals its baseline line. All 207 `tiers=Stats` lines show `reflection=0`. The
+`spec.*` family ran in full, `SecFormTests` (FORM login, a multipart POST included) at its
+Phase 6 figure (23 / 25). `foy-tck/tck-baseline.txt` is refreshed to this tally.
+
+Phase 7 streams `multipart/form-data` bodies (RFC 7578 parser, parts above `fileSizeThreshold`
+in owner-only temporary files under the multipart `location`, deleted at the end of the request
+and of the async cycle), carries `@MultipartConfig`, `<multipart-config>` and
+`setMultipartConfig` to the request, exposes form fields as request parameters, and bounds
+request bodies (`maxChunkedRequestBodySize`, `maxFormBodySize`, `maxMultipartParts`,
+`maxMultipartPartHeaderSize`, configurable on `FoyChappeBoot`).
+
+**Signature test** (`sigtest` profile, Task 7.8, re-run at this exit):
+`./mvnw -ntp -Ptck,tck-official,sigtest -pl foy-tck test -Dtest=ServletSigTest -Dsurefire.failIfNoSpecifiedTests=false`
+is GREEN: `Tests run: 1, Failures: 0, Errors: 0, Skipped: 0` in `servlet.tck.signature.ServletSigTest`,
+`BUILD SUCCESS` (no signature diff). Build-time tooling of the profile only: `sigtest-maven-plugin`
+2.5 (test scope) and `maven-dependency-plugin`.
+
+Remaining 7 errors and 7 skips:
+
+| Count | Classes | Reason |
+|---|---|---|
+| 2 | `spec.security.clientcert.ClientCertTests`, `spec.security.clientcertanno.ClientCertAnnoTests` | accepted gap: CLIENT-CERT deferred (BUG-20261011-03) |
+| 2 | `spec.security.secform.SecFormTests`: `test2`, `test2_anno` | accepted gap: the failed login forwards to `/error.jsp`; no JSP engine (BUG-20261011-04) |
+| 3 | `ServletContext40Tests` (`addJspTest`, `addJspContextListenerInTLD`, `setSessionTimeoutContextListenerInTLD`) | JSP-engine SPI, plugged by Ibarra (Jakarta Pages 4.0) (BUG-20261011-04 family) |
+| 7 skipped | `spec.serverpush.ServerPushTests` (HTTP/2 push) | accepted gap |
+
+Bugs at this exit: BUG-20261011-10 FIXED (vidocq#222); BUG-20261011-11 opened (chappe drains
+an over-cap chunked body without bound).
+
+## 0.1 Phase 6 exit: security (2026-10-11)
 
 `pr/ybl/servlet-completion-phase6` @ `1100b90` (chappe 0.4.0-SNAPSHOT),
 `./run-official-tck-servlet6.1.sh --all`: 1714 run, **1692 passing / 1714 run, 7 skipped**
@@ -53,7 +106,7 @@ accepted gap), -05 (case-sensitive constraint matching vs a case-insensitive fil
 -06 (flaky `CallbackSerializerTest`), -07 (security denial on the redirect and unmapped
 branches outside the request listeners).
 
-## 0.1 Phase 5 exit: streaming, async and non-blocking I/O (2026-10-10)
+## 0.2 Phase 5 exit: streaming, async and non-blocking I/O (2026-10-10)
 
 `pr/ybl/servlet-completion-phase5` @ `3c0aa13` (chappe `pr/ybl/servlet-streaming-upgrade` @
 `3623006`, 0.4.0-SNAPSHOT), `./run-official-tck-servlet6.1.sh --all`: 1714 run,
@@ -108,7 +161,7 @@ only by chappe's write timeout), plus the Phase 4 ones still open (-20261009-01,
 -09). Chappe: CHAPPE-008 (ordinary headers), CHAPPE-014 (lingering close skipped after an
 interrupted body read).
 
-## 0.2 Phase 4 exit: request, response and session core (2026-10-09)
+## 0.3 Phase 4 exit: request, response and session core (2026-10-09)
 
 `pr/ybl/servlet-completion-phase4` @ `8cc03fd`, `./run-official-tck-servlet6.1.sh --all`:
 1714 run, **1649 pass**, 65 errors, 13 min 32 s (Phase 3: 1587, +62). Per family:
@@ -144,7 +197,7 @@ Remaining 65 errors, by class and by phase:
 Open bugs: BUG-20261009-01 (dispatch drops a non-HTTP wrapper), -03 (error dispatch paths),
 -04 (decoded paths in dispatch URIs), -09 (connection and HTTP/2 stream ids, chappe follow-up).
 
-## 0.3 Phase 3 exit: descriptors and pluggability (2026-10-09)
+## 0.4 Phase 3 exit: descriptors and pluggability (2026-10-09)
 
 `pr/ybl/servlet-completion-phase3`, `./run-official-tck-servlet6.1.sh --all`:
 1714 run, **1587 pass**, 127 errors, 13 min 52 s (Phase 2: 928). Per family:
@@ -166,7 +219,7 @@ BUG-20261008-02), `httpservletresponse`, `httpservletresponse30`,
 `fragment.FragmentTests` (1). They belong to the request/response phase (default
 servlet, welcome files) and the security phase.
 
-## 0.4 Phase 2 exit: build-time code generation (2026-10-08)
+## 0.5 Phase 2 exit: build-time code generation (2026-10-08)
 
 `pr/ybl/servlet-completion-phase2`, `./run-official-tck-servlet6.1.sh --all`:
 1714 run, **928 pass**, 786 errors, 11 min 19 s (Phase 1: 921). Per family:

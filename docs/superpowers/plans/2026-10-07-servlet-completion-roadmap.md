@@ -181,6 +181,10 @@ CDI: request/session context activation per request/session in
 `foy-cdi-vauban`. Signature tests (`sigtest-maven-plugin`, `-Psigtest`).
 Docs: `docs/en` pages (`tck.adoc`, `reference.adoc`, `internals.adoc`)
 updated to the final status; `TCK.md` final report; certification decision.
+Shipped: multipart, request body limits, the Phase 1 leftovers, the signature test
+profile and the docs; see "Phase 7 exit / follow-ups". Out of this phase: the CDI
+items (the request and session context activation landed outside the phase plans, foy#18 and
+foy#21; BUG-20261010-07 and -08 stay open) and the certification decision, both carried over.
 
 ## Working rules for every phase
 - TDD: failing test first (unit or foy-core end-to-end with
@@ -199,7 +203,7 @@ updated to the final status; `TCK.md` final report; certification decision.
 - **Phase 2:** default `@WebServlet`/`@WebFilter` name must be the FQCN (§8.1.1; today the simple name, which breaks the §8.2.3 by-name merge for FQCN-named web.xml entries); `ComponentFactory.Reflective` copies its name set and wraps `LinkageError`/`ExceptionInInitializerError`; `ClassCastException` in instantiate skips the component instead of aborting; honour dynamic `setAsyncSupported` and filter `asyncSupported`; same instance under two names; test the CDI discovery path.
 - **Phase 3:** tri-state `async-supported` merge; `NumberFormatException` on malformed `load-on-startup`; tests for error-page / context-param copy and `FilterMappingDecl` invariants; unmapped dynamic vs static filter asymmetry.
 - **Phase 4:** `ServletContext.setSessionTimeout()` from an SCI/listener must reach the session manager; `fireContextDestroyed` must isolate throwing listeners; make the temp-dir leak test independent of the shared `java.io.tmpdir`.
-- **Phase 7:** form body size cap; parameter parsing locks the request encoding (§3.12); retry after a failed body read.
+- **Phase 7:** form body size cap; parameter parsing locks the request encoding (§3.12); retry after a failed body read. **Done in Phase 7** (7e98d7a: form body cap, encoding lock, a failed body read propagates once and is never retried; 9288eb5: the cap on bodies without `Content-Length`).
 - **Cosmetic:** `tck-tally.sh` argument check; harness `start()` closes the deployment if the server fails to start.
 
 ## Phase 2 exit / follow-ups (2026-10-08)
@@ -316,3 +320,29 @@ Phase 6 shipped, in Foy only (branch `pr/ybl/servlet-completion-phase6`, 75f5dcb
 - Constraints: an all-default `HttpConstraint` is dropped as soon as any method constraint exists; `ConstraintTable.Builder` does not enforce the descriptor-then-servlet call order; some `permits()` and mixed method/omission cases lack assertions; the unconfigured fail-closed path logs nothing.
 - Registration: run-as on disabled servlets untested and its apply logic duplicated; `declareRoles(null)` throws NPE instead of IAE; static-registration ISE after initialisation untested.
 - Transport: a 403 transport denial with an error page is untested; duplicate Host headers depend on chappe.
+
+## Phase 7 exit / follow-ups (2026-10-11)
+
+Phase 7 shipped, in Foy only (branch `pr/ybl/servlet-completion-phase7`, 6e5f4e1..6ac5daa, plus the exit commits 0f7455f and the docs commit): `RequestLimits` (`maxChunkedRequestBodySize` 10 MiB for bodies without `Content-Length`, `maxFormBodySize` 2 MiB, `maxMultipartParts` 50, `maxMultipartPartHeaderSize` 8 KiB) on `FoyChappeBoot.Builder` and `DeployOptions` (9288eb5); the form body cap, the encoding lock once a body is parsed and a failed body read propagated once, never retried (7e98d7a); the effective multipart configuration of each servlet (`@MultipartConfig`, `<multipart-config>`, `setMultipartConfig`) frozen at `markInitialized` and resolved for the executing servlet (c148e60); `PartStorage`/`PartImpl` with threshold spill to owner-only random temporary files and a confined `Part.write` (31ef3a6); a streaming RFC 7578 parser with a Knuth-Morris-Pratt delimiter scan and limits enforced while streaming (d6eff97); the `getParts` contract (`ServletException` for a non-multipart request, `IllegalStateException` without a configuration or after the application took the body), the tracked body, the epilogue drain, part cleanup at the end of the request and async cycle, and `413` for an uncaught limit on a synchronous dispatch (d2995fa); form fields as request parameters with the part, request, `_charset_`, ISO-8859-1 charset order (1b49250, b1a85ac); the `sigtest` profile (6ac5daa). Tracked here, no external issue or PR opened.
+
+**Full TCK:** 1700 passing / 1714 run, 7 skipped (Phase 6: 1692), 7 errors, zero per-class regression, `join -v` empty both sides, 2 classes improved (8 tests: `PartTests` 4 → 0, `Part1Tests` 4 → 0), every `tiers=Stats` line `reflection=0`. Per family (passing / run, skipped): `api.*` 856/859, 0; `pluggability.*` 646/646, 0; `spec.*` 196/207, 7; `compat.*` 2/2, 0. Family mode adds `GetServletRegistrationsTest` (`api.*` 857/860). **Signature test:** `ServletSigTest` GREEN (`Tests run: 1, Failures: 0, Errors: 0, Skipped: 0`).
+
+**Remaining failures, by phase:**
+- CLIENT-CERT, 2 (`ClientCertTests`, `ClientCertAnnoTests`): deferred (BUG-20261011-03).
+- JSP, 2 + 3: `SecFormTests.test2`/`test2_anno` (BUG-20261011-04) and the `ServletContext40Tests` trio; both wait for the JSP-engine SPI plugged by Ibarra.
+- HTTP/2 server push, 7 skipped: accepted gap.
+
+**Open bugs:** new BUG-20261011-11 (chappe drains an over-cap chunked body without bound; chappe follow-up). BUG-20261011-10 is FIXED on the Vidocq side (vidocq#222). Still open: BUG-20261011-02, -03 (DEFERRED), -04 (ACCEPTED GAP), -05, -06, -07, -08, -09; BUG-20261010-02 (PARTIAL), -03, -06, -07, -08; BUG-20261009-01, -03, -04, -09, -11 to -14.
+
+**Out of scope, carried over:** the CDI context bugs BUG-20261010-07 (no CDI context on `AsyncContext.start()` threads nor in `AsyncListener.onComplete`) and -08 (error pages without the CDI contexts); the certification decision.
+
+**Documented limits (usage, internals, reference, migration pages):** a configuration is required for `getParts`; `getSubmittedFileName()` is raw; boundary at most 70 characters and CRLF only (bare LF is malformed); `getParameter` on a malformed multipart body answers `500`, not `400`; an uncaught limit answers `413` on a synchronous dispatch but `500` from an `AsyncContext.start` runnable, and a too-large form body answers `500`; the epilogue drain makes a stalled client delay `getParts` on a `Content-Length` body; request listeners see the query-string parameters only on a multipart POST, while an async `requestDestroyed` is in scope through `asyncServletName`; the annotations of an `addServlet(Class)` class are read even under `metadata-complete`, deliberately.
+
+**Deferred minors worth tracking:**
+- No aggregate in-memory cap beyond the body size.
+- The multipart epilogue sent after the response is drained by chappe (BUG-20261011-11 for chunked bodies).
+- `Part.write` checks a relative name lexically (`normalize`) and against the real path of the deepest existing directory at call time: a directory the application swaps for a symbolic link between the check and the write can still lead outside the location.
+- `getParameter` on a multipart request outside any servlet scope (a filter of an unmapped path) sees no body parameters.
+- `PartImpl.text` reads a whole field into memory (bounded by `maxFileSize`).
+- A FORM `j_security_check` sent as multipart gets no credentials.
+- From the task reviews: a failed `filename*` decode with no `filename` turns a file into a field; parameter names of `Content-Disposition` are not token-checked; concurrent `getParts` can orphan a `PartStorage` (application misuse); a `413` while a chunked upload is in flight lacks `Connection: close`; a failed parse's storage is closed only at the end of the request; a `NumberFormatException` on a malformed `Content-Length` (pre-existing); the sigtest profile requires `tck-official` (documented, not enforced).

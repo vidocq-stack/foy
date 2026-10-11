@@ -35,7 +35,7 @@ Before diving into internals, let's pin down the vocabulary. The terms below com
 | `request.startAsync()` returns an `AsyncContext`. No platform pool to protect: each request runs on a *virtual thread*; async only decouples response from request on the program side.
 
 | **Multipart**
-| `@MultipartConfig` + `request.getParts()`. Parsed by `MultipartParser`, **fully buffered in memory** (no streaming parse, no temp-file spill).
+| `@MultipartConfig` + `request.getParts()`. Streamed (RFC 7578), memory up to `fileSizeThreshold` then owner-only temporary files, deleted at the end of the request.
 |===
 
 == Metaphor: the layer above the transport

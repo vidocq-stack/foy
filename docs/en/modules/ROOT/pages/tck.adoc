@@ -6,11 +6,13 @@ This page consolidates the status of the official Jakarta Servlet 6.1 TCK runs a
 
 == Summary
 
-This is a **measurement**, not a conformance claim. At the latest full run (`jakarta.tck:servlet-tck-runtime:6.1.0`, Phase 6 exit, 2026-10-11):
+This is a **measurement**, not a conformance claim. At the latest full run (`jakarta.tck:servlet-tck-runtime:6.1.0`, Phase 7 exit, 2026-10-11):
 
-* **1714** tests run: **1692 passing**, 7 skipped, 0 failures / 15 errors — **98.7 %** of the tests run pass (Phase 5 exit: 1659; Phase 4 exit: 1649). A skipped test is never counted as passing;
+* **1714** tests run: **1700 passing**, 7 skipped, 0 failures / 7 errors — **99.2 %** of the tests run pass (Phase 6 exit: 1692; Phase 5 exit: 1659). A skipped test is never counted as passing;
+* Phase 7 added streamed multipart (RFC 7578: `@MultipartConfig`, `<multipart-config>` and `setMultipartConfig` reach the request, parts above `fileSizeThreshold` go to owner-only temporary files deleted at the end of the request, form fields are request parameters) and container request body limits; `PartTests` and `Part1Tests` now pass 7 of 7 each, no class regressed and 2 improved (8 tests);
 * Phase 6 added security enforcement: `<security-constraint>` and `@ServletSecurity` per url-pattern, `deny-uncovered-http-methods`, the transport guarantee, BASIC and FORM login, `security-role-ref`, programmatic `login`/`logout`/`authenticate`, `setServletSecurity` and `declareRoles`; no class regressed and 5 improved (33 tests). The `spec.security.*` family passes 55 of its 59 tests (Phase 5 exit: 22);
-* the 15 remaining errors are multipart (8), JSP-dependent tests (3 + 2 FORM tests whose error page is a JSP) and CLIENT-CERT (2, deferred); see <<security-status>>;
+* the 7 remaining errors are JSP-dependent tests (3 + 2 FORM tests whose error page is a JSP) and CLIENT-CERT (2, deferred); see <<security-status>>;
+* the API signature test (`ServletSigTest`, `sigtest` profile) passes; see <<signature-test>>;
 * the 7 skipped tests are HTTP/2 server push, an accepted gap (see <<what-is-skipped>>).
 
 Per-family breakdown (passing / run):
@@ -21,10 +23,10 @@ Per-family breakdown (passing / run):
 
 | `api.*` (core engine)
 | 859
-| 848
+| 856
 | 0
-| 98.7 %
-| ✅ The Servlet engine itself is solid; the rest is multipart (8) and JSP (3). Family mode also runs `GetServletRegistrationsTest`: 849 / 860
+| 99.7 %
+| ✅ The Servlet engine itself is solid; the rest is JSP (3). Family mode also runs `GetServletRegistrationsTest`: 857 / 860
 
 | `pluggability.*`
 | 646
@@ -81,7 +83,20 @@ The full run reports `Skipped: 7`, all in `spec.serverpush.ServerPushTests`:
 No other test battery is excluded. Two more product decisions show up as errors rather than skips:
 
 * **No JSP engine in Foy itself** — the 3 JSP-dependent `ServletContext40Tests` fail. A JSP-engine SPI in Foy, plugged by xref:ibarra::index.adoc[Ibarra] (Jakarta Pages 4.0), is the planned way to run them. For dynamic pages today, use xref:cassini::index.adoc[Cassini] (REST) or pure Servlets.
-* **Hang safety net** — some TCK clients read raw sockets without `SO_TIMEOUT` and would hang forever on an unanswered request; `foy-tck` sets a global JUnit 120 s timeout (`SEPARATE_THREAD` mode). No test hits it at the Phase 6 exit.
+* **Hang safety net** — some TCK clients read raw sockets without `SO_TIMEOUT` and would hang forever on an unanswered request; `foy-tck` sets a global JUnit 120 s timeout (`SEPARATE_THREAD` mode). No test hits it at the Phase 7 exit.
+
+[#signature-test]
+== Signature test
+
+The `sigtest` profile of `foy-tck` runs the TCK's own `servlet.tck.signature.ServletSigTest` (signature file `jakarta.servlet.sig_6.1`) against the `jakarta.servlet-api` 6.1.0 jar Foy runs on:
+
+[source,bash]
+----
+./mvnw -ntp -Ptck,tck-official,sigtest -pl foy-tck test -Dtest=ServletSigTest \
+    -Dsurefire.failIfNoSpecifiedTests=false
+----
+
+At the Phase 7 exit it passes: `Tests run: 1, Failures: 0, Errors: 0, Skipped: 0`. The profile needs the `tck-official` artefacts; its two build-time tools (`sigtest-maven-plugin` 2.5, `maven-dependency-plugin`) are never shipped.
 
 == Reading the logs
 

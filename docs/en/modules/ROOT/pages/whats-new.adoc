@@ -1,5 +1,5 @@
 = What's new
-:description: Everything that changed in Foy since the {release-version} release — Servlet security enforcement, the CDI request and session contexts, and Foy proven on Weld SE and with Weld's servlet integration.
+:description: Everything that changed in Foy since the {release-version} release — Servlet security enforcement, streamed multipart and request body limits, the CDI request and session contexts, and Foy proven on Weld SE and with Weld's servlet integration.
 
 [.lead]
 New in the `{project-version}` development line — everything listed here landed **after the {release-version} release** and is not part of it. Every entry links to the section that documents it, and those sections carry the [.tag-new]#NEW# badge. Each brick of the suite keeps its own page of this kind; xref:home::whats-new.adoc[the ecosystem index] gathers them. When the next release train ships, this page is frozen with it and restarts empty on the dev line.
@@ -18,3 +18,11 @@ New in the `{project-version}` development line — everything listed here lande
 * **BASIC and FORM login** — `login-config` BASIC (realm `Restricted` by default) and FORM (`j_security_check`, server-side saved target, session id rotation); `login()`, `logout()` and `authenticate()` follow the configured mechanism. CLIENT-CERT is deferred and DIGEST unsupported; both fail closed. xref:reference.adoc#security[Security reference].
 * **`IdentityStore` replaces `SecurityProvider` (API break)** — declare users with `FoyChappeBoot.builder().user(...)` (salted SHA-256 in memory) or plug an `IdentityStore`. `SecurityProvider` and `AuthenticatedUser` are removed. xref:migration.adoc#security-behaviour-changes[Migration].
 * **TCK** — the `spec.security.*` family passes 55 of its 59 tests (Phase 5 exit: 22); the four left are CLIENT-CERT (2, deferred) and two FORM tests that need a JSP engine. xref:tck.adoc[TCK].
+
+== Multipart and request bodies
+
+* **Multipart is streamed** — `getParts()` parses the body while it streams in (RFC 7578): a part stays in memory up to `fileSizeThreshold`, then goes to an owner-only temporary file under the multipart `location`, deleted at the end of the request (async cycle included). `maxFileSize` and `maxRequestSize` are enforced while streaming. {release-version} buffered the whole body in memory and ignored the location and the threshold. xref:usage.adoc#file-upload[File upload].
+* **`<multipart-config>` and `setMultipartConfig` reach the request**, like `@MultipartConfig`, and a configuration is now required: without one, `getParts()` throws `IllegalStateException`. xref:migration.adoc#request-body-behaviour-changes[Migration].
+* **Form fields of a multipart body are request parameters**, with the part, request, `_charset_`, ISO-8859-1 charset order. xref:usage.adoc#file-upload[File upload].
+* **Container request body limits** — `FoyChappeBoot.Builder` gains `maxChunkedRequestBodySize` (10 MiB), `maxFormBodySize` (2 MiB), `maxMultipartParts` (50) and `maxMultipartPartHeaderSize` (8 KiB); an uncaught limit answers `413` on a synchronous dispatch. xref:reference.adoc#request-body-limits[Request body limits].
+* **TCK** — `PartTests` and `Part1Tests` pass 14 of 14 (Phase 6 exit: 6); the full suite passes 1700 of 1714 tests run, 7 skipped (99.2 %), and the API signature test passes. xref:tck.adoc[TCK].
