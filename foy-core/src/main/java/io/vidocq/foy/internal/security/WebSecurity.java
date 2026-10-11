@@ -21,7 +21,9 @@ package io.vidocq.foy.internal.security;
 
 import io.vidocq.foy.internal.bridge.HttpServletRequestImpl;
 import io.vidocq.foy.internal.security.ConstraintTable.Decision;
+import io.vidocq.foy.internal.session.HttpSessionImpl;
 import io.vidocq.foy.internal.webxml.SecurityDefs.LoginConfigDef;
+import io.vidocq.foy.spi.security.Identity;
 import io.vidocq.foy.spi.security.IdentityStore;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletResponse;
@@ -79,6 +81,13 @@ public final class WebSecurity {
                 ? BasicAuthenticator.DEFAULT_REALM : loginConfig.realmName().trim();
         return switch (method) {
             case "BASIC" -> new BasicAuthenticator(store, realm);
+            case "FORM" -> {
+                if (loginConfig.formLoginPage() == null) {
+                    LOG.log(System.Logger.Level.WARNING,
+                            "FORM login-config without form-login-page; protected resources answer 403");
+                }
+                yield new FormAuthenticator(store, loginConfig.formLoginPage(), loginConfig.formErrorPage());
+            }
             default -> {
                 LOG.log(System.Logger.Level.WARNING,
                         "auth-method {0} is not supported; protected resources answer 403", method);
@@ -94,7 +103,9 @@ public final class WebSecurity {
      * Applies the constraint of {@code canonicalPath} and the request method. Returns {@code true}
      * when the request proceeds; otherwise the response is produced (401 challenge, 403, or the
      * mechanism's challenge) and {@code false} is returned. Any exception fails closed: the caller
-     * does not invoke the target.
+     * does not invoke the target. Order: the identity cached in the session (FORM) is restored, a
+     * CONFIDENTIAL constraint on a plain request is refused, then a FORM login action is handled
+     * (whatever its access rule), then the access rule applies.
      */
     public boolean admit(HttpServletRequestImpl req, HttpServletResponse res, String canonicalPath)
             throws IOException, ServletException {
@@ -102,7 +113,18 @@ public final class WebSecurity {
             res.sendError(HttpServletResponse.SC_FORBIDDEN);
             return false;
         }
+        restoreIdentity(req);
         Decision decision = constraints.decide(canonicalPath, req.getMethod());
+        // The transport guarantee comes first, the login action included: a confidential
+        // application never accepts credentials over plain HTTP.
+        if (decision.confidential() && !req.isSecure()) {
+            res.sendError(HttpServletResponse.SC_FORBIDDEN);
+            return false;
+        }
+        if (authenticator instanceof FormAuthenticator form && form.isLoginAction(canonicalPath)) {
+            form.processLogin(req, res, this);
+            return false;
+        }
         switch (decision.access()) {
             case UNCHECKED -> { return true; }
             case EXCLUDED -> { res.sendError(HttpServletResponse.SC_FORBIDDEN); return false; }
@@ -120,5 +142,40 @@ public final class WebSecurity {
             return false;
         }
         return true;
+    }
+
+    /** A session-based identity (section 13.7), cached by {@link #loggedIn}. */
+    record CachedIdentity(Identity identity, String authType) {}
+
+    /** Binds the identity cached in the session, if any, to a request that has none yet. */
+    void restoreIdentity(HttpServletRequestImpl req) {
+        if (!authenticator.sessionBased() || req.identity() != null) return;
+        if (req.getSession(false) instanceof HttpSessionImpl s
+                && s.note(FormAuthenticator.IDENTITY_NOTE) instanceof CachedIdentity c) {
+            req.bindIdentity(c.identity(), c.authType());
+        }
+    }
+
+    /**
+     * A successful login (FORM action or {@code HttpServletRequest.login}). It binds the identity
+     * to the request and changes the id of an existing session (session fixation;
+     * {@link SecuritySettings#rotateSessionIdOnLogin}). For a session-based mechanism, it then
+     * caches the identity in the session, creating one if needed.
+     */
+    public void loggedIn(HttpServletRequestImpl req, Identity identity, String authType) {
+        req.bindIdentity(identity, authType);
+        if (req.getSession(false) != null && settings.rotateSessionIdOnLogin()) req.changeSessionId();
+        if (authenticator.sessionBased()) {
+            ((HttpSessionImpl) req.getSession(true))
+                    .setNote(FormAuthenticator.IDENTITY_NOTE, new CachedIdentity(identity, authType));
+        }
+    }
+
+    /** {@code HttpServletRequest.logout}: the request's and the session's identity are cleared; the session stays. */
+    public void loggedOut(HttpServletRequestImpl req) {
+        req.bindIdentity(null, null);
+        if (req.getSession(false) instanceof HttpSessionImpl s) {
+            s.removeNote(FormAuthenticator.IDENTITY_NOTE);
+        }
     }
 }

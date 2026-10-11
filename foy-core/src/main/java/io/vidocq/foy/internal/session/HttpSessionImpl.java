@@ -63,6 +63,16 @@ public final class HttpSessionImpl implements HttpSession {
     /** Requests currently using the session; guarded by {@code this}. */
     private int accessCount;
     private final ConcurrentMap<String, Object> attributes = new ConcurrentHashMap<>();
+    /**
+     * Container-private values (authentication state). They are not attributes: no listener, no
+     * {@code getAttributeNames}, out of the application's reach. They stay with the session object
+     * across {@code changeSessionId} and are dropped on invalidation.
+     */
+    private final ConcurrentMap<String, Object> notes = new ConcurrentHashMap<>();
+
+    public Object note(String key) { return notes.get(key); }
+    public void setNote(String key, Object value) { notes.put(key, value); }
+    public Object removeNote(String key) { return notes.remove(key); }
 
     public HttpSessionImpl(String id, ServletContext ctx, SessionManager manager, int maxInactiveSeconds) {
         this.id = id;
@@ -144,6 +154,7 @@ public final class HttpSessionImpl implements HttpSession {
             LOG.log(System.Logger.Level.WARNING, "sessionDestroyed failed for session " + id, e);
         }
         invalidated = true;
+        notes.clear();
         for (String name : new ArrayList<>(attributes.keySet())) {
             Object v = attributes.remove(name);
             if (v == null) continue;
