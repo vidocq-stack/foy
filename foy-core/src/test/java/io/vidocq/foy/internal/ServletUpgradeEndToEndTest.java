@@ -363,25 +363,33 @@ class ServletUpgradeEndToEndTest {
         assertTrue(closeMillis >= 0 && closeMillis < 5_000, "close() took " + closeMillis + " ms");
     }
 
-    /** chappe refuses the upgrade head (invalid header): a 500, a WARNING naming it, no handler started. */
+    /**
+     * An invalid header on the upgrade head is refused at {@code setHeader} (CHAPPE-008, the rule
+     * chappe applies on the wire): the servlet fails before upgrade(), a 500, no handler started.
+     */
     @Test
-    void anInvalidUpgradeHeaderIsA500AndAWarning() throws Exception {
+    void anInvalidUpgradeHeaderIsRefusedBeforeTheUpgrade() throws Exception {
+        var refused = new java.util.concurrent.atomic.AtomicBoolean();
         start(new HttpServlet() {
             @Override
             protected void doPost(HttpServletRequest req, HttpServletResponse resp) throws IOException, ServletException {
                 resp.setStatus(101);
                 resp.setHeader("Upgrade", "YES");
-                resp.setHeader("Bad Name", "x");
+                try {
+                    resp.setHeader("Bad Name", "x");
+                } catch (IllegalArgumentException e) {
+                    refused.set(true);
+                    throw e;
+                }
                 req.upgrade(ClosingHandler.class);
             }
         });
-        try (var log = LogCapture.of(ChappeServletBridge.class.getName());
-             var client = new Client(port)) {
+        try (var client = new Client(port)) {
             client.send(tckHead().replace("Connection: Upgrade", "Connection: close"));
             String response = client.readAll();
             assertTrue(response.startsWith("HTTP/1.1 500"), response);
-            assertTrue(log.warnings().stream().anyMatch(w -> w.contains("Bad Name")), log.warnings().toString());
         }
+        assertTrue(refused.get(), "setHeader refused the invalid name");
         assertEquals(List.of(), probe.events, "init never ran");
         assertEquals(0, probe.destroyCalls.get(), "destroy never runs for a handler never initialised");
     }

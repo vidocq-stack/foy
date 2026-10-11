@@ -213,20 +213,13 @@ public final class HttpServletResponseImpl implements HttpServletResponse {
     private static final String HEX = "0123456789ABCDEF";
 
     /**
-     * Rejects a header name or value that could split the header block or be mangled on the wire:
-     * CR, LF, NUL, or any character above U+00FF (the HTTP/1.1 writer emits one byte per char, so
-     * U+010D U+010A would become CR LF). Common container practice is an
-     * {@link IllegalArgumentException}, which Foy follows for every header entry point.
+     * Rejects a header value that chappe would refuse on the wire (CHAPPE-008, see
+     * {@link io.vidocq.foy.internal.http.HeaderSyntax}): any control character but HTAB, DEL, or a
+     * character above U+00FF. Common container practice is an {@link IllegalArgumentException},
+     * which Foy follows for every header entry point.
      */
     static void checkHeaderText(String what, String text) {
-        if (text == null) return;
-        for (int i = 0; i < text.length(); i++) {
-            char c = text.charAt(i);
-            if (c == '\r' || c == '\n' || c == 0 || c > 0xff) {
-                throw new IllegalArgumentException("illegal character U+" + String.format("%04X", (int) c)
-                        + " in header " + what);
-            }
-        }
+        io.vidocq.foy.internal.http.HeaderSyntax.checkValue("header " + what, text);
     }
 
     /** Servlet 6.1 §5.8.2 — sendRedirect must produce an absolute URL. */
@@ -324,8 +317,9 @@ public final class HttpServletResponseImpl implements HttpServletResponse {
         headers.computeIfAbsent(name, _ -> new ArrayList<>()).add(value);
         interceptSpecialHeader(name, value);
     }
+    /** CHAPPE-008: the name is an RFC 9110 token, checked first so the value message may name it. */
     private static void checkHeader(String name, String value) {
-        checkHeaderText("name", name);
+        io.vidocq.foy.internal.http.HeaderSyntax.checkName(name);
         checkHeaderText(name, value);
     }
     @Override public void setIntHeader(String name, int value) { setHeader(name, Integer.toString(value)); }

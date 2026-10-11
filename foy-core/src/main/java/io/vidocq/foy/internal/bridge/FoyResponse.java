@@ -85,7 +85,7 @@ final class FoyResponse implements Response {
             if (name == null || name.isEmpty() || value == null) continue;
             if (FORBIDDEN.contains(name.toLowerCase(Locale.ROOT))) continue;
             try {
-                HttpServletResponseImpl.checkHeaderText("name", name);
+                io.vidocq.foy.internal.http.HeaderSyntax.checkName(name);
                 HttpServletResponseImpl.checkHeaderText(name, value);
             } catch (IllegalArgumentException invalid) {
                 // Thrown at the application for a header; a trailer is only dropped, the body is out.

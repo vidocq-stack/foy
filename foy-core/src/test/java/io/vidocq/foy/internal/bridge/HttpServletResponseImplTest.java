@@ -323,6 +323,74 @@ class HttpServletResponseImplTest {
         assertNoInjectedLine(res);
     }
 
+    /** CHAPPE-008: a header name is an RFC 9110 token. */
+    @Test
+    void headerNamesMustBeTokens() {
+        var res = new HttpServletResponseImpl();
+        for (String bad : List.of("", "X Y", "X:Y", "X\tY", "Xé", "X\u0001", "X\u007f", "X\u0000", "(X)", "X/Y")) {
+            assertThrows(IllegalArgumentException.class, () -> res.setHeader(bad, "v"), bad);
+            assertThrows(IllegalArgumentException.class, () -> res.addHeader(bad, "v"), bad);
+            assertThrows(IllegalArgumentException.class, () -> res.setIntHeader(bad, 1), bad);
+            assertThrows(IllegalArgumentException.class, () -> res.addIntHeader(bad, 1), bad);
+            assertThrows(IllegalArgumentException.class, () -> res.setDateHeader(bad, 0L), bad);
+            assertThrows(IllegalArgumentException.class, () -> res.addDateHeader(bad, 0L), bad);
+        }
+        assertTrue(res.getHeaderNames().isEmpty());
+        res.setHeader("X-Ok_1!#$%&'*+.^`|~", "v");
+        assertEquals("v", res.getHeader("X-Ok_1!#$%&'*+.^`|~"));
+    }
+
+    /** CHAPPE-008: a value holds no control character but HTAB, and nothing above U+00FF. */
+    @Test
+    void headerValuesRejectEveryControlCharacterButHtab() {
+        var res = new HttpServletResponseImpl();
+        for (char c = 0; c < 0x20; c++) {
+            if (c == '\t') continue;
+            String v = "a" + c + "b";
+            assertThrows(IllegalArgumentException.class, () -> res.setHeader("X", v), "U+" + (int) c);
+            assertThrows(IllegalArgumentException.class, () -> res.addHeader("X", v), "U+" + (int) c);
+        }
+        assertThrows(IllegalArgumentException.class, () -> res.setHeader("X", "a\u007fb"));
+        assertThrows(IllegalArgumentException.class, () -> res.addHeader("X", "aĀb"));
+        assertThrows(IllegalArgumentException.class, () -> res.setContentType("text/html\u0001"));
+        assertFalse(res.containsHeader("X"));
+        // SP, HTAB, obs-text (0x80-0xFF) and the empty value stay legal.
+        res.setHeader("A", "a b\tc");
+        res.setHeader("B", "\u0080ÿ");
+        res.setHeader("C", "");
+        assertEquals("a b\tc", res.getHeader("A"));
+        assertEquals("\u0080ÿ", res.getHeader("B"));
+        assertEquals("", res.getHeader("C"));
+    }
+
+    @Test
+    void theRejectionNeverEchoesTheValue() {
+        var res = new HttpServletResponseImpl();
+        var e = assertThrows(IllegalArgumentException.class, () -> res.setHeader("X", "secret-token\u0001"));
+        assertFalse(e.getMessage().contains("secret-token"), e.getMessage());
+        var n = assertThrows(IllegalArgumentException.class, () -> res.setHeader("secret name", "v"));
+        assertFalse(n.getMessage().contains("secret"), n.getMessage());
+    }
+
+    @Test
+    void cookiesFollowTheHeaderValueRule() {
+        var res = new HttpServletResponseImpl();
+        var path = new jakarta.servlet.http.Cookie("a", "b");
+        path.setPath("/x\u0001");
+        assertThrows(IllegalArgumentException.class, () -> res.addCookie(path));
+        var attr = new jakarta.servlet.http.Cookie("a", "b");
+        attr.setAttribute("X", "v\u007f");
+        assertThrows(IllegalArgumentException.class, () -> res.addCookie(attr));
+        assertTrue(res.cookies().isEmpty());
+    }
+
+    @Test
+    void aRedirectLocationIsEncodedNotRejected() throws IOException {
+        var res = new HttpServletResponseImpl();
+        res.sendRedirect("/x\u0001\u007fy");
+        assertEquals("/x%01%7Fy", res.getHeader("Location"));
+    }
+
     @Test
     void cookiesWithCrLfOrNonLatin1AreRejected() {
         var res = new HttpServletResponseImpl();

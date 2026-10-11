@@ -78,6 +78,21 @@ class ResponseTrailerFieldsTest {
         assertTrue(ChappeServletBridge.toChappeResponse(failing).trailers().isEmpty());
     }
 
+    /** CHAPPE-008 applies to trailers too, but an invalid trailer is dropped, never thrown. */
+    @Test
+    void invalidTrailerFieldsAreDropped() {
+        var res = new HttpServletResponseImpl();
+        var fields = new java.util.LinkedHashMap<String, String>();
+        fields.put("ok", "v");
+        fields.put("bad name", "v");
+        fields.put("bad:name", "v");
+        fields.put("ctl", "a\u0001b");
+        fields.put("del", "a\u007fb");
+        fields.put("tab", "a\tb");
+        res.setTrailerFields(() -> fields);
+        assertEquals(List.of("ok: v", "tab: a\tb"), lines(ChappeServletBridge.toChappeResponse(res).trailers()));
+    }
+
     @Test
     void getTrailerFieldsReturnsTheSupplier() {
         var res = new HttpServletResponseImpl();

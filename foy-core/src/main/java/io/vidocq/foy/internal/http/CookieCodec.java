@@ -95,15 +95,9 @@ public final class CookieCodec {
         }
     }
 
+    /** The Set-Cookie header value follows the response header rule (CHAPPE-008). */
     private static void check(String what, String text) {
-        if (text == null) return;
-        for (int i = 0; i < text.length(); i++) {
-            char ch = text.charAt(i);
-            if (ch == '\r' || ch == '\n' || ch == 0 || ch > 0xff) {
-                throw new IllegalArgumentException("illegal character U+" + String.format("%04X", (int) ch)
-                        + " in " + what);
-            }
-        }
+        HeaderSyntax.checkValue(what, text);
     }
 
     /** RFC 7231 §7.1.1.1 IMF-fixdate, e.g. {@code Sun, 06 Nov 1994 08:49:37 GMT}. */
