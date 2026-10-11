@@ -86,6 +86,27 @@ class FormAuthenticationEndToEndTest {
     }
 
     @Test
+    void theLoginPageServedAtTheProtectedUrlIsNeverCached() throws Exception {
+        try (var app = formApp()) {
+            var r = app.get("/secure/page");
+            assertEquals("LOGIN PAGE", r.body());
+            // The login page answers 200 at the protected URL: a cache must not keep it there.
+            assertEquals("no-store", r.headers().firstValue("Cache-Control").orElse(null));
+            assertEquals("no-cache", r.headers().firstValue("Pragma").orElse(null));
+        }
+    }
+
+    @Test
+    void theErrorPageIsNeverCachedEither() throws Exception {
+        try (var app = formApp()) {
+            app.get("/secure/page");
+            var r = app.postForm("/j_security_check", "j_username=alice&j_password=wrong");
+            assertEquals("LOGIN ERROR", r.body());
+            assertEquals("no-store", r.headers().firstValue("Cache-Control").orElse(null));
+        }
+    }
+
+    @Test
     void loginRotatesTheSessionAndKeepsItsAttributes() throws Exception {
         try (var app = formApp()) {
             app.get("/put");

@@ -216,7 +216,7 @@ The roles are application role names, used as they are by the constraints and by
 | `login-config/realm-name`, or `Restricted` by default, in `WWW-Authenticate: Basic realm="..."`.
 
 | FORM challenge
-| The request is forwarded to `form-login-page` (the browser keeps its URL). Only a `GET` or `HEAD` target is saved, server-side in the session, rebuilt from the request URI and query; a protected `POST` is not replayed. A FORM `login-config` without a login page answers `403`.
+| The request is forwarded to `form-login-page` (the browser keeps its URL). Only a `GET` or `HEAD` target is saved, server-side in the session, rebuilt from the request URI and query; a protected `POST` is not replayed. A FORM `login-config` without a login page answers `403`. The login and error pages are sent with `Cache-Control: no-store` and `Pragma: no-cache`, so no cache keeps the login page at the protected URL; a page that sets those headers itself, or calls `reset()`, replaces them.
 
 | `j_security_check`
 | `POST` only (`405` with `Allow: POST` otherwise), on any path ending in `/j_security_check`. On success: identity bound, session id rotated, identity kept in the session, `302` to the saved target or the context root. The redirect carries the session id only when the client sent it in the URL. On failure: forward to `form-error-page`, or `403` without one. Over plain HTTP it is accepted unless a CONFIDENTIAL constraint covers its path.
@@ -243,7 +243,7 @@ The roles are application role names, used as they are by the constraints and by
 | `401` and `403` go through the `<error-page>` handling, like `sendError`.
 
 | Unconfigured context
-| A context built outside the deployer refuses every request (`403`): security fails closed.
+| A context built outside the deployer refuses every request (`403`): security fails closed. Its first refused request logs one `WARNING` saying so.
 
 | Roles
 | `*` in an `auth-constraint` stands for every declared role; `**` for any authenticated user unless a role `**` is declared. No group mapping.

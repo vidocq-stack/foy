@@ -152,20 +152,45 @@ public final class HttpServletRequestImpl implements HttpServletRequest {
 
     public Identity identity() { return identity; }
 
-    private String currentServletName;
+    /**
+     * The servlet a dispatch thread is executing, for {@code security-role-ref} resolution
+     * (section 13.3). {@code thread} is the dispatch thread that entered it: any other thread (an
+     * {@code AsyncContext.start} Runnable, an application thread) never sees the forward/include
+     * scoping of the dispatch thread.
+     */
+    public record ServletScope(String servletName, Thread thread) {}
+
+    private volatile ServletScope servletScope;
+    /** The servlet executing when the current async cycle started (section 13.3 on async threads). */
+    private volatile String asyncServletName;
 
     /**
-     * Marks {@code servletName} as the servlet now executing, for {@code security-role-ref}
-     * resolution (section 13.3), and returns the previous one for {@link #leaveServlet}.
+     * Marks {@code servletName} as the servlet now executing on the calling thread, for
+     * {@code security-role-ref} resolution (section 13.3), and returns the previous scope for
+     * {@link #leaveServlet}.
      */
-    public String enterServlet(String servletName) {
-        String previous = currentServletName;
-        currentServletName = servletName;
+    public ServletScope enterServlet(String servletName) {
+        ServletScope previous = servletScope;
+        servletScope = new ServletScope(servletName, Thread.currentThread());
         return previous;
     }
 
-    /** Restores the servlet that {@link #enterServlet} returned. */
-    public void leaveServlet(String previous) { currentServletName = previous; }
+    /** Restores the scope that {@link #enterServlet} returned. */
+    public void leaveServlet(ServletScope previous) { servletScope = previous; }
+
+    /**
+     * The servlet whose {@code security-role-ref}s apply to the calling thread: the servlet the
+     * thread is dispatching to, or, on any other thread, the servlet that started the async cycle
+     * (as Tomcat does), so a Runnable passed to {@code AsyncContext.start} answers
+     * {@code isUserInRole} deterministically whatever the dispatch thread is doing.
+     */
+    private String roleRefServletName() {
+        ServletScope scope = servletScope;
+        if (scope != null && scope.thread() == Thread.currentThread()) return scope.servletName();
+        String async = asyncServletName;
+        if (async != null) return async;
+        return scope == null ? null : scope.servletName();
+    }
 
     // ---- Request line & URI ----
 
@@ -690,7 +715,7 @@ public final class HttpServletRequestImpl implements HttpServletRequest {
     @Override public boolean isUserInRole(String role) {
         var roles = servletContext instanceof VidocqServletContext v ? v.roleMapping()
                 : io.vidocq.foy.internal.security.RoleMapping.EMPTY;
-        return roles.isUserInRole(currentServletName, identity, role);
+        return roles.isUserInRole(roleRefServletName(), identity, role);
     }
     @Override public Principal getUserPrincipal() { return identity == null ? null : identity.principal(); }
     private String urlSessionId;
@@ -979,6 +1004,10 @@ public final class HttpServletRequestImpl implements HttpServletRequest {
         boolean original = (req == this && res == boundResponse);
         var started = new io.vidocq.foy.internal.async.AsyncContextImpl(req, res, servletContext, original);
         this.asyncContext = started;
+        // Section 13.3: threads outside the dispatch (AsyncContext.start) resolve role refs against
+        // the servlet executing now, whatever the dispatch thread does afterwards.
+        ServletScope scope = servletScope;
+        asyncServletName = scope == null ? null : scope.servletName();
         // A new cycle may write the response from any thread again; a write failing because the
         // client is gone fails the cycle (onError).
         if (boundResponse instanceof HttpServletResponseImpl impl) impl.openOutput(started::fail);

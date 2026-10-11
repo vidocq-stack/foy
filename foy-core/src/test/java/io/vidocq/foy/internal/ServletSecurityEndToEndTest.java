@@ -120,7 +120,7 @@ class ServletSecurityEndToEndTest {
     void aContextWithoutSecurityRefusesEveryRequest() throws Exception {
         // Fail closed: a context nobody configured (no deployer, no explicit permit-all) admits nothing.
         var ctx = new VidocqServletContext("/");
-        assertSame(WebSecurity.UNCONFIGURED, ctx.security());
+        assertTrue(ctx.security().refusesEveryRequest());
         var bridge = new ChappeServletBridge(
                 new ServletDispatcher(List.of(new ServletDispatcher.Mapping(
                         UrlPatternMatcher.of("/pub"), new PublicServlet(), "S", true))),
@@ -131,6 +131,35 @@ class ServletSecurityEndToEndTest {
         assertEquals(403, get("/pub", null).statusCode());
         assertEquals(403, get("/pub", "alice:a-secret").statusCode());
         assertEquals(403, get("/unmapped", null).statusCode());
+    }
+
+    @Test
+    void anUnconfiguredContextWarnsOnceWhyItRefusesEveryRequest() throws Exception {
+        try (var logs = LogCapture.of(WebSecurity.class.getName())) {
+            for (String path : List.of("/one", "/two")) {
+                var ctx = new VidocqServletContext(path);
+                var bridge = new ChappeServletBridge(
+                        new ServletDispatcher(List.of(new ServletDispatcher.Mapping(
+                                UrlPatternMatcher.of("/pub"), new PublicServlet(), "S", true))),
+                        new FilterRegistry(List.of()), ctx, null, path);
+                var r = TestServerLauncher.start(bridge);
+                try {
+                    server = r.server;
+                    port = r.port;
+                    assertEquals(403, get(path + "/pub", null).statusCode());
+                    assertEquals(403, get(path + "/pub", null).statusCode());
+                    assertEquals(403, get(path + "/other", null).statusCode());
+                } finally {
+                    server.stop();
+                    server = null;
+                }
+            }
+            // One warning per context, not per request.
+            var warnings = logs.warnings().stream().filter(w -> w.contains("no security configured")).toList();
+            assertEquals(2, warnings.size(), warnings.toString());
+            assertTrue(warnings.get(0).contains("/one"), warnings.get(0));
+            assertTrue(warnings.get(1).contains("/two"), warnings.get(1));
+        }
     }
 
     @Test

@@ -284,11 +284,11 @@ public final class VidocqServletContext implements ServletContext {
     }
 
     private volatile io.vidocq.foy.internal.security.WebSecurity security =
-            io.vidocq.foy.internal.security.WebSecurity.UNCONFIGURED;
+            io.vidocq.foy.internal.security.WebSecurity.unconfigured();
 
     /**
      * The application's security. Until the deployer (or a test, explicitly) sets one it is
-     * {@link io.vidocq.foy.internal.security.WebSecurity#UNCONFIGURED}, which refuses every request:
+     * {@link io.vidocq.foy.internal.security.WebSecurity#unconfigured()}, which refuses every request:
      * no context ever admits requests by default.
      */
     public io.vidocq.foy.internal.security.WebSecurity security() { return security; }
@@ -875,6 +875,7 @@ public final class VidocqServletContext implements ServletContext {
     @Override public void declareRoles(String... roleNames) {
         if (programmaticListenerActive) throw programmaticForbidden();
         if (initialized) throw alreadyInitialized();
+        if (roleNames == null) throw new IllegalArgumentException("roleNames is null");
         for (String r : roleNames) {
             if (r == null || r.isEmpty()) throw new IllegalArgumentException("a role name is null or empty");
         }

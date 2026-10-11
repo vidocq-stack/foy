@@ -31,6 +31,7 @@ import jakarta.servlet.http.HttpServletResponse;
 import java.io.IOException;
 import java.util.Locale;
 import java.util.Objects;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * The security of one web application at request time: its compiled constraints, its
@@ -46,14 +47,21 @@ public final class WebSecurity {
     private final Authenticator authenticator;
     private final SecuritySettings settings;
     private final boolean refuseAll;
+    /** Set once the unconfigured context has explained, once, why it refuses every request. */
+    private final AtomicBoolean warned = new AtomicBoolean();
 
     /**
      * The security of a context the deployer has not configured: it fails closed. Every request
      * answers 403 and no login is possible, so a context built outside {@code WebAppDeployer}
-     * never admits a request it was not explicitly told to admit.
+     * never admits a request it was not explicitly told to admit. Each context gets its own
+     * instance, which logs one WARNING on its first refused request.
      */
-    public static final WebSecurity UNCONFIGURED =
-            new WebSecurity(ConstraintTable.EMPTY, new DenyingAuthenticator("NONE"), SecuritySettings.DEFAULTS, true);
+    public static WebSecurity unconfigured() {
+        return new WebSecurity(ConstraintTable.EMPTY, new DenyingAuthenticator("NONE"), SecuritySettings.DEFAULTS, true);
+    }
+
+    /** {@code true} for the fail-closed security of an unconfigured context. */
+    public boolean refusesEveryRequest() { return refuseAll; }
 
     public WebSecurity(ConstraintTable constraints, Authenticator authenticator, SecuritySettings settings) {
         this(constraints, authenticator, settings, false);
@@ -110,6 +118,12 @@ public final class WebSecurity {
     public boolean admit(HttpServletRequestImpl req, HttpServletResponse res, String canonicalPath)
             throws IOException, ServletException {
         if (refuseAll) {
+            if (warned.compareAndSet(false, true)) {
+                LOG.log(System.Logger.Level.WARNING,
+                        "Context ''{0}'' has no security configured (it was not built by the deployer and no "
+                                + "WebSecurity was set): every request is refused with 403",
+                        req.getContextPath());
+            }
             res.sendError(HttpServletResponse.SC_FORBIDDEN);
             return false;
         }
@@ -147,8 +161,10 @@ public final class WebSecurity {
     /**
      * A CONFIDENTIAL/INTEGRAL constraint on a plain request (section 13.8). With a configured HTTPS
      * port, the client is redirected to the same URI over HTTPS, whatever the method (a request
-     * body is not carried over). Otherwise, or when the Host header is not a plain host name, the
-     * request is refused with 403: a hostile Host header never steers the redirect.
+     * body is not carried over). The redirect host is the client's {@code Host} header when it is a
+     * plain host name (letters, digits, dots, hyphens): the client can only redirect itself. Without
+     * an HTTPS port, or when the Host is malformed, an IPv6 literal or carries userinfo, or the raw
+     * URI or query holds a space, control or non-ASCII character, the request is refused with 403.
      */
     private void refuseInsecure(HttpServletRequestImpl req, HttpServletResponse res) throws IOException {
         int port = settings.confidentialPort();

@@ -999,7 +999,7 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
             return;
         }
         boolean previous = impl.isAsyncSupported();
-        String previousServlet = impl.enterServlet(target.servletName());
+        HttpServletRequestImpl.ServletScope previousServlet = impl.enterServlet(target.servletName());
         impl.setAsyncSupported(previous && target.asyncSupported() && chain.asyncSupported());
         try {
             new VidocqFilterChain(filters, target.servlet()).doFilter(req, res);

@@ -140,6 +140,13 @@ public final class FormAuthenticator implements Authenticator {
         return target;
     }
 
+    /**
+     * Forwards to the login or error page, marked uncacheable first: the login page answers 200 at
+     * the protected URL, and a cache keeping it there would serve it again after the login (a login
+     * loop) or to another user. A forward clears only the buffer, so the headers survive whatever
+     * the page writes; only a page that explicitly sets {@code Cache-Control}/{@code Pragma} or calls
+     * {@code reset()} removes them, which is that page's deliberate choice.
+     */
     private static void forward(HttpServletRequestImpl req, HttpServletResponse res, String page)
             throws IOException, ServletException {
         RequestDispatcher rd = req.getServletContext().getRequestDispatcher(page);
@@ -147,6 +154,8 @@ public final class FormAuthenticator implements Authenticator {
             res.sendError(HttpServletResponse.SC_FORBIDDEN);
             return;
         }
+        res.setHeader("Cache-Control", "no-store");
+        res.setHeader("Pragma", "no-cache");
         rd.forward(req, res);
     }
 }
