@@ -365,4 +365,38 @@ class FoyChappeBootTest {
             server.stop();
         }
     }
+
+    private static FoyChappeBoot.Mounted versioned(String versionAttribute) throws ServletException {
+        String xml = """
+            <web-app xmlns="https://jakarta.ee/xml/ns/jakartaee"%s>
+              <servlet><servlet-name>p</servlet-name><servlet-class>%s</servlet-class></servlet>
+              <servlet-mapping><servlet-name>p</servlet-name><url-pattern>/p</url-pattern></servlet-mapping>
+            </web-app>""".formatted(versionAttribute, Plain.class.getName());
+        return FoyChappeBoot.builder().contextPath("/").classLoader(FoyChappeBootTest.class.getClassLoader())
+                .discoverPluggability(false).webXml(new ByteArrayInputStream(xml.getBytes()))
+                .build().orElseThrow();
+    }
+
+    @Test
+    void webXmlVersionIsTheEffectiveVersion() throws Exception {
+        var mounted = versioned(" version=\"5.0\"");
+        try {
+            assertEquals(5, mounted.servletContext().getEffectiveMajorVersion());
+            assertEquals(0, mounted.servletContext().getEffectiveMinorVersion());
+            assertEquals(6, mounted.servletContext().getMajorVersion(), "the container version is unchanged");
+        } finally {
+            mounted.close();
+        }
+    }
+
+    @Test
+    void webXmlWithoutVersionKeepsTheContainerVersion() throws Exception {
+        var mounted = versioned("");
+        try {
+            assertEquals(6, mounted.servletContext().getEffectiveMajorVersion());
+            assertEquals(1, mounted.servletContext().getEffectiveMinorVersion());
+        } finally {
+            mounted.close();
+        }
+    }
 }

@@ -138,8 +138,11 @@ public final class WebAppDescriptor {
     private final List<ErrorPageDef> errorPages;
     private final int sessionTimeoutMinutes;
     private final Map<String, String> localeEncodingMappings;
-    /** Version declared in the {@code web-app/version} attribute (default "6.0"). */
-    private String version = "6.0";
+    /**
+     * Version declared in the {@code web-app/version} attribute (or the legacy DTD), {@code null}
+     * when absent: the container version is then the effective one.
+     */
+    private String version;
     public String version() { return version; }
     public WebAppDescriptor withVersion(String v) {
         if (v != null && !v.isBlank()) this.version = v;

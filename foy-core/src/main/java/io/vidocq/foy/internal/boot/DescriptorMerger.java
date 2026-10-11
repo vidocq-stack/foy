@@ -256,6 +256,7 @@ public final class DescriptorMerger {
             throws ServletException {
         AnnotatedComponents ann = webXml.metadataComplete() ? AnnotatedComponents.none() : annotated;
 
+        effectiveVersion(webXml.version(), target);
         webXml.contextParams().forEach(target::contextParam);
         if (webXml.displayName() != null) target.displayName(webXml.displayName());
         target.sessionTimeoutMinutes(webXml.sessionTimeoutMinutes());
@@ -280,6 +281,26 @@ public final class DescriptorMerger {
 
         mergeFilters(webXml, ann, factory, target);
         mergeListeners(webXml, ann, factory, target);
+    }
+
+    /**
+     * web.xml's {@code version} as the effective Servlet version ({@code ServletContext
+     * .getEffectiveMajorVersion}/{@code getEffectiveMinorVersion}). Fragments never change it
+     * (FragmentMerger keeps web.xml's); without web.xml, without a version, or with a malformed
+     * one, the builder keeps the container version.
+     */
+    private static void effectiveVersion(String version, WebAppModel.Builder target) {
+        if (version == null) return;
+        String v = version.trim();
+        int dot = v.indexOf('.');
+        try {
+            int major = Integer.parseInt(dot < 0 ? v : v.substring(0, dot));
+            int minor = dot < 0 ? 0 : Integer.parseInt(v.substring(dot + 1));
+            if (major < 0 || minor < 0) return;
+            target.effectiveVersion(major, minor);
+        } catch (NumberFormatException ignored) {
+            // malformed version: the container version stays
+        }
     }
 
     /** Merges the servlets into {@code target}; returns the roles their {@code @DeclareRoles} declare. */

@@ -777,3 +777,24 @@ Statuts : `OPEN` → `INVESTIGATING` → `FIXED` (commit hash) → `CLOSED`.
   chunked body is drained to its end whatever its size.
 - **Planned fix**: in chappe, cap chunked bodies at `maxRequestSize` and close the connection instead of
   draining past the cap.
+
+## BUG-20261011-12 — the web.xml version is never the effective Servlet version
+
+- **Date**: 2026-10-11
+- **Status**: FIXED by the commit `fix(core): apply the web.xml version as the effective Servlet
+  version` (branch `pr/ybl/effective-version`). Found by Vidocq: the official Servlet TCK on the
+  assembled runtime, against Foy `main` `ee6c899` (vidocq#217).
+- **Module**: `foy-core` (`DescriptorMerger`, `WebAppDescriptor`), seen through `foy-chappe`
+  (`FoyChappeBoot.build`)
+- **Symptom**: `ServletContext.getEffectiveMajorVersion()` / `getEffectiveMinorVersion()` always
+  answer 6 and 1, whatever the `web-app/version` attribute. The official tests
+  `ServletContext30Tests.getEffectiveMajorVersionTest` and `getEffectiveMinorVersionTest` (api and
+  pluggability families) fail on the runtime: a `version="5.0"` web.xml expects 5 and 0.
+- **Minimal repro**: `FoyChappeBootTest.webXmlVersionIsTheEffectiveVersion`.
+- **Cause**: no product code called `WebAppModel.Builder.effectiveVersion`; only the foy-tck harness
+  (`VidocqDeployableContainer`) did, so the in-reactor TCK passed and hid the gap.
+- **Fix**: `DescriptorMerger` (the deploy path shared by `FoyChappeBoot` and the TCK harness) applies
+  the effective descriptor's version. Fragments never change it (`FragmentMerger` keeps web.xml's), nor
+  does `metadata-complete`. `WebAppDescriptor.version()` is now `null` when no version is declared (it
+  was `"6.0"`), so an application without web.xml or without a version keeps the container version
+  6.1. The harness override is removed, so the TCK guards the product path.

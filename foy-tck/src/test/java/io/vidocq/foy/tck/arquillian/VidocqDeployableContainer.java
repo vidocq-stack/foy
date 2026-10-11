@@ -156,7 +156,6 @@ public class VidocqDeployableContainer implements DeployableContainer<VidocqCont
                     .excludingSources(ApplicationSources.excludedJars(fragments, ordered), sourceOf);
             effective = FragmentMerger.merge(webXml, ordered);
             DescriptorMerger.mergeMerged(effective, ordered, annotated, sourceOf, factory, model);
-            if (content.hasWebXml()) effectiveVersion(model, webXml.version());
             Set<URL> fragmentJars = new LinkedHashSet<>();
             for (Fragment f : fragments) fragmentJars.add(f.jar());
             initializers = initializers(content, ApplicationSources.ordering(webXml.absoluteOrdering(), ordered,
@@ -214,19 +213,6 @@ public class VidocqDeployableContainer implements DeployableContainer<VidocqCont
                 registered.isEmpty() ? "_vidocq" : registered.get(0), tckContextRoot));
         pmd.addContext(ctx);
         return pmd;
-    }
-
-    /** web-app/version as the effective Servlet version ({@code getEffectiveMajorVersion}). */
-    private static void effectiveVersion(WebAppModel.Builder model, String version) {
-        if (version == null) return;
-        int dot = version.indexOf('.');
-        try {
-            int major = Integer.parseInt(dot < 0 ? version : version.substring(0, dot));
-            int minor = dot < 0 ? 0 : Integer.parseInt(version.substring(dot + 1));
-            model.effectiveVersion(major, minor);
-        } catch (NumberFormatException ignored) {
-            // malformed version: the container default stays
-        }
     }
 
     /**
