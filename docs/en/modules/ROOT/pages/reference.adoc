@@ -11,7 +11,7 @@ Consolidated technical reference. Use this page as an anchor for external links 
 | Artefact | Role
 
 | `io.vidocq.foy:foy-api:{project-version}`
-| Public SPI: `SessionStore`, `SecurityProvider`, `AuthenticatedUser`. No dependency outside `jakarta.servlet-api`.
+| Public SPI: `SessionStore`, `IdentityStore`, `Identity`. No dependency outside `jakarta.servlet-api`.
 
 | `io.vidocq.foy:foy-core:{project-version}`
 | Servlet 6.1 engine — dispatcher, filter chain, sessions, error pages, listeners, security, `web.xml` parser, multipart, and the Chappe bridge (`ChappeServletBridge`, package `io.vidocq.foy.internal.bridge`).
@@ -38,7 +38,7 @@ module io.vidocq.foy.api {
     requires static jakarta.annotation;
 
     exports io.vidocq.foy.spi.session;    // SessionStore
-    exports io.vidocq.foy.spi.security;   // SecurityProvider, AuthenticatedUser
+    exports io.vidocq.foy.spi.security;   // IdentityStore, Identity
     exports io.vidocq.foy.spi.gen;        // WebComponent, WebComponentDescriptor
     exports io.vidocq.foy.spi.cdi;        // CdiWebComponents
 }
@@ -141,6 +141,18 @@ The `io.vidocq.foy.internal.*` packages are exported to allow advanced integrati
 | `Builder.webXml(InputStream in)`
 | Optional `web.xml` stream, merged with the annotated components per Servlet 6.1 §8.2.3.
 
+| `Builder.user(String name, char[] password, String... roles)` [.tag-new]#NEW#
+| Declares a user of the in-memory identity store with its application roles. The password is digested at once (salted SHA-256) and not kept. Exclusive with `identityStore`.
+
+| `Builder.identityStore(IdentityStore store)` [.tag-new]#NEW#
+| The user base behind BASIC, FORM and `login()`. With neither this nor `user(...)`, every login fails. Exclusive with `user`.
+
+| `Builder.confidentialPort(int port)` [.tag-new]#NEW#
+| HTTPS port a CONFIDENTIAL/INTEGRAL constraint redirects plain HTTP to (`302`). Default `-1`: such a request gets `403`. Any other value outside 1–65535 throws `IllegalArgumentException`.
+
+| `Builder.rotateSessionIdOnLogin(boolean rotate)` [.tag-new]#NEW#
+| Whether a successful login changes the id of an existing session. Default `true`; `false` re-opens session fixation.
+
 | `Builder.build()`
 | Deploys the web application through `WebAppDeployer`. Returns `Optional<Mounted>`. Empty if no Servlet/Filter/Listener bean was discovered.
 
@@ -166,11 +178,81 @@ The `io.vidocq.foy.internal.*` packages are exported to allow advanced integrati
 | `io.vidocq.foy.spi.session.SessionStore`
 | Session storage backend. Default: `InMemorySessionStore`. Implement to back Redis, Hazelcast, JDBC, etc. Optional default methods: `rename(oldId, session)` (used by `changeSessionId`; default put-then-remove) and `sessions()` (the snapshot scanned by the expiry reaper and invalidated on undeploy; default empty, for stores that expire entries themselves; with the default, sessions expired by the store or left at undeploy fire no `sessionDestroyed`, `valueUnbound` or `attributeRemoved`).
 
-| `io.vidocq.foy.spi.security.SecurityProvider`
-| Application authentication. Default: `AnonymousSecurityProvider` (dev) or `BasicAuthenticator`. Implement for OIDC, LDAP, JWT.
+| `io.vidocq.foy.spi.security.IdentityStore`
+| The user base behind BASIC, FORM and `HttpServletRequest.login`: `Optional<Identity> validate(String username, char[] password)`. Given to `FoyChappeBoot.Builder.identityStore`; Foy's in-memory store backs `Builder.user`. See <<security>>.
 
-| `io.vidocq.foy.spi.security.AuthenticatedUser`
-| Immutable authenticated-user representation (login, roles, attributes).
+| `io.vidocq.foy.spi.security.Identity`
+| Record of a validated caller: its `Principal` and its application roles (`Identity.of(name, roles)`).
+|===
+
+[#security]
+== Security [.tag-new]#NEW#
+
+=== `IdentityStore` contract
+
+`IdentityStore.validate(username, password)` returns the caller's `Identity` (principal and application roles) or `Optional.empty()`. An implementation must:
+
+* compare secrets in constant time (`MessageDigest.isEqual`) and spend the same work on an unknown user as on a wrong password;
+* never log, keep or echo the password; Foy wipes the `char[]` as soon as `validate` returns;
+* return `Optional.empty()` on any refusal. Foy treats an exception or a `null` result as a refusal, and logs only the exception class of a `RuntimeException`;
+* never put the user name or the password in an exception message.
+
+The roles are application role names, used as they are by the constraints and by `isUserInRole` (after the servlet's `security-role-ref`s). Foy maps no group.
+
+=== The in-memory store
+
+`FoyChappeBoot.Builder.user(...)` fills Foy's in-memory store. Each password is kept only as a salted SHA-256 digest (16 random bytes of salt); validation compares digests with `MessageDigest.isEqual` and digests a decoy for an unknown user, so the response time does not tell which user names exist. It is meant for a fixed set of users declared by the embedder, **not as a password database**: a persistent or shared user base plugs its own `IdentityStore`, with a slow hash (PBKDF2, Argon2) if it stores hashes.
+
+=== Mechanisms and behaviour
+
+[cols="1,3",options="header"]
+|===
+| Topic | Behaviour
+
+| `auth-method`
+| `BASIC` (also when there is no `login-config` or no `auth-method`) and `FORM`. `CLIENT-CERT` is deferred; `DIGEST` and any other value are not supported. An unsupported method is logged at deploy and its protected resources answer `403`.
+
+| Realm
+| `login-config/realm-name`, or `Restricted` by default, in `WWW-Authenticate: Basic realm="..."`.
+
+| FORM challenge
+| The request is forwarded to `form-login-page` (the browser keeps its URL). Only a `GET` or `HEAD` target is saved, server-side in the session, rebuilt from the request URI and query; a protected `POST` is not replayed. A FORM `login-config` without a login page answers `403`.
+
+| `j_security_check`
+| `POST` only (`405` with `Allow: POST` otherwise), on any path ending in `/j_security_check`. On success: identity bound, session id rotated, identity kept in the session, `302` to the saved target or the context root. The redirect carries the session id only when the client sent it in the URL. On failure: forward to `form-error-page`, or `403` without one. Over plain HTTP it is accepted unless a CONFIDENTIAL constraint covers its path.
+
+| Session id rotation
+| Every successful login (FORM action or `login()`) changes the id of an existing session, unless `rotateSessionIdOnLogin(false)`.
+
+| `login()`
+| Validates against the store and sets the configured mechanism as auth type. Under FORM the identity is kept in the session, which is created if needed; under BASIC it lasts for the request. A mechanism without password login (CLIENT-CERT, unsupported ones) throws `ServletException`.
+
+| `logout()`
+| Clears the identity of the request and of the session. The session and its attributes stay.
+
+| `authenticate()`
+| `true` when the request has an identity; otherwise the mechanism's challenge (`401` BASIC, login page FORM) and `false`.
+
+| CONFIDENTIAL / INTEGRAL
+| Both mean HTTPS required. A plain request gets `403`, or a `302` to `https://<Host>:<confidentialPort><uri>?<query>` when `confidentialPort` is set (no port in the URL for 443). The redirect host comes from the client's `Host` header; an IPv6 literal or an invalid Host, and a raw request URI or query holding a non-ASCII, space or control character, get `403` instead. A `POST` body is not carried over the redirect.
+
+| Reverse proxy
+| Behind a TLS-terminating proxy, `isSecure()` is `false`, so a CONFIDENTIAL constraint redirects again and again. Terminate TLS in Chappe, or do not declare the transport guarantee on such a deployment.
+
+| Denials
+| `401` and `403` go through the `<error-page>` handling, like `sendError`.
+
+| Unconfigured context
+| A context built outside the deployer refuses every request (`403`): security fails closed.
+
+| Roles
+| `*` in an `auth-constraint` stands for every declared role; `**` for any authenticated user unless a role `**` is declared. No group mapping.
+
+| `run-as`
+| `<run-as>` and `@RunAs` are reported by `ServletRegistration.getRunAsRole()` but not propagated: there is no EJB container.
+
+| `setServletSecurity`
+| Returns the url-patterns already constrained by the descriptor (left unchanged); throws `IllegalStateException` once the context is initialised.
 |===
 
 == `web.xml` and `web-fragment.xml` coverage
@@ -222,12 +304,16 @@ The `io.vidocq.foy.internal.*` packages are exported to allow advanced integrati
 | consumed by the container default servlet: static file first, then servlet; see xref:usage.adoc#welcome-files[Welcome files]
 
 | `<deny-uncovered-http-methods>`
-| parsed
-| enforced with the security phase
+| enforced
+| an uncovered method at a constrained pattern answers `403`; without it, it is open and reported at deploy
 
 | `<security-constraint>`, `<login-config>`, `<security-role>`
-| parsed
-| enforced with the security phase
+| enforced
+| per url-pattern, merged with `@ServletSecurity` (the descriptor wins on an exact pattern); `auth-method` BASIC or FORM, any other fails closed; see <<security>>
+
+| `<security-role-ref>`, `<run-as>`
+| applied
+| `isUserInRole` follows the role-ref of the executing servlet; `run-as` is reported by `getRunAsRole()` only
 
 | `<name>`, `<ordering>`, `<absolute-ordering>`
 | applied
@@ -383,13 +469,13 @@ On a forward the mapping is that of the target; `jakarta.servlet.forward.mapping
 | ✅
 | `InMemorySessionStore`; SPI `SessionStore` for distribution; `changeSessionId`, expiry reaper, tracking modes, URL rewriting.
 
-| Security (Basic)
-| ⚠️
-| `BasicAuthenticator` + `@ServletSecurity` constraints (`SecurityConstraintEnforcer`); `<security-constraint>` in `web.xml` and the fragments is parsed and merged but not enforced yet (security phase, Phase 6). 8 of 14 `secbasic` TCK tests still fail.
+| Security (BASIC, FORM, constraints)
+| ✅
+| `<security-constraint>`, `@ServletSecurity`, `setServletSecurity`, `deny-uncovered-http-methods`, transport guarantee, `security-role-ref`, `declareRoles`, `login`/`logout`/`authenticate`; see <<security>>.
 
-| Security (Form, Digest, Jakarta Auth)
+| Security (CLIENT-CERT, DIGEST, Jakarta Authentication)
 | ❌
-| Not implemented.
+| CLIENT-CERT deferred, DIGEST not supported (both answer `403` on protected resources); Jakarta Authentication and Authorization not implemented.
 
 | WebSocket (Jakarta WebSocket over the upgrade)
 | ❌

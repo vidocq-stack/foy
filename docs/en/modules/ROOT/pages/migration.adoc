@@ -6,7 +6,7 @@ Foy honours the Jakarta Servlet 6.1 spec to the letter — your `web.xml`, your 
 
 [CAUTION]
 ====
-Foy is at **{project-version}** and the official TCK passes **96.8 %** over the full suite: 1659 passing / 1714 run, 7 skipped (`api.*` 848/859, `pluggability.*` 646/646, `spec.*` 163/207, `compat.*` 2/2); the remaining errors are security, multipart and JSP (see xref:tck.adoc[TCK status]). Migration is not recommended in production until the listed gaps are closed.
+Foy is at **{project-version}** and the official TCK passes **98.7 %** over the full suite: 1692 passing / 1714 run, 7 skipped (`api.*` 848/859, `pluggability.*` 646/646, `spec.*` 196/207, `compat.*` 2/2); the remaining errors are multipart, CLIENT-CERT (deferred) and JSP (see xref:tck.adoc[TCK status]). Migration is not recommended in production until the listed gaps are closed.
 ====
 
 == From Tomcat
@@ -36,8 +36,8 @@ Foy is at **{project-version}** and the official TCK passes **96.8 %** over the 
 | HTTP/1.1 + HTTP/2 + virtual threads.
 
 | `Realm` / `AuthMethod`
-| `SecurityProvider` (`foy-api`)
-| Implement `io.vidocq.foy.spi.security.SecurityProvider`. Basic Auth via `BasicAuthenticator`.
+| `IdentityStore` (`foy-api`)
+| Declare users with `FoyChappeBoot.builder().user(...)`, or implement `io.vidocq.foy.spi.security.IdentityStore`. `login-config` BASIC and FORM; see xref:usage.adoc#application-security[Application security].
 
 | JNDI lookups (`@Resource`)
 | `@Inject` via `foy-cdi-vauban`
@@ -96,16 +96,15 @@ Foy is at **{project-version}** and the official TCK passes **96.8 %** over the 
 
 == From Helidon Servlet
 
-No real-world migration has been documented yet — the Tomcat and Jetty tables above transpose directly (programmatic boot, Chappe transport, `SecurityProvider` SPI).
+No real-world migration has been documented yet — the Tomcat and Jetty tables above transpose directly (programmatic boot, Chappe transport, `IdentityStore` SPI).
 
 == Known gaps
 
 * **HTTP/2 server push** — not supported; `newPushBuilder()` returns `null` (push is deprecated in Servlet 6.1).
 * **Directory listings and `multipart/byteranges`** — the default servlet serves single files only (404 for a directory) and answers several ranges with the whole body.
-* **Security enforcement** — `<security-constraint>` and `<login-config>` are parsed but not enforced yet.
 * **WebSocket Servlet 6.1 / Jakarta WebSocket 2.2** — not implemented (planned, no date).
 * **JSP** — not supported by Foy itself; planned through a JSP-engine SPI that xref:ibarra::index.adoc[Ibarra] (Jakarta Pages 4.0) plugs into. For dynamic pages use xref:cassini::index.adoc[Cassini] (REST) or HTML-emitting Servlets.
-* **Form-based / Digest authentication** — not implemented.
+* **CLIENT-CERT deferred, DIGEST not supported** — both fail closed (`403`).
 * **Multipart** — fully buffered in memory; limit/threshold handling partial.
 
 Cross-context dispatch (`ServletContext.getContext`) **is implemented** via `CrossContextRegistry` — strict contextPath match on the contexts deployed in the same JVM.
@@ -153,6 +152,38 @@ The request listener hardening changes these behaviours for embedders:
 * **Every `requestDestroyed` runs, even when one throws.** The listeners are still called in reverse registration order; the first `RuntimeException` is rethrown once they have all run, with the later ones added as suppressed exceptions (an `Error` still propagates at once).
 * **A failed `requestInitialized` is unwound.** When a listener throws from `requestInitialized`, the listeners already initialized get `requestDestroyed`, in reverse order, before the exception propagates.
 * **A filter failure on a path no servlet maps ends like any other failure.** A `RuntimeException` or `IOException` thrown by a filter there (before, only a `ServletException`) is answered with Foy's generic `500` and the request listeners get `requestDestroyed`.
+
+[#security-behaviour-changes]
+=== Security
+
+The security work (Servlet 6.1 chapter 13) changes these behaviours for embedders:
+
+* **`SecurityProvider` and `AuthenticatedUser` are removed (API break)**, replaced by `IdentityStore` and `Identity`, with no deprecated bridge. The password now comes as a `char[]` that Foy wipes after the call, the result carries a `Principal` and the roles, and the store is given to `FoyChappeBoot` instead of `DeployOptions.withSecurityProvider`:
++
+[source,java]
+----
+// Before
+SecurityProvider provider = (user, password) -> myCheck(user, password)
+        .map(roles -> new AuthenticatedUser(user, roles));
+DeployOptions options = DeployOptions.defaults(loader).withSecurityProvider(provider);
+
+// After
+FoyChappeBoot.builder().beanManager(bm)
+        .identityStore((user, password) -> myCheck(user, password).map(roles -> Identity.of(user, roles)))
+        .build();
+// or, for a fixed set of users
+FoyChappeBoot.builder().beanManager(bm).user("alice", password, "admin").build();
+----
+* **web.xml `security-constraint`s are now enforced**, as are `deny-uncovered-http-methods` and `transport-guarantee`. A resource that answered before may now answer `401` or `403`. A CONFIDENTIAL constraint over plain HTTP answers `403`, or `302` when `confidentialPort` is set; behind a TLS-terminating reverse proxy `isSecure()` is `false` and the redirect loops.
+* **Annotation constraints apply per url-pattern**, and the descriptor wins on a pattern it names exactly.
+* **The BASIC realm is `login-config/realm-name` or `Restricted`**, no longer `vidocq`.
+* **`isUserInRole` follows `security-role-ref`** of the executing servlet.
+* **`login()` sets the configured mechanism as auth type**, rotates the session id and, under FORM, keeps the identity in the session (creating one).
+* **`logout()` keeps the session**: it clears the identity only. Invalidate the session to drop its attributes.
+* **An unsupported `auth-method` now answers `403`** on protected resources (CLIENT-CERT, DIGEST, anything else).
+* **`setServletSecurity` returns the descriptor-constrained patterns** and throws `IllegalStateException` after initialisation.
+* **`ServletContext.declareRoles` is implemented.**
+* **Without users or a store, every login fails**, and a context built outside the deployer refuses every request: security fails closed.
 
 == Common pitfalls
 

@@ -29,7 +29,7 @@ package "Foy" {
     [FilterRegistry]
     [SessionManager]
     [VidocqServletContext]
-    [SecurityConstraintEnforcer]
+    [WebSecurity]
   }
   package "io.vidocq.foy.chappe" {
     [FoyChappeBoot]
@@ -55,7 +55,7 @@ APP --> [VidocqServletContext]
 [WebAppDeployer] --> [Deployment]
 [ChappeServletBridge] --> [ServletDispatcher]
 [ServletDispatcher] --> [FilterRegistry]
-[ServletDispatcher] --> [SecurityConstraintEnforcer]
+[ChappeServletBridge] --> [WebSecurity]
 [ChappeServletBridge] --> [Connection / Handler]
 [FoyVaubanBootstrap] --> [BeanManager]
 @enduml
@@ -70,7 +70,7 @@ sequenceDiagram
     participant Chappe as Chappe (transport)
     participant Bridge as ChappeServletBridge
     participant Disp as ServletDispatcher
-    participant Sec as SecurityConstraintEnforcer
+    participant Sec as WebSecurity
     participant Filters as FilterRegistry
     participant Servlet
     participant Session as SessionManager
@@ -79,11 +79,11 @@ sequenceDiagram
     Chappe->>Chappe: parse HTTP, virtual thread
     Chappe->>Bridge: handle(Request, Response)
     Bridge->>Bridge: HttpServletRequestImpl / HttpServletResponseImpl
-    Bridge->>Disp: dispatch(req, resp) on foy-request-<n> (virtual thread)
-    Disp->>Sec: enforce(@ServletSecurity)
-    alt unauthorised
-        Sec-->>Client: 401/403 (BasicAuthenticator)
-    else authorised
+    Bridge->>Sec: admit(req, resp, canonical path) on foy-request-<n> (virtual thread)
+    alt refused
+        Sec-->>Client: 401/403, FORM login page or HTTPS redirect (through error pages)
+    else admitted
+        Bridge->>Disp: dispatch(req, resp)
         Disp->>Session: ensureSession(req, resp)
         Disp->>Filters: build chain(URI, dispatcherType)
         Filters->>Servlet: doGet/doPost/...
@@ -103,6 +103,7 @@ For one request, `ChappeServletBridge` runs these steps in order (Servlet 6.1 §
 . *Canonical path.* The context path is stripped on a segment boundary (404 outside the context), then `RequestPaths.canonicalize` removes path parameters, decodes once and normalises; a refused path is a 400 before anything else. The `;jsessionid=` parameter is extracted first for the session lookup. The result drives every decision below; `getRequestURI` stays raw.
 . *Mapping.* `ServletDispatcher.find` picks the servlet: exact, then longest prefix, then extension, then the application `/` servlet, then the container default servlet `foy.default`, which the deployer adds (as a non-application mapping) only when `/` is free.
 . *Welcome files.* Only when the container default servlet matched: a directory without trailing slash is redirected (302, `Location` from the re-encoded canonical path), a directory path ending with `/` is replaced by the first welcome file that a static resource or a servlet serves, and the mapping is looked up again.
+. *Security.* `WebSecurity.admit` applies the constraints of the original canonical path and, when a welcome file replaced it, of the welcome target too; see <<security-enforcement>>.
 . *Filter chain.* `FilterRegistry.chainFor(path, dispatcherType, servletName)` collects the filters whose URL pattern matches, then those mapped by servlet name (a filter matching both runs once), each in registration order, filtered by the dispatcher type.
 . *Servlet.* The servlet (or the default servlet) runs; a forward, include, async or error dispatch goes through `RequestDispatcherImpl` and `DispatchResolver`, which produce a `DispatchTarget` (servlet, mapping, paths) and rebuild a chain for that dispatcher type with the same URL-then-name rule. Named dispatch looks the servlet up in an index of every registration, mapped or not.
 . *Error.* An exception or `sendError` goes to `ErrorPageRegistry` (class hierarchy, then `ServletException` root cause, then status code); a committed response is never replaced, the exception is logged instead.
@@ -110,6 +111,33 @@ For one request, `ChappeServletBridge` runs these steps in order (Servlet 6.1 §
 The session is touched in step 1 (`accessRequestedSession`) for every request carrying a session id, not only when the servlet calls `getSession`, so a busy session does not expire and `getLastAccessedTime()` stays correct.
 
 Body path: `ServletOutputStreamImpl` buffers up to `getBufferSize()` bytes; the commit hands Chappe a `Body` whose reader is a bounded `ResponsePipe`, which the servlet then fills (coalesced writes pushed when the buffer fills, on a flush, at the end). The `ServletInputStream` reads from the Chappe body directly in blocking mode; with a `ReadListener`, a body pump (one virtual thread) reads ahead into a small buffer and drives the callbacks.
+
+[#security-enforcement]
+== Security enforcement
+
+Package `io.vidocq.foy.internal.security`.
+
+*At deploy.* `WebAppDeployer` compiles a `ConstraintTable` once: the descriptor constraints first, then each servlet's `ServletSecurityElement` (annotation or `setServletSecurity`) on its url-patterns, except the patterns a descriptor constraint names exactly. Without `<deny-uncovered-http-methods/>`, the uncovered methods are reported then (`WARNING`). `WebSecurity.authenticatorFor(login-config, store)` picks the mechanism: `BasicAuthenticator`, `FormAuthenticator`, or a `DenyingAuthenticator` for any other `auth-method`. A `RoleMapping` holds the declared roles and each servlet's `security-role-ref`s. The three, with the embedder's `SecuritySettings` (identity store, HTTPS port, rotation), form the context's `WebSecurity`.
+
+*At request time.* `WebSecurity.admit(req, res, canonicalPath)` runs for the original REQUEST dispatch only; forward, include, error and async dispatches are not checked again (section 13.8). In order:
+
+. restore the identity cached in the session (FORM);
+. decide the constraint of the path and method; when it requires a confidential transport and the request is not secure, answer `403`, or `302` to `https://<Host>:<confidentialPort><uri>` when a port is configured and the Host header is a plain host name and the URI and query are printable ASCII;
+. handle a FORM login action (`POST .../j_security_check`): it runs after the transport check, so a confidential application never accepts a password over plain HTTP;
+. an excluded method answers `403`;
+. an unchecked method proceeds;
+. without an identity, the mechanism authenticates the request (the BASIC header), else challenges (`401`, or the forward to the login page);
+. an identity without an allowed role gets `403`.
+
+`ChappeServletBridge` calls `admit` on its three branches: the normal one (on the original path, then on the welcome target it resolved to), the directory redirect of the default servlet, and the unmapped path. A refusal goes through the `<error-page>` handling, as `sendError` does.
+
+*Session notes.* The FORM identity and saved target are kept as `HttpSessionImpl` notes, not attributes: no listener, no `getAttributeNames`, out of the application's reach. Notes survive `changeSessionId` and are dropped on invalidation.
+
+*Executing servlet.* `HttpServletRequestImpl.enterServlet(name)` and `leaveServlet(previous)` bracket each servlet invocation, so `isUserInRole` resolves the `security-role-ref`s of the servlet that is executing, through forwards and includes.
+
+*Fail closed.* A context built outside `WebAppDeployer` gets `WebSecurity.UNCONFIGURED`, which refuses every request with `403`; permit-all is only ever chosen explicitly (tests). An exception thrown while checking a request fails closed (the target never runs, `500`). An identity store that throws or returns `null` counts as a refusal. An unsupported `auth-method` and a FORM `login-config` without a login page answer `403` on protected resources.
+
+*Password handling.* The `char[]` handed to the identity store is wiped once it returns. The FORM password, though, also exists as the `String` `j_password` in the request parameter map, which Foy cannot wipe.
 
 == Threading model
 
@@ -234,7 +262,7 @@ The guard covers `foy-core` only: `foy-cdi-vauban`'s `CdiWebComponentsCreator` a
 
 == Known limits
 
-* Security constraints are parsed, not enforced; `WEB-INF/lib` nested jars of a WAR are not opened; see xref:tck.adoc[].
+* `WEB-INF/lib` nested jars of a WAR are not opened; see xref:tck.adoc[].
 * HTTP/2 server push is not supported (`newPushBuilder()` returns `null`).
 * Response trailers: the supplier runs on Chappe's thread after `service()` (no request-scoped state); on HTTP/1.1 a `Content-Length` set after `setTrailerFields`, or a `Connection: close` response, drops the trailers silently; `reset()` keeps the supplier.
 * Non-blocking I/O: `ReadListener.onError` is not called on an async timeout; a `WriteListener` is not resumed after an `AsyncContext.dispatch`; bytes still waiting at the end of a cycle are sent in blocking mode, bounded only by Chappe's write timeout for a client that never reads (BUG-20261010-03).
@@ -246,6 +274,6 @@ The guard covers `foy-core` only: `foy-cdi-vauban`'s `CdiWebComponentsCreator` a
 * Multipart: fully buffered in memory, no streaming parse.
 * WebSocket Servlet 6.1: not implemented (planned, no date).
 * JSP: not supported by Foy itself; planned through a JSP-engine SPI that Ibarra (Jakarta Pages 4.0) plugs into.
-* Form-based and Digest authentication: not implemented.
+* Security: CLIENT-CERT is deferred and DIGEST is not supported (both fail closed with `403`); security constraints match url-patterns case-sensitively, which a resource served from a case-insensitive file system can bypass (BUG-20261011-03).
 
 No comparative numbers (Tomcat, Jetty) have been recorded yet — a `BENCH.md` will be created with the first measured run (workspace convention).

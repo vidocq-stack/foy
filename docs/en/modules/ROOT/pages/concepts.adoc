@@ -71,14 +71,26 @@ The four Servlet I/O models map onto that bridge:
 * **Non-blocking I/O** (`ReadListener`, `WriteListener`) — callbacks on Foy virtual threads, never on Chappe's connection thread, serialised per stream.
 * **HTTP Upgrade** (`HttpUpgradeHandler`) — after the `101` head, Chappe hands the raw connection to Foy, which exposes it as a `WebConnection`.
 
+[#application-security]
 == Application security
 
-* `BasicAuthenticator` — standard HTTP Basic (RFC 7617).
-* `SecurityConstraintEnforcer` — applies `@ServletSecurity` constraints (`@HttpConstraint`, `@HttpMethodConstraint`) taken from the component descriptor (generated at build time, or decoded from the class bytes). `<security-constraint>` in `web.xml` is **not** parsed.
-* `AnonymousSecurityProvider` — open fallback for development.
-* Public SPI: `io.vidocq.foy.spi.security.SecurityProvider` for plugging custom providers (LDAP, JWT, OIDC).
+Foy enforces the declarative security of Servlet 6.1 chapter 13 for every request it receives, before any filter or servlet runs. Recipes are in xref:usage.adoc#application-security[Usage].
 
-Form-based and Digest authentication are **not implemented** (the `spec.security.*` TCK family passes 22/59 at the Phase 5 exit). Jakarta Authentication / Authorization: not implemented, later milestone.
+*Constraints.* The constraints come from `web.xml` and its fragments (`<security-constraint>`), from `@ServletSecurity` on a servlet class, and from `ServletRegistration.Dynamic.setServletSecurity`. They are compiled per url-pattern at deploy time:
+
+* A request is matched with the servlet mapping rules (exact, longest path prefix, extension, default); only the **best pattern** applies.
+* At that pattern, the constraints that cover the request method **combine**: an empty `auth-constraint` excludes (`403` for everyone), otherwise a constraint without `auth-constraint` leaves the method open, otherwise the allowed roles are unioned. `*` stands for every declared role, `**` for any authenticated user (unless the application declares a role named `**`).
+* A method no constraint covers at a constrained pattern is **uncovered**: it is open and reported at deploy time, or refused with `403` under `<deny-uncovered-http-methods/>`.
+* An annotation applies to each url-pattern of its servlet, but **the descriptor wins** on a pattern it names exactly, for every method.
+* A CONFIDENTIAL or INTEGRAL transport guarantee applies when every covering constraint asks for it; Foy treats both as "HTTPS required".
+
+*Mechanisms.* The `login-config` names one mechanism per application: BASIC (the default) or FORM. CLIENT-CERT is deferred and DIGEST is not supported: both fail closed (`403` on protected resources). Credentials are checked against the embedder's `IdentityStore`, which returns the principal and its application roles; Foy maps no group.
+
+*Session-cached identity.* BASIC authenticates each request from its `Authorization` header. FORM is session-based: after a successful login the identity is kept in the session, out of the application's reach (it is not an attribute), and restored on each request of that session; the session id changes at login.
+
+*Role references.* `isUserInRole(name)` follows the `security-role-ref` of the servlet that is executing: a ref whose `role-name` is `name` is replaced by its `role-link`; otherwise the role is tested as it is. Declared roles come from `<security-role>`, `@DeclareRoles` and `ServletContext.declareRoles`.
+
+Jakarta Authentication and Jakarta Authorization are not implemented.
 
 == CDI: a single BeanManager
 

@@ -422,14 +422,95 @@ public class MeServlet extends HttpServlet {
 
 Resolution is fully build-time through xref:vauban::index.adoc[Vauban] — no runtime dynamic proxy, no hot-path reflection.
 
-== Application security
+[#application-security]
+== Application security [.tag-new]#NEW#
 
-* Constraints are **annotation-driven**: `SecurityConstraintEnforcer` applies `@ServletSecurity` (`@HttpConstraint`, `@HttpMethodConstraint`, `EmptyRoleSemantic.DENY`) taken from the component descriptor (generated at build time, or decoded from the class bytes). `<security-constraint>` in `web.xml` is **not** parsed.
-* `BasicAuthenticator` covers HTTP Basic (8 of the 14 `secbasic` TCK tests still fail — see xref:tck.adoc[TCK status]).
-* `AnonymousSecurityProvider` is the open fallback (development only).
-* Form-based and Digest authentication are **not implemented**.
+Foy enforces the Servlet 6.1 security model (chapter 13): `<security-constraint>` and `@ServletSecurity` per url-pattern, `<deny-uncovered-http-methods/>`, the transport guarantee, BASIC and FORM login, `security-role-ref`, and the programmatic `login`/`logout`/`authenticate`. The concepts are in xref:concepts.adoc#application-security[Concepts], the contracts in xref:reference.adoc#security[Reference].
 
-For a custom provider, implement `io.vidocq.foy.spi.security.SecurityProvider` and register it as a CDI bean.
+=== Declaring the users
+
+The user base (the container "realm") is given to `FoyChappeBoot`. For a fixed set of users, declare them on the builder; Foy keeps each password only as a salted SHA-256 digest, so the caller may wipe the array afterwards:
+
+[source,java]
+----
+char[] pw = readSecret();
+var mounted = FoyChappeBoot.builder()
+        .beanManager(bm)
+        .user("alice", pw, "admin", "user")
+        .user("bob", readOtherSecret(), "user")
+        .build();
+java.util.Arrays.fill(pw, '\0');
+----
+
+For a persistent or shared user base (database, LDAP, an identity provider), plug an `IdentityStore` instead; `identityStore(...)` and `user(...)` are exclusive:
+
+[source,java]
+----
+IdentityStore store = (username, password) -> myDirectory.check(username, password)
+        .map(roles -> Identity.of(username, roles));
+FoyChappeBoot.builder().beanManager(bm).identityStore(store).build();
+----
+
+With neither, every login fails: protected resources stay unreachable. The store contract (constant-time comparison, no logging, an exception counts as a refusal) is in xref:reference.adoc#security[Reference].
+
+Two more settings:
+
+* `confidentialPort(int)` — the HTTPS port a CONFIDENTIAL or INTEGRAL constraint redirects plain HTTP requests to (`302`). By default (`-1`) such a request gets `403`.
+* `rotateSessionIdOnLogin(boolean)` — a successful login changes the id of an existing session (session fixation defence). On by default; turning it off re-opens session fixation.
+
+=== Constraints and login in `web.xml`
+
+[source,xml]
+----
+<security-constraint>
+  <web-resource-collection>
+    <web-resource-name>admin</web-resource-name>
+    <url-pattern>/admin/*</url-pattern>
+  </web-resource-collection>
+  <auth-constraint>
+    <role-name>admin</role-name>
+  </auth-constraint>
+  <user-data-constraint>
+    <transport-guarantee>CONFIDENTIAL</transport-guarantee>
+  </user-data-constraint>
+</security-constraint>
+<deny-uncovered-http-methods/>
+
+<login-config>
+  <auth-method>FORM</auth-method>
+  <realm-name>Back office</realm-name>
+  <form-login-config>
+    <form-login-page>/login.html</form-login-page>
+    <form-error-page>/login-error.html</form-error-page>
+  </form-login-config>
+</login-config>
+
+<security-role>
+  <role-name>admin</role-name>
+</security-role>
+----
+
+* `BASIC` sends `401` with `WWW-Authenticate: Basic realm="<realm-name>"` (`Restricted` when no `realm-name` is given). A missing `login-config`, or one without `auth-method`, means BASIC.
+* `FORM` forwards an unauthenticated request to `form-login-page` (the browser keeps the original URL). The login page posts `j_username` and `j_password` to `j_security_check`, with `POST` only. On success the client is redirected to the saved target (the protected `GET` that triggered the login), or to the context root; on failure the request is forwarded to `form-error-page`.
+* `CLIENT-CERT`, `DIGEST` and any other method are not supported: their protected resources answer `403`.
+
+The same constraints can be put on a servlet class:
+
+[source,java]
+----
+@WebServlet("/reports/*")
+@ServletSecurity(value = @HttpConstraint(rolesAllowed = "user"),
+        httpMethodConstraints = @HttpMethodConstraint(value = "DELETE", rolesAllowed = "admin"))
+public class ReportServlet extends HttpServlet { ... }
+----
+
+A descriptor constraint on exactly the same url-pattern wins over the annotation. `ServletRegistration.Dynamic.setServletSecurity` sets the same element programmatically, before the context is initialised.
+
+=== Programmatic login and logout
+
+* `request.login(user, password)` checks the credentials against the identity store and sets the configured mechanism as the auth type. It rotates the id of an existing session; under FORM it also keeps the identity in the session (creating one), so the following requests are authenticated. Under BASIC the identity lasts for the request only.
+* `request.logout()` clears the identity of the request and of its session. The session itself, and its attributes, stay; call `session.invalidate()` to drop them.
+* `request.authenticate(response)` returns `true` when the request already has an identity; otherwise it runs the mechanism's challenge (`401` for BASIC, the login page for FORM) and returns `false`.
 
 == Cohabitation with Cassini
 

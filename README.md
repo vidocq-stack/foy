@@ -30,7 +30,7 @@ module to become an independent project usable outside the Vidocq Runtime ecosys
 
 | Module | Description |
 | --- | --- |
-| `foy-api` | Public SPI interfaces: `SessionStore`, `SecurityProvider`, `AuthenticatedUser`. Zero dependencies beyond `jakarta.servlet-api`. |
+| `foy-api` | Public SPI interfaces: `SessionStore`, `IdentityStore`, `Identity`. Zero dependencies beyond `jakarta.servlet-api`. |
 | `foy-core` | Servlet 6.1 engine — dispatcher, filter chain, session, error pages, listeners, security, web.xml, multipart. |
 | `foy-processor` | Build-time annotation processor generating `X$$FoyComponent` companions and indexes. Zero dependency (`java.compiler` only); never shipped in the application. |
 | `foy-cdi-vauban` | Bridge to the [Vauban](https://forge.vidocq.dev/vidocq/vauban) CDI container (`FoyVaubanBootstrap.beanManager()`). |
@@ -43,15 +43,19 @@ module to become an independent project usable outside the Vidocq Runtime ecosys
 The reactor (`foy-api`, `foy-core`, `foy-cdi-vauban`, `foy-chappe`) compiles without
 blocking warnings.
 
-**TCK at the Phase 5 exit (2026-10-10)** — full official Jakarta Servlet 6.1 suite:
-**1659 passing / 1714 run, 7 skipped (96.8 %)**: `api.*` 848/859, `pluggability.*` 646/646,
-`spec.*` 163/207 (7 skipped), `compat.*` 2/2. On top of the Phase 4 core (default servlet,
+**TCK at the Phase 6 exit (2026-10-11)** — full official Jakarta Servlet 6.1 suite:
+**1692 passing / 1714 run, 7 skipped (98.7 %)**: `api.*` 848/859, `pluggability.*` 646/646,
+`spec.*` 196/207 (7 skipped), `compat.*` 2/2. On top of the Phase 4 core (default servlet,
 welcome files, `HttpServletMapping`, dispatcher semantics, sessions, legacy descriptors), Foy
 now streams responses (commit on buffer overflow and `flushBuffer`), sends response trailers,
 runs the full async lifecycle (timeout to an error dispatch, `AsyncListener` events), supports
 non-blocking I/O (`ReadListener`, `WriteListener`) and HTTP Upgrade (`HttpUpgradeHandler`).
 HTTP/2 server push is not supported (`newPushBuilder()` returns `null`; the 7 push tests are
-skipped). The remaining gaps are security enforcement (37), multipart (8) and JSP (3).
+skipped). Phase 6 added Servlet security: `<security-constraint>` and `@ServletSecurity`
+per url-pattern, `deny-uncovered-http-methods`, the transport guarantee, BASIC and FORM login,
+`security-role-ref`, `login`/`logout`/`authenticate`, with users declared on `FoyChappeBoot`
+or an `IdentityStore` (55/59 security tests). The remaining gaps are multipart (8), JSP (3, plus
+2 FORM tests whose error page is a JSP) and CLIENT-CERT (2, deferred).
 Per-family breakdown, root causes and roadmap in [`TCK.md`](TCK.md).
 
 **TODO M2 — transport decoupling**:

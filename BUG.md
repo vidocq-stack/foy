@@ -611,3 +611,88 @@ Statuts : `OPEN` → `INVESTIGATING` → `FIXED` (commit hash) → `CLOSED`.
   before `onComplete`), and initialise the request listeners around the unmapped-path error dispatch;
   needs a full official Servlet TCK run (`run-official-tck-servlet6.1.sh --all`) since every error
   dispatch changes order.
+
+## BUG-20261011-01 — CLIENT-CERT authentication is not supported
+
+- **Date** : 2026-10-11
+- **Statut** : DEFERRED (Phase 6 decision; fails closed)
+- **Module touché** : `foy-core` (`WebSecurity.authenticatorFor`, `DenyingAuthenticator`), chappe (TLS)
+- **Symptôme** : an application whose `login-config` says `<auth-method>CLIENT-CERT</auth-method>` gets
+  `403` on every protected resource, whatever certificate the client presents; `login()` throws
+  `ServletException`. The official TCK `spec.security.clientcert.ClientCertTests` and
+  `spec.security.clientcertanno.ClientCertAnnoTests` (1 test each) fail.
+- **Reproduction minimale** : any application with `auth-method` CLIENT-CERT and a
+  `security-constraint` with an `auth-constraint`: a request to the constrained path answers `403`
+  (a `WARNING` at deploy says the method is not supported).
+- **Hypothèse de cause** : not implemented by decision. It needs chappe TLS client authentication
+  (requested or required `SSLEngine` client auth) and the peer certificate chain exposed to Foy
+  (`jakarta.servlet.request.X509Certificate`), a certificate-to-identity mapping in the identity SPI,
+  and an `https` Arquillian container in `foy-tck` for the two TCK tests.
+- **Fix envisagé** : chappe exposes the peer certificates; Foy adds a CLIENT-CERT authenticator mapping
+  the subject to an `Identity` through the store; `foy-tck` gets a TLS container.
+
+## BUG-20261011-02 — SecFormTests.test2 and test2_anno need a JSP engine
+
+- **Date** : 2026-10-11
+- **Statut** : ACCEPTED GAP (until a JSP-engine SPI exists)
+- **Module touché** : `foy-tck` (no Foy defect)
+- **Symptôme** : `servlet.tck.spec.security.secform.SecFormTests.test2` and `test2_anno` fail: after
+  a failed login, the expected error page content is never produced.
+- **Reproduction minimale** : run `./run-official-tck-servlet6.1.sh --no-install -Dtest=SecFormTests`:
+  a failed `j_security_check` forwards to `form-error-page` `/error.jsp`, which lands on `*.jsp`; Foy
+  has no JSP engine, so the page is not executed.
+- **Hypothèse de cause** : the TCK test application uses JSP pages for its login error page. FORM
+  authentication itself behaves (the 23 other SecForm tests pass).
+- **Fix envisagé** : the JSP-engine SPI plugged by Ibarra (Jakarta Pages 4.0), like the 3 JSP tests of
+  `ServletContext40Tests`.
+
+## BUG-20261011-03 — case-sensitive constraint matching vs a case-insensitive file system
+
+- **Date** : 2026-10-11
+- **Statut** : OPEN (security follow-up, not fixed in Phase 6)
+- **Module touché** : `foy-core` (`ConstraintTable`, container default servlet, resource providers)
+- **Symptôme** : security constraints match url-patterns case-sensitively, as the specification
+  requires, but a resource provider over a case-insensitive file system (macOS directory roots, Windows)
+  serves `/STATIC/x` from the same file as `/static/x`. A `/static/*` constraint therefore does not
+  protect `/STATIC/x`, which the default servlet serves: a bypass by case.
+- **Reproduction minimale** : on macOS, deploy with a directory resource root holding
+  `META-INF/resources/static/x.txt` and a `security-constraint` on `/static/*` with an `auth-constraint`;
+  `GET /static/x.txt` answers `401`, while `GET /STATIC/x.txt` is expected to answer `200` with the
+  file (by code reading and the Phase 6 preflight scan, S-11; not pinned by a test yet).
+- **Hypothèse de cause** : the constraint decision runs on the canonical request path, the file lookup is
+  delegated to a file system that folds case.
+- **Fix envisagé** : make the default servlet (or the resource provider) refuse a resource whose resolved
+  real name differs in case from the request path (404), so the served path is always the matched one.
+
+## BUG-20261011-04 — CallbackSerializerTest.holdWaitsForTheRunningCallbackAndDefersTheQueuedOnes is flaky
+
+- **Date** : 2026-10-11
+- **Statut** : OPEN (test only; seen during Phase 6 Task 6.1)
+- **Module touché** : `foy-core` tests (`CallbackSerializerTest`)
+- **Symptôme** : the test failed once in three full `./mvnw -ntp clean install` runs, at line 108
+  (`assertFalse(second.await(200, ms))` got `true`: the queued callback ran although `hold()` was
+  expected to defer it). It passes on reruns.
+- **Reproduction minimale** : run `./mvnw -ntp -pl foy-core test -Dtest=CallbackSerializerTest` in a
+  loop under load; it fails now and then.
+- **Hypothèse de cause** : a race in the test, not in `CallbackSerializer`: the holder virtual thread is
+  started and `proceed.countDown()` is called at once, so the first callback may end and the serializer
+  start the second one before the holder thread has called `hold()`.
+- **Fix envisagé** : release `proceed` only once the holder thread is blocked in `hold()` (wait for its
+  state, or add a test hook signalling that `hold()` is waiting).
+
+## BUG-20261011-05 — a security denial on the redirect or unmapped branch runs without request listeners
+
+- **Date** : 2026-10-11
+- **Statut** : OPEN (cosmetic, by code reading)
+- **Module touché** : `foy-core` (`ChappeServletBridge.gate`)
+- **Symptôme** : on the directory-redirect branch of the default servlet and on the unmapped-path branch,
+  `WebSecurity.admit` (and a FORM forward to the login page) runs before any `requestInitialized`: a
+  login page reached through those branches has no CDI request or session context driven by Foy's
+  request listeners.
+- **Reproduction minimale** : by code reading: a FORM application whose login page injects a
+  `@RequestScoped` bean, and a constraint on an unmapped path; a request to that path forwards to the
+  login page outside the request listeners (same family as BUG-20261010-08).
+- **Hypothèse de cause** : those two branches never fire the request listeners; `gate` was added there to
+  fail closed.
+- **Fix envisagé** : fire the request listeners around those branches, or restrict them to mechanisms
+  that do not forward (BASIC).

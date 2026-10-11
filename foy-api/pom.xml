@@ -12,7 +12,7 @@
 
     <artifactId>foy-api</artifactId>
     <name>Foy :: API + SPI HTTP</name>
-    <description>Interfaces publiques + SPI transport HTTP, BeanProvider, SessionStore, SecurityProvider (zéro dépendance hors jakarta.servlet-api)</description>
+    <description>Public interfaces and SPI: SessionStore, IdentityStore (no dependency beyond jakarta.servlet-api)</description>
 
     <dependencies>
         <dependency>

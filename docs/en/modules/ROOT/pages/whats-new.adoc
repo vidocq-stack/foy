@@ -1,5 +1,5 @@
 = What's new
-:description: Everything that changed in Foy since the {release-version} release — the CDI request and session contexts, and Foy proven on Weld SE and with Weld's servlet integration.
+:description: Everything that changed in Foy since the {release-version} release — Servlet security enforcement, the CDI request and session contexts, and Foy proven on Weld SE and with Weld's servlet integration.
 
 [.lead]
 New in the `{project-version}` development line — everything listed here landed **after the {release-version} release** and is not part of it. Every entry links to the section that documents it, and those sections carry the [.tag-new]#NEW# badge. Each brick of the suite keeps its own page of this kind; xref:home::whats-new.adoc[the ecosystem index] gathers them. When the next release train ships, this page is frozen with it and restarts empty on the dev line.
@@ -11,3 +11,10 @@ New in the `{project-version}` development line — everything listed here lande
 * **`@SessionScoped` on Vauban** — the session context is active for each request: `@SessionScoped` beans live in the `HttpSession` and are destroyed with it, with the `@Initialized`, `@BeforeDestroyed` and `@Destroyed(SessionScoped.class)` events. Vauban's new `vauban-webcontexts` provides the context and `foy-cdi-vauban` drives it; nothing to configure. A session-scoped bean used to fail with `ContextNotActiveException` (foy#21). xref:reference.adoc#other-containers[Other CDI containers].
 * **`CdiContextListeners`, a service for the adapters of CDI implementations** — Foy registers the listeners a provider gives for the `BeanManager` it is given, ahead of the application's listeners. xref:reference.adoc#other-containers[Other CDI containers].
 * **Weld's servlet integration runs on Foy** — `weld-servlet-core`'s initializer starts Weld, which manages the request and session contexts itself. `foy-it-weld-servlet` uses it as the reference for the session scope, and `foy-it-vauban-session` runs the same scenarios on Vauban. xref:reference.adoc#other-containers[Other CDI containers].
+
+== Security
+
+* **The Servlet security model is enforced** — `<security-constraint>` from `web.xml` and its fragments, `@ServletSecurity` and `setServletSecurity` apply per url-pattern before any filter or servlet runs, with `<deny-uncovered-http-methods/>`, the transport guarantee (`403`, or a redirect to `confidentialPort`), `security-role-ref` and `declareRoles`. {release-version} parsed the descriptor constraints without enforcing them. xref:usage.adoc#application-security[Application security].
+* **BASIC and FORM login** — `login-config` BASIC (realm `Restricted` by default) and FORM (`j_security_check`, server-side saved target, session id rotation); `login()`, `logout()` and `authenticate()` follow the configured mechanism. CLIENT-CERT is deferred and DIGEST unsupported; both fail closed. xref:reference.adoc#security[Security reference].
+* **`IdentityStore` replaces `SecurityProvider` (API break)** — declare users with `FoyChappeBoot.builder().user(...)` (salted SHA-256 in memory) or plug an `IdentityStore`. `SecurityProvider` and `AuthenticatedUser` are removed. xref:migration.adoc#security-behaviour-changes[Migration].
+* **TCK** — the `spec.security.*` family passes 55 of its 59 tests (Phase 5 exit: 22); the four left are CLIENT-CERT (2, deferred) and two FORM tests that need a JSP engine. xref:tck.adoc[TCK].

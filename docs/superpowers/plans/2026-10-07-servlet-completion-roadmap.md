@@ -166,13 +166,13 @@ efficiently. **TCK targets:** `spec.async`, `ReadListener`/`WriteListener`
 classes, `HttpUpgradeHandlerTests`.
 
 ### Phase 6 — Security
-`login-config` (BASIC, FORM, CLIENT-CERT; DIGEST optional), web.xml
-`security-constraint` + annotation merge, `ServletRegistration.Dynamic.setServletSecurity`,
+`login-config` (BASIC, FORM; CLIENT-CERT deferred, it needs chappe TLS client
+authentication and peer certificates plus an `https` Arquillian container; DIGEST out),
+web.xml `security-constraint` + annotation merge, `ServletRegistration.Dynamic.setServletSecurity`,
 transport guarantee, `deny-uncovered-http-methods`, role mapping +
 `@DeclareRoles`/`@RunAs`, `login()`/`logout()`/`authenticate()` semantics
-(logout invalidates the authenticated session). Client-cert needs chappe TLS
-peer certificates (check chappe API). **TCK targets:** `spec.security.*`
-(21/59 today).
+(logout clears the identity only; the session stays). **TCK targets:** `spec.security.*`
+(22/59 at the Phase 5 exit). Shipped: see "Phase 6 exit / follow-ups".
 
 ### Phase 7 — Finishing
 Multipart: `@MultipartConfig` required, `location`/`fileSizeThreshold`/
@@ -292,3 +292,27 @@ Phase 5 shipped, in chappe (branch `pr/ybl/servlet-streaming-upgrade`, 0.4.0-SNA
 - Non-blocking I/O: `read()` allocates for `byte[1]`; `CallbackSerializer.isRunning` is test-only; one drain virtual thread per capacity event and one per non-blocking upgraded write; `releaseBody` Javadoc misplaced; no `ReadBuffers` unit test nor TLS variant of `InterruptedBodyReadTest`.
 - Upgrade: `close()` drops an in-flight non-blocking write; `destroy()` closes the connection twice when a close happens during `init`; the `RegistryComponentFactory` fallback is untested; `ServletUpgradeEndToEndTest` is long (its shared-static-state flake was fixed at the exit with a per-test probe).
 - Trailers: rename the `trailersOverHttp2_` unit test; the HTTP/2 `setContentLength` branch is untested; parametrise the FORBIDDEN-name test.
+
+## Phase 6 exit / follow-ups (2026-10-11)
+
+Phase 6 shipped, in Foy only (branch `pr/ybl/servlet-completion-phase6`, 75f5dcb..1100b90): the `IdentityStore`/`Identity` SPI replacing `SecurityProvider`/`AuthenticatedUser` (API break), an in-memory store (salted SHA-256, decoy digest) behind `FoyChappeBoot.Builder.user`, and the `identityStore`, `confidentialPort` and `rotateSessionIdOnLogin` settings; the TCK users and identity store; `security-role-ref` of the executing servlet and `@DeclareRoles`; a `ConstraintTable` compiled per url-pattern at deploy (best pattern, per-method combination, uncovered methods, descriptor over annotation on an exact pattern); enforcement in `WebSecurity.admit` before any target on all three bridge branches, failing closed (unconfigured context, exceptions, unsupported `auth-method`), denials through `<error-page>`; BASIC (realm `Restricted` by default) and FORM (forward to the login page, server-side saved GET target, `j_security_check` POST-only, session id rotation, identity as a session note); `login`/`logout`/`authenticate` following the configured mechanism (logout clears the identity only); `setServletSecurity`, `declareRoles` and run-as per the specification; the transport guarantee (403, or 302 to `confidentialPort`, hostile Host and non-ASCII URIs refused). CLIENT-CERT is deferred, DIGEST out; both fail closed. Tracked here, no external issue or PR opened.
+
+**Full TCK:** 1692 passing / 1714 run, 7 skipped (Phase 5: 1659), 15 errors, zero per-class regression, `join -v` empty both sides, 5 classes improved (33 tests: `SecFormTests` 17 → 2, `SecBasicTests` 8 → 0, `DenyUncoveredTests` 4 → 0, `MetaDataCompleteTests` 4 → 0, `AnnotationsTests` 2 → 0), every `tiers=Stats` line `reflection=0`. Per family (passing / run, skipped): `api.*` 848/859, 0; `pluggability.*` 646/646, 0; `spec.*` 196/207, 7; `compat.*` 2/2, 0. Family mode adds `GetServletRegistrationsTest` (`api.*` 849/860). `spec.security.*` 55/59 (Phase 5: 22).
+
+**Remaining failures, by phase:**
+- CLIENT-CERT, 2 (`ClientCertTests`, `ClientCertAnnoTests`): deferred; needs chappe TLS client authentication and peer certificates, and an `https` Arquillian container (BUG-20261011-01).
+- JSP, 2 + 3: `SecFormTests.test2`/`test2_anno` (the failed login forwards to `/error.jsp`, BUG-20261011-02) and `ServletContext40Tests` (`addJspTest` and two TLD listener tests); both wait for the JSP-engine SPI plugged by Ibarra.
+- Phase 7 (multipart), 8: `PartTests` 4, `Part1Tests` 4.
+- HTTP/2 server push, 7 skipped: accepted gap.
+
+**Open bugs:** BUG-20261011-01 (CLIENT-CERT, DEFERRED), -02 (SecForm JSP, ACCEPTED GAP), -03 (case-sensitive constraint matching vs a case-insensitive file system: a default-servlet resource may bypass a constraint by case; should-fix follow-up), -04 (flaky `CallbackSerializerTest.holdWaitsForTheRunningCallbackAndDefersTheQueuedOnes`), -05 (a denial or FORM forward on the redirect and unmapped branches runs outside the request listeners); still open from earlier phases: BUG-20261010-02 (PARTIAL), -03, -06, -07, -08 and BUG-20261009-01, -03, -04, -09, -11 to -14.
+
+**Documented limits (usage, concepts, internals, reference, migration pages):** the in-memory store is not a password database; `rotateSessionIdOnLogin(false)` re-opens session fixation; under FORM `login()` creates a session; `logout()` keeps the session; a protected POST is not replayed after a FORM login and the POST body is lost on the HTTPS redirect; `j_security_check` over plain HTTP is accepted when no CONFIDENTIAL constraint covers it; behind a TLS-terminating proxy `isSecure()` is false (redirect loop); the redirect host comes from the `Host` header (IPv6 literals and invalid hosts get 403); `j_password` stays as a `String` in the parameter map; no group mapping; run-as reported, not propagated.
+
+**Deferred minors worth tracking:**
+- FORM: no `Cache-Control: no-store` on the login page served at the protected URL; no FORM landing-page setting (the context root is used when no target is saved); a FORM error-page forward keeps the POST method; any later anonymous protected GET (an image or a stylesheet the login page loads from a protected area) overwrites the saved target; no login throttling nor login-CSRF token; `j_security_check` is accepted on any path ending in `/j_security_check`; the saved target has no explicit size cap; `formLoginPage` is not checked for blank.
+- Roles: `isUserInRole` in an `AsyncContext.start()` thread sees no executing servlet (plain field read, nondeterministic); a fragment conflict on a `security-role-ref` is resolved silently (first wins) instead of failing the deployment.
+- Login: rotation on BASIC `login()` when a session exists (BASIC is not session-based); BASIC request-scoped logout and a failed FORM `login()` are untested; `InMemoryIdentityStore.digest` uses `Charset.encode` (replacement on lone surrogates, a possibly unwiped reallocated buffer); BASIC accepts C1 controls in credentials.
+- Constraints: an all-default `HttpConstraint` is dropped as soon as any method constraint exists; `ConstraintTable.Builder` does not enforce the descriptor-then-servlet call order; some `permits()` and mixed method/omission cases lack assertions; the unconfigured fail-closed path logs nothing.
+- Registration: run-as on disabled servlets untested and its apply logic duplicated; `declareRoles(null)` throws NPE instead of IAE; static-registration ISE after initialisation untested.
+- Transport: a 403 transport denial with an error page is untested; duplicate Host headers depend on chappe.
