@@ -197,7 +197,7 @@ The multipart and request body work (Servlet 6.1 sections 3.1, 3.2 and 3.12) cha
 * **Multipart fields are request parameters**, on a POST to a servlet with a multipart configuration, or on any request once `getParts()` ran.
 * **`Part.write` resolves a relative name against the multipart `location`**, no longer against the working directory, and refuses a name that leaves it. `Part.delete()` deletes the part's file.
 * **Parts above `fileSizeThreshold` go to disk**, in owner-only temporary files deleted at the end of the request. The default threshold is `0`: every non-empty part goes to disk.
-* **Form bodies above 2 MiB make `getParameter*` throw `IllegalStateException`** (`maxFormBodySize`).
+* **Form bodies above 2 MiB make `getParameter*` throw `IllegalStateException`** (`maxFormBodySize`). The limit also bounds the total size of the multipart form fields exposed as parameters; file parts do not count.
 * **Bodies without `Content-Length` above 10 MiB fail the read** (`maxChunkedRequestBodySize`), for the application stream and the container parsers alike.
 * **At most 50 parts and 8 KiB of headers per part** (`maxMultipartParts`, `maxMultipartPartHeaderSize`).
 * **An uncaught request body or multipart limit answers `413`** on a synchronous dispatch, instead of `500`.

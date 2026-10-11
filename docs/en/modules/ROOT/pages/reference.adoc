@@ -197,7 +197,7 @@ Container ceilings, applied to every application of the deployment on top of eac
 
 | `maxFormBodySize`
 | 2 MiB
-| An `application/x-www-form-urlencoded` body parsed into request parameters.
+| An `application/x-www-form-urlencoded` body parsed into request parameters, and the total size of the multipart form fields (parts without a file name) exposed as request parameters, checked before any field is read. File parts do not count.
 | The first `getParameter*` call throws `IllegalStateException`; later calls see the query-string parameters only. Uncaught: `500`.
 
 | `maxMultipartParts`
