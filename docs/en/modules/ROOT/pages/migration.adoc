@@ -6,7 +6,7 @@ Foy honours the Jakarta Servlet 6.1 spec to the letter — your `web.xml`, your 
 
 [CAUTION]
 ====
-Foy is at **{project-version}** and the official TCK passes **99.2 %** over the full suite: 1700 passing / 1714 run, 7 skipped (`api.*` 856/859, `pluggability.*` 646/646, `spec.*` 196/207, `compat.*` 2/2); the remaining errors are CLIENT-CERT (deferred) and JSP (see xref:tck.adoc[TCK status]). Migration is not recommended in production until the listed gaps are closed.
+Foy is at **{project-version}** and the official TCK passes **99.3 %** over the full suite: 1702 passing / 1714 run, 7 skipped (`api.*` 856/859, `pluggability.*` 646/646, `spec.*` 198/207, `compat.*` 2/2); the remaining errors are JSP (see xref:tck.adoc[TCK status]). Migration is not recommended in production until the listed gaps are closed.
 ====
 
 == From Tomcat
@@ -104,7 +104,7 @@ No real-world migration has been documented yet — the Tomcat and Jetty tables 
 * **Directory listings and `multipart/byteranges`** — the default servlet serves single files only (404 for a directory) and answers several ranges with the whole body.
 * **WebSocket Servlet 6.1 / Jakarta WebSocket 2.2** — not implemented (planned, no date).
 * **JSP** — not supported by Foy itself; planned through a JSP-engine SPI that xref:ibarra::index.adoc[Ibarra] (Jakarta Pages 4.0) plugs into. For dynamic pages use xref:cassini::index.adoc[Cassini] (REST) or HTML-emitting Servlets.
-* **CLIENT-CERT deferred, DIGEST not supported** — both fail closed (`403`).
+* **DIGEST not supported** — it fails closed (`403`). CLIENT-CERT is supported: see xref:usage.adoc#client-cert[Client certificates].
 
 Cross-context dispatch (`ServletContext.getContext`) **is implemented** via `CrossContextRegistry` — strict contextPath match on the contexts deployed in the same JVM.
 
@@ -179,7 +179,7 @@ FoyChappeBoot.builder().beanManager(bm).user("alice", password, "admin").build()
 * **`isUserInRole` follows `security-role-ref`** of the executing servlet.
 * **`login()` sets the configured mechanism as auth type**, rotates the session id and, under FORM, keeps the identity in the session (creating one).
 * **`logout()` keeps the session**: it clears the identity only. Invalidate the session to drop its attributes.
-* **An unsupported `auth-method` now answers `403`** on protected resources (CLIENT-CERT, DIGEST, anything else).
+* **An unsupported `auth-method` now answers `403`** on protected resources (DIGEST, anything else).
 * **`setServletSecurity` returns the descriptor-constrained patterns** and throws `IllegalStateException` after initialisation.
 * **`ServletContext.declareRoles` is implemented.**
 * **Without users or a store, every login fails**, and a context built outside the deployer refuses every request: security fails closed.

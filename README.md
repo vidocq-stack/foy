@@ -43,9 +43,9 @@ module to become an independent project usable outside the Vidocq Runtime ecosys
 The reactor (`foy-api`, `foy-core`, `foy-cdi-vauban`, `foy-chappe`) compiles without
 blocking warnings.
 
-**TCK at the Phase 7 exit (2026-10-11)** — full official Jakarta Servlet 6.1 suite:
-**1700 passing / 1714 run, 7 skipped (99.2 %)**: `api.*` 856/859, `pluggability.*` 646/646,
-`spec.*` 196/207 (7 skipped), `compat.*` 2/2. On top of the Phase 4 core (default servlet,
+**TCK at the CLIENT-CERT exit (2026-10-12)** — full official Jakarta Servlet 6.1 suite:
+**1702 passing / 1714 run, 7 skipped (99.3 %)**: `api.*` 856/859, `pluggability.*` 646/646,
+`spec.*` 198/207 (7 skipped), `compat.*` 2/2. On top of the Phase 4 core (default servlet,
 welcome files, `HttpServletMapping`, dispatcher semantics, sessions, legacy descriptors), Foy
 now streams responses (commit on buffer overflow and `flushBuffer`), sends response trailers,
 runs the full async lifecycle (timeout to an error dispatch, `AsyncListener` events), supports
@@ -54,12 +54,14 @@ HTTP/2 server push is not supported (`newPushBuilder()` returns `null`; the 7 pu
 skipped). Phase 6 added Servlet security: `<security-constraint>` and `@ServletSecurity`
 per url-pattern, `deny-uncovered-http-methods`, the transport guarantee, BASIC and FORM login,
 `security-role-ref`, `login`/`logout`/`authenticate`, with users declared on `FoyChappeBoot`
-or an `IdentityStore` (55/59 security tests). Phase 7 streams multipart bodies (RFC 7578, parts
+or an `IdentityStore` (57/59 security tests). Phase 7 streams multipart bodies (RFC 7578, parts
 above `fileSizeThreshold` in owner-only temporary files deleted at the end of the request, form
 fields as parameters) and bounds request bodies (`maxChunkedRequestBodySize`, `maxFormBodySize`,
 `maxMultipartParts`, `maxMultipartPartHeaderSize` on `FoyChappeBoot`); the API signature test
-passes. The remaining gaps are JSP (3, plus 2 FORM tests whose error page is a JSP) and
-CLIENT-CERT (2, deferred).
+passes. CLIENT-CERT authenticates from the TLS client certificate (`certificateUser`, or an
+`IdentityStore` overriding `validate(X509Certificate[])`), and the Servlet 6.1 section 3.10
+TLS request attributes are set. The remaining gaps are JSP (3, plus 2 FORM tests whose error
+page is a JSP).
 Per-family breakdown, root causes and roadmap in [`TCK.md`](TCK.md).
 
 **TODO M2 — transport decoupling**:

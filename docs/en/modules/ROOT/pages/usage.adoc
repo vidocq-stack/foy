@@ -550,7 +550,8 @@ Two more settings:
 
 * `BASIC` sends `401` with `WWW-Authenticate: Basic realm="<realm-name>"` (`Restricted` when no `realm-name` is given). A missing `login-config`, or one without `auth-method`, means BASIC.
 * `FORM` forwards an unauthenticated request to `form-login-page` (the browser keeps the original URL). The login page posts `j_username` and `j_password` to `j_security_check`, with `POST` only. On success the client is redirected to the saved target (the protected `GET` that triggered the login), or to the context root; on failure the request is forwarded to `form-error-page`.
-* `CLIENT-CERT`, `DIGEST` and any other method are not supported: their protected resources answer `403`.
+* `CLIENT-CERT` authenticates from the TLS client certificate: see <<client-cert>>.
+* `DIGEST` and any other method are not supported: their protected resources answer `403`.
 
 The same constraints can be put on a servlet class:
 
@@ -563,6 +564,66 @@ public class ReportServlet extends HttpServlet { ... }
 ----
 
 A descriptor constraint on exactly the same url-pattern wins over the annotation. `ServletRegistration.Dynamic.setServletSecurity` sets the same element programmatically, before the context is initialised.
+
+[#client-cert]
+=== Client certificates (CLIENT-CERT) [.tag-new]#NEW#
+
+`<auth-method>CLIENT-CERT</auth-method>` authenticates the caller from the certificate it presented in the TLS handshake. It needs a TLS listener that asks for one, an identity mapped to the certificate, and nothing else in the application.
+
+*The TLS listener.* The Chappe server must request a client certificate: `Server.Builder.tls(sslContext, ClientAuth.WANT)`, or `ClientAuth.NEED` to refuse a connection without one. The mode belongs to the listener, not to a URL: TLS 1.3 and HTTP/2 allow no renegotiation, so a certificate cannot be requested later only for a protected resource. Use `WANT` when only part of the application needs a certificate, and let Foy answer `403` where it is missing.
+
+*Trust.* The trust material is the `SSLContext`'s. Pass a `TrustManager` built from your client CA: `init(keyManagers, null, ...)` trusts the JDK's default public CAs, which is almost never what a client-certificate listener wants.
+
+*Identities.* Map a certificate to an identity with `FoyChappeBoot.Builder.certificateUser(subjectDn, roles...)`, or plug an `IdentityStore` that overrides `validate(X509Certificate[] chain)` (the chain is the one the peer sent, leaf first). Foy compares the leaf subject with the declared DN canonically: spacing and the case of attribute values do not matter. The principal name is the leaf subject in RFC 1779 form, for example `CN=CTS, OU=Java Software, O=Sun Microsystems Inc., L=Burlington, ST=MA, C=US`. `certificateUser` is exclusive with `identityStore`.
+
+[source,java]
+----
+SSLContext tls = SSLContext.getInstance("TLS");
+tls.init(serverKeyManagers, clientCaTrustManagers, null);
+var mounted = FoyChappeBoot.builder()
+        .webXml(webXml)
+        .certificateUser("CN=Alice Example, OU=Ops, O=Example, C=FR", "admin")
+        .build().orElseThrow();
+Server server = Server.builder().port(8443).tls(tls, ClientAuth.WANT)
+        .handler(Router.builder().mount(mounted.mountPrefix(), mounted.handler(), false).build())
+        .build();
+----
+
+*Behaviour.*
+
+* `getAuthType()` is `CLIENT_CERT`, and `getUserPrincipal()` carries the RFC 1779 name above.
+* A request with no certificate, with a certificate no identity is mapped to, or whose store fails, answers `403` without `WWW-Authenticate`: there is nothing to challenge.
+* `request.authenticate(response)` without a certificate answers `403` and returns `false`.
+* `request.login(user, password)` still works, through the store's password path.
+* A CONFIDENTIAL or INTEGRAL constraint is satisfied by the TLS listener. On plain HTTP it redirects to `confidentialPort`, or answers `403` when none is set.
+* The identity is read from the connection, never from the request attributes below, so an application cannot forge it.
+
+*Request attributes (Servlet 6.1 section 3.10).* On a TLS connection Foy seeds these attributes without firing `ServletRequestAttributeListener`s. After that they belong to the application, which may replace or remove them.
+
+[cols="2,1,3",options="header"]
+|===
+| Attribute | Type | Value
+
+| `jakarta.servlet.request.X509Certificate`
+| `X509Certificate[]`
+| The peer chain, leaf first; absent when the client sent no certificate.
+
+| `jakarta.servlet.request.cipher_suite`
+| `String`
+| The negotiated cipher suite, for example `TLS_AES_128_GCM_SHA256`.
+
+| `jakarta.servlet.request.key_size`
+| `Integer`
+| Derived from the cipher-suite name (128, 256, 168 for 3DES, and so on); absent when the suite is unknown.
+
+| `jakarta.servlet.request.ssl_session_id`
+| `String`
+| The TLS session id in lowercase hexadecimal; absent when the id is empty.
+
+| `jakarta.servlet.request.secure_protocol`
+| `String`
+| The negotiated protocol, for example `TLSv1.3`. New in Servlet 6.1.
+|===
 
 === Programmatic login and logout
 

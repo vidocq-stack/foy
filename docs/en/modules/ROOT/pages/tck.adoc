@@ -6,12 +6,13 @@ This page consolidates the status of the official Jakarta Servlet 6.1 TCK runs a
 
 == Summary
 
-This is a **measurement**, not a conformance claim. At the latest full run (`jakarta.tck:servlet-tck-runtime:6.1.0`, Phase 7 exit, 2026-10-11):
+This is a **measurement**, not a conformance claim. At the latest full run (`jakarta.tck:servlet-tck-runtime:6.1.0`, CLIENT-CERT exit, 2026-10-12):
 
-* **1714** tests run: **1700 passing**, 7 skipped, 0 failures / 7 errors — **99.2 %** of the tests run pass (Phase 6 exit: 1692; Phase 5 exit: 1659). A skipped test is never counted as passing;
+* **1714** tests run: **1702 passing**, 7 skipped, 0 failures / 5 errors — **99.3 %** of the tests run pass (Phase 7 exit: 1700; Phase 6 exit: 1692; Phase 5 exit: 1659). A skipped test is never counted as passing;
+* The CLIENT-CERT exit added TLS client authentication (`ClientCertTests` and `ClientCertAnnoTests` now pass, against an `https` Arquillian container, see <<https-container>>) and the Servlet 6.1 section 3.10 TLS request attributes; no class regressed.
 * Phase 7 added streamed multipart (RFC 7578: `@MultipartConfig`, `<multipart-config>` and `setMultipartConfig` reach the request, parts above `fileSizeThreshold` go to owner-only temporary files deleted at the end of the request, form fields are request parameters) and container request body limits; `PartTests` and `Part1Tests` now pass 7 of 7 each, no class regressed and 2 improved (8 tests);
 * Phase 6 added security enforcement: `<security-constraint>` and `@ServletSecurity` per url-pattern, `deny-uncovered-http-methods`, the transport guarantee, BASIC and FORM login, `security-role-ref`, programmatic `login`/`logout`/`authenticate`, `setServletSecurity` and `declareRoles`; no class regressed and 5 improved (33 tests). The `spec.security.*` family passes 55 of its 59 tests (Phase 5 exit: 22);
-* the 7 remaining errors are JSP-dependent tests (3 + 2 FORM tests whose error page is a JSP) and CLIENT-CERT (2, deferred); see <<security-status>>;
+* the 5 remaining errors are JSP-dependent tests (3 `ServletContext40Tests` + 2 FORM tests whose error page is a JSP); see <<security-status>>;
 * the API signature test (`ServletSigTest`, `sigtest` profile) passes; see <<signature-test>>;
 * the 7 skipped tests are HTTP/2 server push, an accepted gap (see <<what-is-skipped>>).
 
@@ -39,8 +40,8 @@ Per-family breakdown (passing / run):
 | 207
 | 196
 | 7
-| 94.7 %
-| ✅ Security 55/59 (CLIENT-CERT 2 deferred, 2 FORM tests need JSP); server push skipped (7)
+| 95.7 %
+| ✅ Security 57/59 (2 FORM tests need JSP); server push skipped (7)
 
 | `compat.*`
 | 2
@@ -67,11 +68,12 @@ Exact figures live in `target/surefire-reports/` after an `--all` run and in lin
 | `metadatacomplete.MetaDataCompleteTests` | 6 | 6 |
 | `secbasic.SecBasicTests` | 14 | 14 |
 | `secform.SecFormTests` | 25 | 23 | `test2`, `test2_anno`: accepted gap, the failed login forwards to `/error.jsp`, which needs a JSP engine
-| `clientcert.ClientCertTests` | 1 | 0 | accepted gap: CLIENT-CERT deferred
-| `clientcertanno.ClientCertAnnoTests` | 1 | 0 | accepted gap: CLIENT-CERT deferred
+| `clientcert.ClientCertTests` | 1 | 1 | served by the `https` container, <<https-container>>
+| `clientcertanno.ClientCertAnnoTests` | 1 | 1 | same
 |===
 
-CLIENT-CERT is deferred: it needs TLS client authentication and the peer certificates from Chappe, and an `https` Arquillian container in `foy-tck`. Until then a CLIENT-CERT application fails closed (`403`). The TCK users (`user`/`password` and `authuser`/`authpassword` system properties of the `tck-official` profile in `foy-tck/pom.xml`) and their roles are declared in an in-memory identity store by the harness (`TckIdentities`).
+[#https-container]
+CLIENT-CERT is supported: the two tests run against an `https` Arquillian container of `foy-tck`, a second container next to the plain one, whose chappe listener asks for a client certificate (`ClientAuth.WANT`). The keystores are generated at build time, never committed: `maven-antrun-plugin` runs `keytool` to create the server key (with a subject alternative name covering `127.0.0.1` and `localhost`) and the trust stores, and `maven-dependency-plugin` unpacks the certificates that ship with the TCK (`clientcert.jks`, whose subject, the CTS DN, is mapped to the TCK administrator role). Both plugins are build-time tools of the `tck` profile and are never shipped. The TCK users (`user`/`password` and `authuser`/`authpassword` system properties of the `tck-official` profile in `foy-tck/pom.xml`) and their roles are declared in an in-memory identity store by the harness (`TckIdentities`).
 
 [#what-is-skipped]
 == What is skipped

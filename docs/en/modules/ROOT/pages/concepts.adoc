@@ -84,7 +84,7 @@ Foy enforces the declarative security of Servlet 6.1 chapter 13 for every reques
 * An annotation applies to each url-pattern of its servlet, but **the descriptor wins** on a pattern it names exactly, for every method.
 * A CONFIDENTIAL or INTEGRAL transport guarantee applies when every covering constraint asks for it; Foy treats both as "HTTPS required".
 
-*Mechanisms.* The `login-config` names one mechanism per application: BASIC (the default) or FORM. CLIENT-CERT is deferred and DIGEST is not supported: both fail closed (`403` on protected resources). Credentials are checked against the embedder's `IdentityStore`, which returns the principal and its application roles; Foy maps no group.
+*Mechanisms.* The `login-config` names one mechanism per application: BASIC (the default), FORM or CLIENT-CERT (the identity comes from the TLS client certificate, see xref:usage.adoc#client-cert[Client certificates]). DIGEST is not supported: it fails closed (`403` on protected resources). Credentials are checked against the embedder's `IdentityStore`, which returns the principal and its application roles; Foy maps no group.
 
 *Session-cached identity.* BASIC authenticates each request from its `Authorization` header. FORM is session-based: after a successful login the identity is kept in the session, out of the application's reach (it is not an attribute), and restored on each request of that session; the session id changes at login.
 
