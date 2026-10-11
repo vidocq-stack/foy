@@ -96,6 +96,7 @@ public final class WebSecurity {
                 }
                 yield new FormAuthenticator(store, loginConfig.formLoginPage(), loginConfig.formErrorPage());
             }
+            case "CLIENT-CERT" -> new ClientCertAuthenticator(store);
             default -> {
                 LOG.log(System.Logger.Level.WARNING,
                         "auth-method {0} is not supported; protected resources answer 403", method);

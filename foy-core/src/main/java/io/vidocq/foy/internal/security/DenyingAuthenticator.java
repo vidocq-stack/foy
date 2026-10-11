@@ -27,8 +27,8 @@ import java.io.IOException;
 import java.util.Optional;
 
 /**
- * The mechanism of an application whose {@code auth-method} Foy does not support (CLIENT-CERT,
- * DIGEST, a custom name). It fails closed: a protected resource answers 403 and {@code login()}
+ * The mechanism of an application whose {@code auth-method} Foy does not support (DIGEST, a
+ * custom name). It fails closed: a protected resource answers 403 and {@code login()}
  * throws.
  */
 public final class DenyingAuthenticator implements Authenticator {

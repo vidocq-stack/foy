@@ -19,6 +19,7 @@
  */
 package io.vidocq.foy.internal.security;
 
+import io.vidocq.chappe.api.ClientAuth;
 import io.vidocq.chappe.api.Server;
 import io.vidocq.foy.internal.boot.DeployOptions;
 import io.vidocq.foy.internal.boot.Deployment;
@@ -29,6 +30,8 @@ import io.vidocq.foy.internal.session.SessionManager;
 import io.vidocq.foy.internal.webxml.SecurityDefs.SecurityConstraintDef;
 import io.vidocq.foy.internal.webxml.SecurityDefs.WebResourceCollectionDef;
 import io.vidocq.foy.spi.security.IdentityStore;
+
+import javax.net.ssl.SSLContext;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -61,6 +64,7 @@ final class SecureApp implements AutoCloseable {
     final int port;
     final CookieManager cookies = new CookieManager();
     final HttpClient client;
+    private final String scheme;
 
     SecureApp(WebAppModel model) { this(model, SecuritySettings.DEFAULTS.withIdentityStore(USERS)); }
 
@@ -80,7 +84,25 @@ final class SecureApp implements AutoCloseable {
         var started = io.vidocq.foy.internal.TestServerLauncherAccess.start(deployment.handler());
         server = started.server();
         port = started.port();
+        scheme = "http";
         client = HttpClient.newBuilder().cookieHandler(cookies).followRedirects(HttpClient.Redirect.NEVER).build();
+    }
+
+    /**
+     * Over TLS: the listener asks for a client certificate without requiring one
+     * ({@code ClientAuth.WANT}); the client presents what {@code clientContext} holds.
+     */
+    SecureApp(WebAppModel model, SecuritySettings settings, SSLContext serverContext, SSLContext clientContext,
+              HttpClient.Version version) {
+        deployment = WebAppDeployer.deploy(model,
+                DeployOptions.defaults(SecureApp.class.getClassLoader()).withSecurity(settings));
+        var started = io.vidocq.foy.internal.TestServerLauncherAccess.startTls(deployment.handler(), serverContext,
+                ClientAuth.WANT);
+        server = started.server();
+        port = started.port();
+        scheme = "https";
+        client = HttpClient.newBuilder().cookieHandler(cookies).followRedirects(HttpClient.Redirect.NEVER)
+                .sslContext(clientContext).version(version).build();
     }
 
     static SecurityConstraintDef constraint(List<String> patterns, List<String> methods, List<String> omissions,
@@ -93,7 +115,7 @@ final class SecureApp implements AutoCloseable {
         return "Basic " + Base64.getEncoder().encodeToString(userColonPassword.getBytes(StandardCharsets.UTF_8));
     }
 
-    HttpRequest.Builder request(String path) { return HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port + path)); }
+    HttpRequest.Builder request(String path) { return HttpRequest.newBuilder(URI.create(scheme + "://127.0.0.1:" + port + path)); }
 
     HttpResponse<String> get(String path) throws Exception { return send(request(path).GET()); }
 

@@ -160,7 +160,7 @@ class ProgrammaticSecurityEndToEndTest {
 
     @Test
     void loginUnderAnUnsupportedMechanismThrows() throws Exception {
-        try (var app = app("CLIENT-CERT")) {
+        try (var app = app("DIGEST")) {
             assertEquals("refused:false:the configured authentication mechanism does not support username/password login",
                     app.get("/bad").body());
         }
