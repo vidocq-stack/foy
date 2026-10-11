@@ -46,7 +46,7 @@ class MultipartParserTest {
         var parts = MultipartParser.parse(body.getBytes(StandardCharsets.UTF_8), "XYZ");
         assertEquals(1, parts.size());
         assertEquals("field", parts.get(0).getName());
-        assertEquals("value", new String(parts.get(0).bytes(), StandardCharsets.UTF_8));
+        assertEquals("value", content(parts.get(0)));
         assertNull(parts.get(0).getSubmittedFileName());
     }
 
@@ -63,7 +63,7 @@ class MultipartParserTest {
         assertEquals("file", p.getName());
         assertEquals("hello.txt", p.getSubmittedFileName());
         assertEquals("text/plain", p.getContentType());
-        assertEquals("hello world", new String(p.bytes(), StandardCharsets.UTF_8));
+        assertEquals("hello world", content(p));
         assertEquals(11L, p.getSize());
     }
 
@@ -97,5 +97,13 @@ class MultipartParserTest {
         var parts = MultipartParser.parse(body.getBytes(StandardCharsets.UTF_8), "B");
         assertEquals("yes", parts.get(0).getHeader("x-custom"));
         assertTrue(parts.get(0).getHeaderNames().contains("Content-Disposition"));
+    }
+
+    private static String content(PartImpl p) {
+        try (var in = p.getInputStream()) {
+            return new String(in.readAllBytes(), StandardCharsets.UTF_8);
+        } catch (java.io.IOException e) {
+            throw new java.io.UncheckedIOException(e);
+        }
     }
 }

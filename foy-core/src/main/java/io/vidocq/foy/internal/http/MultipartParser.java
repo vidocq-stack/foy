@@ -24,7 +24,6 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 
@@ -36,6 +35,8 @@ import java.util.Locale;
  * Does not support partial streaming or disk transfer.</p>
  */
 public final class MultipartParser {
+
+    private static final PartStorage NO_STORAGE = new PartStorage(null);
 
     private MultipartParser() {}
 
@@ -106,7 +107,7 @@ public final class MultipartParser {
     }
 
     private static PartImpl buildPart(String headersRaw, byte[] content) {
-        LinkedHashMap<String, String> singles = new LinkedHashMap<>();
+        var headers = new ArrayList<PartImpl.Header>();
         String name = null;
         String filename = null;
         String contentType = null;
@@ -115,7 +116,7 @@ public final class MultipartParser {
             if (colon < 0) continue;
             String k = line.substring(0, colon).trim();
             String v = line.substring(colon + 1).trim();
-            singles.put(k, v);
+            headers.add(new PartImpl.Header(k, v));
             if ("Content-Disposition".equalsIgnoreCase(k)) {
                 name = extractParam(v, "name");
                 filename = extractParam(v, "filename");
@@ -124,7 +125,7 @@ public final class MultipartParser {
             }
         }
         if (name == null) return null;
-        return new PartImpl(name, filename, contentType, content, PartImpl.headersOf(singles));
+        return PartImpl.inMemory(name, filename, contentType, headers, content, NO_STORAGE);
     }
 
     private static String extractParam(String header, String key) {

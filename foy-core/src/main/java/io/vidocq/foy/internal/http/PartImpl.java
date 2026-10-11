@@ -24,69 +24,224 @@ import jakarta.servlet.http.Part;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.nio.ByteBuffer;
+import java.nio.channels.SeekableByteChannel;
+import java.nio.charset.Charset;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
+import java.nio.file.OpenOption;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
+import java.nio.file.StandardOpenOption;
+import java.util.ArrayList;
 import java.util.Collection;
-import java.util.Collections;
 import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Locale;
 import java.util.Map;
-import java.util.TreeMap;
+import java.util.Objects;
+import java.util.Set;
+import java.util.concurrent.locks.ReentrantLock;
 
 /**
- * {@link Part} in-memory: each part keeps its content in {@code byte[]}.
+ * A {@link Part} of a {@code multipart/form-data} request (Servlet 6.1 section 3.2). Its content is in
+ * memory up to the {@code fileSizeThreshold}, else in a container temporary file ({@link PartSink});
+ * the container deletes its temporary files at the end of the request ({@link PartStorage#close()}).
  *
- * <p>This milestone does not spill to disk — the threshold {@code fileSizeThreshold} of
- * {@link jakarta.servlet.annotation.MultipartConfig @MultipartConfig} is ignored for now.</p>
+ * <p>{@link #getSubmittedFileName()} is the client's value, raw: it may hold {@code ../}, a drive
+ * letter or a backslash path. The container never builds a path from it; an application must
+ * sanitise it first, and in particular never pass it to {@link #write} as is.</p>
  */
 public final class PartImpl implements Part {
+
+    /** One part header as received; names compare case-insensitively. */
+    public record Header(String name, String value) {
+        public Header {
+            Objects.requireNonNull(name, "name");
+            Objects.requireNonNull(value, "value");
+        }
+    }
 
     private final String name;
     private final String submittedFileName;
     private final String contentType;
-    private final byte[] content;
-    private final Map<String, java.util.List<String>> headers;
+    /** Values by lower-case name; {@link #headerNames} keeps each name's first spelling, in order. */
+    private final Map<String, List<String>> headers;
+    private final List<String> headerNames;
+    private final long size;
+    private final PartStorage storage;
+    private final ReentrantLock lock = new ReentrantLock();
+    /** Guarded by {@link #lock}: the content in memory, or {@code null}. */
+    private byte[] memory;
+    /** Guarded by {@link #lock}: the file holding the content, or {@code null}. */
+    private Path file;
+    /** Guarded by {@link #lock}: {@link #file} is a container temporary file. */
+    private boolean temporary;
+    /** Guarded by {@link #lock}. */
+    private boolean deleted;
 
-    public PartImpl(String name, String submittedFileName, String contentType,
-                    byte[] content, Map<String, java.util.List<String>> headers) {
-        this.name = name;
+    private PartImpl(String name, String submittedFileName, String contentType, List<Header> received,
+                     byte[] memory, Path file, long size, PartStorage storage) {
+        this.name = Objects.requireNonNull(name, "name");
         this.submittedFileName = submittedFileName;
         this.contentType = contentType;
-        this.content = content;
-        Map<String, java.util.List<String>> h = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
-        h.putAll(headers);
-        this.headers = Collections.unmodifiableMap(h);
+        var values = new LinkedHashMap<String, List<String>>();
+        var names = new ArrayList<String>();
+        for (Header h : received) {
+            String key = h.name().toLowerCase(Locale.ROOT);
+            if (!values.containsKey(key)) names.add(h.name());
+            values.computeIfAbsent(key, _ -> new ArrayList<>()).add(h.value());
+        }
+        values.replaceAll((k, v) -> List.copyOf(v));
+        this.headers = Map.copyOf(values);
+        this.headerNames = List.copyOf(names);
+        this.memory = memory;
+        this.file = file;
+        this.temporary = file != null;
+        this.size = size;
+        this.storage = Objects.requireNonNull(storage, "storage");
     }
 
-    @Override public InputStream getInputStream() { return new ByteArrayInputStream(content); }
+    static PartImpl inMemory(String name, String submittedFileName, String contentType, List<Header> headers,
+                             byte[] content, PartStorage storage) {
+        return new PartImpl(name, submittedFileName, contentType, headers, content, null, content.length, storage);
+    }
+
+    static PartImpl onDisk(String name, String submittedFileName, String contentType, List<Header> headers,
+                           Path file, long size, PartStorage storage) {
+        return new PartImpl(name, submittedFileName, contentType, headers, null, file, size, storage);
+    }
+
+    @Override
+    public InputStream getInputStream() throws IOException {
+        lock.lock();
+        try {
+            if (deleted) throw new IOException("the part " + name + " was deleted");
+            return memory != null ? new ByteArrayInputStream(memory) : Files.newInputStream(file);
+        } finally {
+            lock.unlock();
+        }
+    }
+
     @Override public String getContentType() { return contentType; }
     @Override public String getName() { return name; }
     @Override public String getSubmittedFileName() { return submittedFileName; }
-    @Override public long getSize() { return content.length; }
+    @Override public long getSize() { return size; }
 
-    @Override public void write(String fileName) throws IOException {
-        Files.write(Path.of(fileName), content);
+    /**
+     * Stores the content at {@code fileName}.
+     *
+     * <ul>
+     *   <li>A <b>relative</b> name resolves under the multipart location and may not leave it: no
+     *       {@code ..} escape, no symbolic link leading out of it, not the name of a container
+     *       temporary file ({@link PartStorage}). A link at the target itself is never followed.</li>
+     *   <li>An <b>absolute</b> path is used as provided, as the {@code Part.write} Javadoc says
+     *       ("the file will be created relative to the location ... if the path is relative"): it is
+     *       the application's own choice and the container does not confine it.</li>
+     * </ul>
+     *
+     * <p>A temporary file is moved there (atomic when on the same file system) and becomes the
+     * application's: the container no longer deletes it. A part held in memory is written to a new
+     * file created owner-only ({@code rw-------} where POSIX is supported), like the moved temporary
+     * files; a part already written is copied.</p>
+     */
+    @Override
+    public void write(String fileName) throws IOException {
+        Path target = storage.writeTarget(fileName);
+        boolean confined = !Path.of(fileName).isAbsolute(); // writeTarget accepted it: a valid path
+        lock.lock();
+        try {
+            if (deleted) throw new IOException("the part " + name + " was deleted");
+            if (memory != null) {
+                writeMemory(target, confined);
+            } else if (temporary) {
+                Files.move(file, target, StandardCopyOption.REPLACE_EXISTING);
+                storage.disown(file);
+                file = target;
+                temporary = false;
+            } else if (!file.equals(target)) {
+                Files.copy(file, target, StandardCopyOption.REPLACE_EXISTING);
+            }
+        } finally {
+            lock.unlock();
+        }
     }
 
-    @Override public void delete() { /* in-memory: no-op */ }
-
-    @Override public String getHeader(String name) {
-        var v = headers.get(name);
-        return v == null || v.isEmpty() ? null : v.get(0);
+    /** Guarded by {@link #lock}. A confined target that is a symbolic link fails instead of being followed. */
+    private void writeMemory(Path target, boolean confined) throws IOException {
+        Set<OpenOption> options = confined
+                ? Set.of(StandardOpenOption.WRITE, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING,
+                        LinkOption.NOFOLLOW_LINKS)
+                : Set.of(StandardOpenOption.WRITE, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
+        Path dir = target.toAbsolutePath().getParent();
+        try (SeekableByteChannel channel = Files.newByteChannel(target, options, PartStorage.ownerOnly(dir))) {
+            ByteBuffer buffer = ByteBuffer.wrap(memory);
+            while (buffer.hasRemaining()) channel.write(buffer);
+        }
     }
-    @Override public Collection<String> getHeaders(String name) {
-        var v = headers.get(name);
-        return v == null ? java.util.List.of() : v;
-    }
-    @Override public Collection<String> getHeaderNames() {
-        return new java.util.LinkedHashSet<>(headers.keySet());
+
+    /**
+     * Deletes the container's storage of this part: its content in memory and its temporary file. A
+     * file the application wrote with {@link #write} is the application's and stays.
+     */
+    @Override
+    public void delete() throws IOException {
+        lock.lock();
+        try {
+            if (deleted) return;
+            deleted = true;
+            memory = null;
+            if (temporary) {
+                temporary = false;
+                storage.discard(file);
+            }
+        } finally {
+            lock.unlock();
+        }
     }
 
-    /** Raw content (exposed so that {@code HttpServletRequestImpl} can also use it as a parameter). */
-    public byte[] bytes() { return content; }
+    /** {@link #delete()}, ignoring a failure: a failed parse; {@link PartStorage#close()} retries. */
+    void discard() {
+        try { delete(); } catch (IOException ignored) { /* retried at the end of the request */ }
+    }
 
-    public static Map<String, java.util.List<String>> headersOf(LinkedHashMap<String, String> singles) {
-        Map<String, java.util.List<String>> out = new LinkedHashMap<>();
-        singles.forEach((k, v) -> out.put(k, java.util.List.of(v)));
-        return out;
+    @Override
+    public String getHeader(String name) {
+        List<String> values = headers.get(name.toLowerCase(Locale.ROOT));
+        return values == null ? null : values.getFirst();
+    }
+
+    @Override
+    public Collection<String> getHeaders(String name) {
+        return headers.getOrDefault(name.toLowerCase(Locale.ROOT), List.of());
+    }
+
+    @Override
+    public Collection<String> getHeaderNames() { return headerNames; }
+
+    /** The content decoded with {@code charset}: the value of a field exposed as a request parameter. */
+    public String text(Charset charset) throws IOException {
+        try (InputStream in = getInputStream()) {
+            return new String(in.readAllBytes(), charset);
+        }
+    }
+
+    /** The {@code charset} parameter of this part's Content-Type when the JDK supports it, else {@code fallback}. */
+    public Charset charset(Charset fallback) {
+        if (contentType == null) return fallback;
+        for (String parameter : contentType.split(";")) {
+            int eq = parameter.indexOf('=');
+            if (eq < 0 || !parameter.substring(0, eq).trim().equalsIgnoreCase("charset")) continue;
+            String value = parameter.substring(eq + 1).trim();
+            if (value.length() >= 2 && value.startsWith("\"") && value.endsWith("\"")) {
+                value = value.substring(1, value.length() - 1);
+            }
+            try {
+                return Charset.forName(value);
+            } catch (RuntimeException unsupported) {
+                return fallback;
+            }
+        }
+        return fallback;
     }
 }

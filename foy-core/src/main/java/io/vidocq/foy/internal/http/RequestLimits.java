@@ -32,9 +32,9 @@ package io.vidocq.foy.internal.http;
  *                                   {@link IllegalStateException} and later calls see the query-string
  *                                   parameters only
  * @param maxMultipartParts          parts in one {@code multipart/form-data} body; beyond, the parse fails
- *                                   with {@code MultipartLimitException}
+ *                                   with {@link MultipartLimitException}
  * @param maxMultipartPartHeaderSize bytes of the header section of one part (CRLFs included); beyond,
- *                                   the parse fails with {@code MultipartLimitException}
+ *                                   the parse fails with {@link MultipartLimitException}
  */
 public record RequestLimits(long maxChunkedRequestBodySize, long maxFormBodySize, int maxMultipartParts,
                             int maxMultipartPartHeaderSize) {
