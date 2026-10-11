@@ -192,8 +192,8 @@ servlet.tck.spec.rdspecialchar.RdSpecialCharTests 2 0 0
 servlet.tck.spec.requestdispatcher.RequestDispatcherTests 20 0 0
 servlet.tck.spec.requestmap.RequestMapTests 8 0 0
 servlet.tck.spec.security.annotations.AnnotationsTests 7 0 0
-servlet.tck.spec.security.clientcert.ClientCertTests 1 1 0
-servlet.tck.spec.security.clientcertanno.ClientCertAnnoTests 1 1 0
+servlet.tck.spec.security.clientcert.ClientCertTests 1 0 0
+servlet.tck.spec.security.clientcertanno.ClientCertAnnoTests 1 0 0
 servlet.tck.spec.security.denyUncovered.DenyUncoveredTests 5 0 0
 servlet.tck.spec.security.metadatacomplete.MetaDataCompleteTests 6 0 0
 servlet.tck.spec.security.secbasic.SecBasicTests 14 0 0

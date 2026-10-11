@@ -19,6 +19,7 @@
  */
 package io.vidocq.foy.tck.arquillian;
 
+import io.vidocq.chappe.api.ClientAuth;
 import io.vidocq.foy.internal.boot.ApplicationSources;
 import io.vidocq.foy.internal.boot.ComponentFactory;
 import io.vidocq.foy.internal.boot.DescriptorMerger;
@@ -50,7 +51,16 @@ import org.jboss.shrinkwrap.api.Node;
 import org.jboss.shrinkwrap.api.spec.WebArchive;
 import org.jboss.shrinkwrap.descriptor.api.Descriptor;
 
+import javax.net.ssl.KeyManagerFactory;
+import javax.net.ssl.SSLContext;
+import javax.net.ssl.TrustManagerFactory;
+import java.io.IOException;
+import java.io.InputStream;
 import java.net.URL;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.security.GeneralSecurityException;
+import java.security.KeyStore;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -206,8 +216,7 @@ public class VidocqDeployableContainer implements DeployableContainer<VidocqCont
         var ctx = new HTTPContext(config.getHost(), harness.port());
         // The Arquillian servlet's "contextRoot" is the path the TCK requests go under: our
         // context path, or "/" for a root war (Arquillian derives getPath() from the URL).
-        String tckContextRoot = harness.baseUrl().substring(
-                ("http://" + config.getHost() + ":" + harness.port()).length());
+        String tckContextRoot = harness.baseUrl().replaceFirst("^https?://[^/]+", "");
         if (tckContextRoot.isEmpty()) tckContextRoot = "/";
         ctx.add(new org.jboss.arquillian.container.spi.client.protocol.metadata.Servlet(
                 registered.isEmpty() ? "_vidocq" : registered.get(0), tckContextRoot));
@@ -269,8 +278,42 @@ public class VidocqDeployableContainer implements DeployableContainer<VidocqCont
     }
 
     private synchronized ServletTestHost host() {
-        if (host == null) host = new ServletTestHost();
+        if (host == null) {
+            // WANT is enough: the war's CONFIDENTIAL constraint and CLIENT-CERT refuse a request
+            // without a certificate.
+            host = config.isTls() ? new ServletTestHost(serverSslContext(), ClientAuth.WANT) : new ServletTestHost();
+        }
         return host;
+    }
+
+    /**
+     * The server side of the {@code https} container: the build-generated {@code server.p12} as key
+     * material, and {@code server-trust.p12} (the TCK's {@code cts_cert}) as trust material.
+     */
+    private static SSLContext serverSslContext() {
+        Path dir = VidocqContainerConfiguration.tlsDir();
+        if (dir == null) {
+            throw new IllegalStateException("tls=true needs -D" + VidocqContainerConfiguration.TLS_DIR
+                    + " (run with -Ptck,tck-official)");
+        }
+        try {
+            char[] password = "changeit".toCharArray();
+            var kmf = KeyManagerFactory.getInstance(KeyManagerFactory.getDefaultAlgorithm());
+            kmf.init(pkcs12(dir.resolve("server.p12"), password), password);
+            var tmf = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
+            tmf.init(pkcs12(dir.resolve("server-trust.p12"), password));
+            SSLContext context = SSLContext.getInstance("TLS");
+            context.init(kmf.getKeyManagers(), tmf.getTrustManagers(), null);
+            return context;
+        } catch (IOException | GeneralSecurityException e) {
+            throw new IllegalStateException("cannot load the TLS stores of " + dir + ": " + e.getMessage(), e);
+        }
+    }
+
+    private static KeyStore pkcs12(Path file, char[] password) throws IOException, GeneralSecurityException {
+        KeyStore store = KeyStore.getInstance("PKCS12");
+        try (InputStream in = Files.newInputStream(file)) { store.load(in, password); }
+        return store;
     }
 
     @Override

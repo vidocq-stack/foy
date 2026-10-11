@@ -19,11 +19,13 @@
  */
 package io.vidocq.foy.tck;
 
+import io.vidocq.chappe.api.ClientAuth;
 import io.vidocq.chappe.api.Handler;
 import io.vidocq.chappe.api.Response;
 import io.vidocq.chappe.api.Server;
 import io.vidocq.chappe.api.StatusCode;
 
+import javax.net.ssl.SSLContext;
 import java.net.ServerSocket;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -39,9 +41,23 @@ public final class ServletTestHost implements AutoCloseable {
     private final Map<String, Handler> mounts = new ConcurrentHashMap<>();
     private final Server server;
     private final int port;
+    private final String scheme;
 
-    /** Starts the server on a free local port. */
+    /** Starts a cleartext server on a free local port. */
     public ServletTestHost() {
+        this(null, ClientAuth.NONE, false);
+    }
+
+    /**
+     * Starts a TLS server on a free local port, serving with {@code sslContext} and asking for a
+     * client certificate as {@code clientAuth} says.
+     */
+    public ServletTestHost(SSLContext sslContext, ClientAuth clientAuth) {
+        this(java.util.Objects.requireNonNull(sslContext, "sslContext"),
+                java.util.Objects.requireNonNull(clientAuth, "clientAuth"), true);
+    }
+
+    private ServletTestHost(SSLContext sslContext, ClientAuth clientAuth, boolean tls) {
         RuntimeException last = null;
         Server started = null;
         int bound = -1;
@@ -53,9 +69,11 @@ public final class ServletTestHost implements AutoCloseable {
                 // Short keep-alive idle timeout: some TCK clients (6.1.0 TrailerTest) read the
                 // response to EOF on a keep-alive connection and rely on the container closing
                 // it; 60 s (chappe default) would add a minute per such test.
-                Server s = Server.builder().host("127.0.0.1").port(candidate)
+                var builder = Server.builder().host("127.0.0.1").port(candidate)
                         .idleTimeout(java.time.Duration.ofSeconds(5))
-                        .handler(this::route).build();
+                        .handler(this::route);
+                if (tls) builder = builder.tls(sslContext, clientAuth);
+                Server s = builder.build();
                 s.start();
                 started = s;
                 bound = candidate;
@@ -64,9 +82,13 @@ public final class ServletTestHost implements AutoCloseable {
         if (started == null) throw last;
         this.server = started;
         this.port = bound;
+        this.scheme = tls ? "https" : "http";
     }
 
     public int port() { return port; }
+
+    /** {@code "https"} for a TLS host, {@code "http"} otherwise. */
+    public String scheme() { return scheme; }
 
     /**
      * Mounts {@code handler} under {@code contextPath} ({@code "/"} or {@code ""} for the root).

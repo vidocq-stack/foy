@@ -169,6 +169,68 @@
                         </executions>
                     </plugin>
                     <plugin>
+                        <!-- CLIENT-CERT (BUG-20261011-03): the TCK's client certificates. Build-time only. -->
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-dependency-plugin</artifactId>
+                        <version>3.8.1</version>
+                        <executions>
+                            <execution>
+                                <id>unpack-tck-certificates</id>
+                                <phase>generate-test-resources</phase>
+                                <goals><goal>unpack</goal></goals>
+                                <configuration>
+                                    <artifactItems>
+                                        <artifactItem>
+                                            <groupId>jakarta.tck</groupId>
+                                            <artifactId>servlet-tck-runtime</artifactId>
+                                            <version>6.1.0</version>
+                                        </artifactItem>
+                                    </artifactItems>
+                                    <includes>certificates/**</includes>
+                                    <outputDirectory>${project.build.directory}/tck-certificates</outputDirectory>
+                                </configuration>
+                            </execution>
+                        </executions>
+                    </plugin>
+                    <plugin>
+                        <!-- CLIENT-CERT (BUG-20261011-03): the https container's key store (SAN 127.0.0.1 and
+                             localhost), the client's trust store of it, and the server's trust store of the
+                             TCK's cts_cert. Build-time only: the JDK's keytool, the <delete> keeps it idempotent. -->
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-antrun-plugin</artifactId>
+                        <version>3.1.0</version>
+                        <executions>
+                            <execution>
+                                <id>generate-tls-stores</id>
+                                <phase>process-test-resources</phase>
+                                <goals><goal>run</goal></goals>
+                                <configuration>
+                                    <target>
+                                        <property name="tls.dir" value="${project.build.directory}/tls"/>
+                                        <property name="keytool" value="${java.home}/bin/keytool"/>
+                                        <delete dir="${tls.dir}"/>
+                                        <mkdir dir="${tls.dir}"/>
+                                        <exec executable="${keytool}" failonerror="true">
+                                            <arg line="-genkeypair -alias foy-tck -keyalg RSA -keysize 2048 -validity 3650"/>
+                                            <arg value="-dname"/><arg value="CN=localhost, O=Foy TCK"/>
+                                            <arg value="-ext"/><arg value="SAN=ip:127.0.0.1,dns:localhost"/>
+                                            <arg line="-keystore ${tls.dir}/server.p12 -storetype PKCS12 -storepass changeit -keypass changeit"/>
+                                        </exec>
+                                        <exec executable="${keytool}" failonerror="true">
+                                            <arg line="-exportcert -rfc -alias foy-tck -keystore ${tls.dir}/server.p12 -storepass changeit -file ${tls.dir}/server.pem"/>
+                                        </exec>
+                                        <exec executable="${keytool}" failonerror="true">
+                                            <arg line="-importcert -noprompt -alias foy-tck -file ${tls.dir}/server.pem -keystore ${tls.dir}/client-trust.p12 -storetype PKCS12 -storepass changeit"/>
+                                        </exec>
+                                        <exec executable="${keytool}" failonerror="true">
+                                            <arg line="-importcert -noprompt -alias cts -file ${project.build.directory}/tck-certificates/certificates/cts_cert -keystore ${tls.dir}/server-trust.p12 -storetype PKCS12 -storepass changeit"/>
+                                        </exec>
+                                    </target>
+                                </configuration>
+                            </execution>
+                        </executions>
+                    </plugin>
+                    <plugin>
                         <groupId>org.apache.maven.plugins</groupId>
                         <artifactId>maven-surefire-plugin</artifactId>
                         <configuration>
@@ -197,6 +259,15 @@
                                 <servlet.tck.support.http2Push>false</servlet.tck.support.http2Push>
                                 <webServerPort>8080</webServerPort>
                                 <ts_home>${project.build.directory}/test-classes</ts_home>
+                                <!-- CLIENT-CERT (BUG-20261011-03): the TCK client presents the CTS certificate and trusts the
+                                     build-generated server certificate; the https container serves with server.p12 and trusts cts_cert. -->
+                                <javax.net.ssl.keyStore>${project.build.directory}/tck-certificates/certificates/clientcert.jks</javax.net.ssl.keyStore>
+                                <javax.net.ssl.keyStorePassword>changeit</javax.net.ssl.keyStorePassword>
+                                <javax.net.ssl.keyStoreType>JKS</javax.net.ssl.keyStoreType>
+                                <javax.net.ssl.trustStore>${project.build.directory}/tls/client-trust.p12</javax.net.ssl.trustStore>
+                                <javax.net.ssl.trustStorePassword>changeit</javax.net.ssl.trustStorePassword>
+                                <javax.net.ssl.trustStoreType>PKCS12</javax.net.ssl.trustStoreType>
+                                <foy.tck.tls.dir>${project.build.directory}/tls</foy.tck.tls.dir>
                             </systemPropertyVariables>
                             <!-- Certains tests TCK injectent Cookie/Host/etc. que
                                  Java HttpClient refuse par défaut (JDK-8203771).

@@ -3,9 +3,18 @@
             xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
             xsi:schemaLocation="http://jboss.org/schema/arquillian http://jboss.org/schema/arquillian/arquillian_1_0.xsd">
 
-    <container qualifier="vidocq-servlet-chappe" default="true">
-        <configuration>
-            <property name="host">127.0.0.1</property>
-        </configuration>
-    </container>
+    <group qualifier="foy" default="true">
+        <container qualifier="vidocq-servlet-chappe" default="true">
+            <configuration>
+                <property name="host">127.0.0.1</property>
+            </configuration>
+        </container>
+        <!-- @TargetsContainer("https"): the CLIENT-CERT tests (BUG-20261011-03). -->
+        <container qualifier="https">
+            <configuration>
+                <property name="host">127.0.0.1</property>
+                <property name="tls">true</property>
+            </configuration>
+        </container>
+    </group>
 </arquillian>

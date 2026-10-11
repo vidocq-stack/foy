@@ -97,7 +97,7 @@ public final class ServletTestHarness implements AutoCloseable {
     }
 
     public int port() { return port; }
-    public String baseUrl() { return "http://127.0.0.1:" + port + (contextPath.equals("/") ? "" : contextPath); }
+    public String baseUrl() { return host.scheme() + "://127.0.0.1:" + port + (contextPath.equals("/") ? "" : contextPath); }
     public HttpClient client() { return client; }
     /** The deployed model. */
     public WebAppModel model() { return model; }

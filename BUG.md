@@ -624,7 +624,11 @@ Statuts : `OPEN` → `INVESTIGATING` → `FIXED` (commit hash) → `CLOSED`.
 ## BUG-20261011-03 — CLIENT-CERT authentication is not supported
 
 - **Date** : 2026-10-11
-- **Statut** : DEFERRED (Phase 6 decision; fails closed)
+- **Statut** : FIXED (2026-10-12, branch `pr/ybl/foy-client-cert`, on chappe#29: TLS client
+  authentication and `Request.tls()`). CLIENT-CERT authenticates the TLS client certificate through
+  `IdentityStore.validate(X509Certificate[])`, and `foy-tck` serves the security wars that target it from
+  an `https` Arquillian container: `spec.security.clientcert.ClientCertTests#clientCertTest` and
+  `spec.security.clientcertanno.ClientCertAnnoTests#clientCertTest` now pass.
 - **Module touché** : `foy-core` (`WebSecurity.authenticatorFor`, `DenyingAuthenticator`), chappe (TLS)
 - **Symptôme** : an application whose `login-config` says `<auth-method>CLIENT-CERT</auth-method>` gets
   `403` on every protected resource, whatever certificate the client presents; `login()` throws
