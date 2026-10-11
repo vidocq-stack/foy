@@ -328,7 +328,7 @@ class WebSecurityEndToEndTest {
 
     @Test
     void anUnsupportedAuthMethodFailsClosed() throws Exception {
-        try (var app = new SecureApp(adminApp().loginConfig(new LoginConfigDef("CLIENT-CERT", null, null, null)).build())) {
+        try (var app = new SecureApp(adminApp().loginConfig(new LoginConfigDef("DIGEST", null, null, null)).build())) {
             var r = app.send("GET", "/admin/x", "alice:a-secret");
             assertEquals(403, r.statusCode());
             assertTrue(r.headers().firstValue("WWW-Authenticate").isEmpty());

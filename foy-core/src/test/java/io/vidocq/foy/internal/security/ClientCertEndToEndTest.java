@@ -156,6 +156,13 @@ class ClientCertEndToEndTest {
 
     @Test
     void plainHttpIsRefusedByTheTransportGuarantee() throws Exception {
+        // With an HTTPS port the refusal is a redirect, which only the transport guarantee produces.
+        var settings = SecuritySettings.DEFAULTS.withIdentityStore(STORE).withConfidentialPort(8443);
+        try (var app = new SecureApp(base().build(), settings)) {
+            var r = app.get("/secure/x");
+            assertEquals(302, r.statusCode());
+            assertEquals("https://127.0.0.1:8443/secure/x", r.headers().firstValue("Location").orElse(""));
+        }
         try (var app = new SecureApp(base().build(), SecuritySettings.DEFAULTS.withIdentityStore(STORE))) {
             assertEquals(403, app.get("/secure/x").statusCode());
         }
@@ -192,6 +199,15 @@ class ClientCertEndToEndTest {
     void httpServletRequestAuthenticateUsesTheCertificate(HttpClient.Version version) throws Exception {
         try (var app = tls(base().build(), STORE, "alice", version)) {
             assertEquals("authenticate=true user=" + TlsTestCertificates.ALICE_DN, app.get("/auth").body());
+        }
+    }
+
+    @Test
+    void authenticateWithoutACertificateReturnsFalseAndForbids() throws Exception {
+        try (var app = tls(base().build(), STORE, null, HttpClient.Version.HTTP_1_1)) {
+            var r = app.get("/auth");
+            assertEquals(403, r.statusCode());
+            assertFalse(r.body().contains("authenticate=true"));
         }
     }
 }
