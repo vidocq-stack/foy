@@ -19,9 +19,11 @@
  */
 package io.vidocq.foy.internal;
 
+import io.vidocq.chappe.api.ClientAuth;
 import io.vidocq.chappe.api.Handler;
 import io.vidocq.chappe.api.Server;
 
+import javax.net.ssl.SSLContext;
 import java.net.ServerSocket;
 
 /**
@@ -38,13 +40,24 @@ final class TestServerLauncher {
     }
 
     static Result start(Handler handler) {
+        return launch(handler, null, null);
+    }
+
+    /** Same as {@link #start(Handler)}, over TLS with the given client-authentication mode. */
+    static Result startTls(Handler handler, SSLContext sslContext, ClientAuth clientAuth) {
+        return launch(handler, sslContext, clientAuth);
+    }
+
+    private static Result launch(Handler handler, SSLContext sslContext, ClientAuth clientAuth) {
         RuntimeException last = null;
         for (int i = 0; i < 5; i++) {
             int port;
             try (ServerSocket s = new ServerSocket(0)) { port = s.getLocalPort(); }
             catch (Exception e) { throw new RuntimeException(e); }
             try {
-                Server server = Server.builder().host("127.0.0.1").port(port).handler(handler).build();
+                var builder = Server.builder().host("127.0.0.1").port(port).handler(handler);
+                if (sslContext != null) builder.tls(sslContext, clientAuth);
+                Server server = builder.build();
                 server.start();
                 return new Result(server, port);
             } catch (RuntimeException e) {

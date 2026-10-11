@@ -19,8 +19,11 @@
  */
 package io.vidocq.foy.internal;
 
+import io.vidocq.chappe.api.ClientAuth;
 import io.vidocq.chappe.api.Handler;
 import io.vidocq.chappe.api.Server;
+
+import javax.net.ssl.SSLContext;
 
 /** Public bridge to {@link TestServerLauncher} for tests in sub-packages. */
 public final class TestServerLauncherAccess {
@@ -28,6 +31,11 @@ public final class TestServerLauncherAccess {
 
     public static Started start(Handler handler) {
         var r = TestServerLauncher.start(handler);
+        return new Started(r.server, r.port);
+    }
+
+    public static Started startTls(Handler handler, SSLContext sslContext, ClientAuth clientAuth) {
+        var r = TestServerLauncher.startTls(handler, sslContext, clientAuth);
         return new Started(r.server, r.port);
     }
 

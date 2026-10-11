@@ -57,6 +57,7 @@ import java.io.InputStreamReader;
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
 import java.security.Principal;
+import java.security.cert.X509Certificate;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
@@ -103,6 +104,17 @@ public final class HttpServletRequestImpl implements HttpServletRequest {
         this.servletPath = servletPath;
         this.pathInfo = pathInfo;
         this.sessionManager = sessionManager;
+        if (chappe != null) chappe.tls().ifPresent(t -> TlsAttributes.seed(t, attributes));
+    }
+
+    /**
+     * The client certificate chain of the connection, leaf first, as the TLS handshake delivered it:
+     * a fresh array, empty on a plain connection or when the client sent no certificate. It is read
+     * from the connection, never from the request attribute an application can change.
+     */
+    public X509Certificate[] peerCertificates() {
+        return chappe == null ? new X509Certificate[0] : chappe.tls()
+                .map(t -> t.peerCertificates().toArray(X509Certificate[]::new)).orElseGet(() -> new X509Certificate[0]);
     }
 
     private Identity identity;
