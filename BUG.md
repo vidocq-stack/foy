@@ -696,3 +696,54 @@ Statuts : `OPEN` → `INVESTIGATING` → `FIXED` (commit hash) → `CLOSED`.
   fail closed.
 - **Fix envisagé** : fire the request listeners around those branches, or restrict them to mechanisms
   that do not forward (BASIC).
+
+## BUG-20261011-06 — a fragment conflict on security-role-ref is silently resolved
+
+- **Date** : 2026-10-11
+- **Statut** : OPEN (final Phase 6 review, by code reading)
+- **Module touché** : `foy-core` (`ComponentMerger.servlets`)
+- **Symptôme** : when two `web-fragment.xml` declare the same servlet with a `security-role-ref` of the
+  same `role-name` but different `role-link`s, and `web.xml` does not reference that role-name, the
+  first fragment in the ordering wins silently (`putIfAbsent`). Section 8.2.3 makes such a conflict an
+  error that fails the deployment, as Foy already does for conflicting `init-param`s.
+- **Reproduction minimale** : fragments A and B both declare servlet `s` with
+  `<security-role-ref><role-name>MGR</role-name><role-link>admin</role-link>` (A) and
+  `<role-link>user</role-link>` (B); deploy: it succeeds, and `isUserInRole("MGR")` in `s` follows A.
+- **Hypothèse de cause** : role refs from fragments are merged with `Map.putIfAbsent` instead of the
+  `MergeSlots.Keyed` slot used for `init-param` (which records the source and reports a conflict).
+- **Fix envisagé** : merge fragment role refs through a `Keyed<String>` per servlet (web.xml entries
+  override, equal values from two fragments are not a conflict), and fail the deployment otherwise.
+
+## BUG-20261011-07 — InMemoryIdentityStore digest encodes the password with Charset.encode
+
+- **Date** : 2026-10-11
+- **Statut** : OPEN (final Phase 6 review, by code reading)
+- **Module touché** : `foy-core` (`InMemoryIdentityStore.digest`)
+- **Symptôme** : the password is encoded with `StandardCharsets.UTF_8.encode(CharBuffer)`, whose
+  coding error action is REPLACE: two passwords differing only by lone (unpaired) surrogates encode to the
+  same bytes (`?`), so they collide and either one authenticates. `Charset.encode` may also grow its
+  output buffer, leaving an intermediate copy of the encoded password that is never wiped (only the
+  final `ByteBuffer`'s array and the copied `byte[]` are), and the returned `ByteBuffer`'s backing array
+  itself is not wiped.
+- **Reproduction minimale** : register `"a\uD800"` and authenticate with `"a\uDC00"`: by code reading,
+  both digest to SHA-256(salt + `a?`) and the login succeeds.
+- **Hypothèse de cause** : convenience encoder with REPLACE semantics and an internal buffer growth policy.
+- **Fix envisagé** : use `UTF_8.newEncoder().onMalformedInput(REPORT).onUnmappableCharacter(REPORT)`
+  into a `ByteBuffer` sized `maxBytesPerChar * length` (exact upper bound, no reallocation), refuse a
+  password that does not encode (no identity), and wipe that buffer's backing array.
+
+## BUG-20261011-08 — FoyVaubanBootstrap offers no way to configure an IdentityStore
+
+- **Date** : 2026-10-11
+- **Statut** : OPEN (final Phase 6 review, by code reading)
+- **Module touché** : `foy-cdi-vauban` (`FoyVaubanBootstrap`)
+- **Symptôme** : the identity store is configured through `FoyChappeBoot` only; an application booted
+  with `FoyVaubanBootstrap` (CDI) cannot pass an `IdentityStore`, so its security settings keep the
+  default empty store and no BASIC, FORM or programmatic login can ever succeed: every protected
+  resource answers 401 (or the login page / error page) for every credential.
+- **Reproduction minimale** : boot through `FoyVaubanBootstrap` an application with a
+  `security-constraint` and an `auth-constraint`; send valid-looking Basic credentials: `401`.
+- **Hypothèse de cause** : `SecuritySettings`/`identityStore` were wired into `FoyChappeBoot.Builder` in
+  Phase 6, not into the Vauban bootstrap.
+- **Fix envisagé** : accept an `IdentityStore` in the Vauban bootstrap builder, or resolve one as a CDI
+  bean (an `IdentityStore` bean in the application), and pass it to the deploy options.
