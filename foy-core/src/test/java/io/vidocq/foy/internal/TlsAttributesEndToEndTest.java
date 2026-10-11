@@ -22,12 +22,15 @@ package io.vidocq.foy.internal;
 import io.vidocq.chappe.api.ClientAuth;
 import io.vidocq.chappe.api.Server;
 import io.vidocq.foy.internal.bridge.ChappeServletBridge;
+import io.vidocq.foy.internal.bridge.HttpServletRequestImpl;
 import io.vidocq.foy.internal.container.VidocqServletContext;
 import io.vidocq.foy.internal.dispatcher.FilterRegistry;
 import io.vidocq.foy.internal.dispatcher.ServletDispatcher;
 import io.vidocq.foy.internal.dispatcher.UrlPatternMatcher;
+import jakarta.servlet.ServletRequest;
 import jakarta.servlet.ServletRequestAttributeEvent;
 import jakarta.servlet.ServletRequestAttributeListener;
+import jakarta.servlet.ServletRequestWrapper;
 import jakarta.servlet.http.HttpServlet;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
@@ -82,6 +85,20 @@ class TlsAttributesEndToEndTest {
         };
     }
 
+    private static HttpServletRequestImpl impl(ServletRequest req) {
+        while (req instanceof ServletRequestWrapper w) req = w.getRequest();
+        return (HttpServletRequestImpl) req;
+    }
+
+    private static HttpServlet peers() {
+        return new HttpServlet() {
+            @Override
+            protected void doGet(HttpServletRequest req, HttpServletResponse resp) throws IOException {
+                resp.getWriter().write("peers=" + impl(req).peerCertificates().length);
+            }
+        };
+    }
+
     private static HttpServlet mutate() {
         return new HttpServlet() {
             @Override
@@ -89,7 +106,13 @@ class TlsAttributesEndToEndTest {
                 var chain = (X509Certificate[]) req.getAttribute("jakarta.servlet.request.X509Certificate");
                 chain[0] = null;
                 req.removeAttribute("jakarta.servlet.request.X509Certificate");
-                resp.getWriter().write("mutated");
+                var impl = impl(req);
+                var first = impl.peerCertificates();
+                first[0] = null;
+                var again = impl.peerCertificates();
+                resp.getWriter().write("mutated peers=" + again.length + " leaf="
+                        + again[0].getSubjectX500Principal().getName()
+                        + " distinct=" + (first != again) + " attribute=" + req.getAttribute("jakarta.servlet.request.X509Certificate"));
             }
         };
     }
@@ -102,7 +125,8 @@ class TlsAttributesEndToEndTest {
         return new ChappeServletBridge(
                 new ServletDispatcher(List.of(
                         new ServletDispatcher.Mapping(UrlPatternMatcher.of("/a"), describe(), "A"),
-                        new ServletDispatcher.Mapping(UrlPatternMatcher.of("/mutate"), mutate(), "M"))),
+                        new ServletDispatcher.Mapping(UrlPatternMatcher.of("/mutate"), mutate(), "M"),
+                        new ServletDispatcher.Mapping(UrlPatternMatcher.of("/peers"), peers(), "P"))),
                 new FilterRegistry(List.of()), TestSecurity.permitAll(ctx), null, "/");
     }
 
@@ -176,8 +200,28 @@ class TlsAttributesEndToEndTest {
     @Test
     void theCertificateArrayIsPerRequest() throws Exception {
         var client = client(HttpClient.Version.HTTP_1_1, CERTS.clientContext("alice"));
-        assertEquals("mutated", get(client, "/mutate"));
+        String mutated = get(client, "/mutate");
+        // within the request, the connection's chain survives both the array mutation and the removal
+        assertTrue(mutated.startsWith("mutated peers=1 leaf=CN=Alice Example"), mutated);
+        assertTrue(mutated.contains("distinct=true attribute=null"), mutated);
         String body = get(client, "/a");
         assertTrue(body.contains("leaf=CN=Alice Example"), body);
+    }
+
+    @Test
+    void peerCertificatesIsEmptyWithoutAClientCertificate() throws Exception {
+        var client = client(HttpClient.Version.HTTP_1_1, CERTS.clientContextWithoutCertificate());
+        assertEquals("peers=0", get(client, "/peers"));
+    }
+
+    @Test
+    void peerCertificatesIsEmptyOnAPlainConnection() throws Exception {
+        var r = TestServerLauncher.start(bridge());
+        plainServer = r.server;
+        String body = HttpClient.newBuilder().version(HttpClient.Version.HTTP_1_1).build().send(
+                HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + r.port + "/peers"))
+                        .timeout(Duration.ofSeconds(10)).GET().build(),
+                HttpResponse.BodyHandlers.ofString()).body();
+        assertEquals("peers=0", body);
     }
 }
