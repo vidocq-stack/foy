@@ -201,9 +201,17 @@ public class UploadServlet extends HttpServlet {
     protected void doPost(HttpServletRequest req, HttpServletResponse resp) throws Exception {
         String title = req.getParameter("title"); // a form field of the same multipart body
         Part part = req.getPart("file");
-        String submitted = part.getSubmittedFileName(); // raw client input: never trust it
-        String safe = java.nio.file.Path.of(submitted.replace('\\', '/')).getFileName().toString();
-        part.write(safe); // relative: resolved against the location
+        String submitted = part == null ? null : part.getSubmittedFileName(); // raw client input
+        if (submitted == null) { // no part, or a plain field instead of a file
+            resp.sendError(HttpServletResponse.SC_BAD_REQUEST);
+            return;
+        }
+        var name = java.nio.file.Path.of(submitted.replace('\\', '/')).getFileName();
+        if (name == null || name.toString().equals(".") || name.toString().equals("..")) {
+            resp.sendError(HttpServletResponse.SC_BAD_REQUEST);
+            return;
+        }
+        part.write(name.toString()); // relative: resolved against the location
         resp.setStatus(204);
     }
 }
@@ -230,7 +238,7 @@ Every temporary file is deleted at the end of the request, at the end of the asy
 A relative name is resolved against the location; a name that leaves it (`..`, a symbolic link to elsewhere) is refused with an `IOException`. An absolute name is used as provided. `Part.delete()` deletes the part's temporary file.
 
 `getSubmittedFileName()`::
-Returned raw, as the client sent it: it can hold `..`, `/`, `\` or a full Windows path. Sanitise it before using it as a file name, as the example above does: replace `\` with `/`, then keep only `Path.of(name).getFileName()`.
+Returned raw, as the client sent it: it can hold `..`, `/`, `\` or a full Windows path. Sanitise it before using it as a file name, as the example above does: replace `\` with `/`, then keep only `Path.of(name).getFileName()`, and refuse a missing, empty, `.` or `..` name. `getSubmittedFileName()` is `null` for a part sent as a plain field.
 
 Form fields as parameters::
 The parts without a file name are request parameters, after the query-string parameters, on a POST to a servlet with a multipart configuration, or on any request once `getParts()` ran. A field's charset is the part's own `Content-Type` charset, else the request encoding (`setCharacterEncoding`, the request `Content-Type`, `request-character-encoding`), else the value of a `_charset_` field, else ISO-8859-1. Request listeners, which run before any servlet, see the query-string parameters only.

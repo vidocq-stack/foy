@@ -746,8 +746,9 @@ Statuts : `OPEN` → `INVESTIGATING` → `FIXED` (commit hash) → `CLOSED`.
 - **Date** : 2026-10-11
 - **Statut** : FIXED (2026-10-11), on the Vidocq side by vidocq#222 (merged 2026-10-11, closes
   vidocq#220): the Vidocq Servlet extension passes an `IdentityStore` bean or the
-  `vidocq.servlet.users.*` configuration to `FoyChappeBoot`. Found by code reading in the final
-  Phase 6 review.
+  `vidocq.servlet.users.*` configuration to `FoyChappeBoot`. No merge commit exists (the PR was
+  rebased onto vidocq `main`); its commits there are `a4c11687` (feat: configure Foy's identity
+  store and transport rules) to `12518f83`. Found by code reading in the final Phase 6 review.
 - **Module touché** : `foy-cdi-vauban` (`FoyVaubanBootstrap`)
 - **Symptôme** : the identity store is configured through `FoyChappeBoot` only; an application booted
   with `FoyVaubanBootstrap` (CDI) cannot pass an `IdentityStore`, so its security settings keep the
