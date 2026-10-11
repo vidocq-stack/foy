@@ -19,155 +19,404 @@
  */
 package io.vidocq.foy.internal.http;
 
+import jakarta.servlet.MultipartConfigElement;
+
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.nio.ByteBuffer;
+import java.nio.charset.CharacterCodingException;
+import java.nio.charset.Charset;
+import java.nio.charset.CodingErrorAction;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 
 /**
- * Parser {@code multipart/form-data} compliant with minimum RFC 7578 §4.
+ * Streaming {@code multipart/form-data} parser (RFC 7578, RFC 2046 section 5.1).
  *
- * <p>MVP: full loading of the body into memory, split on {@code --boundary}, parse
- * headers on each side, extraction of content up to the next boundary.
- * Does not support partial streaming or disk transfer.</p>
+ * <p>The body is read once, through an 8 KiB window: a delimiter is {@code CRLF--boundary} (the
+ * first one may open the body), found in linear time (Knuth-Morris-Pratt), so a file that holds the
+ * boundary text elsewhere is never split. Each part's content goes to a {@link PartSink} (memory up
+ * to the threshold, then a temporary file). Part headers are decoded as UTF-8 (ISO-8859-1 when they
+ * are not valid UTF-8), kept in order with their repetitions; {@code filename*} (RFC 8187) wins over
+ * {@code filename}. A truncated or malformed body is a {@link MalformedMultipartException}; a body
+ * beyond a limit a {@link MultipartLimitException}; either way the files already written are deleted.
+ * A part without a {@code form-data} disposition or a {@code name} is read, counted and dropped.</p>
  */
 public final class MultipartParser {
 
-    private static final PartStorage NO_STORAGE = new PartStorage(null);
+    /** Read-ahead window, and the largest chunk handed to a part at once. */
+    private static final int BUFFER = 8192;
+
+    /**
+     * The limits of one parse ({@code -1}: none): the servlet's {@code maxFileSize},
+     * {@code maxRequestSize} and {@code fileSizeThreshold}, the container's part count and part
+     * header size.
+     */
+    public record Limits(long maxFileSize, long maxRequestSize, int fileSizeThreshold, int maxParts,
+                         int maxPartHeaderSize) {
+
+        public static Limits of(MultipartConfigElement config, RequestLimits container) {
+            return new Limits(config.getMaxFileSize(), config.getMaxRequestSize(),
+                    Math.max(0, config.getFileSizeThreshold()), container.maxMultipartParts(),
+                    container.maxMultipartPartHeaderSize());
+        }
+    }
 
     private MultipartParser() {}
 
-    /** Extracts the boundary value from a multipart/form-data Content-Type. */
+    /**
+     * The boundary of a {@code multipart/form-data} Content-Type: 1 to 70 RFC 2046 bchars, not ending
+     * with a space, quoted or not; {@code null} for another media type or an invalid boundary.
+     */
     public static String extractBoundary(String contentType) {
         if (contentType == null) return null;
-        int idx = contentType.toLowerCase(Locale.ROOT).indexOf("boundary=");
-        if (idx < 0) return null;
-        String b = contentType.substring(idx + "boundary=".length()).trim();
-        int semi = b.indexOf(';');
-        if (semi >= 0) b = b.substring(0, semi).trim();
-        if (b.length() >= 2 && b.startsWith("\"") && b.endsWith("\"")) {
-            b = b.substring(1, b.length() - 1);
+        var params = new HashMap<String, String>();
+        try {
+            if (!"multipart/form-data".equals(parseParameters(contentType, params))) return null;
+        } catch (MalformedMultipartException e) {
+            return null;
         }
-        return b;
-    }
-
-    public static List<PartImpl> parse(InputStream body, String boundary) throws IOException {
-        byte[] all = readAll(body);
-        return parse(all, boundary);
-    }
-
-    public static List<PartImpl> parse(byte[] all, String boundary) {
-        List<PartImpl> parts = new ArrayList<>();
-        byte[] delim = ("--" + boundary).getBytes(StandardCharsets.US_ASCII);
-
-        int pos = indexOf(all, delim, 0);
-        if (pos < 0) return parts;
-
-        while (pos < all.length) {
-            int nextDelim = indexOf(all, delim, pos + delim.length);
-            if (nextDelim < 0) break;
-
-            // Positionner au début des headers de la part (après le CRLF qui suit --boundary).
-            int headerStart = pos + delim.length;
-            // Closing boundary "--boundary--" → fin.
-            if (headerStart + 2 <= all.length
-                    && all[headerStart] == '-' && all[headerStart + 1] == '-') {
-                break;
-            }
-            // Consommer CRLF après --boundary.
-            if (headerStart + 2 <= all.length
-                    && all[headerStart] == '\r' && all[headerStart + 1] == '\n') {
-                headerStart += 2;
-            }
-
-            // Trouver fin des headers : CRLF CRLF
-            int bodyStart = findBlankLine(all, headerStart, nextDelim);
-            if (bodyStart < 0) { pos = nextDelim; continue; }
-
-            String headersRaw = new String(all, headerStart, bodyStart - headerStart - 4,
-                    StandardCharsets.US_ASCII);
-            int bodyEnd = nextDelim;
-            // Retire le CRLF juste avant le delimiter suivant.
-            if (bodyEnd - 2 >= bodyStart
-                    && all[bodyEnd - 2] == '\r' && all[bodyEnd - 1] == '\n') {
-                bodyEnd -= 2;
-            }
-            byte[] content = new byte[bodyEnd - bodyStart];
-            System.arraycopy(all, bodyStart, content, 0, content.length);
-
-            PartImpl part = buildPart(headersRaw, content);
-            if (part != null) parts.add(part);
-
-            pos = nextDelim;
+        String boundary = params.get("boundary");
+        if (boundary == null || boundary.isEmpty() || boundary.length() > 70 || boundary.endsWith(" ")) return null;
+        for (int i = 0; i < boundary.length(); i++) {
+            if (!isBoundaryChar(boundary.charAt(i))) return null;
         }
-        return parts;
+        return boundary;
     }
 
-    private static PartImpl buildPart(String headersRaw, byte[] content) {
+    /**
+     * Parses {@code body} up to its close delimiter (the epilogue is left unread).
+     *
+     * @throws MalformedMultipartException for a truncated or malformed body
+     * @throws MultipartLimitException     beyond a limit
+     * @throws IOException                 when the body or a temporary file fails
+     */
+    public static List<PartImpl> parse(InputStream body, String boundary, Limits limits, PartStorage storage)
+            throws IOException {
+        var in = new CountingReader(body, limits.maxRequestSize());
+        var scanner = new DelimiterScanner(("\r\n--" + boundary).getBytes(StandardCharsets.US_ASCII));
+        var parts = new ArrayList<PartImpl>();
+        boolean complete = false;
+        try {
+            // The preamble is discarded; the first delimiter may open the body, as if a CRLF preceded it.
+            if (!scanner.scan(in, null, true)) throw new MalformedMultipartException("no multipart boundary in the body");
+            int seen = 0;
+            while (!atCloseDelimiter(in)) {
+                if (limits.maxParts() >= 0 && seen == limits.maxParts()) {
+                    throw new MultipartLimitException("the request has more than " + limits.maxParts() + " parts");
+                }
+                seen++;
+                List<PartImpl.Header> headers = readHeaders(in, limits.maxPartHeaderSize());
+                Disposition disposition = Disposition.of(headers);
+                if (disposition == null) {
+                    if (!scanner.scan(in, null, false)) throw new MalformedMultipartException("truncated multipart body");
+                    continue;
+                }
+                try (var sink = new PartSink(storage, limits.fileSizeThreshold(), limits.maxFileSize())) {
+                    if (!scanner.scan(in, sink, false)) throw new MalformedMultipartException("truncated multipart body");
+                    parts.add(sink.finish(disposition.name(), disposition.fileName(), header(headers, "Content-Type"),
+                            headers));
+                }
+            }
+            complete = true;
+            return parts;
+        } finally {
+            if (!complete) for (PartImpl p : parts) p.discard();
+        }
+    }
+
+    /** After a delimiter: {@code --} closes the body; else optional padding then CRLF open a part. */
+    private static boolean atCloseDelimiter(CountingReader in) throws IOException {
+        int c = in.read();
+        if (c == '-') {
+            if (in.read() == '-') return true;
+            throw new MalformedMultipartException("malformed close delimiter");
+        }
+        while (c == ' ' || c == '\t') c = in.read();
+        if (c == '\r') {
+            if (in.read() == '\n') return false;
+            throw new MalformedMultipartException("malformed delimiter line");
+        }
+        if (c < 0) throw new MalformedMultipartException("truncated multipart body");
+        throw new MalformedMultipartException("malformed delimiter line");
+    }
+
+    /** The header section of a part, up to its blank line, at most {@code maxBytes} bytes (CRLFs included). */
+    private static List<PartImpl.Header> readHeaders(CountingReader in, int maxBytes) throws IOException {
         var headers = new ArrayList<PartImpl.Header>();
-        String name = null;
-        String filename = null;
-        String contentType = null;
-        for (String line : headersRaw.split("\r\n")) {
-            int colon = line.indexOf(':');
-            if (colon < 0) continue;
-            String k = line.substring(0, colon).trim();
-            String v = line.substring(colon + 1).trim();
-            headers.add(new PartImpl.Header(k, v));
-            if ("Content-Disposition".equalsIgnoreCase(k)) {
-                name = extractParam(v, "name");
-                filename = extractParam(v, "filename");
-            } else if ("Content-Type".equalsIgnoreCase(k)) {
-                contentType = v;
+        var line = new ByteArrayOutputStream();
+        int total = 0;
+        while (true) {
+            line.reset();
+            int c;
+            while ((c = in.read()) != '\r') {
+                if (c < 0) throw new MalformedMultipartException("truncated multipart part headers");
+                if (c == '\n') throw new MalformedMultipartException("bare LF in a part header");
+                if (++total > maxBytes) {
+                    throw new MultipartLimitException("the headers of a part exceed " + maxBytes + " bytes");
+                }
+                line.write(c);
+            }
+            if (in.read() != '\n') throw new MalformedMultipartException("bare CR in a part header");
+            total += 2;
+            if (total > maxBytes) throw new MultipartLimitException("the headers of a part exceed " + maxBytes + " bytes");
+            if (line.size() == 0) return headers;
+            headers.add(parseHeader(line.toByteArray()));
+        }
+    }
+
+    private static PartImpl.Header parseHeader(byte[] raw) throws MalformedMultipartException {
+        if (raw[0] == ' ' || raw[0] == '\t') throw new MalformedMultipartException("obsolete folded part header");
+        String text = decodeHeader(raw);
+        int colon = text.indexOf(':');
+        if (colon <= 0 || !isToken(text, 0, colon)) throw new MalformedMultipartException("malformed part header");
+        for (int i = colon + 1; i < text.length(); i++) {
+            char ch = text.charAt(i);
+            if ((ch < 0x20 && ch != '\t') || ch == 0x7F) {
+                throw new MalformedMultipartException("control character in a part header");
             }
         }
-        if (name == null) return null;
-        return PartImpl.inMemory(name, filename, contentType, headers, content, NO_STORAGE);
+        return new PartImpl.Header(text.substring(0, colon), trimOws(text.substring(colon + 1)));
     }
 
-    private static String extractParam(String header, String key) {
-        int idx = header.toLowerCase(Locale.ROOT).indexOf(key + "=");
-        if (idx < 0) return null;
-        int start = idx + key.length() + 1;
-        if (start >= header.length()) return null;
-        if (header.charAt(start) == '"') {
-            int end = header.indexOf('"', start + 1);
-            if (end < 0) return null;
-            return header.substring(start + 1, end);
+    /** UTF-8 (what browsers send, RFC 7578 section 5.1), else ISO-8859-1. */
+    private static String decodeHeader(byte[] raw) {
+        try {
+            return StandardCharsets.UTF_8.newDecoder().onMalformedInput(CodingErrorAction.REPORT)
+                    .onUnmappableCharacter(CodingErrorAction.REPORT).decode(ByteBuffer.wrap(raw)).toString();
+        } catch (CharacterCodingException e) {
+            return new String(raw, StandardCharsets.ISO_8859_1);
         }
-        int end = start;
-        while (end < header.length() && header.charAt(end) != ';' && header.charAt(end) != ' ') end++;
-        return header.substring(start, end);
     }
 
-    private static int findBlankLine(byte[] buf, int from, int until) {
-        for (int i = from; i + 3 < until; i++) {
-            if (buf[i] == '\r' && buf[i + 1] == '\n' && buf[i + 2] == '\r' && buf[i + 3] == '\n') {
-                return i + 4;
+    private static String header(List<PartImpl.Header> headers, String name) {
+        for (var h : headers) if (h.name().equalsIgnoreCase(name)) return h.value();
+        return null;
+    }
+
+    /** The {@code form-data} name and file name of a part; {@code null} when it has none (the part is dropped). */
+    private record Disposition(String name, String fileName) {
+
+        static Disposition of(List<PartImpl.Header> headers) throws MalformedMultipartException {
+            String value = header(headers, "Content-Disposition");
+            if (value == null) return null;
+            var params = new HashMap<String, String>();
+            if (!"form-data".equals(parseParameters(value, params))) return null;
+            String name = params.get("name");
+            if (name == null) return null;
+            String extended = params.containsKey("filename*") ? decodeExtendedValue(params.get("filename*")) : null;
+            return new Disposition(name, extended != null ? extended : params.get("filename"));
+        }
+    }
+
+    /**
+     * Parses {@code type; name=value; name="quoted"} into {@code params} (lower-case names) and returns
+     * the lower-case type. Inside quotes only {@code \"} and {@code \\} are escapes: browsers send the
+     * backslashes of a Windows path raw.
+     */
+    static String parseParameters(String value, Map<String, String> params) throws MalformedMultipartException {
+        int length = value.length();
+        int semi = value.indexOf(';');
+        String type = (semi < 0 ? value : value.substring(0, semi)).trim().toLowerCase(Locale.ROOT);
+        int i = semi < 0 ? length : semi + 1;
+        while (i < length) {
+            i = skipOws(value, i);
+            if (i == length) break;
+            if (value.charAt(i) == ';') {
+                i++;
+                continue;
+            }
+            int eq = value.indexOf('=', i);
+            if (eq < 0) throw new MalformedMultipartException("parameter without a value");
+            String name = value.substring(i, eq).trim().toLowerCase(Locale.ROOT);
+            if (name.isEmpty()) throw new MalformedMultipartException("parameter without a name");
+            i = skipOws(value, eq + 1);
+            String parameter;
+            if (i < length && value.charAt(i) == '"') {
+                var quoted = new StringBuilder();
+                i++;
+                while (true) {
+                    if (i == length) throw new MalformedMultipartException("unterminated quoted string");
+                    char c = value.charAt(i++);
+                    if (c == '"') break;
+                    if (c == '\\' && i < length && (value.charAt(i) == '"' || value.charAt(i) == '\\')) c = value.charAt(i++);
+                    quoted.append(c);
+                }
+                parameter = quoted.toString();
+                i = skipOws(value, i);
+                if (i < length && value.charAt(i) != ';') {
+                    throw new MalformedMultipartException("unexpected text after a quoted parameter");
+                }
+            } else {
+                int end = value.indexOf(';', i);
+                if (end < 0) end = length;
+                parameter = value.substring(i, end).trim();
+                i = end;
+            }
+            if (params.putIfAbsent(name, parameter) != null) {
+                throw new MalformedMultipartException("duplicate parameter " + name);
+            }
+            if (i < length) i++;
+        }
+        return type;
+    }
+
+    /** RFC 8187 {@code charset'language'pct-encoded} in UTF-8 or ISO-8859-1; {@code null} when it does not decode. */
+    private static String decodeExtendedValue(String value) {
+        int first = value.indexOf('\'');
+        int second = first < 0 ? -1 : value.indexOf('\'', first + 1);
+        if (second < 0) return null;
+        Charset charset = switch (value.substring(0, first).toUpperCase(Locale.ROOT)) {
+            case "UTF-8" -> StandardCharsets.UTF_8;
+            case "ISO-8859-1" -> StandardCharsets.ISO_8859_1;
+            default -> null;
+        };
+        if (charset == null) return null;
+        var bytes = new ByteArrayOutputStream();
+        String encoded = value.substring(second + 1);
+        for (int i = 0; i < encoded.length(); i++) {
+            char c = encoded.charAt(i);
+            if (c == '%') {
+                if (i + 2 >= encoded.length()) return null;
+                int hi = Character.digit(encoded.charAt(i + 1), 16);
+                int lo = Character.digit(encoded.charAt(i + 2), 16);
+                if (hi < 0 || lo < 0) return null;
+                bytes.write(hi << 4 | lo);
+                i += 2;
+            } else if (c < 0x21 || c > 0x7E) {
+                return null;
+            } else {
+                bytes.write(c);
             }
         }
-        return -1;
-    }
-
-    private static int indexOf(byte[] hay, byte[] needle, int from) {
-        outer:
-        for (int i = from; i <= hay.length - needle.length; i++) {
-            for (int j = 0; j < needle.length; j++) {
-                if (hay[i + j] != needle[j]) continue outer;
-            }
-            return i;
+        try {
+            return charset.newDecoder().onMalformedInput(CodingErrorAction.REPORT)
+                    .onUnmappableCharacter(CodingErrorAction.REPORT)
+                    .decode(ByteBuffer.wrap(bytes.toByteArray())).toString();
+        } catch (CharacterCodingException e) {
+            return null;
         }
-        return -1;
     }
 
-    private static byte[] readAll(InputStream in) throws IOException {
-        ByteArrayOutputStream out = new ByteArrayOutputStream();
-        byte[] buf = new byte[8192];
-        int n;
-        while ((n = in.read(buf)) >= 0) out.write(buf, 0, n);
-        return out.toByteArray();
+    private static boolean isBoundaryChar(char c) {
+        return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
+                || "'()+_,-./:=? ".indexOf(c) >= 0;
+    }
+
+    private static boolean isToken(String s, int from, int to) {
+        for (int i = from; i < to; i++) {
+            char c = s.charAt(i);
+            boolean ok = (c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
+                    || "!#$%&'*+-.^_`|~".indexOf(c) >= 0;
+            if (!ok) return false;
+        }
+        return true;
+    }
+
+    private static int skipOws(String s, int i) {
+        while (i < s.length() && (s.charAt(i) == ' ' || s.charAt(i) == '\t')) i++;
+        return i;
+    }
+
+    private static String trimOws(String s) {
+        int start = skipOws(s, 0);
+        int end = s.length();
+        while (end > start && (s.charAt(end - 1) == ' ' || s.charAt(end - 1) == '\t')) end--;
+        return s.substring(start, end);
+    }
+
+    /** The body, read through a window and counted against maxRequestSize. */
+    private static final class CountingReader {
+        private final InputStream in;
+        private final long max;
+        private final byte[] buffer = new byte[BUFFER];
+        private int position;
+        private int length;
+        private long total;
+
+        CountingReader(InputStream in, long max) {
+            this.in = in;
+            this.max = max;
+        }
+
+        int read() throws IOException {
+            if (position == length) {
+                int n;
+                do {
+                    n = in.read(buffer, 0, buffer.length);
+                } while (n == 0);
+                if (n < 0) return -1;
+                total += n;
+                if (max >= 0 && total > max) {
+                    throw new MultipartLimitException("the multipart body exceeds maxRequestSize (" + max + " bytes)");
+                }
+                position = 0;
+                length = n;
+            }
+            return buffer[position++] & 0xFF;
+        }
+    }
+
+    /** Finds the delimiter in linear time (Knuth-Morris-Pratt); the bytes before it go to a sink. */
+    private static final class DelimiterScanner {
+        private final byte[] delimiter;
+        /** {@code border[i]}: length of the longest proper border of {@code delimiter[0..i]}. */
+        private final int[] border;
+        private final byte[] pending = new byte[BUFFER];
+
+        DelimiterScanner(byte[] delimiter) {
+            this.delimiter = delimiter;
+            this.border = new int[delimiter.length];
+            for (int i = 1, k = 0; i < delimiter.length; i++) {
+                while (k > 0 && delimiter[i] != delimiter[k]) k = border[k - 1];
+                if (delimiter[i] == delimiter[k]) k++;
+                border[i] = k;
+            }
+        }
+
+        /**
+         * Consumes the stream up to and including the next delimiter.
+         *
+         * @param sink   receives the bytes before the delimiter; {@code null} discards them
+         * @param primed the stream starts right after a CRLF (the body's first delimiter needs none)
+         * @return {@code false} when the stream ends first
+         */
+        boolean scan(CountingReader in, PartSink sink, boolean primed) throws IOException {
+            int matched = primed ? 2 : 0;
+            int pendingLength = 0;
+            int b;
+            while ((b = in.read()) >= 0) {
+                while (matched > 0 && delimiter[matched] != (byte) b) {
+                    int keep = border[matched - 1];
+                    // delimiter[0 .. matched - keep) can no longer begin a delimiter: it was content.
+                    for (int i = 0; i < matched - keep; i++) {
+                        if (pendingLength == pending.length) pendingLength = flush(sink, pendingLength);
+                        pending[pendingLength++] = delimiter[i];
+                    }
+                    matched = keep;
+                }
+                if (delimiter[matched] == (byte) b) {
+                    if (++matched == delimiter.length) {
+                        flush(sink, pendingLength);
+                        return true;
+                    }
+                } else {
+                    if (pendingLength == pending.length) pendingLength = flush(sink, pendingLength);
+                    pending[pendingLength++] = (byte) b;
+                }
+            }
+            flush(sink, pendingLength);
+            return false;
+        }
+
+        private int flush(PartSink sink, int pendingLength) throws IOException {
+            if (sink != null && pendingLength > 0) sink.write(pending, 0, pendingLength);
+            return 0;
+        }
     }
 }

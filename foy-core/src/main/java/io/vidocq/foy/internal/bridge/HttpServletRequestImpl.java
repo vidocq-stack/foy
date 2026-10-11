@@ -953,8 +953,10 @@ public final class HttpServletRequestImpl implements HttpServletRequest {
         }
         String boundary = io.vidocq.foy.internal.http.MultipartParser.extractBoundary(ct);
         if (boundary == null) { parsedParts = List.of(); return; }
-        parsedParts = io.vidocq.foy.internal.http.MultipartParser.parse(
-                chappe.body().asInputStream(), boundary);
+        // Interim until Task 7.6: unlimited and in memory, as before the streaming parser.
+        parsedParts = io.vidocq.foy.internal.http.MultipartParser.parse(chappe.body().asInputStream(), boundary,
+                new io.vidocq.foy.internal.http.MultipartParser.Limits(-1, -1, Integer.MAX_VALUE, -1, 64 * 1024),
+                new io.vidocq.foy.internal.http.PartStorage(null));
     }
     /**
      * Server push is not supported: chappe emits no PUSH_PROMISE frame, and push is deprecated in

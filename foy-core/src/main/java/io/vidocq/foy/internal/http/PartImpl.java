@@ -229,19 +229,18 @@ public final class PartImpl implements Part {
     /** The {@code charset} parameter of this part's Content-Type when the JDK supports it, else {@code fallback}. */
     public Charset charset(Charset fallback) {
         if (contentType == null) return fallback;
-        for (String parameter : contentType.split(";")) {
-            int eq = parameter.indexOf('=');
-            if (eq < 0 || !parameter.substring(0, eq).trim().equalsIgnoreCase("charset")) continue;
-            String value = parameter.substring(eq + 1).trim();
-            if (value.length() >= 2 && value.startsWith("\"") && value.endsWith("\"")) {
-                value = value.substring(1, value.length() - 1);
-            }
-            try {
-                return Charset.forName(value);
-            } catch (RuntimeException unsupported) {
-                return fallback;
-            }
+        var params = new java.util.HashMap<String, String>();
+        try {
+            MultipartParser.parseParameters(contentType, params);
+        } catch (MalformedMultipartException malformed) {
+            return fallback;
         }
-        return fallback;
+        String value = params.get("charset");
+        if (value == null) return fallback;
+        try {
+            return Charset.forName(value);
+        } catch (RuntimeException unsupported) {
+            return fallback;
+        }
     }
 }

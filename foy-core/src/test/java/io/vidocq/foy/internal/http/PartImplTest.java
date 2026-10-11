@@ -162,4 +162,15 @@ class PartImplTest {
         var plain = PartImpl.inMemory("n", null, null, List.of(), new byte[0], new PartStorage(temp));
         assertEquals(StandardCharsets.ISO_8859_1, plain.charset(StandardCharsets.ISO_8859_1));
     }
+
+    @Test
+    void theCharsetParameterIsParsedLikeAnyParameter() {
+        var storage = new PartStorage(temp);
+        var quoted = PartImpl.inMemory("n", null, "text/plain; x=\"a; charset=latin1\"; charset=\"UTF-16\"",
+                List.of(), new byte[0], storage);
+        assertEquals(StandardCharsets.UTF_16, quoted.charset(StandardCharsets.ISO_8859_1),
+                "a charset= inside another quoted parameter is not the charset");
+        var malformed = PartImpl.inMemory("n", null, "text/plain; charset=\"UTF-8", List.of(), new byte[0], storage);
+        assertEquals(StandardCharsets.ISO_8859_1, malformed.charset(StandardCharsets.ISO_8859_1));
+    }
 }
