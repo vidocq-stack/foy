@@ -22,10 +22,23 @@ package io.vidocq.foy.spi.jsp;
 import jakarta.servlet.Servlet;
 import jakarta.servlet.ServletContext;
 import jakarta.servlet.ServletException;
+import java.util.EventListener;
+import java.util.List;
+import java.util.Objects;
+import java.util.function.Supplier;
 
 /** Optional, container-neutral binding for precompiled or translated page engines. */
 @FunctionalInterface
 public interface JspEngine {
+    /** Constructor-based TLD listener; Foy can deduplicate by type before construction. */
+    record Listener(Class<? extends EventListener> type, Supplier<? extends EventListener> factory) {
+        public Listener { Objects.requireNonNull(type, "type"); Objects.requireNonNull(factory, "factory"); }
+        public EventListener createListener() {
+            var listener = Objects.requireNonNull(factory.get(), "Listener factory returned null");
+            if (!type.isInstance(listener)) throw new IllegalArgumentException("Listener factory returned the wrong type");
+            return listener;
+        }
+    }
     /** Opens one application before initializers/listeners. The layer defines page visibility. */
     Application deploy(ServletContext context, ModuleLayer applicationLayer) throws ServletException;
 
@@ -35,6 +48,8 @@ public interface JspEngine {
         Servlet servlet();
         /** Fresh, uninitialized servlet backing a named JSP registration. */
         Servlet servletFor(String jspFile);
+        /** TLD listeners, in discovery order; factories are invoked only by the container. */
+        default List<Listener> listeners() { return List.of(); }
         /** Releases application state after requests and servlet/listener destruction have drained. */
         @Override void close();
     }

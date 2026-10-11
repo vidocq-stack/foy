@@ -144,6 +144,13 @@ public final class WebAppDeployer {
             for (var l : model.listeners()) listeners.add(l.factory().get());
             ListenerRegistry registry = new ListenerRegistry();
             registry.registerAll(listeners);
+            if (engine != null) {
+                var registeredTypes = new java.util.HashSet<Class<?>>();
+                for (var listener : listeners) registeredTypes.add(listener.getClass());
+                for (var descriptor : ctx.jspEngineApplication().listeners()) {
+                    if (registeredTypes.add(descriptor.type())) registry.register(descriptor.createListener(), true);
+                }
+            }
             ctx.setListenerRegistry(registry);
             runInitializers(model, options, ctx);
             contextInitializedListeners = registry;

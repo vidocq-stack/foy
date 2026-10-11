@@ -517,8 +517,12 @@ destruction; closing a deployment does not drain requests itself.
 `jsp-config` is exposed through immutable standard `JspConfigDescriptor` views.
 Ordered fragments contribute property groups; root taglib locations take
 precedence over fragments, while conflicting fragment locations fail merging.
-Configuration is available before engine startup. TLD discovery/listeners are
-outside this initial SPI. Ibarra provides the optional page-engine implementation.
+Configuration is available before engine startup. Engine applications can expose
+constructor-based TLD listener descriptors. Foy deduplicates their classes before
+construction, preserves descriptor-declared listeners, and registers remaining
+TLD listeners with restricted dynamic configuration during context initialization.
+They share the normal listener lifecycle and are destroyed before engine close.
+Ibarra provides the optional page-engine implementation and TLD discovery.
 
 == Compatibility
 
