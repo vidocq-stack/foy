@@ -56,7 +56,7 @@ final class TestServerLauncher {
             catch (Exception e) { throw new RuntimeException(e); }
             try {
                 var builder = Server.builder().host("127.0.0.1").port(port).handler(handler);
-                if (sslContext != null) builder.tls(sslContext, clientAuth);
+                if (sslContext != null) builder = builder.tls(sslContext, clientAuth);
                 Server server = builder.build();
                 server.start();
                 return new Result(server, port);

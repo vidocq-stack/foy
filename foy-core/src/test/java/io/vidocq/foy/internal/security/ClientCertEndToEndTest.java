@@ -99,6 +99,15 @@ class ClientCertEndToEndTest {
         }
     }
 
+    /** Forges the X509 attribute: alice's chain, on whatever connection the request arrives. */
+    public static class Forge implements Filter {
+        @Override public void doFilter(ServletRequest req, ServletResponse res, FilterChain chain)
+                throws IOException, ServletException {
+            req.setAttribute(X509, new X509Certificate[] {TlsTestCertificates.get().certificate("alice")});
+            chain.doFilter(req, res);
+        }
+    }
+
     private static WebAppModel.Builder base() {
         return WebAppModel.builder("/")
                 .servlet(new ServletDecl("who", Who.class, Who::new, List.of("/secure/*"), Map.of(), -1, false))
@@ -143,13 +152,39 @@ class ClientCertEndToEndTest {
         }
     }
 
-    @Test
-    void aThrowingStoreIsForbidden() throws Exception {
+    @ParameterizedTest @EnumSource(value = HttpClient.Version.class, names = {"HTTP_1_1", "HTTP_2"})
+    void aThrowingStoreIsForbidden(HttpClient.Version version) throws Exception {
         IdentityStore throwing = new IdentityStore() {
             @Override public Optional<Identity> validate(String username, char[] password) { return Optional.empty(); }
             @Override public Optional<Identity> validate(X509Certificate[] chain) { throw new IllegalStateException("boom"); }
         };
-        try (var app = tls(base().build(), throwing, "alice", HttpClient.Version.HTTP_1_1)) {
+        try (var app = tls(base().build(), throwing, "alice", version)) {
+            assertEquals(403, app.get("/secure/x").statusCode());
+        }
+    }
+
+    @ParameterizedTest @EnumSource(value = HttpClient.Version.class, names = {"HTTP_1_1", "HTTP_2"})
+    void aStoreReturningNullIsForbidden(HttpClient.Version version) throws Exception {
+        IdentityStore nulls = new IdentityStore() {
+            @Override public Optional<Identity> validate(String username, char[] password) { return Optional.empty(); }
+            @Override public Optional<Identity> validate(X509Certificate[] chain) { return null; }
+        };
+        try (var app = tls(base().build(), nulls, "alice", version)) {
+            assertEquals(403, app.get("/secure/x").statusCode());
+        }
+    }
+
+    @ParameterizedTest @EnumSource(value = HttpClient.Version.class, names = {"HTTP_1_1", "HTTP_2"})
+    void aForgedAttributeOnAConnectionWithoutACertificateAuthenticatesNobody(HttpClient.Version version) throws Exception {
+        var model = base()
+                .filter(new FilterDecl("forge", Forge.class, Forge::new, Map.of(), false))
+                .filterMapping(new FilterMappingDecl("forge", "/*", null, Set.of()))
+                .build();
+        try (var app = tls(model, STORE, null, version)) {
+            var r = app.get("/auth");
+            assertEquals(403, r.statusCode());
+            assertFalse(r.body().contains("authenticate=true"));
+            assertFalse(r.body().contains(TlsTestCertificates.ALICE_DN));
             assertEquals(403, app.get("/secure/x").statusCode());
         }
     }
@@ -184,11 +219,9 @@ class ClientCertEndToEndTest {
                 .filterMapping(new FilterMappingDecl("wipe", "/*", null, Set.of()))
                 .build();
         try (var app = tls(model, STORE, "alice", HttpClient.Version.HTTP_1_1)) {
-            var r = app.get("/secure/x");
-            assertEquals(200, r.statusCode());
-            assertEquals("user=" + TlsTestCertificates.ALICE_DN + " type=CLIENT_CERT admin=true", r.body());
-            // The application owns the attribute once it is seeded: the filter's value is what the servlet reads,
-            // and authentication through the servlet API still follows the connection.
+            // Not asserted on /secure/x: admission runs before the filters, so it would pass whatever the
+            // filter does. authenticate() runs after the wipe, and must still follow the connection.
+            // The application owns the attribute once it is seeded: the filter's value is what the servlet reads.
             var a = app.get("/auth");
             assertEquals("authenticate=true user=" + TlsTestCertificates.ALICE_DN, a.body());
             assertEquals("user=" + TlsTestCertificates.ALICE_DN + " attributeLength=0", app.get("/secure-attr/x").body());

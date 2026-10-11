@@ -145,7 +145,7 @@ The `io.vidocq.foy.internal.*` packages are exported to allow advanced integrati
 | Declares a user of the in-memory identity store with its application roles. The password is digested at once (salted SHA-256) and not kept. Exclusive with `identityStore`.
 
 | `Builder.certificateUser(String subjectDn, String... roles)` [.tag-new]#NEW#
-| Declares a CLIENT-CERT identity of the in-memory identity store: the certificate whose leaf subject equals `subjectDn` (compared canonically, spacing and attribute-value case ignored) gets these application roles, and the principal name is the subject in RFC 1779 form. Exclusive with `identityStore`. See xref:usage.adoc#client-cert[Client certificates].
+| Declares a CLIENT-CERT identity of the in-memory identity store: the certificate whose leaf subject equals `subjectDn` (compared strictly: spacing and the case of attribute names and values ignored, no Unicode folding, same RDN order) gets these application roles, and the principal name is the subject in RFC 1779 form. Exclusive with `identityStore`. See xref:usage.adoc#client-cert[Client certificates].
 
 | `Builder.identityStore(IdentityStore store)` [.tag-new]#NEW#
 | The user base behind BASIC, FORM, CLIENT-CERT and `login()`. With neither this nor `user(...)`/`certificateUser(...)`, every login fails. Exclusive with `user` and `certificateUser`.
