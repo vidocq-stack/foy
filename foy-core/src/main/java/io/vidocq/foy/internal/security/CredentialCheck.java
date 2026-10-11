@@ -22,6 +22,7 @@ package io.vidocq.foy.internal.security;
 import io.vidocq.foy.spi.security.Identity;
 import io.vidocq.foy.spi.security.IdentityStore;
 
+import java.security.cert.X509Certificate;
 import java.util.Arrays;
 import java.util.Optional;
 
@@ -48,6 +49,19 @@ public final class CredentialCheck {
             return Optional.empty();
         } finally {
             if (password != null) Arrays.fill(password, '\0');
+        }
+    }
+
+    /** {@link IdentityStore#validate(X509Certificate[])}, with a failing or {@code null}-returning store read as a refusal. */
+    public static Optional<Identity> validate(IdentityStore store, X509Certificate[] chain) {
+        try {
+            if (chain == null || chain.length == 0) return Optional.empty();
+            Optional<Identity> result = store.validate(chain.clone());
+            return result == null ? Optional.empty() : result;
+        } catch (RuntimeException e) {
+            LOG.log(System.Logger.Level.WARNING, "identity store {0} failed with {1}; the certificate is refused",
+                    store.getClass().getName(), e.getClass().getName());
+            return Optional.empty();
         }
     }
 }

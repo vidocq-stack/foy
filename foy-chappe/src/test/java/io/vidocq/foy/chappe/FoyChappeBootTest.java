@@ -22,6 +22,7 @@ package io.vidocq.foy.chappe;
 import io.vidocq.chappe.api.Router;
 import io.vidocq.chappe.api.Server;
 import io.vidocq.foy.internal.http.RequestLimits;
+import io.vidocq.foy.spi.security.IdentityStore;
 import jakarta.enterprise.inject.spi.Bean;
 import jakarta.enterprise.inject.spi.BeanManager;
 import jakarta.servlet.Servlet;
@@ -40,6 +41,8 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.lang.reflect.Proxy;
+import java.security.cert.CertificateFactory;
+import java.security.cert.X509Certificate;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -470,5 +473,23 @@ class FoyChappeBootTest {
                     ProgrammaticListener.class.getName()), names);
             assertThrows(UnsupportedOperationException.class, () -> names.add("x"));
         }
+    }
+
+    @Test
+    void certificateUserIsMappedByTheInMemoryStore() throws Exception {
+        X509Certificate alice;
+        try (var in = FoyChappeBootTest.class.getResourceAsStream("/tls/alice.pem")) {
+            alice = (X509Certificate) CertificateFactory.getInstance("X.509").generateCertificate(in);
+        }
+        var store = FoyChappeBoot.builder().certificateUser("CN=Alice Example, OU=Foy Tests, O=Vidocq, C=FR", "admin")
+                .securitySettings().identityStore();
+        assertEquals(Set.of("admin"), store.validate(new X509Certificate[] {alice}).orElseThrow().roles());
+    }
+
+    @Test
+    void certificateUserIsExclusiveWithIdentityStore() {
+        var b = FoyChappeBoot.builder().identityStore(IdentityStore.none())
+                .certificateUser("CN=Alice Example, OU=Foy Tests, O=Vidocq, C=FR", "admin");
+        assertThrows(IllegalStateException.class, b::securitySettings);
     }
 }

@@ -19,6 +19,7 @@
  */
 package io.vidocq.foy.spi.security;
 
+import java.security.cert.X509Certificate;
 import java.util.Optional;
 
 /**
@@ -42,6 +43,17 @@ import java.util.Optional;
 public interface IdentityStore {
 
     Optional<Identity> validate(String username, char[] password);
+
+    /**
+     * The identity of a TLS client certificate chain, leaf first, as the handshake delivered it (the
+     * TLS layer has already checked it against the server's trust material). CLIENT-CERT calls it.
+     * The default refuses every chain: a store that only knows passwords never authenticates a
+     * certificate.
+     *
+     * @param chain the client chain, leaf first; never empty when called by Foy
+     * @return the identity of the leaf certificate's subject, or empty to refuse it
+     */
+    default Optional<Identity> validate(X509Certificate[] chain) { return Optional.empty(); }
 
     /** A store that refuses everyone: the default when the embedder configures none. */
     static IdentityStore none() {

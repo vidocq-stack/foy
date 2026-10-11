@@ -28,6 +28,7 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.security.SecureRandom;
+import java.security.cert.X509Certificate;
 import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -35,6 +36,8 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+
+import javax.security.auth.x500.X500Principal;
 
 /**
  * An {@link IdentityStore} over a fixed set of users the embedder declares
@@ -54,8 +57,11 @@ public final class InMemoryIdentityStore implements IdentityStore {
     private final byte[] decoySalt = salt();
     private final byte[] decoyDigest = digest(decoySalt, new char[] {'\0'});
 
-    private InMemoryIdentityStore(Map<String, User> users) {
+    private final Map<X500Principal, Set<String>> certificateUsers;
+
+    private InMemoryIdentityStore(Map<String, User> users, Map<X500Principal, Set<String>> certificateUsers) {
         this.users = Map.copyOf(users);
+        this.certificateUsers = Map.copyOf(certificateUsers);
     }
 
     public static Builder builder() { return new Builder(); }
@@ -71,6 +77,15 @@ public final class InMemoryIdentityStore implements IdentityStore {
         } finally {
             Arrays.fill(candidate, (byte) 0);
         }
+    }
+
+    @Override
+    public Optional<Identity> validate(X509Certificate[] chain) {
+        if (chain == null || chain.length == 0 || chain[0] == null) return Optional.empty();
+        X500Principal subject = chain[0].getSubjectX500Principal();
+        Set<String> roles = certificateUsers.get(subject);
+        return roles == null ? Optional.empty()
+                : Optional.of(new Identity(new Identity.NamedPrincipal(subject.getName(X500Principal.RFC1779)), roles));
     }
 
     private static byte[] salt() {
@@ -100,6 +115,8 @@ public final class InMemoryIdentityStore implements IdentityStore {
     public static final class Builder {
         private final Map<String, User> users = new LinkedHashMap<>();
 
+        private final Map<X500Principal, Set<String>> certificateUsers = new LinkedHashMap<>();
+
         private Builder() {}
 
         /** Declares a user. {@code password} is digested at once and not kept: the caller may wipe it. */
@@ -112,6 +129,22 @@ public final class InMemoryIdentityStore implements IdentityStore {
             return this;
         }
 
-        public InMemoryIdentityStore build() { return new InMemoryIdentityStore(users); }
+        /**
+         * Declares a certificate user: a TLS client whose leaf certificate has this subject is
+         * authenticated by CLIENT-CERT with these roles. The DN is compared in its canonical form,
+         * so spacing and attribute-value case do not matter.
+         *
+         * @throws IllegalArgumentException when the DN is malformed or declared twice
+         */
+        public Builder certificateUser(String subjectDn, String... roles) {
+            Objects.requireNonNull(subjectDn, "subjectDn");
+            X500Principal subject = new X500Principal(subjectDn);
+            if (certificateUsers.putIfAbsent(subject, Set.copyOf(List.of(roles))) != null) {
+                throw new IllegalArgumentException("certificate user '" + subjectDn + "' declared twice");
+            }
+            return this;
+        }
+
+        public InMemoryIdentityStore build() { return new InMemoryIdentityStore(users, certificateUsers); }
     }
 }

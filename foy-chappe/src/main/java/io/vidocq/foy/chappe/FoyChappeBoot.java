@@ -232,7 +232,9 @@ public final class FoyChappeBoot {
 
         /**
          * The user base behind BASIC, FORM and {@code HttpServletRequest.login}. With neither this nor
-         * {@link #user}, every login fails. Exclusive with {@link #user}.
+         * {@link #user}, every login fails. Also behind CLIENT-CERT, through
+         * {@link IdentityStore#validate(java.security.cert.X509Certificate[])}. Exclusive with
+         * {@link #user} and {@link #certificateUser}.
          */
         public Builder identityStore(IdentityStore store) {
             this.identityStore = Objects.requireNonNull(store, "store");
@@ -246,6 +248,19 @@ public final class FoyChappeBoot {
         public Builder user(String name, char[] password, String... roles) {
             if (users == null) users = InMemoryIdentityStore.builder();
             users.user(name, password, roles);
+            return this;
+        }
+
+        /**
+         * Declares a certificate user of Foy's in-memory identity store: CLIENT-CERT authenticates a
+         * TLS client whose leaf certificate has this subject DN, with these roles. Exclusive with
+         * {@link #identityStore}.
+         *
+         * @throws IllegalArgumentException when the DN is malformed or declared twice
+         */
+        public Builder certificateUser(String subjectDn, String... roles) {
+            if (users == null) users = InMemoryIdentityStore.builder();
+            users.certificateUser(subjectDn, roles);
             return this;
         }
 
@@ -312,7 +327,7 @@ public final class FoyChappeBoot {
 
         SecuritySettings securitySettings() {
             if (identityStore != null && users != null) {
-                throw new IllegalStateException("identityStore(...) and user(...) are exclusive");
+                throw new IllegalStateException("identityStore(...) and user(...)/certificateUser(...) are exclusive");
             }
             IdentityStore store = identityStore != null ? identityStore
                     : users != null ? users.build() : IdentityStore.none();
