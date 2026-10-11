@@ -22,6 +22,9 @@ package io.vidocq.foy.internal.bridge;
 import io.vidocq.chappe.api.Request;
 import io.vidocq.foy.internal.container.VidocqServletContext;
 import io.vidocq.foy.internal.http.CookieCodec;
+import io.vidocq.foy.internal.security.CredentialCheck;
+import io.vidocq.foy.internal.security.SecuritySettings;
+import io.vidocq.foy.internal.security.WebSecurity;
 import io.vidocq.foy.internal.session.HttpSessionImpl;
 import io.vidocq.foy.internal.session.SessionManager;
 import io.vidocq.foy.spi.security.Identity;
@@ -797,31 +800,49 @@ public final class HttpServletRequestImpl implements HttpServletRequest {
         accessedSessions.clear();
     }
 
-    @Override public boolean authenticate(jakarta.servlet.http.HttpServletResponse response) throws IOException {
+    /**
+     * Section 13.3: an established identity answers {@code true}; otherwise the configured
+     * mechanism authenticates the request or produces its challenge (BASIC 401, FORM forward to
+     * the login page) and {@code false} is returned.
+     */
+    @Override public boolean authenticate(jakarta.servlet.http.HttpServletResponse response)
+            throws IOException, ServletException {
         if (identity != null) return true;
-        var basic = new io.vidocq.foy.internal.security.BasicAuthenticator(identityStore(),
-                io.vidocq.foy.internal.security.BasicAuthenticator.DEFAULT_REALM);
-        var found = basic.tryAuthenticate(getHeader("Authorization"));
-        if (found.isEmpty()) {
-            response.setHeader("WWW-Authenticate", basic.challengeHeaderValue());
-            response.sendError(401);
-            return false;
+        if (response.isCommitted()) throw new IllegalStateException("the response is already committed");
+        var mechanism = security().authenticator();
+        var found = mechanism.authenticate(this);
+        if (found.isPresent()) {
+            bindIdentity(found.get(), mechanism.authType());
+            return true;
         }
-        bindIdentity(found.get(), BASIC_AUTH);
-        return true;
+        mechanism.challenge(this, response);
+        return false;
     }
+
+    /**
+     * Validates the credentials against the identity store of the configured mechanism. The auth
+     * type is the mechanism's; a session-based mechanism (FORM) keeps the identity in the session,
+     * and an existing session gets a new id. Neither the user name nor the password is echoed.
+     */
     @Override public void login(String username, String password) throws ServletException {
         if (identity != null) throw new ServletException("an identity is already established for this request");
-        Identity found = io.vidocq.foy.internal.security.CredentialCheck.validate(identityStore(), username,
+        var security = security();
+        var mechanism = security.authenticator();
+        if (!mechanism.supportsPasswordLogin()) {
+            throw new ServletException("the configured authentication mechanism does not support username/password login");
+        }
+        Identity found = CredentialCheck.validate(security.settings().identityStore(), username,
                 password == null ? null : password.toCharArray()).orElse(null);
         if (found == null) throw new ServletException("login failed");
-        bindIdentity(found, BASIC_AUTH);
+        security.loggedIn(this, found, mechanism.authType());
     }
-    @Override public void logout() { bindIdentity(null, null); }
 
-    private io.vidocq.foy.spi.security.IdentityStore identityStore() {
-        return servletContext instanceof VidocqServletContext v ? v.identityStore()
-                : io.vidocq.foy.spi.security.IdentityStore.none();
+    /** Clears the identity of this request and the one cached in its session; the session stays. */
+    @Override public void logout() { security().loggedOut(this); }
+
+    private WebSecurity security() {
+        return servletContext instanceof VidocqServletContext v ? v.security()
+                : WebSecurity.permitAll(SecuritySettings.DEFAULTS);
     }
 
     private java.util.List<io.vidocq.foy.internal.http.PartImpl> parsedParts;
