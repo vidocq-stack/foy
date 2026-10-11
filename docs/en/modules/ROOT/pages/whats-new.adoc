@@ -12,6 +12,10 @@ New in the `{project-version}` development line — everything listed here lande
 * **`CdiContextListeners`, a service for the adapters of CDI implementations** — Foy registers the listeners a provider gives for the `BeanManager` it is given, ahead of the application's listeners. xref:reference.adoc#other-containers[Other CDI containers].
 * **Weld's servlet integration runs on Foy** — `weld-servlet-core`'s initializer starts Weld, which manages the request and session contexts itself. `foy-it-weld-servlet` uses it as the reference for the session scope, and `foy-it-vauban-session` runs the same scenarios on Vauban. xref:reference.adoc#other-containers[Other CDI containers].
 
+== Observability
+
+* **`Mounted.activeSessions()` and `Mounted.listenerClassNames()`** — two read-only accessors on `FoyChappeBoot.Mounted` for dev consoles and monitoring, without reading foy-core: the live session count and the registered listeners' class names. xref:reference.adoc[Reference].
+
 == Security
 
 * **The Servlet security model is enforced** — `<security-constraint>` from `web.xml` and its fragments, `@ServletSecurity` and `setServletSecurity` apply per url-pattern before any filter or servlet runs, with `<deny-uncovered-http-methods/>`, the transport guarantee (`403`, or a redirect to `confidentialPort`), `security-role-ref` and `declareRoles`. {release-version} parsed the descriptor constraints without enforcing them. xref:usage.adoc#application-security[Application security].

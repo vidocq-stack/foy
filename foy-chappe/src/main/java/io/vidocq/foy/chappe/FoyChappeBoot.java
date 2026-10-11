@@ -119,6 +119,28 @@ public final class FoyChappeBoot {
             return deployment.servletContext();
         }
 
+        /**
+         * The number of live HTTP sessions of the deployment, for observability. A cheap live
+         * read of the session store ({@code SessionStore.size()}, a {@code ConcurrentHashMap}
+         * count in the default store): no lock, no I/O and no expiry sweep, so a session that
+         * expired but has not been reaped yet is still counted. It is {@code 0} once the
+         * deployment is closed, which invalidates every session.
+         */
+        public int activeSessions() {
+            return deployment.sessionManager().store().size();
+        }
+
+        /**
+         * The class names of every listener the deployment holds, in registration order, for
+         * observability: those of {@code web.xml}, {@code @WebListener}, the fragments, the
+         * {@code ServletContainerInitializer}s and {@code addListener}, plus the container's
+         * own listeners (they come first). Returned as an unmodifiable snapshot; reading it has
+         * no side effect.
+         */
+        public List<String> listenerClassNames() {
+            return deployment.listeners().classNames();
+        }
+
         /** Destroys the application: servlets, filters, then {@code contextDestroyed}. */
         @Override
         public void close() {

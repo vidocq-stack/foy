@@ -399,4 +399,76 @@ class FoyChappeBootTest {
             mounted.close();
         }
     }
+
+    public static class SessionServlet extends HttpServlet {
+        @Override protected void doGet(HttpServletRequest q, HttpServletResponse r) throws IOException {
+            if ("/invalidate".equals(q.getServletPath())) {
+                var session = q.getSession(false);
+                if (session != null) session.invalidate();
+            } else {
+                q.getSession();
+            }
+            r.getWriter().write("ok");
+        }
+    }
+
+    @Test
+    void activeSessionsTracksTheLiveSessionsOfTheDeployment() throws Exception {
+        String xml = """
+            <web-app xmlns="https://jakarta.ee/xml/ns/jakartaee" version="6.1">
+              <servlet><servlet-name>s</servlet-name><servlet-class>%s</servlet-class></servlet>
+              <servlet-mapping><servlet-name>s</servlet-name><url-pattern>/open</url-pattern>
+                <url-pattern>/invalidate</url-pattern></servlet-mapping>
+            </web-app>""".formatted(SessionServlet.class.getName());
+        var mounted = FoyChappeBoot.builder().contextPath("/").discoverPluggability(false)
+                .classLoader(getClass().getClassLoader())
+                .webXml(new ByteArrayInputStream(xml.getBytes())).build().orElseThrow();
+        int port;
+        try (var s = new ServerSocket(0)) { port = s.getLocalPort(); }
+        Server server = Server.builder().host("127.0.0.1").port(port).handler(mounted.handler()).build();
+        server.start();
+        try {
+            assertEquals(0, mounted.activeSessions());
+            var client = HttpClient.newBuilder().cookieHandler(new java.net.CookieManager()).build();
+            client.send(HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port + "/open")).build(),
+                    HttpResponse.BodyHandlers.ofString());
+            assertEquals(1, mounted.activeSessions());
+            client.send(HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port + "/invalidate")).build(),
+                    HttpResponse.BodyHandlers.ofString());
+            assertEquals(0, mounted.activeSessions());
+            client.send(HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port + "/open")).build(),
+                    HttpResponse.BodyHandlers.ofString());
+            assertEquals(1, mounted.activeSessions());
+        } finally {
+            server.stop();
+            mounted.close();
+        }
+        assertEquals(0, mounted.activeSessions(), "closing the deployment invalidates every session");
+    }
+
+    public static class ProgrammaticListener implements jakarta.servlet.ServletRequestListener {}
+
+    public static class DescriptorListener implements jakarta.servlet.ServletContextListener {
+        @Override public void contextInitialized(jakarta.servlet.ServletContextEvent e) {
+            e.getServletContext().addListener(ProgrammaticListener.class);
+        }
+    }
+
+    @Test
+    void listenerClassNamesListsEveryListenerInRegistrationOrder() throws Exception {
+        String xml = """
+            <web-app xmlns="https://jakarta.ee/xml/ns/jakartaee" version="6.1">
+              <listener><listener-class>%s</listener-class></listener>
+              <servlet><servlet-name>p</servlet-name><servlet-class>%s</servlet-class></servlet>
+              <servlet-mapping><servlet-name>p</servlet-name><url-pattern>/p</url-pattern></servlet-mapping>
+            </web-app>""".formatted(DescriptorListener.class.getName(), Plain.class.getName());
+        try (var mounted = FoyChappeBoot.builder().contextPath("/").discoverPluggability(false)
+                .classLoader(getClass().getClassLoader())
+                .webXml(new ByteArrayInputStream(xml.getBytes())).build().orElseThrow()) {
+            var names = mounted.listenerClassNames();
+            assertEquals(java.util.List.of(DescriptorListener.class.getName(),
+                    ProgrammaticListener.class.getName()), names);
+            assertThrows(UnsupportedOperationException.class, () -> names.add("x"));
+        }
+    }
 }

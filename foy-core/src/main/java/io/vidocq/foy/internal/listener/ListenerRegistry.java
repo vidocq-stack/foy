@@ -63,9 +63,22 @@ public final class ListenerRegistry {
     private final java.util.IdentityHashMap<EventListener, Boolean> programmatic =
             new java.util.IdentityHashMap<>();
 
+    /** Every listener held, in registration order, whatever the interfaces it implements. */
+    private final List<EventListener> all = new java.util.concurrent.CopyOnWriteArrayList<>();
+
+    /**
+     * The class names of every registered listener, in registration order (container listeners
+     * registered ahead of the application's come first). Read-only snapshot, safe to call from
+     * any thread.
+     */
+    public List<String> classNames() {
+        return all.stream().map(l -> l.getClass().getName()).toList();
+    }
+
     public void register(EventListener listener) { register(listener, false); }
 
     public void register(EventListener listener, boolean isProgrammatic) {
+        all.add(listener);
         if (listener instanceof ServletContextListener l) contextListeners.add(l);
         if (listener instanceof ServletContextAttributeListener l) contextAttrListeners.add(l);
         if (listener instanceof ServletRequestListener l) requestListeners.add(l);
@@ -83,6 +96,7 @@ public final class ListenerRegistry {
      * serves requests.
      */
     public void addFirst(ServletRequestListener listener) {
+        all.add(0, listener);
         requestListeners.add(0, listener);
     }
 
@@ -93,6 +107,7 @@ public final class ListenerRegistry {
      * deployment serves requests.
      */
     public void registerFirst(EventListener listener) {
+        all.add(0, listener);
         if (listener instanceof ServletRequestListener l) requestListeners.add(0, l);
         if (listener instanceof HttpSessionListener l) sessionListeners.add(0, l);
     }

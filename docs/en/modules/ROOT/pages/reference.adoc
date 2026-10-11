@@ -177,6 +177,12 @@ The `io.vidocq.foy.internal.*` packages are exported to allow advanced integrati
 | `Mounted.servletContext()`
 | The live `jakarta.servlet.ServletContext` of the deployment — useful for observability. Declared as the Jakarta type so that Java Modules consumers need not read `io.vidocq.foy.core`.
 
+| `Mounted.activeSessions()` [.tag-new]#NEW#
+| The number of live HTTP sessions, for observability. A cheap live read of the session store (a concurrent-map count in the default store): no lock, no I/O, no expiry sweep, so an expired session not yet reaped is still counted. `0` once the deployment is closed.
+
+| `Mounted.listenerClassNames()` [.tag-new]#NEW#
+| The class names of every registered listener (`web.xml`, `@WebListener`, fragments, initializers, `addListener`), in registration order, as an unmodifiable list. Container listeners come first. Read-only, for observability.
+
 | `Mounted.close()`
 | Destroys servlets and filters and fires `ServletContextListener.contextDestroyed`. `contextInitialized` already fired during `build()`.
 |===
