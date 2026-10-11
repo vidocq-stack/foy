@@ -105,10 +105,20 @@ class FoyChappeBootTest {
     }
 
     @Test
+    void mountedServletContextIsExposedAsTheJakartaType() throws Exception {
+        assertEquals(jakarta.servlet.ServletContext.class,
+                FoyChappeBoot.Mounted.class.getMethod("servletContext").getReturnType());
+        try (var mounted = plainApp(null).contextPath("/").build().orElseThrow()) {
+            jakarta.servlet.ServletContext ctx = mounted.servletContext();
+            assertEquals(30 * 60, ctx.getSessionTimeout() * 60);
+        }
+    }
+
+    @Test
     void usersDeclaredOnTheBuilderReachTheContext() throws Exception {
         try (var mounted = plainApp(null).contextPath("/").user("alice", "a-secret".toCharArray(), "admin")
                 .build().orElseThrow()) {
-            var store = mounted.servletContext().identityStore();
+            var store = mounted.deployment().servletContext().identityStore();
             assertEquals(Set.of("admin"), store.validate("alice", "a-secret".toCharArray()).orElseThrow().roles());
             assertTrue(store.validate("alice", "wrong".toCharArray()).isEmpty());
         }

@@ -185,6 +185,10 @@ FoyChappeBoot.builder().beanManager(bm).user("alice", password, "admin").build()
 * **`ServletContext.declareRoles` is implemented.**
 * **Without users or a store, every login fails**, and a context built outside the deployer refuses every request: security fails closed.
 
+=== API narrowing
+
+* **`FoyChappeBoot.Mounted.servletContext()` returns `jakarta.servlet.ServletContext`**, no longer the internal `VidocqServletContext`. Code that called Foy-specific methods on it no longer compiles; standard Servlet methods (for example `getSessionTimeout()`) now work from a named module that does not read `io.vidocq.foy.core`.
+
 == Common pitfalls
 
 * **`ServletContainerInitializer`s and fragments are discovered at boot.** `ApplicationSources` loads the initializers through `ServiceLoader` (`META-INF/services` or `provides`) and the `META-INF/web-fragment.xml` of every root, then orders them per §8.2.2 and §8.2.4. Component classes themselves are still never scanned.

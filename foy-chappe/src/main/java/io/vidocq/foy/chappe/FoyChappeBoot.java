@@ -45,6 +45,7 @@ import io.vidocq.foy.internal.security.SecuritySettings;
 import io.vidocq.foy.spi.cdi.CdiContextListeners;
 import io.vidocq.foy.spi.security.IdentityStore;
 import jakarta.enterprise.inject.spi.BeanManager;
+import jakarta.servlet.ServletContext;
 import jakarta.servlet.ServletException;
 
 import java.io.IOException;
@@ -103,7 +104,11 @@ public final class FoyChappeBoot {
     public record Mounted(Handler handler, String mountPrefix, Deployment deployment)
             implements AutoCloseable {
 
-        public VidocqServletContext servletContext() {
+        /**
+         * The live {@link ServletContext} of the deployed application. Returned as the Jakarta
+         * type so that named-module consumers do not need to read foy-core.
+         */
+        public ServletContext servletContext() {
             return deployment.servletContext();
         }
 

@@ -163,7 +163,7 @@ The `io.vidocq.foy.internal.*` packages are exported to allow advanced integrati
 | Mount prefix to use (`""` if `contextPath == "/"`).
 
 | `Mounted.servletContext()`
-| The container's `VidocqServletContext` — useful for observability.
+| The live `jakarta.servlet.ServletContext` of the deployment — useful for observability. Declared as the Jakarta type so that Java Modules consumers need not read `io.vidocq.foy.core`.
 
 | `Mounted.close()`
 | Destroys servlets and filters and fires `ServletContextListener.contextDestroyed`. `contextInitialized` already fired during `build()`.
