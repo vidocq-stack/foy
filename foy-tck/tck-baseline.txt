@@ -101,8 +101,8 @@ servlet.tck.api.jakarta_servlet_http.httpsessionlistener.HttpSessionListenerTest
 servlet.tck.api.jakarta_servlet_http.httpsessionlistener40.HttpSessionListener40Tests 1 0 0
 servlet.tck.api.jakarta_servlet_http.httpsessionx.HttpSessionxTests 8 0 0
 servlet.tck.api.jakarta_servlet_http.httpupgradehandler.HttpUpgradeHandlerTests 1 0 0
-servlet.tck.api.jakarta_servlet_http.part.PartTests 7 4 0
-servlet.tck.api.jakarta_servlet_http.part1.Part1Tests 7 4 0
+servlet.tck.api.jakarta_servlet_http.part.PartTests 7 0 0
+servlet.tck.api.jakarta_servlet_http.part1.Part1Tests 7 0 0
 servlet.tck.api.jakarta_servlet_http.readlistener.ReadListenerTests 1 0 0
 servlet.tck.api.jakarta_servlet_http.readlistener1.ReadListener1Tests 2 0 0
 servlet.tck.api.jakarta_servlet_http.servletcontext303.ServletContext303Tests 4 0 0
