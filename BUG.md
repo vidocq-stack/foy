@@ -612,7 +612,7 @@ Statuts : `OPEN` → `INVESTIGATING` → `FIXED` (commit hash) → `CLOSED`.
   needs a full official Servlet TCK run (`run-official-tck-servlet6.1.sh --all`) since every error
   dispatch changes order.
 
-## BUG-20261011-01 — CLIENT-CERT authentication is not supported
+## BUG-20261011-03 — CLIENT-CERT authentication is not supported
 
 - **Date** : 2026-10-11
 - **Statut** : DEFERRED (Phase 6 decision; fails closed)
@@ -631,7 +631,7 @@ Statuts : `OPEN` → `INVESTIGATING` → `FIXED` (commit hash) → `CLOSED`.
 - **Fix envisagé** : chappe exposes the peer certificates; Foy adds a CLIENT-CERT authenticator mapping
   the subject to an `Identity` through the store; `foy-tck` gets a TLS container.
 
-## BUG-20261011-02 — SecFormTests.test2 and test2_anno need a JSP engine
+## BUG-20261011-04 — SecFormTests.test2 and test2_anno need a JSP engine
 
 - **Date** : 2026-10-11
 - **Statut** : ACCEPTED GAP (until a JSP-engine SPI exists)
@@ -646,7 +646,7 @@ Statuts : `OPEN` → `INVESTIGATING` → `FIXED` (commit hash) → `CLOSED`.
 - **Fix envisagé** : the JSP-engine SPI plugged by Ibarra (Jakarta Pages 4.0), like the 3 JSP tests of
   `ServletContext40Tests`.
 
-## BUG-20261011-03 — case-sensitive constraint matching vs a case-insensitive file system
+## BUG-20261011-05 — case-sensitive constraint matching vs a case-insensitive file system
 
 - **Date** : 2026-10-11
 - **Statut** : OPEN (security follow-up, not fixed in Phase 6)
@@ -664,7 +664,7 @@ Statuts : `OPEN` → `INVESTIGATING` → `FIXED` (commit hash) → `CLOSED`.
 - **Fix envisagé** : make the default servlet (or the resource provider) refuse a resource whose resolved
   real name differs in case from the request path (404), so the served path is always the matched one.
 
-## BUG-20261011-04 — CallbackSerializerTest.holdWaitsForTheRunningCallbackAndDefersTheQueuedOnes is flaky
+## BUG-20261011-06 — CallbackSerializerTest.holdWaitsForTheRunningCallbackAndDefersTheQueuedOnes is flaky
 
 - **Date** : 2026-10-11
 - **Statut** : OPEN (test only; seen during Phase 6 Task 6.1)
@@ -680,7 +680,7 @@ Statuts : `OPEN` → `INVESTIGATING` → `FIXED` (commit hash) → `CLOSED`.
 - **Fix envisagé** : release `proceed` only once the holder thread is blocked in `hold()` (wait for its
   state, or add a test hook signalling that `hold()` is waiting).
 
-## BUG-20261011-05 — a security denial on the redirect or unmapped branch runs without request listeners
+## BUG-20261011-07 — a security denial on the redirect or unmapped branch runs without request listeners
 
 - **Date** : 2026-10-11
 - **Statut** : OPEN (cosmetic, by code reading)
@@ -697,7 +697,7 @@ Statuts : `OPEN` → `INVESTIGATING` → `FIXED` (commit hash) → `CLOSED`.
 - **Fix envisagé** : fire the request listeners around those branches, or restrict them to mechanisms
   that do not forward (BASIC).
 
-## BUG-20261011-06 — a fragment conflict on security-role-ref is silently resolved
+## BUG-20261011-08 — a fragment conflict on security-role-ref is silently resolved
 
 - **Date** : 2026-10-11
 - **Statut** : OPEN (final Phase 6 review, by code reading)
@@ -714,7 +714,7 @@ Statuts : `OPEN` → `INVESTIGATING` → `FIXED` (commit hash) → `CLOSED`.
 - **Fix envisagé** : merge fragment role refs through a `Keyed<String>` per servlet (web.xml entries
   override, equal values from two fragments are not a conflict), and fail the deployment otherwise.
 
-## BUG-20261011-07 — InMemoryIdentityStore digest encodes the password with Charset.encode
+## BUG-20261011-09 — InMemoryIdentityStore digest encodes the password with Charset.encode
 
 - **Date** : 2026-10-11
 - **Statut** : OPEN (final Phase 6 review, by code reading)
@@ -732,7 +732,7 @@ Statuts : `OPEN` → `INVESTIGATING` → `FIXED` (commit hash) → `CLOSED`.
   into a `ByteBuffer` sized `maxBytesPerChar * length` (exact upper bound, no reallocation), refuse a
   password that does not encode (no identity), and wipe that buffer's backing array.
 
-## BUG-20261011-08 — FoyVaubanBootstrap offers no way to configure an IdentityStore
+## BUG-20261011-10 — FoyVaubanBootstrap offers no way to configure an IdentityStore
 
 - **Date** : 2026-10-11
 - **Statut** : OPEN (final Phase 6 review, by code reading)

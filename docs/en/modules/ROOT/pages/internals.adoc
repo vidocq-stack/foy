@@ -274,6 +274,6 @@ The guard covers `foy-core` only: `foy-cdi-vauban`'s `CdiWebComponentsCreator` a
 * Multipart: fully buffered in memory, no streaming parse.
 * WebSocket Servlet 6.1: not implemented (planned, no date).
 * JSP: not supported by Foy itself; planned through a JSP-engine SPI that Ibarra (Jakarta Pages 4.0) plugs into.
-* Security: CLIENT-CERT is deferred and DIGEST is not supported (both fail closed with `403`); security constraints match url-patterns case-sensitively, which a resource served from a case-insensitive file system can bypass (BUG-20261011-03).
+* Security: CLIENT-CERT is deferred and DIGEST is not supported (both fail closed with `403`); security constraints match url-patterns case-sensitively, which a resource served from a case-insensitive file system can bypass (BUG-20261011-05).
 
 No comparative numbers (Tomcat, Jetty) have been recorded yet — a `BENCH.md` will be created with the first measured run (workspace convention).

@@ -42,15 +42,15 @@ Remaining 15 errors and 7 skips:
 
 | Count | Classes | Reason |
 |---|---|---|
-| 2 | `spec.security.clientcert.ClientCertTests`, `spec.security.clientcertanno.ClientCertAnnoTests` | accepted gap: CLIENT-CERT deferred; it needs chappe TLS client authentication and peer certificates, plus an `https` Arquillian container (BUG-20261011-01) |
-| 2 | `spec.security.secform.SecFormTests`: `test2`, `test2_anno` | accepted gap: the failed login forwards to `/error.jsp`, which must be executed; no JSP engine (BUG-20261011-02) |
+| 2 | `spec.security.clientcert.ClientCertTests`, `spec.security.clientcertanno.ClientCertAnnoTests` | accepted gap: CLIENT-CERT deferred; it needs chappe TLS client authentication and peer certificates, plus an `https` Arquillian container (BUG-20261011-03) |
+| 2 | `spec.security.secform.SecFormTests`: `test2`, `test2_anno` | accepted gap: the failed login forwards to `/error.jsp`, which must be executed; no JSP engine (BUG-20261011-04) |
 | 8 | multipart: `PartTests` 4, `Part1Tests` 4 | Phase 7 |
 | 3 | `ServletContext40Tests` (`addJspTest`, `addJspContextListenerInTLD`, `setSessionTimeoutContextListenerInTLD`) | JSP-engine SPI, plugged by Ibarra (Jakarta Pages 4.0) |
 | 7 skipped | `spec.serverpush.ServerPushTests` (HTTP/2 push) | accepted gap |
 
-Open bugs added at this exit: BUG-20261011-01 (CLIENT-CERT, deferred), -02 (SecForm JSP,
-accepted gap), -03 (case-sensitive constraint matching vs a case-insensitive file system),
--04 (flaky `CallbackSerializerTest`), -05 (security denial on the redirect and unmapped
+Open bugs added at this exit: BUG-20261011-03 (CLIENT-CERT, deferred), -04 (SecForm JSP,
+accepted gap), -05 (case-sensitive constraint matching vs a case-insensitive file system),
+-06 (flaky `CallbackSerializerTest`), -07 (security denial on the redirect and unmapped
 branches outside the request listeners).
 
 ## 0.1 Phase 5 exit: streaming, async and non-blocking I/O (2026-10-10)
