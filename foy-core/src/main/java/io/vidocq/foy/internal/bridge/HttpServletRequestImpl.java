@@ -21,7 +21,9 @@ package io.vidocq.foy.internal.bridge;
 
 import io.vidocq.chappe.api.Request;
 import io.vidocq.foy.internal.container.VidocqServletContext;
+import io.vidocq.foy.internal.http.BoundedInputStream;
 import io.vidocq.foy.internal.http.CookieCodec;
+import io.vidocq.foy.internal.http.RequestLimits;
 import io.vidocq.foy.internal.security.CredentialCheck;
 import io.vidocq.foy.internal.security.SecuritySettings;
 import io.vidocq.foy.internal.security.WebSecurity;
@@ -470,12 +472,29 @@ public final class HttpServletRequestImpl implements HttpServletRequest {
         if (body != null) body.handBack();
     }
 
+    /** The ceilings the embedder configured for this context. */
+    private RequestLimits limits() {
+        return servletContext instanceof VidocqServletContext v ? v.requestLimits() : RequestLimits.DEFAULTS;
+    }
+
+    /**
+     * Chappe's body stream. A body that declares no Content-Length (HTTP/1.1 chunked, HTTP/2 without
+     * content-length) is bounded by {@link RequestLimits#maxChunkedRequestBodySize()}: chappe bounds
+     * only Content-Length bodies ({@code ServerConfig.maxRequestSize}).
+     */
+    private java.io.InputStream bodySource() {
+        java.io.InputStream raw = chappe.body().asInputStream();
+        long cap = limits().maxChunkedRequestBodySize();
+        if (cap < 0 || chappe.headers().firstOrNull("Content-Length") != null) return raw;
+        return new BoundedInputStream(raw, cap);
+    }
+
     @Override public ServletInputStream getInputStream() throws IOException {
         if (reader != null) throw new IllegalStateException("getReader() already called");
         if (inputStream == null) {
             java.io.InputStream source = bodyConsumedByParameters
                     ? java.io.InputStream.nullInputStream()
-                    : chappe.body().asInputStream();
+                    : bodySource();
             trackedBody = new ServletInputStreamImpl(source, nonBlockingHost);
             inputStream = trackedBody;
             encodingLocked = true;
@@ -495,7 +514,7 @@ public final class HttpServletRequestImpl implements HttpServletRequest {
             }
             java.io.InputStream source = bodyConsumedByParameters
                     ? java.io.InputStream.nullInputStream()
-                    : chappe.body().asInputStream();
+                    : bodySource();
             trackedBody = new ServletInputStreamImpl(source, nonBlockingHost);
             reader = new BufferedReader(new InputStreamReader(trackedBody, cs));
             encodingLocked = true;

@@ -266,6 +266,7 @@ public final class WebAppDeployer {
         options.reservedFilterNames().forEach(ctx::reserveFilterName);
         options.reservedUrlPatterns().forEach(ctx::reserveUrlPattern);
         ctx.setSecuritySettings(options.security());
+        ctx.setRequestLimits(options.requestLimits());
         // setServletSecurity reports, and leaves alone, the patterns a descriptor constraint targets (section 13.4.2).
         Set<String> constrained = new LinkedHashSet<>();
         for (var c : model.securityConstraints()) for (var col : c.collections()) constrained.addAll(col.urlPatterns());

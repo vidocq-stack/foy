@@ -20,6 +20,7 @@
 package io.vidocq.foy.internal.boot;
 
 import io.vidocq.foy.internal.container.VidocqServletContext;
+import io.vidocq.foy.internal.http.RequestLimits;
 import io.vidocq.foy.internal.security.SecuritySettings;
 import io.vidocq.foy.spi.security.IdentityStore;
 
@@ -42,6 +43,7 @@ import java.util.Set;
  * @param virtualServerName    {@code ServletContext.getVirtualServerName()}; {@code null} gives {@code "vidocq"}
  * @param tempDirRoot          directory under which the context temp dir is created; {@code null} gives
  *                             {@code java.io.tmpdir}
+ * @param requestLimits        container ceilings on request bodies; {@code null} gives {@link RequestLimits#DEFAULTS}
  */
 public record DeployOptions(SecuritySettings security,
                             VidocqServletContext.ResourceProvider resourceProvider,
@@ -52,10 +54,12 @@ public record DeployOptions(SecuritySettings security,
                             ComponentFactory componentFactory,
                             HandlesTypesResolver handlesTypes,
                             String virtualServerName,
-                            Path tempDirRoot) {
+                            Path tempDirRoot,
+                            RequestLimits requestLimits) {
 
     public DeployOptions {
         if (security == null) security = SecuritySettings.DEFAULTS;
+        if (requestLimits == null) requestLimits = RequestLimits.DEFAULTS;
         reservedServletNames = Set.copyOf(reservedServletNames);
         reservedFilterNames = Set.copyOf(reservedFilterNames);
         reservedUrlPatterns = Set.copyOf(reservedUrlPatterns);
@@ -63,7 +67,7 @@ public record DeployOptions(SecuritySettings security,
         Objects.requireNonNull(handlesTypes, "handlesTypes");
     }
 
-    /** Without virtual server name and temp-dir root (their defaults apply). */
+    /** Without virtual server name, temp-dir root and request limits (their defaults apply). */
     public DeployOptions(SecuritySettings security,
                          VidocqServletContext.ResourceProvider resourceProvider,
                          String servletContextName,
@@ -73,7 +77,7 @@ public record DeployOptions(SecuritySettings security,
                          ComponentFactory componentFactory,
                          HandlesTypesResolver handlesTypes) {
         this(security, resourceProvider, servletContextName, reservedServletNames, reservedFilterNames,
-                reservedUrlPatterns, componentFactory, handlesTypes, null, null);
+                reservedUrlPatterns, componentFactory, handlesTypes, null, null, null);
     }
 
     /** Registry-backed component factory (generated, Class-File, then reflective tiers) and class-index {@code @HandlesTypes} resolution on {@code loader}, nothing reserved. */
@@ -118,21 +122,20 @@ public record DeployOptions(SecuritySettings security,
     }
 
     public DeployOptions withComponentFactory(ComponentFactory f) {
-        return new DeployOptions(security, resourceProvider, servletContextName,
-                reservedServletNames, reservedFilterNames, reservedUrlPatterns, f, handlesTypes,
-                virtualServerName, tempDirRoot);
+        return new DeployOptions(security, resourceProvider, servletContextName, reservedServletNames,
+                reservedFilterNames, reservedUrlPatterns, f, handlesTypes, virtualServerName, tempDirRoot, requestLimits);
     }
 
     public DeployOptions withHandlesTypes(HandlesTypesResolver r) {
-        return new DeployOptions(security, resourceProvider, servletContextName,
-                reservedServletNames, reservedFilterNames, reservedUrlPatterns, componentFactory, r,
-                virtualServerName, tempDirRoot);
+        return new DeployOptions(security, resourceProvider, servletContextName, reservedServletNames,
+                reservedFilterNames, reservedUrlPatterns, componentFactory, r, virtualServerName, tempDirRoot,
+                requestLimits);
     }
 
     public DeployOptions withSecurity(SecuritySettings s) {
-        return new DeployOptions(s, resourceProvider, servletContextName,
-                reservedServletNames, reservedFilterNames, reservedUrlPatterns, componentFactory, handlesTypes,
-                virtualServerName, tempDirRoot);
+        return new DeployOptions(s, resourceProvider, servletContextName, reservedServletNames,
+                reservedFilterNames, reservedUrlPatterns, componentFactory, handlesTypes, virtualServerName,
+                tempDirRoot, requestLimits);
     }
 
     public DeployOptions withIdentityStore(IdentityStore store) {
@@ -140,30 +143,35 @@ public record DeployOptions(SecuritySettings security,
     }
 
     public DeployOptions withResourceProvider(VidocqServletContext.ResourceProvider p) {
-        return new DeployOptions(security, p, servletContextName,
-                reservedServletNames, reservedFilterNames, reservedUrlPatterns, componentFactory, handlesTypes,
-                virtualServerName, tempDirRoot);
+        return new DeployOptions(security, p, servletContextName, reservedServletNames, reservedFilterNames,
+                reservedUrlPatterns, componentFactory, handlesTypes, virtualServerName, tempDirRoot, requestLimits);
     }
 
     public DeployOptions withServletContextName(String n) {
-        return new DeployOptions(security, resourceProvider, n,
-                reservedServletNames, reservedFilterNames, reservedUrlPatterns, componentFactory, handlesTypes,
-                virtualServerName, tempDirRoot);
+        return new DeployOptions(security, resourceProvider, n, reservedServletNames, reservedFilterNames,
+                reservedUrlPatterns, componentFactory, handlesTypes, virtualServerName, tempDirRoot, requestLimits);
     }
 
     public DeployOptions withReserved(Set<String> servletNames, Set<String> filterNames, Set<String> urlPatterns) {
-        return new DeployOptions(security, resourceProvider, servletContextName,
-                servletNames, filterNames, urlPatterns, componentFactory, handlesTypes,
-                virtualServerName, tempDirRoot);
+        return new DeployOptions(security, resourceProvider, servletContextName, servletNames, filterNames,
+                urlPatterns, componentFactory, handlesTypes, virtualServerName, tempDirRoot, requestLimits);
     }
 
     public DeployOptions withVirtualServerName(String name) {
         return new DeployOptions(security, resourceProvider, servletContextName, reservedServletNames,
-                reservedFilterNames, reservedUrlPatterns, componentFactory, handlesTypes, name, tempDirRoot);
+                reservedFilterNames, reservedUrlPatterns, componentFactory, handlesTypes, name, tempDirRoot,
+                requestLimits);
     }
 
     public DeployOptions withTempDirRoot(Path root) {
         return new DeployOptions(security, resourceProvider, servletContextName, reservedServletNames,
-                reservedFilterNames, reservedUrlPatterns, componentFactory, handlesTypes, virtualServerName, root);
+                reservedFilterNames, reservedUrlPatterns, componentFactory, handlesTypes, virtualServerName, root,
+                requestLimits);
+    }
+
+    public DeployOptions withRequestLimits(RequestLimits limits) {
+        return new DeployOptions(security, resourceProvider, servletContextName, reservedServletNames,
+                reservedFilterNames, reservedUrlPatterns, componentFactory, handlesTypes, virtualServerName,
+                tempDirRoot, limits);
     }
 }

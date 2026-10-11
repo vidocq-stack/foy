@@ -34,6 +34,7 @@ import io.vidocq.foy.internal.container.ClassPathResourceProvider;
 import io.vidocq.foy.internal.container.VidocqServletContext;
 import io.vidocq.foy.internal.gen.RegistryComponentFactory;
 import io.vidocq.foy.internal.gen.WebComponentRegistry;
+import io.vidocq.foy.internal.http.RequestLimits;
 import io.vidocq.foy.internal.webxml.Fragment;
 import io.vidocq.foy.internal.webxml.FragmentMerger;
 import io.vidocq.foy.internal.webxml.FragmentOrderer;
@@ -133,6 +134,7 @@ public final class FoyChappeBoot {
         private InMemoryIdentityStore.Builder users;
         private int confidentialPort = -1;
         private boolean rotateSessionIdOnLogin = true;
+        private RequestLimits requestLimits = RequestLimits.DEFAULTS;
 
         public Builder beanManager(BeanManager bm) { this.beanManager = bm; return this; }
 
@@ -232,6 +234,53 @@ public final class FoyChappeBoot {
 
         /** Whether a successful login changes the session id (session fixation defence); {@code true} by default. */
         public Builder rotateSessionIdOnLogin(boolean rotate) { this.rotateSessionIdOnLogin = rotate; return this; }
+
+        /**
+         * Bytes Foy reads from a request body that declares no Content-Length (HTTP/1.1 chunked,
+         * HTTP/2 without content-length) before the read fails with an {@code IOException}: 10 MiB by
+         * default, {@code -1} for no ceiling. A body with a Content-Length is bounded by chappe
+         * ({@code Server.Builder.maxRequestSize}, 10 MiB by default), never by this setting.
+         *
+         * @throws IllegalArgumentException when {@code bytes} is below {@code -1}
+         */
+        public Builder maxChunkedRequestBodySize(long bytes) {
+            this.requestLimits = requestLimits.withMaxChunkedRequestBodySize(bytes);
+            return this;
+        }
+
+        /**
+         * Bytes of an {@code application/x-www-form-urlencoded} body parsed into request parameters:
+         * 2 MiB by default, {@code -1} for no ceiling. A larger form makes {@code getParameter*}
+         * throw {@code IllegalStateException} once; the query-string parameters stay available.
+         *
+         * @throws IllegalArgumentException when {@code bytes} is below {@code -1}
+         */
+        public Builder maxFormBodySize(long bytes) {
+            this.requestLimits = requestLimits.withMaxFormBodySize(bytes);
+            return this;
+        }
+
+        /**
+         * Parts in one {@code multipart/form-data} body: 50 by default (CVE-2023-24998), {@code -1}
+         * for no ceiling. Beyond, {@code getParts()} throws {@code IllegalStateException}.
+         *
+         * @throws IllegalArgumentException when {@code parts} is {@code 0} or below {@code -1}
+         */
+        public Builder maxMultipartParts(int parts) {
+            this.requestLimits = requestLimits.withMaxMultipartParts(parts);
+            return this;
+        }
+
+        /**
+         * Bytes of the header section of one multipart part: 8 KiB by default. Beyond,
+         * {@code getParts()} throws {@code IllegalStateException}.
+         *
+         * @throws IllegalArgumentException when {@code bytes} is below {@code 1}
+         */
+        public Builder maxMultipartPartHeaderSize(int bytes) {
+            this.requestLimits = requestLimits.withMaxMultipartPartHeaderSize(bytes);
+            return this;
+        }
 
         SecuritySettings securitySettings() {
             if (identityStore != null && users != null) {
@@ -342,7 +391,8 @@ public final class FoyChappeBoot {
                 deployment = WebAppDeployer.deploy(model, DeployOptions
                         .defaults(loader, registry, ApplicationSources.scanRoots(scanRoots), excluded)
                         .withComponentFactory(factory).withResourceProvider(resources)
-                        .withVirtualServerName(virtualServerName).withSecurity(security));
+                        .withVirtualServerName(virtualServerName).withSecurity(security)
+                        .withRequestLimits(requestLimits));
             } catch (RuntimeException e) {
                 throw new ServletException("Foy deployment failed: " + e.getMessage(), e);
             }

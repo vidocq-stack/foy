@@ -20,6 +20,7 @@
 package io.vidocq.foy.chappe;
 
 import io.vidocq.chappe.api.Server;
+import io.vidocq.foy.internal.http.RequestLimits;
 import jakarta.enterprise.inject.spi.Bean;
 import jakarta.enterprise.inject.spi.BeanManager;
 import jakarta.servlet.Servlet;
@@ -137,6 +138,27 @@ class FoyChappeBootTest {
         assertThrows(IllegalArgumentException.class, () -> b.confidentialPort(0));
         assertThrows(IllegalArgumentException.class, () -> b.confidentialPort(65_536));
         b.confidentialPort(-1).confidentialPort(8443);
+    }
+
+    @Test
+    void requestLimitsAreConfigurableAndReachTheContext() throws Exception {
+        try (var mounted = plainApp(null).contextPath("/").build().orElseThrow()) {
+            assertEquals(RequestLimits.DEFAULTS, mounted.deployment().servletContext().requestLimits());
+        }
+        try (var mounted = plainApp(null).contextPath("/").maxChunkedRequestBodySize(1024).maxFormBodySize(512)
+                .maxMultipartParts(5).maxMultipartPartHeaderSize(256).build().orElseThrow()) {
+            assertEquals(new RequestLimits(1024, 512, 5, 256), mounted.deployment().servletContext().requestLimits());
+        }
+    }
+
+    @Test
+    void invalidRequestLimitsAreRejectedAtTheCallSite() {
+        var b = plainApp(null);
+        assertThrows(IllegalArgumentException.class, () -> b.maxChunkedRequestBodySize(-2));
+        assertThrows(IllegalArgumentException.class, () -> b.maxFormBodySize(-2));
+        assertThrows(IllegalArgumentException.class, () -> b.maxMultipartParts(0));
+        assertThrows(IllegalArgumentException.class, () -> b.maxMultipartPartHeaderSize(0));
+        assertDoesNotThrow(() -> b.maxChunkedRequestBodySize(-1).maxFormBodySize(-1).maxMultipartParts(-1));
     }
 
     @Test

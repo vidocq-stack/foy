@@ -74,6 +74,8 @@ public final class VidocqServletContext implements ServletContext {
             new io.vidocq.foy.internal.error.ErrorPageRegistry();
     private volatile io.vidocq.foy.internal.security.SecuritySettings securitySettings =
             io.vidocq.foy.internal.security.SecuritySettings.DEFAULTS;
+    private volatile io.vidocq.foy.internal.http.RequestLimits requestLimits =
+            io.vidocq.foy.internal.http.RequestLimits.DEFAULTS;
     private boolean initialized;
     private boolean programmaticListenerActive;
     private Map<String, String> localeEncodingMappings = Map.of();
@@ -270,6 +272,13 @@ public final class VidocqServletContext implements ServletContext {
     public void setSecuritySettings(io.vidocq.foy.internal.security.SecuritySettings settings) {
         this.securitySettings = java.util.Objects.requireNonNull(settings, "settings");
     }
+
+    /** The container ceilings of this context's requests (body, form, multipart). */
+    public void setRequestLimits(io.vidocq.foy.internal.http.RequestLimits limits) {
+        this.requestLimits = java.util.Objects.requireNonNull(limits, "limits");
+    }
+
+    public io.vidocq.foy.internal.http.RequestLimits requestLimits() { return requestLimits; }
 
     public io.vidocq.foy.spi.security.IdentityStore identityStore() { return securitySettings.identityStore(); }
 
