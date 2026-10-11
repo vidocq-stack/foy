@@ -42,6 +42,8 @@ import io.vidocq.foy.internal.async.AsyncContextImpl.CycleEnd;
 import io.vidocq.foy.internal.dispatcher.VidocqFilterChain;
 import io.vidocq.foy.internal.error.ErrorPageRegistry;
 import io.vidocq.foy.internal.http.CookieCodec;
+import io.vidocq.foy.internal.http.MultipartLimitException;
+import io.vidocq.foy.internal.http.RequestBodyTooLargeException;
 import io.vidocq.foy.internal.http.RequestPaths;
 import io.vidocq.foy.internal.listener.ListenerRegistry;
 import io.vidocq.foy.internal.session.HttpSessionImpl;
@@ -885,8 +887,7 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
     private static boolean bodyTooLarge(Throwable thrown) {
         int depth = 0;
         for (Throwable t = thrown; t != null && depth++ < 16; t = t.getCause()) {
-            if (t instanceof io.vidocq.foy.internal.http.RequestBodyTooLargeException
-                    || t instanceof io.vidocq.foy.internal.http.MultipartLimitException) {
+            if (t instanceof RequestBodyTooLargeException || t instanceof MultipartLimitException) {
                 return true;
             }
         }
@@ -916,8 +917,8 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
                 location = match.location();
                 matched = match.matched();
             }
-            // Servlet 6.1 §2.3.3.2 : UnavailableException remonte explicitement
-            // un status 404 (permanent) ou 503 (temporary) au lieu du 500 générique.
+            // Servlet 6.1 section 2.3.3.2: an UnavailableException answers 404 (permanent) or
+            // 503 (temporary) instead of the generic 500.
             Throwable root = thrown;
             while (root.getCause() != null && !(root instanceof UnavailableException)) {
                 root = root.getCause();
@@ -937,9 +938,8 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
             location = pages.findByStatus(errorStatus).orElse(null);
         }
         if (location == null) {
-            // Pas d'error-page mappée : on applique tout de même le status approprié
-            // (404/503 pour UnavailableException) et on court-circuite le error()
-            // générique du handler.
+            // No error page is mapped: still apply the matching status (404/503 for an
+            // UnavailableException) and bypass the handler's generic error().
             if (thrown instanceof UnavailableException
                     || (thrown != null && thrown.getCause() instanceof UnavailableException)) {
                 res.clearErrorState();
