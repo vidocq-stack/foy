@@ -145,5 +145,14 @@ It:
 6. Supports multi-deployment (several WARs in parallel, used
    by `DispatchTests`).
 
-Signature tests `sigtest-maven-plugin` not yet connected — to add
-in a `-Psigtest` profile if needed to certify API conformance.
+**Signature test.** The `sigtest` profile runs the TCK's own `servlet.tck.signature.ServletSigTest`
+(signature file `jakarta.servlet.sig_6.1` from `servlet-tck-runtime`) against the
+`jakarta.servlet-api` 6.1.0 jar Foy runs on, plus the JDK `java.base` module extracted with `jimage`
+into `target/jimage` (the whole JDK is extracted, which is slow and large on a clean run):
+
+    ./mvnw -ntp -Ptck,tck-official,sigtest -pl foy-tck test -Dtest=ServletSigTest \
+        -Dsurefire.failIfNoSpecifiedTests=false
+
+Build-time dependencies of the profile only: `jakarta.tck:sigtest-maven-plugin:2.5` (test scope, it
+provides `com.sun.tdk.signaturetest`) and `maven-dependency-plugin` (copies the API jar). The latest
+result is in `TCK.md`.

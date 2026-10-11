@@ -44,6 +44,7 @@
         <foy.version>0.4.0-SNAPSHOT</foy.version>
         <chappe.version>0.4.0-SNAPSHOT</chappe.version>
         <vauban.version>0.4.0-SNAPSHOT</vauban.version>
+        <servlet-api.version>6.1.0</servlet-api.version>
     </properties>
 
     <dependencies>
@@ -85,7 +86,7 @@
         <dependency>
             <groupId>jakarta.servlet</groupId>
             <artifactId>jakarta.servlet-api</artifactId>
-            <version>6.1.0</version>
+            <version>${servlet-api.version}</version>
         </dependency>
 
         <dependency>
@@ -236,6 +237,59 @@
                     <groupId>junit</groupId>
                     <artifactId>junit</artifactId>
                     <version>4.13.2</version>
+                    <scope>test</scope>
+                </dependency>
+            </dependencies>
+        </profile>
+        <profile>
+            <!-- API signature test (the TCK's own ServletSigTest, signature file jakarta.servlet.sig_6.1)
+                 of the jakarta.servlet-api jar Foy runs on. Combine with tck-official:
+                 ./mvnw -ntp -Ptck,tck-official,sigtest -pl foy-tck test -Dtest=ServletSigTest
+                        -Dsurefire.failIfNoSpecifiedTests=false
+                 Build-time only: sigtest-maven-plugin (test scope) and maven-dependency-plugin. -->
+            <id>sigtest</id>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-dependency-plugin</artifactId>
+                        <version>3.8.1</version>
+                        <executions>
+                            <execution>
+                                <id>copy-servlet-api-for-sigtest</id>
+                                <phase>process-test-resources</phase>
+                                <goals><goal>copy</goal></goals>
+                                <configuration>
+                                    <artifactItems>
+                                        <artifactItem>
+                                            <groupId>jakarta.servlet</groupId>
+                                            <artifactId>jakarta.servlet-api</artifactId>
+                                            <version>${servlet-api.version}</version>
+                                            <destFileName>jakarta.servlet-api.jar</destFileName>
+                                        </artifactItem>
+                                    </artifactItems>
+                                    <outputDirectory>${project.build.directory}/sigtest</outputDirectory>
+                                </configuration>
+                            </execution>
+                        </executions>
+                    </plugin>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-surefire-plugin</artifactId>
+                        <configuration>
+                            <systemPropertyVariables>
+                                <jimage.dir>${project.build.directory}/jimage</jimage.dir>
+                                <sigTestClasspath>${project.build.directory}/sigtest/jakarta.servlet-api.jar${path.separator}${project.build.directory}/jimage/java.base</sigTestClasspath>
+                            </systemPropertyVariables>
+                        </configuration>
+                    </plugin>
+                </plugins>
+            </build>
+            <dependencies>
+                <dependency>
+                    <groupId>jakarta.tck</groupId>
+                    <artifactId>sigtest-maven-plugin</artifactId>
+                    <version>2.5</version>
                     <scope>test</scope>
                 </dependency>
             </dependencies>
