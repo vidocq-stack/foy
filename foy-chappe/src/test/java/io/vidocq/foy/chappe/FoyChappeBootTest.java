@@ -19,6 +19,7 @@
  */
 package io.vidocq.foy.chappe;
 
+import io.vidocq.chappe.api.Router;
 import io.vidocq.chappe.api.Server;
 import io.vidocq.foy.internal.http.RequestLimits;
 import jakarta.enterprise.inject.spi.Bean;
@@ -322,6 +323,46 @@ class FoyChappeBootTest {
             assertEquals(2, mounted.servletContext().getSessionTimeout());
         } finally {
             mounted.close();
+        }
+    }
+
+    @Test
+    void handlerUnderAContextPathIsMountedWithoutStrippingThePrefix() throws Exception {
+        String xml = """
+            <web-app xmlns="https://jakarta.ee/xml/ns/jakartaee" version="6.1">
+              <servlet><servlet-name>h</servlet-name><servlet-class>%s</servlet-class>
+                <init-param><param-name>who</param-name><param-value>app</param-value></init-param></servlet>
+              <servlet-mapping><servlet-name>h</servlet-name><url-pattern>/hello</url-pattern></servlet-mapping>
+            </web-app>""".formatted(Hello.class.getName());
+        try (var mounted = FoyChappeBoot.builder().contextPath("/app")
+                .classLoader(getClass().getClassLoader()).discoverPluggability(false)
+                .webXml(new ByteArrayInputStream(xml.getBytes()))
+                .build().orElseThrow()) {
+            assertEquals("/app", mounted.mountPrefix());
+            // The handler dispatches on the full request path, context path included:
+            // the prefix routes the request but must not be stripped.
+            assertEquals(200, getThroughRouter(mounted, false, "/app/hello").statusCode());
+            assertEquals("hello app", getThroughRouter(mounted, false, "/app/hello").body());
+            assertEquals(404, getThroughRouter(mounted, true, "/app/hello").statusCode(),
+                    "a stripping mount hides the context path from the handler");
+        }
+    }
+
+    private static HttpResponse<String> getThroughRouter(FoyChappeBoot.Mounted mounted, boolean stripPrefix,
+                                                         String path) throws Exception {
+        var router = Router.builder()
+                .mount(mounted.mountPrefix(), mounted.handler(), stripPrefix)
+                .build();
+        int port;
+        try (var s = new ServerSocket(0)) { port = s.getLocalPort(); }
+        Server server = Server.builder().host("127.0.0.1").port(port).handler(router).build();
+        server.start();
+        try {
+            return HttpClient.newHttpClient().send(
+                    HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port + path)).build(),
+                    HttpResponse.BodyHandlers.ofString());
+        } finally {
+            server.stop();
         }
     }
 }

@@ -169,7 +169,7 @@ stateDiagram-v2
     Discovery: WebAppDiscovery scans the Vauban BeanManager\nWebXmlParser reads web.xml, ApplicationSources the fragments and initializers
     Discovery --> Modeled: WebAppModel + DescriptorMerger
     Modeled --> Deployed: WebAppDeployer.deploy(model, options) — contextInitialized, load-on-startup
-    Deployed --> Mounted: Router.Builder.mount(mountPrefix, handler)
+    Deployed --> Mounted: Router.Builder.mount(mountPrefix, handler, false)
     Mounted --> Serving: requests handled
     Serving --> Stopping: shutdown signal
     Stopping --> Destroyed: Mounted.close() — contextDestroyed

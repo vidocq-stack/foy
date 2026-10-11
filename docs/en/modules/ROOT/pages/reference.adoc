@@ -169,7 +169,7 @@ The `io.vidocq.foy.internal.*` packages are exported to allow advanced integrati
 | Deploys the web application through `WebAppDeployer`. Returns `Optional<Mounted>`. Empty if no Servlet/Filter/Listener bean was discovered.
 
 | `Mounted.handler()`
-| The `io.vidocq.chappe.api.Handler` to mount through a Chappe `Router.Builder.mount(mountPrefix, handler)`, or to pass directly to `Server.builder().handler(...)` when the contextPath is `/`.
+| The `io.vidocq.chappe.api.Handler` to mount through a Chappe `Router.Builder.mount(mountPrefix, handler, false)`, or to pass directly to `Server.builder().handler(...)` when the contextPath is `/`. The handler dispatches on the full request path, context path included: the mount must route on the prefix without stripping it. The two-argument `mount(prefix, handler)` strips the prefix, and every servlet under a non-root context path then answers 404.
 
 | `Mounted.mountPrefix()`
 | Mount prefix to use (`""` if `contextPath == "/"`).

@@ -68,7 +68,7 @@ The `@WebServlet` annotation is resolved at compile time by an APT. Zero classpa
 
 == Boot the container
 
-The public Chappe-side API is `FoyChappeBoot`. It takes a `BeanManager` (CDI) and exposes a Chappe `Handler` (`Mounted.handler()`). Mounting is plain Chappe: hang the handler on a `Router.Builder.mount(prefix, handler)` — or pass it directly to `Server.builder().handler(...)` when the contextPath is `/`.
+The public Chappe-side API is `FoyChappeBoot`. It takes a `BeanManager` (CDI) and exposes a Chappe `Handler` (`Mounted.handler()`). Mounting is plain Chappe: hang the handler on a `Router.Builder.mount(prefix, handler, false)` — or pass it directly to `Server.builder().handler(...)` when the contextPath is `/`. Keep the prefix: the handler dispatches on the full request path, context path included, so a stripping mount (the two-argument `mount(prefix, handler)`) makes every servlet answer 404.
 
 [source,java]
 ----
@@ -86,7 +86,7 @@ void main() throws Exception {
             .orElseThrow(() -> new IllegalStateException("No @WebServlet discovered"));
 
     var router = Router.builder()
-            .mount(mounted.mountPrefix(), mounted.handler())
+            .mount(mounted.mountPrefix(), mounted.handler(), false) // route on the prefix, never strip it
             .build();
 
     try (mounted; var server = Server.builder().port(8080).handler(router).build()) {

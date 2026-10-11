@@ -80,9 +80,14 @@ import java.util.Set;
  *         .contextPath("/app")
  *         .sessionTimeoutSeconds(1800)
  *         .build();
- * opt.ifPresent(mounted -> chappeMountPoint.mount(listener, mounted.mountPrefix(), mounted.handler()));
+ * opt.ifPresent(mounted -> routerBuilder.mount(mounted.mountPrefix(), mounted.handler(), false));
  * // on shutdown: mounted.close()
  * }</pre>
+ *
+ * <p>The handler dispatches on the full request path, context path included. Mount it so that
+ * the prefix routes the request without being stripped ({@code stripPrefix=false}): a stripping
+ * mount, such as Chappe's two-argument {@code Router.Builder.mount(prefix, handler)}, hides the
+ * context path and every servlet under a non-root context path then answers 404.</p>
  *
  * <p>The {@link Optional} is empty if the application declares no servlet, filter or listener.
  * {@code contextInitialized} fires during {@code build()}; {@link Mounted#close()} fires
@@ -100,7 +105,8 @@ public final class FoyChappeBoot {
 
     /**
      * Result of a successful bootstrap: a handler ready to mount, the mount prefix to use
-     * ({@code ""} if contextPath is {@code "/"}) and the live deployment.
+     * ({@code ""} if contextPath is {@code "/"}) and the live deployment. The prefix routes
+     * requests to the handler and must not be stripped from the path it receives.
      */
     public record Mounted(Handler handler, String mountPrefix, Deployment deployment)
             implements AutoCloseable {
