@@ -296,7 +296,10 @@ public final class HttpServletRequestImpl implements HttpServletRequest {
     // values (?p=a&p=b gives {"p": ["a","b"]}); queryParams() is a String-to-String map, one value
     // per key.
 
-    private Map<String, List<String>> parsedParams;
+    /** Published once complete: a reader on another thread never sees a map still being filled. */
+    private volatile Map<String, List<String>> parsedParams;
+    /** A body read for the parameters failed: it propagated once and is never attempted again. */
+    private boolean paramsBodyFailed;
     /**
      * True once the container consumed the body itself (form parameters, and multipart parts):
      * getInputStream()/getReader() then return an empty stream (section 3.1.1).
@@ -305,17 +308,50 @@ public final class HttpServletRequestImpl implements HttpServletRequest {
 
     /**
      * The request parameters: the query string first, then the body (section 3.1.1). The map is
-     * settled before the body is read, so a refused or failed body read propagates once and leaves
-     * the query-string parameters; the body is never read a second time.
+     * built locally and published once complete. A refused or failed body read propagates once and
+     * leaves the query-string parameters; the body is never read a second time. A multipart body
+     * feeds them when it is a POST to a servlet with a multipart configuration, or once getParts()
+     * parsed it. Read before any servlet runs (a request listener, a FORM login check), a multipart
+     * POST gives the query-string parameters without caching them, so the servlet later sees its fields.
      */
     private Map<String, List<String>> parameters() {
-        if (parsedParams != null) return parsedParams;
+        var cached = parsedParams;
+        if (cached != null) return cached;
         var out = new java.util.LinkedHashMap<String, List<String>>();
         decodeInto(out, chappe.query(), StandardCharsets.UTF_8);
-        parsedParams = out;
-        if (inputStream != null || reader != null || bodyConsumedByContainer) return out;
-        if (isFormPost()) decodeInto(out, readFormBody(), formBodyCharset());
-        return out;
+        if (paramsBodyFailed) return publishParams(out);
+        try {
+            if (parsedParts != null) {
+                appendPartFields(out);
+            } else if (inputStream == null && reader == null && !bodyConsumedByContainer) {
+                if (isFormPost()) {
+                    decodeInto(out, readFormBody(), formBodyCharset());
+                } else if (partsFailure == null && "POST".equalsIgnoreCase(getMethod()) && isMultipart()) {
+                    if (multipartConfig() != null) {
+                        parts();
+                        appendPartFields(out);
+                    } else if (executingServletName() == null) {
+                        return out; // no servlet yet: decide once one runs (F-05)
+                    }
+                }
+            }
+        } catch (IOException e) {
+            paramsBodyFailed = true;
+            throw new java.io.UncheckedIOException("cannot read the multipart body", e);
+        } catch (ServletException e) {
+            paramsBodyFailed = true;
+            throw new IllegalStateException(e); // unreachable: the media type was checked
+        } catch (RuntimeException e) {
+            paramsBodyFailed = true;
+            throw e;
+        }
+        return publishParams(out);
+    }
+
+    private Map<String, List<String>> publishParams(Map<String, List<String>> complete) {
+        parsedParams = complete;
+        if (parsedParts != null) partFieldsMerged = true;
+        return complete;
     }
 
     /**
@@ -328,8 +364,16 @@ public final class HttpServletRequestImpl implements HttpServletRequest {
         bodyConsumedByContainer = true;
         encodingLocked = true;
         trackedBody = new ServletInputStreamImpl(bodySource(), nonBlockingHost);
+        containerStream = trackedBody;
         return trackedBody;
     }
+
+    /**
+     * The body stream the container read (form parameters, parts). A later getInputStream() or
+     * getReader() replaces {@link #trackedBody} with an empty stream; trailer readiness still
+     * follows the real body.
+     */
+    private volatile ServletInputStreamImpl containerStream;
 
     /**
      * The urlencoded body as ISO-8859-1 text (the percent-decoding applies the request charset),
@@ -594,7 +638,10 @@ public final class HttpServletRequestImpl implements HttpServletRequest {
         if (!"chunked".equalsIgnoreCase(chappe.headers().firstOrNull("Transfer-Encoding"))) {
             return true;
         }
-        return trackedBody != null && trackedBody.isFinished();
+        var container = containerStream;
+        if (container != null && container.isFinished()) return true;
+        var body = trackedBody;
+        return body != null && body.isFinished();
     }
     @Override public String getCharacterEncoding() {
         if (characterEncoding != null) return characterEncoding;
@@ -1015,7 +1062,62 @@ public final class HttpServletRequestImpl implements HttpServletRequest {
             bodyConsumedByContainer = true;
             throw e;
         }
+        if (parsedParams != null) mergePartFields();
         return parsedParts;
+    }
+
+    /** The cached parameters already hold the fields of {@link #parsedParts}. */
+    private boolean partFieldsMerged;
+
+    /**
+     * Section 3.2: the parameters cached before getParts() ran (a PUT, a request whose body was
+     * not parsed) gain the fields, after the query string. A new map is published: one handed out
+     * earlier never changes under its reader. Once, and only once it succeeded.
+     */
+    private void mergePartFields() throws IOException {
+        var current = parsedParams;
+        if (partFieldsMerged || current == null) return;
+        var merged = new java.util.LinkedHashMap<String, List<String>>();
+        current.forEach((k, v) -> merged.put(k, new ArrayList<>(v)));
+        appendPartFields(merged);
+        parsedParams = merged;
+        partFieldsMerged = true;
+    }
+
+    /** Appends to {@code out} the value of every part without a file name, in part order. */
+    private void appendPartFields(Map<String, List<String>> out) throws IOException {
+        Charset fallback = fieldFallbackCharset();
+        var fields = new java.util.LinkedHashMap<String, List<String>>();
+        for (PartImpl p : parsedParts) {
+            if (p.getSubmittedFileName() != null) continue;
+            fields.computeIfAbsent(p.getName(), _ -> new ArrayList<>()).add(p.text(p.charset(fallback)));
+        }
+        fields.forEach((k, v) -> out.computeIfAbsent(k, _ -> new ArrayList<>()).addAll(v));
+    }
+
+    /**
+     * The charset of a field whose part declares none: the request encoding (setCharacterEncoding,
+     * the Content-Type charset, request-character-encoding), else the {@code _charset_} field
+     * (RFC 7578 section 4.6), else ISO-8859-1 (section 3.12).
+     */
+    private Charset fieldFallbackCharset() throws IOException {
+        String encoding = getCharacterEncoding();
+        if (encoding != null) {
+            try {
+                return Charset.forName(encoding);
+            } catch (RuntimeException unknown) {
+                // fall through to the next source
+            }
+        }
+        for (PartImpl p : parsedParts) {
+            if (!"_charset_".equals(p.getName()) || p.getSubmittedFileName() != null) continue;
+            try {
+                return Charset.forName(p.text(StandardCharsets.US_ASCII).trim());
+            } catch (RuntimeException unknown) {
+                break;
+            }
+        }
+        return StandardCharsets.ISO_8859_1;
     }
 
     private static RuntimeException rethrowParts(Exception failure) throws IOException {

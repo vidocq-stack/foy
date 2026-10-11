@@ -110,4 +110,19 @@ class MultipartLifecycleTest {
         assertEquals("1", req.getTrailerFields().get("x-sum"));
         req.releaseParts();
     }
+
+    @Test
+    void theTrailersStayReadyWhenTheApplicationAsksForTheBodyAfterAContainerParse() throws Exception {
+        var stream = request(body(), true, Headers.of("X-Sum", "1"));
+        assertEquals(1, stream.getParts().size());
+        stream.getInputStream();
+        assertTrue(stream.isTrailerFieldsReady(), "the container read the body to its end");
+        stream.releaseParts();
+
+        var reader = request(body(), true, Headers.of("X-Sum", "1"));
+        assertEquals(1, reader.getParts().size());
+        reader.getReader();
+        assertTrue(reader.isTrailerFieldsReady(), "the container read the body to its end");
+        reader.releaseParts();
+    }
 }
