@@ -77,6 +77,7 @@ public final class VidocqServletContext implements ServletContext {
     private volatile io.vidocq.foy.internal.http.RequestLimits requestLimits =
             io.vidocq.foy.internal.http.RequestLimits.DEFAULTS;
     private boolean initialized;
+    private volatile Map<String, jakarta.servlet.MultipartConfigElement> multipartConfigs;
     private boolean programmaticListenerActive;
     private Map<String, String> localeEncodingMappings = Map.of();
     private final java.util.LinkedHashMap<String, DynamicServletRegistration> dynamicServlets = new java.util.LinkedHashMap<>();
@@ -242,8 +243,30 @@ public final class VidocqServletContext implements ServletContext {
     }
 
     /** End-of-initialization marker (Servlet 6.1 §4.4); after this call,
-     *  dynamic configuration methods must throw {@link IllegalStateException}. */
-    public void markInitialized() { this.initialized = true; }
+     *  dynamic configuration methods must throw {@link IllegalStateException}. The multipart
+     *  configuration of every servlet is frozen here for the request threads. */
+    public void markInitialized() {
+        this.initialized = true;
+        var frozen = new HashMap<String, jakarta.servlet.MultipartConfigElement>();
+        staticServlets.forEach((name, r) -> { if (r.getMultipartConfig() != null) frozen.put(name, r.getMultipartConfig()); });
+        dynamicServlets.forEach((name, r) -> { if (r.getMultipartConfig() != null) frozen.put(name, r.getMultipartConfig()); });
+        this.multipartConfigs = Map.copyOf(frozen);
+    }
+
+    /**
+     * The effective multipart configuration of {@code servletName} (section 3.2): the registration's
+     * {@code setMultipartConfig}, else the descriptor's {@code <multipart-config>}, else the class's
+     * {@code @MultipartConfig}; {@code null} for none or a {@code null} name. Read live from the
+     * registrations until {@link #markInitialized()}, frozen afterwards.
+     */
+    public jakarta.servlet.MultipartConfigElement multipartConfig(String servletName) {
+        if (servletName == null) return null;
+        var frozen = multipartConfigs;
+        if (frozen != null) return frozen.get(servletName);
+        DynamicServletRegistration r = dynamicServlets.get(servletName);
+        if (r == null) r = staticServlets.get(servletName);
+        return r == null ? null : r.getMultipartConfig();
+    }
 
     public void setListenerRegistry(ListenerRegistry registry) {
         this.listenerRegistry = registry;

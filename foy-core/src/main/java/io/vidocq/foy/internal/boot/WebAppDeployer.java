@@ -123,6 +123,7 @@ public final class WebAppDeployer {
             // ServletContext.getServletRegistrations() — visibility required by the TCK
             // (RegistrationTests.servletRegistrationsTest).
             registerStatic(ctx, model, servlets, filters);
+            // A disabled servlet is never served, so its multipart-config is not carried here.
             for (ServletDecl d : model.servlets()) {
                 if (d.enabled() || d.type() == null) continue;
                 var reg = ctx.registerStaticServlet(d.name(), d.type(), d.urlPatterns(), d.initParams(),
@@ -303,11 +304,16 @@ public final class WebAppDeployer {
      */
     private static void registerStatic(VidocqServletContext ctx, WebAppModel model, List<ServletUnit> servlets,
                                        List<FilterUnit> filters) {
+        var multipart = new java.util.HashMap<String, jakarta.servlet.MultipartConfigElement>();
+        for (ServletDecl d : model.servlets()) if (d.multipartConfig() != null) multipart.put(d.name(), d.multipartConfig());
         for (ServletUnit s : servlets) {
             var reg = ctx.registerStaticServlet(s.name(), s.type(), s.patterns(), s.initParams(),
                     s.asyncSupported());
             String runAs = model.runAsRoles().get(s.name());
             if (runAs != null) reg.setRunAsRole(runAs);
+            // The descriptor's <multipart-config> already won over @MultipartConfig in the model (section 8.2.3).
+            var config = multipart.get(s.name());
+            if (config != null) reg.setMultipartConfig(config);
         }
         for (FilterUnit f : filters) {
             var registration = ctx.registerStaticFilter(f.name(), f.type(), f.initParams(), f.asyncSupported());
@@ -356,16 +362,22 @@ public final class WebAppDeployer {
             // An unmapped dynamic servlet is still initialised and reachable by name (section 9.1.2).
             if (instance == null) continue;
             // setServletSecurity wins; otherwise the class's @ServletSecurity applies (§13.4.1).
+            // setMultipartConfig wins; otherwise the class's @MultipartConfig applies (section 3.2).
             ServletSecurityElement security = reg.getServletSecurity();
-            if (security == null && !jsp) {
+            if (!jsp && (security == null || reg.getMultipartConfig() == null)) {
+                io.vidocq.foy.spi.gen.WebComponentDescriptor descriptor;
                 try {
-                    security = factory.descriptor(instance.getClass()).servletSecurity();
+                    descriptor = factory.descriptor(instance.getClass());
                 } catch (IllegalArgumentException misuse) {
                     // addServlet declares no checked exception: the misuse is reported here and
                     // only this component is left out, like an instantiation failure.
                     LOG.log(System.Logger.Level.WARNING, "cannot register dynamic servlet " + name,
                             new ServletException(misuse.getMessage(), misuse));
                     continue;
+                }
+                if (security == null) security = descriptor.servletSecurity();
+                if (reg.getMultipartConfig() == null && descriptor.multipartConfig() != null) {
+                    reg.setMultipartConfig(descriptor.multipartConfig());
                 }
             }
             // Dynamic registrations are not async unless setAsyncSupported(true) was called.

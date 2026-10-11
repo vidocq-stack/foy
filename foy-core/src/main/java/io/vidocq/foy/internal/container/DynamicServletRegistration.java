@@ -132,7 +132,18 @@ public final class DynamicServletRegistration implements ServletRegistration.Dyn
         return conflicts;
     }
     public ServletSecurityElement getServletSecurity() { return security; }
+    /**
+     * {@code ServletRegistration.Dynamic} Javadoc: overrides the servlet's {@code @MultipartConfig};
+     * each call overrides the previous one.
+     *
+     * @throws IllegalArgumentException when {@code multipartConfig} is null
+     * @throws IllegalStateException once the context is initialized
+     */
     @Override public void setMultipartConfig(MultipartConfigElement multipartConfig) {
+        if (multipartConfig == null) throw new IllegalArgumentException("multipartConfig is null");
+        if (owner != null && owner.isInitializedInternal()) {
+            throw new IllegalStateException("the ServletContext is already initialized");
+        }
         this.multipart = multipartConfig;
     }
     public MultipartConfigElement getMultipartConfig() { return multipart; }
