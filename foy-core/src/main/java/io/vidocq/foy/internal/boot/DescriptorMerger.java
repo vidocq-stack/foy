@@ -271,6 +271,7 @@ public final class DescriptorMerger {
         target.securityConstraints(webXml.securityConstraints());
         target.loginConfig(webXml.loginConfig());
         target.securityRoles(webXml.securityRoles());
+        target.jspConfigDescriptor(webXml.jspConfigDescriptor());
 
         mergeServlets(webXml, ann, factory, target);
         mergeFilters(webXml, ann, factory, target);
@@ -289,9 +290,9 @@ public final class DescriptorMerger {
             // The web.xml declaration overrides the annotated one of the same name, even when skipped.
             done.add(def.name());
             if (def.className() == null && def.jspFile() != null) {
-                // Foy ships no JSP engine: a <jsp-file> servlet is left out, the rest deploys.
-                LOG.log(System.Logger.Level.WARNING, "servlet '" + def.name() + "' skipped: <jsp-file> "
-                        + def.jspFile() + " needs a JSP engine, which Foy does not provide");
+                target.servlet(new ServletDecl(def.name(), null, null, webXml.patternsFor(def.name()),
+                        def.initParams(), def.loadOnStartup(), Boolean.TRUE.equals(def.asyncSupported()),
+                        null, null, def.enabled(), def.jspFile()));
                 continue;
             }
             Class<? extends Servlet> type = loadComponent(factory, def.className(), Servlet.class, "servlet",

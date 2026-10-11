@@ -123,6 +123,8 @@ public final class Deployment implements AutoCloseable {
             catch (RuntimeException e) { warn("contextDestroyed failed", e); }
         }
         CrossContextRegistry.unregister(servletContext);
+        try { servletContext.closeJspEngineApplication(); }
+        catch (RuntimeException failure) { warn("JSP application cleanup failed", failure); }
         if (tempDir != null) deleteRecursively(tempDir);
     }
 

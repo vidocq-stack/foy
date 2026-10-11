@@ -83,6 +83,19 @@ public final class WebAppDeployer {
      * before the exception propagates.
      */
     public static Deployment deploy(WebAppModel model, DeployOptions options) {
+        return deploy(model, options, ModuleLayer.boot());
+    }
+
+    /** Deploys with optional page engines and application pages visible in the supplied layer. */
+    public static Deployment deploy(WebAppModel model, DeployOptions options, ModuleLayer applicationLayer) {
+        var providers = java.util.ServiceLoader.load(applicationLayer, io.vidocq.foy.spi.jsp.JspEngine.class).iterator();
+        var engine = providers.hasNext() ? providers.next() : null;
+        if (providers.hasNext()) throw new IllegalStateException("Multiple JSP engines are visible in the application layer");
+        return deploy(model, options, applicationLayer, engine);
+    }
+
+    static Deployment deploy(WebAppModel model, DeployOptions options, ModuleLayer applicationLayer,
+            io.vidocq.foy.spi.jsp.JspEngine engine) {
         Objects.requireNonNull(model, "model");
         Objects.requireNonNull(options, "options");
         ComponentFactory factory = options.componentFactory();
@@ -95,18 +108,31 @@ public final class WebAppDeployer {
         try {
             var servlets = new ArrayList<ServletUnit>();
             var filters = new ArrayList<FilterUnit>();
-            instantiateStatic(model, servlets, filters);
+            model.contextParams().forEach(ctx::setInitParameter);
+            tempDir = createTempDir(ctx, options.tempDirRoot());
+            if (engine != null) {
+                try { ctx.setJspEngineApplication(engine.deploy(ctx, applicationLayer)); }
+                catch (ServletException failure) { throw new IllegalStateException("JSP application deployment failed", failure); }
+            }
+            instantiateStatic(model, ctx, servlets, filters);
             // Expose the servlets/filters declared in web.xml/@WebServlet through
             // ServletContext.getServletRegistrations() — visibility required by the TCK
             // (RegistrationTests.servletRegistrationsTest).
             registerStatic(ctx, model, servlets, filters);
             for (ServletDecl d : model.servlets()) {
-                if (!d.enabled()) ctx.registerStaticServlet(d.name(), d.type(), d.urlPatterns(), d.initParams(),
+                if (!d.enabled() && d.type() != null) ctx.registerStaticServlet(d.name(), d.type(), d.urlPatterns(), d.initParams(),
                         d.asyncSupported());
             }
             // <context-param> init params (web.xml) — must be set before markInitialized.
-            model.contextParams().forEach(ctx::setInitParameter);
-            tempDir = createTempDir(ctx, options.tempDirRoot());
+            if (engine != null) {
+                var registration = ctx.addServlet("jsp", ctx.jspEngineApplication().servlet());
+                if (registration != null) {
+                    ctx.markJspRegistration("jsp");
+                    registration.setLoadOnStartup(1);
+                    registration.addMapping("*.jsp");
+                    registration.addMapping("*.jspx");
+                }
+            }
             var listeners = new ArrayList<EventListener>();
             for (var l : model.listeners()) listeners.add(l.factory().get());
             ListenerRegistry registry = new ListenerRegistry();
@@ -182,6 +208,7 @@ public final class WebAppDeployer {
         ctx.applyCookieConfig(model.cookieConfig());
         if (!model.trackingModes().isEmpty()) ctx.setDescriptorTrackingModes(model.trackingModes());
         ctx.setEffectiveVersion(model.effectiveMajorVersion(), model.effectiveMinorVersion());
+        ctx.setJspConfigDescriptor(model.jspConfigDescriptor());
         if (options.resourceProvider() != null) ctx.setResourceProvider(options.resourceProvider());
         ctx.setVirtualServerName(options.virtualServerName());
         String name = options.servletContextName() != null ? options.servletContextName() : model.displayName();
@@ -201,11 +228,13 @@ public final class WebAppDeployer {
      * {@link ComponentFactory#isVisible}: their classes are already resolved, and the
      * visibility restriction (TCK war isolation) applies to dynamic registrations only.
      */
-    private static void instantiateStatic(WebAppModel model, List<ServletUnit> servlets, List<FilterUnit> filters) {
+    private static void instantiateStatic(WebAppModel model, VidocqServletContext context, List<ServletUnit> servlets, List<FilterUnit> filters) {
         for (ServletDecl d : model.servlets()) {
             // A disabled servlet is declared (registerDisabled) but never instantiated nor mapped.
             if (!d.enabled()) continue;
-            servlets.add(new ServletUnit(d.name(), d.type(), d.factory().get(), d.urlPatterns(), d.initParams(),
+            if (d.jspFile() != null && context.jspEngineApplication() == null) continue;
+            Servlet instance = d.jspFile() == null ? d.factory().get() : context.jspEngineApplication().servletFor(d.jspFile());
+            servlets.add(new ServletUnit(d.name(), d.jspFile() == null ? d.type() : instance.getClass(), instance, d.urlPatterns(), d.initParams(),
                     d.loadOnStartup(), d.asyncSupported(), d.servletSecurity()));
         }
         for (FilterDecl d : model.filters()) {
@@ -265,13 +294,14 @@ public final class WebAppDeployer {
             String name = e.getKey();
             var reg = e.getValue();
             if (staticServletNames.contains(name)) continue;
-            Servlet instance = instantiate("servlet", name, reg.instance(), reg.klass(), reg.getClassName(),
+            boolean jsp = ctx.isJspRegistration(name);
+            Servlet instance = jsp ? reg.instance() : instantiate("servlet", name, reg.instance(), reg.klass(), reg.getClassName(),
                     Servlet.class, factory);
             // An unmapped dynamic servlet is still initialised and reachable by name (section 9.1.2).
             if (instance == null) continue;
             // setServletSecurity wins; otherwise the class's @ServletSecurity applies (§13.4.1).
             ServletSecurityElement security = reg.getServletSecurity();
-            if (security == null) {
+            if (security == null && !jsp) {
                 try {
                     security = factory.descriptor(instance.getClass()).servletSecurity();
                 } catch (IllegalArgumentException misuse) {

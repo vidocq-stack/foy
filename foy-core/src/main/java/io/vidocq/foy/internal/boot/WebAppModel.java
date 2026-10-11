@@ -96,7 +96,8 @@ public record WebAppModel(String contextPath,
                           Set<SessionTrackingMode> trackingModes,
                           List<SecurityConstraintDef> securityConstraints,
                           LoginConfigDef loginConfig,
-                          List<String> securityRoles) {
+                          List<String> securityRoles,
+                          jakarta.servlet.descriptor.JspConfigDescriptor jspConfigDescriptor) {
 
     public WebAppModel {
         validateContextPath(contextPath);
@@ -116,6 +117,22 @@ public record WebAppModel(String contextPath,
                 : Collections.unmodifiableSet(EnumSet.copyOf(trackingModes));
         securityConstraints = List.copyOf(securityConstraints);
         securityRoles = List.copyOf(securityRoles);
+        jspConfigDescriptor = io.vidocq.foy.internal.webxml.JspDescriptors.copy(jspConfigDescriptor);
+    }
+
+    /** Backward-compatible model constructor without JSP configuration. */
+    public WebAppModel(String contextPath, String displayName, Map<String, String> contextParams,
+            List<ServletDecl> servlets, List<FilterDecl> filters, List<FilterMappingDecl> filterMappings,
+            List<ListenerDecl> listeners, List<ServletContainerInitializer> initializers, ErrorPageRegistry errorPages,
+            int sessionTimeoutMinutes, Map<String, String> localeEncodingMappings, int effectiveMajorVersion,
+            int effectiveMinorVersion, List<String> welcomeFiles, Map<String, String> mimeMappings,
+            String requestCharacterEncoding, String responseCharacterEncoding, String defaultContextPath,
+            boolean denyUncoveredHttpMethods, CookieConfigDef cookieConfig, Set<SessionTrackingMode> trackingModes,
+            List<SecurityConstraintDef> securityConstraints, LoginConfigDef loginConfig, List<String> securityRoles) {
+        this(contextPath, displayName, contextParams, servlets, filters, filterMappings, listeners, initializers,
+                errorPages, sessionTimeoutMinutes, localeEncodingMappings, effectiveMajorVersion, effectiveMinorVersion,
+                welcomeFiles, mimeMappings, requestCharacterEncoding, responseCharacterEncoding, defaultContextPath,
+                denyUncoveredHttpMethods, cookieConfig, trackingModes, securityConstraints, loginConfig, securityRoles, null);
     }
 
     /**
@@ -132,13 +149,24 @@ public record WebAppModel(String contextPath,
                               boolean asyncSupported,
                               ServletSecurityElement servletSecurity,
                               MultipartConfigElement multipartConfig,
-                              boolean enabled) {
+                              boolean enabled, String jspFile) {
         public ServletDecl {
             Objects.requireNonNull(name, "name");
-            Objects.requireNonNull(type, "type");
-            Objects.requireNonNull(factory, "factory");
+            if (jspFile == null) {
+                Objects.requireNonNull(type, "type");
+                Objects.requireNonNull(factory, "factory");
+            } else if (!jspFile.startsWith("/")) throw new IllegalArgumentException("JSP file must start with /: " + jspFile);
             urlPatterns = List.copyOf(urlPatterns);
             initParams = copyOf(initParams);
+        }
+
+        /** An enabled declaration without multipart configuration. */
+        public ServletDecl(String name, Class<? extends Servlet> type, Supplier<? extends Servlet> factory,
+                           List<String> urlPatterns, Map<String, String> initParams, int loadOnStartup,
+                           boolean asyncSupported, ServletSecurityElement servletSecurity,
+                           MultipartConfigElement multipartConfig, boolean enabled) {
+            this(name, type, factory, urlPatterns, initParams, loadOnStartup, asyncSupported,
+                    servletSecurity, multipartConfig, enabled, null);
         }
 
         /** An enabled declaration without multipart configuration. */
@@ -287,6 +315,10 @@ public record WebAppModel(String contextPath,
         private List<SecurityConstraintDef> securityConstraints = List.of();
         private LoginConfigDef loginConfig;
         private List<String> securityRoles = List.of();
+        private jakarta.servlet.descriptor.JspConfigDescriptor jspConfigDescriptor;
+        public Builder jspConfigDescriptor(jakarta.servlet.descriptor.JspConfigDescriptor descriptor) {
+            jspConfigDescriptor = descriptor; return this;
+        }
 
         private Builder(String contextPath) {
             this.contextPath = Objects.requireNonNull(contextPath, "contextPath");
@@ -433,7 +465,7 @@ public record WebAppModel(String contextPath,
                     localeEncodingMappings, effectiveMajorVersion, effectiveMinorVersion, welcomeFiles,
                     mimeMappings, requestCharacterEncoding, responseCharacterEncoding, defaultContextPath,
                     denyUncoveredHttpMethods, cookieConfig, trackingModes, securityConstraints, loginConfig,
-                    securityRoles);
+                    securityRoles, jspConfigDescriptor);
         }
     }
 }

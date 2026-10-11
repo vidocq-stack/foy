@@ -33,6 +33,7 @@ module io.vidocq.foy.core {
 
     uses io.vidocq.foy.spi.gen.WebComponent;
     uses jakarta.servlet.ServletContainerInitializer;
+    uses io.vidocq.foy.spi.jsp.JspEngine;
 
     exports io.vidocq.foy.internal.async;
     exports io.vidocq.foy.internal.boot;

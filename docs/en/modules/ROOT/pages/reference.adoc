@@ -413,6 +413,27 @@ Foy does not need Vauban: give `FoyChappeBoot` the `BeanManager` of any CDI 4 co
 
 [.tag-new]#NEW# The session scope has its own pair of modules, never published, running the same HTTP scenarios from `foy-it-session-scenarios`: `foy-it-weld-servlet`, the reference, where Weld's servlet integration manages the session context, and `foy-it-vauban-session`, where `vauban-webcontexts` does. Both check one cart per session across requests, two carts for two clients, a new and empty cart after `invalidate()` with the old one's `@PreDestroy` run, and the session events.
 
+== Optional JSP-engine service
+
+`foy-api` exports `io.vidocq.foy.spi.jsp.JspEngine`; Foy core discovers it
+with `ServiceLoader`. This SPI uses only Servlet/JDK types. Foy has no Jakarta
+Pages dependency and accepts deployments without an engine.
+
+`WebAppDeployer.deploy(model, options, applicationLayer)` opens one engine
+application before initializers/listeners. It supplies the `jsp` servlet's
+`*.jsp` and `*.jspx` mappings, respecting application mappings, and backs
+`ServletContext.addJspFile` and descriptor `jsp-file` declarations.
+Engine-owned servlet instances retain application-layer isolation; Foy owns
+their initialization and destruction. Stop and drain the HTTP server before
+closing the deployment. Engine application close follows servlet and listener
+destruction; closing a deployment does not drain requests itself.
+
+`jsp-config` is exposed through immutable standard `JspConfigDescriptor` views.
+Ordered fragments contribute property groups; root taglib locations take
+precedence over fragments, while conflicting fragment locations fail merging.
+Configuration is available before engine startup. TLD discovery/listeners are
+outside this initial SPI. Ibarra provides the optional page-engine implementation.
+
 == Compatibility
 
 * Java 25 (LTS)

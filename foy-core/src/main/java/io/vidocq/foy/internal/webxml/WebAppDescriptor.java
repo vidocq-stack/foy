@@ -41,6 +41,11 @@ public final class WebAppDescriptor {
     public static final String OTHERS = "\u0000others";
 
     private Kind kind = Kind.WEB_APP;
+    private jakarta.servlet.descriptor.JspConfigDescriptor jspConfig;
+    public jakarta.servlet.descriptor.JspConfigDescriptor jspConfigDescriptor() { return jspConfig; }
+    public WebAppDescriptor withJspConfigDescriptor(jakarta.servlet.descriptor.JspConfigDescriptor config) {
+        jspConfig = JspDescriptors.copy(config); return this;
+    }
     private String fragmentName;
     private Ordering ordering = Ordering.NONE;
     private List<String> absoluteOrdering;
@@ -289,7 +294,7 @@ public final class WebAppDescriptor {
 
     public boolean isEmpty() {
         return contextParams.isEmpty() && servlets.isEmpty() && filters.isEmpty()
-                && listenerClasses.isEmpty() && errorPages.isEmpty() && sessionTimeoutMinutes == -1;
+                && listenerClasses.isEmpty() && errorPages.isEmpty() && sessionTimeoutMinutes == -1 && jspConfig == null;
     }
 
     /** Patterns associated with a given servlet. */

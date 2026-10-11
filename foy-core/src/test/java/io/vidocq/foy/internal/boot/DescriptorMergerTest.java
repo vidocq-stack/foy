@@ -460,7 +460,7 @@ class DescriptorMergerTest {
     }
 
     @Test
-    void jspFileServletIsSkippedWithoutFailingTheDeployment() throws Exception {
+    void jspFileServletIsRetainedForOptionalEngineDeployment() throws Exception {
         var d = WebXmlParser.parse(new ByteArrayInputStream((HEAD + """
                 >
                   <servlet><servlet-name>jsp</servlet-name><jsp-file>/dummy.jsp</jsp-file></servlet>
@@ -470,10 +470,10 @@ class DescriptorMergerTest {
         var b = WebAppModel.builder("/");
         try (var log = io.vidocq.foy.internal.LogCapture.of(DescriptorMerger.class.getName())) {
             DescriptorMerger.merge(d, AnnotatedComponents.none(), F, b);
-            assertEquals(List.of("servlet 'jsp' skipped: <jsp-file> /dummy.jsp needs a JSP engine, which Foy"
-                    + " does not provide"), log.warnings());
+            assertTrue(log.warnings().isEmpty());
         }
-        assertEquals(List.of("x"), b.build().servlets().stream().map(ServletDecl::name).toList());
+        assertEquals(List.of("jsp", "x"), b.build().servlets().stream().map(ServletDecl::name).toList());
+        assertEquals("/dummy.jsp", b.build().servlets().getFirst().jspFile());
     }
 
     @WebServlet(name = "ws", urlPatterns = "/ws", asyncSupported = true)

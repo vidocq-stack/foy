@@ -1,5 +1,24 @@
 # BUG.md — foy
 
+## BUG-20261011-01 — duplicate JSP taglib fields overwrite earlier values
+
+- Date: 2026-10-11.
+- Symptom: repeated `taglib-uri` fields silently select the last URI.
+- Minimal repro: `JspConfigurationTest.duplicateTaglibFieldsAreRejectedInsteadOfSilentlyOverwriting`.
+- Cause: collecting fields with `Map.put` loses duplicates.
+- Status: FIXED in the JSP-engine SPI branch; reject duplicates and unknown fields.
+
+## BUG-20261011-02 — existing Vauban request-scope test prevents a full local install
+
+- Date: 2026-10-11.
+- Symptom: `FoyWebExtensionTest.requestScopedThroughFoyChappeBoot` gets HTTP 500
+  with `ContextNotActiveException: RequestScope is not active`.
+- Minimal repro: Java 25, local Vauban 0.4.0-SNAPSHOT, `./mvnw -o -ntp -pl foy-cdi-vauban -am test -Dtest=FoyWebExtensionTest#requestScopedThroughFoyChappeBoot -Dsurefire.failIfNoSpecifiedTests=false`.
+- Cause hypothesis: existing Vauban request activation gap, also referenced as
+  vauban#147 in BUG-20261010-07; unrelated to JSP service discovery.
+- Status: OPEN; reproduced on unchanged `origin/main` and the JSP-engine branch.
+  The JSP changes pass the Foy Core suite. No test exclusion is committed.
+
 Suivi des bugs reproductibles. Convention : voir `../CLAUDE.md` (workspace root).
 
 Statuts : `OPEN` → `INVESTIGATING` → `FIXED` (commit hash) → `CLOSED`.

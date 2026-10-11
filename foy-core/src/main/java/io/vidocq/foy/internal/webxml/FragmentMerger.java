@@ -153,7 +153,9 @@ public final class FragmentMerger {
                 .withTrackingModes(modes == null ? Set.of() : modes)
                 .withSecurityConstraints(securityConstraints)
                 .withLoginConfig(loginConfig.value())
-                .withSecurityRoles(List.copyOf(securityRoles));
+                .withSecurityRoles(List.copyOf(securityRoles))
+                .withJspConfigDescriptor(JspDescriptors.merge(webXml.jspConfigDescriptor(),
+                        ordered.stream().map(fragment -> fragment.descriptor().jspConfigDescriptor()).toList()));
     }
 
     /** {@code <cookie-config>} merged per sub-element: web.xml wins per sub-element, fragments fill the rest. */

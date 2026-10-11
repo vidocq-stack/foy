@@ -283,6 +283,7 @@ public final class WebXmlParser {
                 .withSecurityConstraints(securityConstraints)
                 .withLoginConfig(loginConfig)
                 .withSecurityRoles(securityRoles)
+                .withJspConfigDescriptor(JspDescriptors.parse(root))
                 .withAbsoluteOrdering(absoluteOrdering)
                 .withMetadataComplete(isPre25(version) || Boolean.TRUE.equals(xsdBoolean(
                         root.hasAttribute("metadata-complete") ? root.getAttribute("metadata-complete") : null,

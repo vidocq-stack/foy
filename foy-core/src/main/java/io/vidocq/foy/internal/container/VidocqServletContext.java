@@ -114,6 +114,23 @@ public final class VidocqServletContext implements ServletContext {
     }
     /** Names reserved by web.xml — an addServlet/addFilter with this name should return null. */
     private final java.util.Set<String> reservedServletNames = new java.util.HashSet<>();
+    private final java.util.Set<String> jspRegistrations = new java.util.HashSet<>();
+    private final java.util.concurrent.atomic.AtomicReference<io.vidocq.foy.spi.jsp.JspEngine.Application> jspApplication =
+            new java.util.concurrent.atomic.AtomicReference<>();
+
+    /** Container hook; the engine is application-owned and installed once before initialization. */
+    public void setJspEngineApplication(io.vidocq.foy.spi.jsp.JspEngine.Application application) {
+        if (!jspApplication.compareAndSet(null, java.util.Objects.requireNonNull(application)))
+            throw new IllegalStateException("A JSP application is already installed");
+    }
+    public io.vidocq.foy.spi.jsp.JspEngine.Application jspEngineApplication() { return jspApplication.get(); }
+    public void markJspRegistration(String name) { jspRegistrations.add(name); }
+    public boolean isJspRegistration(String name) { return jspRegistrations.contains(name); }
+    /** Called after the container has stopped requests and destroyed application components. */
+    public void closeJspEngineApplication() {
+        var application = jspApplication.getAndSet(null);
+        if (application != null) application.close();
+    }
     private final java.util.Set<String> reservedFilterNames = new java.util.HashSet<>();
     /** URL patterns already mapped by web.xml to a static servlet. */
     private final java.util.Set<String> reservedUrlPatterns = new java.util.HashSet<>();
@@ -606,10 +623,11 @@ public final class VidocqServletContext implements ServletContext {
         if (initialized) throw alreadyInitialized();
         // §4.4 addJspFile : IllegalArgumentException si servletName null ou vide.
         requireNonEmptyName(name, "servletName");
-        // JSP non supporté — on enregistre quand même la registration pour les tests qui
-        // vérifient le flux de configuration (la request vers cette URL renverra 404).
         if (dynamicServlets.containsKey(name) || reservedServletNames.contains(name)) return null;
-        var r = new DynamicServletRegistration(name, (String) null);
+        var application = jspApplication.get();
+        var r = application == null ? new DynamicServletRegistration(name, (String) null)
+                : new DynamicServletRegistration(name, java.util.Objects.requireNonNull(application.servletFor(jspFile)));
+        if (application != null) markJspRegistration(name);
         r.attach(this);
         dynamicServlets.put(name, r);
         return r;
@@ -805,7 +823,11 @@ public final class VidocqServletContext implements ServletContext {
      *  propager la valeur de {@code <session-timeout>} du web.xml. */
     public void setSessionTimeoutInternal(int minutes) { this.sessionTimeout = minutes; }
 
-    @Override public JspConfigDescriptor getJspConfigDescriptor() { return null; }
+    private JspConfigDescriptor jspConfigDescriptor;
+    public void setJspConfigDescriptor(JspConfigDescriptor config) {
+        jspConfigDescriptor = io.vidocq.foy.internal.webxml.JspDescriptors.copy(config);
+    }
+    @Override public JspConfigDescriptor getJspConfigDescriptor() { return jspConfigDescriptor; }
     @Override public ClassLoader getClassLoader() { return Thread.currentThread().getContextClassLoader(); }
     @Override public void declareRoles(String... roleNames) {}
     private volatile String virtualServerName = "vidocq";
