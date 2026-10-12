@@ -22,6 +22,7 @@ package io.vidocq.foy.chappe;
 import io.vidocq.chappe.api.Router;
 import io.vidocq.chappe.api.Server;
 import io.vidocq.foy.internal.http.RequestLimits;
+import io.vidocq.foy.spi.jsp.JspEngine;
 import io.vidocq.foy.spi.security.IdentityStore;
 import jakarta.enterprise.inject.spi.Bean;
 import jakarta.enterprise.inject.spi.BeanManager;
@@ -43,8 +44,12 @@ import java.net.http.HttpResponse;
 import java.lang.reflect.Proxy;
 import java.security.cert.CertificateFactory;
 import java.security.cert.X509Certificate;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Function;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -188,6 +193,109 @@ class FoyChappeBootTest {
     @Test
     void emptyApplicationYieldsEmpty() throws Exception {
         assertTrue(FoyChappeBoot.builder().classLoader(new ClassLoader(null) {}).build().isEmpty());
+    }
+
+    /** A test engine whose pages answer {@code page}; {@code hasPages} and {@code deploy} are observable. */
+    private static JspEngine pageEngine(boolean hasPages, List<ModuleLayer> hasPagesLayers,
+                                        List<ModuleLayer> deployLayers, AtomicInteger openings) {
+        return new JspEngine() {
+            @Override
+            public Application deploy(jakarta.servlet.ServletContext context, ModuleLayer layer) {
+                deployLayers.add(layer);
+                openings.incrementAndGet();
+                return new Application() {
+                    @Override public Servlet servlet() { return new PageServlet(); }
+                    @Override public Servlet servletFor(String jspFile) { return new PageServlet(); }
+                    @Override public void close() {}
+                };
+            }
+
+            @Override
+            public boolean hasPages(ModuleLayer layer) {
+                hasPagesLayers.add(layer);
+                return hasPages;
+            }
+        };
+    }
+
+    public static class PageServlet extends HttpServlet {
+        @Override
+        protected void doGet(HttpServletRequest q, HttpServletResponse r) throws IOException {
+            r.getWriter().write("page");
+        }
+    }
+
+    @Test
+    void aJspOnlyApplicationIsDeployedWhenTheEngineHasPages() throws Exception {
+        var engine = pageEngine(true, new ArrayList<>(), new ArrayList<>(), new AtomicInteger());
+        try (var mounted = FoyChappeBoot.builder().classLoader(new ClassLoader(null) {})
+                .jspEngineLookup(layer -> Optional.of(engine)).contextPath("/").build().orElseThrow()) {
+            assertEquals("page", getThroughRouter(mounted, false, "/x.jsp").body());
+        }
+    }
+
+    @Test
+    void anEngineWithoutPagesDeploysNothingAlone() throws Exception {
+        var engine = pageEngine(false, new ArrayList<>(), new ArrayList<>(), new AtomicInteger());
+        assertTrue(FoyChappeBoot.builder().classLoader(new ClassLoader(null) {})
+                .jspEngineLookup(layer -> Optional.of(engine)).build().isEmpty());
+    }
+
+    @Test
+    void anEngineWithoutPagesStillServesAnOtherwiseNonEmptyApp() throws Exception {
+        var engine = pageEngine(false, new ArrayList<>(), new ArrayList<>(), new AtomicInteger());
+        try (var mounted = plainApp(null).contextPath("/")
+                .jspEngineLookup(layer -> Optional.of(engine)).build().orElseThrow()) {
+            assertEquals("page", getThroughRouter(mounted, false, "/x.jsp").body());
+        }
+    }
+
+    @Test
+    void aLayerWithoutAnEngineStaysEmpty() throws Exception {
+        assertTrue(FoyChappeBoot.builder().classLoader(new ClassLoader(null) {})
+                .jspEngineLookup(layer -> Optional.empty()).build().isEmpty());
+    }
+
+    @Test
+    void theLayerIsHandedToTheLookupAndToTheEngine() throws Exception {
+        var lookups = new ArrayList<ModuleLayer>();
+        var asked = new ArrayList<ModuleLayer>();
+        var opened = new ArrayList<ModuleLayer>();
+        var engine = pageEngine(true, asked, opened, new AtomicInteger());
+        Function<ModuleLayer, Optional<JspEngine>> lookup = layer -> {
+            lookups.add(layer);
+            return Optional.of(engine);
+        };
+        try (var mounted = FoyChappeBoot.builder().classLoader(new ClassLoader(null) {})
+                .applicationLayer(ModuleLayer.empty()).jspEngineLookup(lookup).build().orElseThrow()) {
+            assertEquals(List.of(ModuleLayer.empty()), lookups);
+            assertEquals(List.of(ModuleLayer.empty()), asked);
+            assertEquals(List.of(ModuleLayer.empty()), opened);
+        }
+        lookups.clear();
+        FoyChappeBoot.builder().classLoader(new ClassLoader(null) {}).jspEngineLookup(lookup).build()
+                .ifPresent(FoyChappeBoot.Mounted::close);
+        assertEquals(List.of(ModuleLayer.boot()), lookups);
+    }
+
+    @Test
+    void theEngineIsLookedUpOnceAndOpenedOnce() throws Exception {
+        var lookups = new AtomicInteger();
+        var openings = new AtomicInteger();
+        var engine = pageEngine(true, new ArrayList<>(), new ArrayList<>(), openings);
+        try (var mounted = FoyChappeBoot.builder().classLoader(new ClassLoader(null) {})
+                .jspEngineLookup(layer -> {
+                    lookups.incrementAndGet();
+                    return Optional.of(engine);
+                }).build().orElseThrow()) {
+            assertEquals(1, lookups.get());
+            assertEquals(1, openings.get());
+        }
+    }
+
+    @Test
+    void applicationLayerRejectsNull() {
+        assertThrows(NullPointerException.class, () -> FoyChappeBoot.builder().applicationLayer(null));
     }
 
     @Test

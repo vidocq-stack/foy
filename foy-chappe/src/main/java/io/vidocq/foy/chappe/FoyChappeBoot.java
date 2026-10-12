@@ -44,6 +44,7 @@ import io.vidocq.foy.internal.listener.CdiRequestScopeListener;
 import io.vidocq.foy.internal.security.InMemoryIdentityStore;
 import io.vidocq.foy.internal.security.SecuritySettings;
 import io.vidocq.foy.spi.cdi.CdiContextListeners;
+import io.vidocq.foy.spi.jsp.JspEngine;
 import io.vidocq.foy.spi.security.IdentityStore;
 import jakarta.enterprise.inject.spi.BeanManager;
 import jakarta.servlet.ServletContext;
@@ -61,6 +62,7 @@ import java.util.ServiceLoader;
 import java.util.Optional;
 import java.util.ServiceConfigurationError;
 import java.util.Set;
+import java.util.function.Function;
 
 /**
  * Bootstrap Foy on Chappe HTTP transport.
@@ -89,8 +91,10 @@ import java.util.Set;
  * mount, such as Chappe's two-argument {@code Router.Builder.mount(prefix, handler)}, hides the
  * context path and every servlet under a non-root context path then answers 404.</p>
  *
- * <p>The {@link Optional} is empty if the application declares no servlet, filter or listener.
- * {@code contextInitialized} fires during {@code build()}; {@link Mounted#close()} fires
+ * <p>The {@link Optional} is empty unless the application has something to run: a servlet, filter
+ * or listener (from a descriptor or annotated), a descriptor, a {@code ServletContainerInitializer},
+ * or pages of the {@link JspEngine} found in the {@linkplain Builder#applicationLayer application
+ * layer}. {@code contextInitialized} fires during {@code build()}; {@link Mounted#close()} fires
  * {@code contextDestroyed}.</p>
  */
 public final class FoyChappeBoot {
@@ -153,6 +157,8 @@ public final class FoyChappeBoot {
         private String contextPath;
         private int sessionTimeoutSeconds = 30 * 60;
         private ClassLoader classLoader = Thread.currentThread().getContextClassLoader();
+        private ModuleLayer applicationLayer = ModuleLayer.boot();
+        private Function<ModuleLayer, Optional<JspEngine>> jspEngineLookup = WebAppDeployer::jspEngine;
         private InputStream webXml;
         private boolean discoverPluggability = true;
         private final List<URL> applicationRoots = new ArrayList<>();
@@ -195,6 +201,29 @@ public final class FoyChappeBoot {
 
         /** Class loader used to load components and to look up {@code web.xml}. */
         public Builder classLoader(ClassLoader cl) { this.classLoader = cl; return this; }
+
+        /**
+         * The layer of the application's modules: the JSP engine ({@link JspEngine}) is looked up
+         * there (its named modules and their ancestors; a provider on the class path is never
+         * found), asked whether the application has pages, and opened with it. The boot layer by
+         * default. Fragments, initializers, descriptors, resources and CDI adapters still come from
+         * {@link #classLoader}: a layer whose modules hold them also needs
+         * {@code classLoader(layer.findLoader(module))} or a loader that delegates to it.
+         */
+        public Builder applicationLayer(ModuleLayer layer) {
+            this.applicationLayer = Objects.requireNonNull(layer, "layer");
+            return this;
+        }
+
+        /**
+         * Replaces the lookup of the JSP engine, {@link WebAppDeployer#jspEngine} by default. It exists
+         * for tests: the tests of this module run on the class path, where no child layer can provide
+         * a {@link JspEngine} that Foy's own class accepts.
+         */
+        Builder jspEngineLookup(Function<ModuleLayer, Optional<JspEngine>> lookup) {
+            this.jspEngineLookup = Objects.requireNonNull(lookup, "lookup");
+            return this;
+        }
 
         /** Explicit descriptor; wins over the class loader lookup. */
         public Builder webXml(InputStream in) { this.webXml = in; return this; }
@@ -347,7 +376,9 @@ public final class FoyChappeBoot {
          * <p>Under an absolute ordering without {@code <others/>}, the initializers of library
          * jars that carry no fragment are not run (see {@link #applicationRoot}). Any retained
          * initializer on the path is enough for Foy to start, even without servlet, filter,
-         * listener or descriptor.</p>
+         * listener or descriptor, and so are pages: the {@link JspEngine} of the
+         * {@linkplain #applicationLayer application layer}, when it answers
+         * {@link JspEngine#hasPages} with {@code true}. The engine is looked up once and opened once.</p>
          *
          * @throws IllegalStateException when both {@link #identityStore} and {@link #user} were called
          */
@@ -399,11 +430,19 @@ public final class FoyChappeBoot {
             }
             WebAppDescriptor effective = FragmentMerger.merge(descriptor, ordered);
 
+            JspEngine engine;
+            try {
+                engine = jspEngineLookup.apply(applicationLayer).orElse(null);
+            } catch (RuntimeException e) {
+                throw new ServletException("Foy deployment failed: " + e.getMessage(), e);
+            }
+            boolean pages = engine != null && engine.hasPages(applicationLayer);
+
             if (effective.isEmpty() && initializers.isEmpty() && annotated.servlets().isEmpty()
-                    && annotated.filters().isEmpty() && annotated.listeners().isEmpty()) {
+                    && annotated.filters().isEmpty() && annotated.listeners().isEmpty() && !pages) {
                 LOG.log(System.Logger.Level.INFO,
-                        "No @WebServlet / @WebFilter / @WebListener beans, web.xml, web fragment or "
-                                + "ServletContainerInitializer discovered — Foy inactive");
+                        "No @WebServlet / @WebFilter / @WebListener beans, web.xml, web fragment, "
+                                + "ServletContainerInitializer or JSP page discovered — Foy inactive");
                 return Optional.empty();
             }
 
@@ -437,7 +476,7 @@ public final class FoyChappeBoot {
                         .defaults(loader, registry, ApplicationSources.scanRoots(scanRoots), excluded)
                         .withComponentFactory(factory).withResourceProvider(resources)
                         .withVirtualServerName(virtualServerName).withSecurity(security)
-                        .withRequestLimits(requestLimits));
+                        .withRequestLimits(requestLimits), applicationLayer, engine);
             } catch (RuntimeException e) {
                 throw new ServletException("Foy deployment failed: " + e.getMessage(), e);
             }
