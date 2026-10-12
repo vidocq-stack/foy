@@ -142,7 +142,7 @@ The `io.vidocq.foy.internal.*` packages are exported to allow advanced integrati
 | Layer of the application's modules, default `ModuleLayer.boot()`; `null` throws `NullPointerException`. The JSP engine is looked up in it (named modules and their ancestors only, never the class path), and it is passed to `JspEngine.hasPages` and `JspEngine.deploy`. Two visible engines fail the deployment. Independent of `classLoader(...)`.
 
 | `Builder.componentSource(Function<Class<?>, URL> sourceOf)` [.tag-new]#NEW#
-| Attributes a discovered class to its jar or directory, default the code source of the class; `null` throws `NullPointerException`. Used for the absolute-ordering exclusion, the `metadata-complete` exclusion, the application roots and the attribution of initializers. A `null` result keeps the class; an exception fails `build()` with a `ServletException` naming the class. For a harness that loads several jars from one class loader (vidocq#228).
+| Attributes a discovered class to its jar or directory, default the code source of the class; `null` throws `NullPointerException`. Used for the absolute-ordering exclusion, the `metadata-complete` exclusion, the application roots and the attribution of initializers. A `null` result keeps the class; an exception fails `build()` with a `ServletException` naming the class. Limited to these four uses: the `@HandlesTypes` scan and `META-INF/resources/` are decided by the jar URLs. The hook must return the jar URL under the same spelling that the class loader reports for the jar's `META-INF/web-fragment.xml`; nested-archive URLs and symbolic-link aliases are not normalised, and such a class is kept. For a harness that loads several jars from one class loader (vidocq#228).
 
 | `Builder.webXml(InputStream in)`
 | Optional `web.xml` stream, merged with the annotated components per Servlet 6.1 §8.2.3.
@@ -622,12 +622,15 @@ modules of that layer and their ancestors only: an engine on the class path is n
 found, and two visible engines make the deployment fail.
 
 [.tag-new]#NEW# `JspEngine.hasPages(ModuleLayer)` is a default method answering `true`.
-Foy asks it only when the application has nothing else to deploy: no servlet, filter or
-listener (from a descriptor or an annotation), no descriptor content and no initializer.
+Foy asks at most once per deployment, and only when the application has nothing else to deploy:
+no servlet, filter or listener (from a descriptor or an annotation), no descriptor content and no
+initializer. It asks on the same instance and with the same layer that `deploy` then receives.
 When it answers `true`, a JSP-only application is deployed; when it answers `false`,
 nothing is deployed and `build()` returns an empty `Optional`. An exception from it fails
 `build()` with a `ServletException`. An application with other components is deployed
-whatever the answer. Foy does not depend on Ibarra: an engine such as Ibarra overrides
+without the question being asked. Implementations must not rely on being called (no indexing
+side effect), and the engine constructor should stay cheap: the engine is instantiated on every
+build. Foy does not depend on Ibarra: an engine such as Ibarra overrides
 the method with its own index of pages.
 
 == Compatibility

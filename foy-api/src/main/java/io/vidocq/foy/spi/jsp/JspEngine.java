@@ -43,11 +43,18 @@ public interface JspEngine {
     Application deploy(ServletContext context, ModuleLayer applicationLayer) throws ServletException;
 
     /**
-     * Whether the application in {@code applicationLayer} has pages for this engine to serve. Foy asks
-     * before it opens the application: an application made only of pages (no servlet, filter, listener,
-     * descriptor or initializer) is deployed when the engine answers {@code true}, and is not deployed
-     * otherwise. An application with other components is deployed whatever the answer, and the engine
-     * is opened for it. The default answers {@code true}: an engine that cannot tell says yes.
+     * Whether the application in {@code applicationLayer} has pages for this engine to serve.
+     * <p>
+     * Foy asks at most once per deployment, and only when the application has nothing else to deploy
+     * (no servlet, filter, listener, descriptor content or initializer). It asks on the same instance
+     * and with the same layer that {@link #deploy} then receives. An otherwise empty application is
+     * deployed when the engine answers {@code true}, and is not deployed otherwise. An application with
+     * other components is deployed, and the engine opened for it, without the question being asked.
+     * <p>
+     * Implementations must not rely on being called: no indexing or other side effect may depend on it.
+     * The constructor of an engine should stay cheap, because Foy instantiates the engine on every build,
+     * including builds that end up empty or fail. A runtime exception fails the deployment. The default
+     * answers {@code true}: an engine that cannot tell says yes.
      *
      * @param applicationLayer the layer the application's pages are looked up in
      */
