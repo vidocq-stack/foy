@@ -159,6 +159,7 @@ public final class FoyChappeBoot {
         private ClassLoader classLoader = Thread.currentThread().getContextClassLoader();
         private ModuleLayer applicationLayer = ModuleLayer.boot();
         private Function<ModuleLayer, Optional<JspEngine>> jspEngineLookup = WebAppDeployer::jspEngine;
+        private Function<Class<?>, URL> componentSource;
         private InputStream webXml;
         private boolean discoverPluggability = true;
         private final List<URL> applicationRoots = new ArrayList<>();
@@ -199,6 +200,21 @@ public final class FoyChappeBoot {
             return seconds <= 0 ? 0 : (int) ((seconds + 59L) / 60);
         }
 
+        /** A {@link #componentSource} hook that threw: the build fails, naming the class. */
+        private static final class ComponentSourceException extends IllegalStateException {
+            ComponentSourceException(String message, Throwable cause) { super(message, cause); }
+        }
+
+        private static Function<Class<?>, URL> guarded(Function<Class<?>, URL> sourceOf) {
+            return type -> {
+                try {
+                    return sourceOf.apply(type);
+                } catch (RuntimeException e) {
+                    throw new ComponentSourceException("componentSource failed for " + type.getName(), e);
+                }
+            };
+        }
+
         /** Class loader used to load components and to look up {@code web.xml}. */
         public Builder classLoader(ClassLoader cl) { this.classLoader = cl; return this; }
 
@@ -212,6 +228,19 @@ public final class FoyChappeBoot {
          */
         public Builder applicationLayer(ModuleLayer layer) {
             this.applicationLayer = Objects.requireNonNull(layer, "layer");
+            return this;
+        }
+
+        /**
+         * How a discovered class is attributed to the jar or directory it comes from, for the
+         * exclusions of an absolute ordering and of {@code metadata-complete} fragments, and for
+         * the roots of the application: the code source of the class by default. A harness that
+         * loads the classes of several jars from one class loader (so their code source does not
+         * name their jar) supplies the real jar here. A {@code null} result means "unknown": the
+         * class is kept. An exception fails {@link #build()}.
+         */
+        public Builder componentSource(Function<Class<?>, URL> sourceOf) {
+            this.componentSource = Objects.requireNonNull(sourceOf, "sourceOf");
             return this;
         }
 
@@ -397,6 +426,8 @@ public final class FoyChappeBoot {
                 throw new ServletException("Foy deployment failed: " + e.getMessage(), e);
             }
             WebAppDescriptor descriptor = loadDescriptor(loader);
+            Function<Class<?>, URL> sourceOf = componentSource != null
+                    ? guarded(componentSource) : ApplicationSources::codeSource;
 
             List<Fragment> ordered = List.of();
             List<Initializer> initializers = List.of();
@@ -410,21 +441,25 @@ public final class FoyChappeBoot {
                 List<Fragment> fragments = ApplicationSources.fragments(loader);
                 ordered = FragmentOrderer.order(descriptor.absoluteOrdering(), fragments);
                 excluded = ApplicationSources.excludedJars(fragments, ordered);
-                // First, so that an excluded jar's components never make it an application root.
-                // metadata-complete fragments' jars are dropped by DescriptorMerger itself.
-                annotated = annotated.excludingSources(excluded);
                 Set<URL> fragmentJars = new LinkedHashSet<>();
                 for (Fragment f : fragments) fragmentJars.add(f.jar());
                 Set<URL> appRoots = new LinkedHashSet<>(applicationRoots);
                 appRoots.addAll(ApplicationSources.applicationRoots(loader, fragmentJars));
-                appRoots.addAll(ApplicationSources.codeSources(annotated));
+                try {
+                    // First, so that an excluded jar's components never make it an application root.
+                    // metadata-complete fragments' jars are dropped by DescriptorMerger itself.
+                    annotated = annotated.excludingSources(excluded, sourceOf);
+                    appRoots.addAll(ApplicationSources.codeSources(annotated, sourceOf));
+                } catch (ComponentSourceException e) {
+                    throw new ServletException("Foy deployment failed: " + e.getMessage(), e);
+                }
                 resourceRoots.addAll(appRoots);
                 for (Fragment f : ordered) resourceRoots.add(f.jar());
                 scanRoots.addAll(resourceRoots);
                 try {
                     initializers = ApplicationSources.initializers(loader, ApplicationSources.ordering(
-                            descriptor.absoluteOrdering(), ordered, fragmentJars, appRoots));
-                } catch (ServiceConfigurationError e) {
+                            descriptor.absoluteOrdering(), ordered, fragmentJars, appRoots), sourceOf);
+                } catch (ServiceConfigurationError | ComponentSourceException e) {
                     throw new ServletException("Foy deployment failed: " + e.getMessage(), e);
                 }
             }
@@ -463,7 +498,11 @@ public final class FoyChappeBoot {
                 throw new ServletException("Foy deployment failed: " + e.getMessage(), e);
             }
             WebAppModel.Builder modelBuilder = WebAppModel.builder(path);
-            DescriptorMerger.mergeMerged(effective, ordered, annotated, factory, modelBuilder);
+            try {
+                DescriptorMerger.mergeMerged(effective, ordered, annotated, sourceOf, factory, modelBuilder);
+            } catch (ComponentSourceException e) {
+                throw new ServletException("Foy deployment failed: " + e.getMessage(), e);
+            }
             for (Initializer i : initializers) {
                 modelBuilder.initializer(i.sci());
                 if (i.jar() != null) scanRoots.add(i.jar());

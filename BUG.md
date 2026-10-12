@@ -1,5 +1,18 @@
 # BUG.md — foy
 
+## BUG-20261012-01 — components of an excluded fragment stay deployed under a shared class loader
+
+- Date: 2026-10-12.
+- Symptom: with an absolute ordering that excludes a fragment, its servlets, filters, listeners
+  and `ServletContainerInitializer`s are still deployed when the harness loads the classes of
+  several jars from one class loader (vidocq#228, `Aordering4Tests.absoluteOrderingTest`).
+- Minimal repro: `FoyChappeBootFragmentsTest.aSharedLoaderHarnessExcludesTheFragmentThroughComponentSource`
+  (classes load parent-first from `shared.jar`, `META-INF/web-fragment.xml` is found in `ex.jar`).
+- Cause: a component was attributed to a jar by the code source of its class only, which names the
+  shared jar and not the jar of the fragment.
+- Status: FIXED by `FoyChappeBoot.Builder#componentSource`, which attributes each class to its real
+  jar for the exclusions, the application roots and the initializers.
+
 ## FOY-TLD-001 · 2026-10-11 · A factory can hide its actual listener class
 
 - Symptom: an interface/base descriptor type bypasses deduplication by actual

@@ -48,7 +48,8 @@ public class FoyChappeBootFragmentsTest {
     /** Servlet of the application itself (test classes), declared by an explicit web.xml. */
     public static class AppServlet extends HttpServlet {
         @Override protected void doGet(HttpServletRequest q, HttpServletResponse r) throws IOException {
-            r.getWriter().write("app");
+            Object listened = q.getAttribute("exl");
+            r.getWriter().write(listened == null ? "app" : "app:" + listened);
         }
     }
 
@@ -304,24 +305,212 @@ public class FoyChappeBootFragmentsTest {
 
     /** A BeanManager whose only Servlet bean is {@code servletClass} (no CdiWebComponents index). */
     private static jakarta.enterprise.inject.spi.BeanManager servletBeans(Class<?> servletClass) {
-        var bean = (jakarta.enterprise.inject.spi.Bean<?>) java.lang.reflect.Proxy.newProxyInstance(
-                jakarta.enterprise.inject.spi.Bean.class.getClassLoader(),
-                new Class<?>[]{jakarta.enterprise.inject.spi.Bean.class}, (p, m, a) -> switch (m.getName()) {
-                    case "getBeanClass" -> servletClass;
-                    case "hashCode" -> System.identityHashCode(p);
-                    case "equals" -> p == a[0];
-                    case "toString" -> "Bean[" + servletClass.getName() + "]";
-                    default -> throw new UnsupportedOperationException(m.getName());
-                });
+        return beans(servletClass);
+    }
+
+    /**
+     * A BeanManager whose beans are {@code classes} (no CdiWebComponents index): a lookup by a
+     * type returns the beans of the classes assignable to it, so servlets, filters and listeners
+     * are all found.
+     */
+    private static jakarta.enterprise.inject.spi.BeanManager beans(Class<?>... classes) {
+        var all = new java.util.LinkedHashMap<Class<?>, jakarta.enterprise.inject.spi.Bean<?>>();
+        for (Class<?> c : classes) {
+            all.put(c, (jakarta.enterprise.inject.spi.Bean<?>) java.lang.reflect.Proxy.newProxyInstance(
+                    jakarta.enterprise.inject.spi.Bean.class.getClassLoader(),
+                    new Class<?>[]{jakarta.enterprise.inject.spi.Bean.class}, (p, m, a) -> switch (m.getName()) {
+                        case "getBeanClass" -> c;
+                        case "hashCode" -> System.identityHashCode(p);
+                        case "equals" -> p == a[0];
+                        case "toString" -> "Bean[" + c.getName() + "]";
+                        default -> throw new UnsupportedOperationException(m.getName());
+                    }));
+        }
         return (jakarta.enterprise.inject.spi.BeanManager) java.lang.reflect.Proxy.newProxyInstance(
                 jakarta.enterprise.inject.spi.BeanManager.class.getClassLoader(),
                 new Class<?>[]{jakarta.enterprise.inject.spi.BeanManager.class}, (p, m, a) -> switch (m.getName()) {
-                    case "getBeans" -> a[0] == jakarta.servlet.Servlet.class ? java.util.Set.of(bean) : java.util.Set.of();
+                    case "getBeans" -> {
+                        var found = new java.util.LinkedHashSet<jakarta.enterprise.inject.spi.Bean<?>>();
+                        all.forEach((c, b) -> { if (((Class<?>) a[0]).isAssignableFrom(c)) found.add(b); });
+                        yield found;
+                    }
+                    // Components that stay deployed are instantiated: a plain constructor call.
+                    case "createCreationalContext" -> null;
+                    case "getReference" -> ((jakarta.enterprise.inject.spi.Bean<?>) a[0]).getBeanClass()
+                            .getDeclaredConstructor().newInstance();
                     case "hashCode" -> System.identityHashCode(p);
                     case "equals" -> p == a[0];
                     case "toString" -> "FakeBeanManager";
                     default -> throw new UnsupportedOperationException(m.getName());
                 });
+    }
+
+    /** The classes of the vidocq#228 harness: a servlet, a filter, a listener and an initializer. */
+    private static final java.util.Map<String, String> SHARED_LOADER_SOURCES = java.util.Map.of(
+            "expkg.ExServlet", """
+                    package expkg;
+                    @jakarta.servlet.annotation.WebServlet("/ex")
+                    public class ExServlet extends jakarta.servlet.http.HttpServlet {
+                        protected void doGet(jakarta.servlet.http.HttpServletRequest q,
+                                             jakarta.servlet.http.HttpServletResponse r) throws java.io.IOException {
+                            r.getWriter().write("ex");
+                        }
+                    }""",
+            "expkg.ExFilter", """
+                    package expkg;
+                    @jakarta.servlet.annotation.WebFilter("/*")
+                    public class ExFilter implements jakarta.servlet.Filter {
+                        public void doFilter(jakarta.servlet.ServletRequest q, jakarta.servlet.ServletResponse r,
+                                             jakarta.servlet.FilterChain c)
+                                throws java.io.IOException, jakarta.servlet.ServletException {
+                            ((jakarta.servlet.http.HttpServletResponse) r).setHeader("X-Ex", "1");
+                            c.doFilter(q, r);
+                        }
+                    }""",
+            "expkg.ExListener", """
+                    package expkg;
+                    @jakarta.servlet.annotation.WebListener
+                    public class ExListener implements jakarta.servlet.ServletRequestListener {
+                        public void requestInitialized(jakarta.servlet.ServletRequestEvent e) {
+                            e.getServletRequest().setAttribute("exl", "1");
+                        }
+                    }""",
+            "expkg.ExSci", """
+                    package expkg;
+                    public class ExSci implements jakarta.servlet.ServletContainerInitializer {
+                        public ExSci() { System.setProperty("expkg.exsci", "constructed"); }
+                        public void onStartup(java.util.Set<Class<?>> c, jakarta.servlet.ServletContext ctx) {
+                            ctx.addServlet("exsci", new jakarta.servlet.http.HttpServlet() {
+                                protected void doGet(jakarta.servlet.http.HttpServletRequest q,
+                                                     jakarta.servlet.http.HttpServletResponse r)
+                                        throws java.io.IOException {
+                                    r.getWriter().write("exsci");
+                                }
+                            }).addMapping("/exsci");
+                        }
+                    }""");
+
+    private static final String SERVICES = "META-INF/services/jakarta.servlet.ServletContainerInitializer";
+
+    /** What {@link #sharedLoaderHarness} built: the two jars and the class loaders that see them. */
+    private record Harness(Path ex, Path shared, URLClassLoader parent, URLClassLoader loader)
+            implements AutoCloseable {
+        URL exUrl() throws Exception { return ex.toUri().toURL(); }
+        URL sharedUrl() throws Exception { return shared.toUri().toURL(); }
+        @Override public void close() throws IOException { loader.close(); parent.close(); }
+    }
+
+    /**
+     * Reproduces the layout of vidocq#228: {@code ex.jar} holds the fragment descriptor {@code Ex}
+     * and the classes, {@code shared.jar} the same classes without descriptor. The loader that
+     * sees {@code ex.jar} has {@code shared.jar} for a parent, so the classes load parent-first
+     * from {@code shared.jar} while {@code META-INF/web-fragment.xml} is found in {@code ex.jar}.
+     */
+    private static Harness sharedLoaderHarness(Path dir) throws Exception {
+        Path ex = compiledJar(dir, "ex.jar", SHARED_LOADER_SOURCES, java.util.Map.of(
+                "META-INF/web-fragment.xml", "<web-fragment xmlns=\"https://jakarta.ee/xml/ns/jakartaee\" "
+                        + "version=\"6.1\"><name>Ex</name></web-fragment>",
+                SERVICES, "expkg.ExSci\n"));
+        Path shared = compiledJar(dir, "shared.jar", SHARED_LOADER_SOURCES,
+                java.util.Map.of(SERVICES, "expkg.ExSci\n"));
+        var parent = new URLClassLoader(new URL[] {shared.toUri().toURL()},
+                FoyChappeBootFragmentsTest.class.getClassLoader());
+        var loader = new URLClassLoader(new URL[] {ex.toUri().toURL()}, parent);
+        var harness = new Harness(ex, shared, parent, loader);
+        // The point of the layout: the code source of the classes is NOT the jar of the fragment.
+        URL source = loader.loadClass("expkg.ExServlet").getProtectionDomain().getCodeSource().getLocation();
+        assertEquals(harness.sharedUrl(), source, "the classes must come from shared.jar");
+        assertNotEquals(harness.exUrl(), source);
+        assertTrue(loader.getResource("META-INF/web-fragment.xml").toString().contains("ex.jar"),
+                "the fragment descriptor must come from ex.jar");
+        return harness;
+    }
+
+    private static FoyChappeBoot.Builder sharedLoaderBoot(Harness h) throws Exception {
+        return FoyChappeBoot.builder().classLoader(h.loader())
+                .beanManager(beans(h.loader().loadClass("expkg.ExServlet"), h.loader().loadClass("expkg.ExFilter"),
+                        h.loader().loadClass("expkg.ExListener")))
+                .webXml(new ByteArrayInputStream(webXml("<absolute-ordering/>").getBytes()));
+    }
+
+    /** Serves {@code mounted} and returns the response of each path. */
+    private static java.util.List<HttpResponse<String>> fetch(FoyChappeBoot.Mounted mounted, String... paths)
+            throws Exception {
+        int port;
+        try (var s = new ServerSocket(0)) { port = s.getLocalPort(); }
+        Server server = Server.builder().host("127.0.0.1").port(port).handler(mounted.handler()).build();
+        server.start();
+        try {
+            var client = HttpClient.newHttpClient();
+            var out = new java.util.ArrayList<HttpResponse<String>>();
+            for (String path : paths) {
+                out.add(client.send(HttpRequest.newBuilder(
+                        URI.create("http://127.0.0.1:" + port + mounted.mountPrefix() + path)).build(),
+                        HttpResponse.BodyHandlers.ofString()));
+            }
+            return out;
+        } finally {
+            server.stop();
+            mounted.close();
+        }
+    }
+
+    @Test
+    void aSharedLoaderHarnessExcludesTheFragmentThroughComponentSource(@TempDir Path dir) throws Exception {
+        try (var h = sharedLoaderHarness(dir)) {
+            System.clearProperty("expkg.exsci");
+            // Without the hook the bug is reproduced (vidocq#228): the code source names shared.jar,
+            // which is no excluded fragment, so the classes of the excluded fragment stay deployed.
+            var before = fetch(sharedLoaderBoot(h).build().orElseThrow(), "/ex", "/exsci");
+            assertEquals(200, before.get(0).statusCode(), "documents today's behaviour without the hook");
+            assertEquals(200, before.get(1).statusCode());
+            assertEquals("constructed", System.getProperty("expkg.exsci"));
+
+            System.clearProperty("expkg.exsci");
+            URL exUrl = h.exUrl();
+            var mounted = sharedLoaderBoot(h)
+                    .componentSource(type -> type.getName().startsWith("expkg.") ? exUrl : null)
+                    .build().orElseThrow();
+            var responses = fetch(mounted, "/ex", "/exsci", "/app");
+            assertEquals(404, responses.get(0).statusCode());
+            assertEquals(404, responses.get(1).statusCode());
+            assertEquals(200, responses.get(2).statusCode());
+            assertEquals("app", responses.get(2).body(), "ExListener must not have run");
+            assertTrue(responses.get(2).headers().firstValue("X-Ex").isEmpty(), "ExFilter must not have run");
+            assertNull(System.getProperty("expkg.exsci"), "the constructor of ExSci never ran");
+        } finally {
+            System.clearProperty("expkg.exsci");
+        }
+    }
+
+    @Test
+    void aNullSourceKeepsTheComponent(@TempDir Path dir) throws Exception {
+        try (var h = sharedLoaderHarness(dir)) {
+            var responses = fetch(sharedLoaderBoot(h).componentSource(type -> null).build().orElseThrow(),
+                    "/ex", "/app");
+            assertEquals(200, responses.get(0).statusCode());
+            assertEquals("app:1", responses.get(1).body(), "the listener of the kept component ran");
+            assertEquals("1", responses.get(1).headers().firstValue("X-Ex").orElse(null));
+        } finally {
+            System.clearProperty("expkg.exsci");
+        }
+    }
+
+    @Test
+    void aThrowingSourceFailsTheBuild(@TempDir Path dir) throws Exception {
+        try (var h = sharedLoaderHarness(dir)) {
+            var boot = sharedLoaderBoot(h).componentSource(type -> { throw new IllegalStateException("boom"); });
+            var e = assertThrows(jakarta.servlet.ServletException.class, boot::build);
+            assertTrue(e.getMessage().contains("componentSource failed for expkg."), e.getMessage());
+            assertEquals("boom", e.getCause().getCause().getMessage());
+        } finally {
+            System.clearProperty("expkg.exsci");
+        }
+    }
+
+    @Test
+    void componentSourceRejectsNull() {
+        assertThrows(NullPointerException.class, () -> FoyChappeBoot.builder().componentSource(null));
     }
 
     @Test

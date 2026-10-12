@@ -42,6 +42,7 @@ import java.util.List;
 import java.util.ServiceLoader;
 import java.util.Set;
 import java.util.TreeMap;
+import java.util.function.Function;
 import java.util.function.Predicate;
 
 /**
@@ -113,9 +114,21 @@ public final class ApplicationSources {
      *         one cannot be instantiated
      */
     public static List<Initializer> initializers(ClassLoader loader, Predicate<URL> retained) {
+        return initializers(loader, retained, ApplicationSources::codeSource);
+    }
+
+    /**
+     * Like {@link #initializers(ClassLoader, Predicate)}, the root of a provider type being
+     * {@code sourceOf.apply(type)} normalised as a code source is, instead of its code source:
+     * for a harness whose classes are not loaded from the jar they belong to. A {@code null}
+     * source means "unknown". {@code Provider.type()} loads the class without instantiating it,
+     * so an excluded initializer's constructor still never runs.
+     */
+    public static List<Initializer> initializers(ClassLoader loader, Predicate<URL> retained,
+                                                 Function<Class<?>, URL> sourceOf) {
         var out = new ArrayList<Initializer>();
         ServiceLoader.load(ServletContainerInitializer.class, loader).stream().forEach(p -> {
-            URL jar = root(p.type());
+            URL jar = root(p.type(), sourceOf);
             if (retained.test(jar)) out.add(new Initializer(p.get(), jar));
         });
         return List.copyOf(out);
@@ -139,15 +152,24 @@ public final class ApplicationSources {
 
     /** The normalised code-source roots of the classes of {@code annotated}'s components. */
     public static Set<URL> codeSources(DescriptorMerger.AnnotatedComponents annotated) {
+        return codeSources(annotated, ApplicationSources::codeSource);
+    }
+
+    /**
+     * The normalised roots of the classes of {@code annotated}'s components, the source of a class
+     * being {@code sourceOf.apply(type)}; a {@code null} source contributes no root.
+     */
+    public static Set<URL> codeSources(DescriptorMerger.AnnotatedComponents annotated,
+                                       Function<Class<?>, URL> sourceOf) {
         var out = new LinkedHashSet<URL>();
-        annotated.servlets().forEach(s -> addRoot(out, s.type()));
-        annotated.filters().forEach(f -> addRoot(out, f.type()));
-        annotated.listeners().forEach(l -> addRoot(out, l.type()));
+        annotated.servlets().forEach(s -> addRoot(out, s.type(), sourceOf));
+        annotated.filters().forEach(f -> addRoot(out, f.type(), sourceOf));
+        annotated.listeners().forEach(l -> addRoot(out, l.type(), sourceOf));
         return Collections.unmodifiableSet(out);
     }
 
-    private static void addRoot(Set<URL> out, Class<?> type) {
-        URL root = root(type);
+    private static void addRoot(Set<URL> out, Class<?> type, Function<Class<?>, URL> sourceOf) {
+        URL root = root(type, sourceOf);
         if (root != null) out.add(root);
     }
 
@@ -224,10 +246,15 @@ public final class ApplicationSources {
         return List.copyOf(out);
     }
 
-    /** Normalised root of {@code type}'s code source; {@code null} without one. */
-    private static URL root(Class<?> type) {
+    /** The {@code ProtectionDomain} code source location of {@code type}, {@code null} without one. */
+    public static URL codeSource(Class<?> type) {
         CodeSource cs = type.getProtectionDomain().getCodeSource();
-        URL location = cs == null ? null : cs.getLocation();
+        return cs == null ? null : cs.getLocation();
+    }
+
+    /** Normalised root of {@code type}'s source ({@code sourceOf}); {@code null} without one. */
+    private static URL root(Class<?> type, Function<Class<?>, URL> sourceOf) {
+        URL location = sourceOf.apply(type);
         return location == null ? null : toUrl(Fragment.sourceKey(location), location);
     }
 
