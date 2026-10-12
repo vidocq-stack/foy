@@ -375,7 +375,8 @@ Statuts : `OPEN` → `INVESTIGATING` → `FIXED` (commit hash) → `CLOSED`.
 ## BUG-20261009-11 — chappe HTTP/1.1 writer truncates header chars to one byte (header injection)
 
 - **Date** : 2026-10-09
-- **Statut** : OPEN (chappe follow-up; mitigated in foy by 2f7fcf0)
+- **Statut** : FIXED in chappe (CHAPPE-008, commit `fix(http): validate response header fields everywhere`,
+  branch `pr/ybl/chappe-008-014`); mitigated in foy by 2f7fcf0 before that
 - **Module touché** : chappe `chappe-http` (`HttpResponseWriter.putAsciiString`)
 - **Symptôme** : `putAsciiString` casts each `char` of a header name or value to a `byte`, so a
   character above U+00FF loses its high byte: U+010D U+010A become CR LF on the wire, which lets
@@ -388,6 +389,9 @@ Statuts : `OPEN` → `INVESTIGATING` → `FIXED` (commit hash) → `CLOSED`.
     every header entry point (`IllegalArgumentException`) and percent-encodes redirect locations.
     Chappe follow-up: reject (or encode) non-Latin-1 and CR/LF/NUL characters in
     `HttpResponseWriter` itself. The chappe repository is not modified here.
+  - 2026-10-12: fixed on the chappe side by CHAPPE-008. Header names must be tokens and values may
+    hold only field-vchar, obs-text, SP and HTAB, checked in the API (`IllegalArgumentException`),
+    in the HTTP/1.1 writer (500 and close) and in the HTTP/2 encoder (500).
 
 ## BUG-20261009-12 — dispatch query string decoded as UTF-8 regardless of the request encoding
 

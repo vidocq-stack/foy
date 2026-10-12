@@ -12,14 +12,11 @@ First servlet, Foy container, Chappe transport: under fifty lines of Java, no ma
 
 == Maven coordinates
 
+The Jakarta Servlet API comes transitively with Foy: the application does not declare it.
+
 [source,xml,subs=attributes+]
 ----
 <dependencies>
-    <dependency>
-        <groupId>jakarta.servlet</groupId>
-        <artifactId>jakarta.servlet-api</artifactId>
-        <version>6.1.0</version>
-    </dependency>
     <dependency>
         <groupId>io.vidocq.foy</groupId>
         <artifactId>foy-core</artifactId>
