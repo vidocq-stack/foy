@@ -58,7 +58,6 @@ import java.util.EventListener;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Objects;
-import java.util.ServiceLoader;
 import java.util.Optional;
 import java.util.ServiceConfigurationError;
 import java.util.Set;
@@ -542,9 +541,10 @@ public final class FoyChappeBoot {
                 // The CDI request context, active for each request under any container (foy#18).
                 deployment.listeners().addFirst(new CdiRequestScopeListener(beanManager));
                 // The contexts CDI Lite leaves to the servlet container, the session context first,
-                // driven by the adapter of the CDI implementation in use (foy#21).
-                for (CdiContextListeners provider : ServiceLoader.load(CdiContextListeners.class, loader)) {
-                    for (EventListener listener : provider.listeners(beanManager)) {
+                // driven by the adapter of the CDI implementation in use (foy#21). An adapter
+                // module in both the boot and the application layer registers once.
+                for (var provider : ApplicationSources.providers(CdiContextListeners.class, loader)) {
+                    for (EventListener listener : provider.get().listeners(beanManager)) {
                         deployment.listeners().registerFirst(listener);
                     }
                 }

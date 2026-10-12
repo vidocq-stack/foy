@@ -1,5 +1,18 @@
 # BUG.md — foy
 
+## BUG-20261012-02 — a provider module in two layers registers its CDI context listeners twice
+
+- Date: 2026-10-12 (foy#38).
+- Symptom: under Vidocq, the startup report lists `VaubanWebContextsListener` twice, and each
+  request and session event activates and deactivates the CDI contexts twice.
+- Minimal repro: `LayeredProvidersTest`, where the same provider module sits in a parent layer and in a
+  child layer whose loader delegates to the parent one.
+- Cause: Vidocq re-layers the application over the boot layer, so `io.vidocq.foy.cdi.vauban` is in
+  both layers. `ServiceLoader.load(service, loader)` with the application layer's loader returns its
+  provider once per layer. `ServletContainerInitializer` discovery had the same exposure.
+- Status: FIXED by `ApplicationSources.providers`, which keeps the first provider of each class
+  name (the child layer's), for the CDI context listeners and the initializers.
+
 ## BUG-20261012-01 — components of an excluded fragment stay deployed under a shared class loader
 
 - Date: 2026-10-12.

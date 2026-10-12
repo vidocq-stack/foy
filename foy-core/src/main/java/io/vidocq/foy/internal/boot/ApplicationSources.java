@@ -96,6 +96,22 @@ public final class ApplicationSources {
     }
 
     /**
+     * The providers of {@code service} that {@link ServiceLoader} finds through {@code loader}, in
+     * discovery order, keeping only the first provider of each class name. A runtime that re-layers
+     * the application over the boot layer puts the same module in both layers, and the child
+     * layer's loader then finds its provider twice, once per layer: the first one found, the child
+     * layer's, wins. No provider is instantiated here.
+     *
+     * @throws java.util.ServiceConfigurationError when a provider cannot be loaded
+     */
+    public static <S> List<ServiceLoader.Provider<S>> providers(Class<S> service, ClassLoader loader) {
+        var names = new HashSet<String>();
+        return ServiceLoader.load(service, loader).stream()
+                .filter(p -> names.add(p.type().getName()))
+                .toList();
+    }
+
+    /**
      * Every initializer {@link ServiceLoader} finds through {@code loader}, in discovery order;
      * equivalent to {@code initializers(loader, root -> true)}.
      */
@@ -109,6 +125,7 @@ public final class ApplicationSources {
      * by {@code retained}, in {@link ServiceLoader} discovery order — the class-loading
      * delegation order §8.2.4 requires. Only retained providers are instantiated (by
      * {@link ServiceLoader}, never by reflection): an excluded initializer's constructor never runs.
+     * An initializer class found in two module layers runs once ({@link #providers}).
      *
      * @throws java.util.ServiceConfigurationError when a provider cannot be loaded, or a retained
      *         one cannot be instantiated
@@ -127,7 +144,7 @@ public final class ApplicationSources {
     public static List<Initializer> initializers(ClassLoader loader, Predicate<URL> retained,
                                                  Function<Class<?>, URL> sourceOf) {
         var out = new ArrayList<Initializer>();
-        ServiceLoader.load(ServletContainerInitializer.class, loader).stream().forEach(p -> {
+        providers(ServletContainerInitializer.class, loader).forEach(p -> {
             URL jar = root(p.type(), sourceOf);
             if (retained.test(jar)) out.add(new Initializer(p.get(), jar));
         });
