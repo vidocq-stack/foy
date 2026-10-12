@@ -117,6 +117,8 @@ Applications that already embedded Foy through `FoyChappeBoot.builder()` before 
 * **`<default-context-path>` changes the mount path** when the builder sets no `contextPath(...)`.
 * **`discoverPluggability(false)`** opts out of the fragment and initializer discovery, for embedders that assemble the application themselves.
 * **New builder methods:** `resourceProvider(...)` replaces the source behind `ServletContext.getResource*`; `applicationRoot(URL...)` declares the roots whose initializers always run, whatever the absolute ordering.
+* **More builder methods:** `applicationLayer(ModuleLayer)` (default `ModuleLayer.boot()`) chooses the layer the JSP engine is looked up in, and `componentSource(Function<Class<?>, URL>)` attributes discovered classes to their jar, for harnesses that load several jars from one class loader.
+* **A JSP-only application is deployed.** An application with no servlet, filter, listener, descriptor or initializer used to give an empty `Optional`; `build()` now asks the engine, `JspEngine.hasPages(ModuleLayer)` (a new default method answering `true`), and deploys when it says yes. With no engine, or an engine answering `false`, the result is still empty.
 
 === Request, response and session semantics
 

@@ -138,6 +138,12 @@ The `io.vidocq.foy.internal.*` packages are exported to allow advanced integrati
 | `Builder.classLoader(ClassLoader cl)`
 | Class loader used for resources and class resolution during deployment.
 
+| `Builder.applicationLayer(ModuleLayer layer)` [.tag-new]#NEW#
+| Layer of the application's modules, default `ModuleLayer.boot()`; `null` throws `NullPointerException`. The JSP engine is looked up in it (named modules and their ancestors only, never the class path), and it is passed to `JspEngine.hasPages` and `JspEngine.deploy`. Two visible engines fail the deployment. Independent of `classLoader(...)`.
+
+| `Builder.componentSource(Function<Class<?>, URL> sourceOf)` [.tag-new]#NEW#
+| Attributes a discovered class to its jar or directory, default the code source of the class; `null` throws `NullPointerException`. Used for the absolute-ordering exclusion, the `metadata-complete` exclusion, the application roots and the attribution of initializers. A `null` result keeps the class; an exception fails `build()` with a `ServletException` naming the class. For a harness that loads several jars from one class loader (vidocq#228).
+
 | `Builder.webXml(InputStream in)`
 | Optional `web.xml` stream, merged with the annotated components per Servlet 6.1 §8.2.3.
 
@@ -169,7 +175,7 @@ The `io.vidocq.foy.internal.*` packages are exported to allow advanced integrati
 | Ceiling on the header section of one part. See <<request-body-limits>>.
 
 | `Builder.build()`
-| Deploys the web application through `WebAppDeployer`. Returns `Optional<Mounted>`. Empty if no Servlet/Filter/Listener bean was discovered.
+| Deploys the web application through `WebAppDeployer`. Returns `Optional<Mounted>`. Empty when the application has no servlet, filter or listener (from a descriptor or an annotation), no descriptor content, no `ServletContainerInitializer`, and no JSP pages (the JSP engine's `hasPages` answers `false`, or there is no engine).
 
 | `Mounted.handler()`
 | The `io.vidocq.chappe.api.Handler` to mount through a Chappe `Router.Builder.mount(mountPrefix, handler, false)`, or to pass directly to `Server.builder().handler(...)` when the contextPath is `/`. The handler dispatches on the full request path, context path included: the mount must route on the prefix without stripping it. The two-argument `mount(prefix, handler)` strips the prefix, and every servlet under a non-root context path then answers 404.
@@ -609,6 +615,20 @@ construction, preserves descriptor-declared listeners, and registers remaining
 TLD listeners with restricted dynamic configuration during context initialization.
 They share the normal listener lifecycle and are destroyed before engine close.
 Ibarra provides the optional page-engine implementation and TLD discovery.
+
+[.tag-new]#NEW# `FoyChappeBoot.Builder.applicationLayer(ModuleLayer)` chooses the layer
+the engine is looked up in (default `ModuleLayer.boot()`). The lookup covers the named
+modules of that layer and their ancestors only: an engine on the class path is never
+found, and two visible engines make the deployment fail.
+
+[.tag-new]#NEW# `JspEngine.hasPages(ModuleLayer)` is a default method answering `true`.
+Foy asks it only when the application has nothing else to deploy: no servlet, filter or
+listener (from a descriptor or an annotation), no descriptor content and no initializer.
+When it answers `true`, a JSP-only application is deployed; when it answers `false`,
+nothing is deployed and `build()` returns an empty `Optional`. An exception from it fails
+`build()` with a `ServletException`. An application with other components is deployed
+whatever the answer. Foy does not depend on Ibarra: an engine such as Ibarra overrides
+the method with its own index of pages.
 
 == Compatibility
 

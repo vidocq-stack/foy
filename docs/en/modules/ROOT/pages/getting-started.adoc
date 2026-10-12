@@ -96,7 +96,7 @@ void main() throws Exception {
 }
 ----
 
-`build()` deploys the web application: servlets marked `load-on-startup` are initialised and `contextInitialized` has already fired when it returns. `Mounted` is `AutoCloseable`: `close()` destroys servlets and filters and fires `contextDestroyed`. `build()` returns an empty `Optional<Mounted>` when the application declares no Servlet/Filter/Listener bean — the caller decides whether that's an error or a degraded mode.
+`build()` deploys the web application: servlets marked `load-on-startup` are initialised and `contextInitialized` has already fired when it returns. `Mounted` is `AutoCloseable`: `close()` destroys servlets and filters and fires `contextDestroyed`. `build()` returns an empty `Optional<Mounted>` when the application has nothing to deploy: no servlet, filter or listener (from a descriptor or an annotation), no descriptor content, no initializer and no JSP pages — the caller decides whether that's an error or a degraded mode.
 
 == Annotations or `web.xml`?
 
