@@ -45,6 +45,12 @@ class ApplicationLayerTest {
         System.getProperties().remove("test.jsp.layer");
     }
 
+    @org.junit.jupiter.api.AfterEach
+    void clearProperties() {
+        System.clearProperty("test.jsp.created");
+        System.getProperties().remove("test.jsp.layer");
+    }
+
     @Test
     void theBootLayerHasNoEngine() {
         assertTrue(WebAppDeployer.jspEngine(ModuleLayer.boot()).isEmpty());
