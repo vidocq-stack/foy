@@ -90,15 +90,31 @@ public final class WebAppDeployer {
         return deploy(model, options, ModuleLayer.boot());
     }
 
-    /** Deploys with optional page engines and application pages visible in the supplied layer. */
+    /**
+     * Deploys with optional page engines and application pages visible in the supplied layer.
+     * The engine is looked up with {@link #jspEngine(ModuleLayer)}.
+     */
     public static Deployment deploy(WebAppModel model, DeployOptions options, ModuleLayer applicationLayer) {
-        var providers = java.util.ServiceLoader.load(applicationLayer, io.vidocq.foy.spi.jsp.JspEngine.class).iterator();
-        var engine = providers.hasNext() ? providers.next() : null;
-        if (providers.hasNext()) throw new IllegalStateException("Multiple JSP engines are visible in the application layer");
-        return deploy(model, options, applicationLayer, engine);
+        return deploy(model, options, applicationLayer, jspEngine(applicationLayer).orElse(null));
     }
 
-    static Deployment deploy(WebAppModel model, DeployOptions options, ModuleLayer applicationLayer,
+    /**
+     * The JSP engine visible in {@code applicationLayer}, its named modules and their ancestors
+     * ({@link java.util.ServiceLoader#load(ModuleLayer, Class)}: a provider on the class path is never found);
+     * empty when there is none. The provider is instantiated once per call.
+     *
+     * @throws IllegalStateException when more than one engine is visible
+     */
+    public static java.util.Optional<io.vidocq.foy.spi.jsp.JspEngine> jspEngine(ModuleLayer applicationLayer) {
+        var it = java.util.ServiceLoader.load(applicationLayer, io.vidocq.foy.spi.jsp.JspEngine.class).iterator();
+        if (!it.hasNext()) return java.util.Optional.empty();
+        io.vidocq.foy.spi.jsp.JspEngine engine = it.next();
+        if (it.hasNext()) throw new IllegalStateException("Multiple JSP engines are visible in the application layer");
+        return java.util.Optional.of(engine);
+    }
+
+    /** Deploys with {@code engine}, already looked up in {@code applicationLayer} ({@code null} for none); the layer is handed to {@code JspEngine.deploy}. */
+    public static Deployment deploy(WebAppModel model, DeployOptions options, ModuleLayer applicationLayer,
             io.vidocq.foy.spi.jsp.JspEngine engine) {
         Objects.requireNonNull(model, "model");
         Objects.requireNonNull(options, "options");

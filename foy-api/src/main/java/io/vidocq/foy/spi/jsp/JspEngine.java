@@ -42,6 +42,17 @@ public interface JspEngine {
     /** Opens one application before initializers/listeners. The layer defines page visibility. */
     Application deploy(ServletContext context, ModuleLayer applicationLayer) throws ServletException;
 
+    /**
+     * Whether the application in {@code applicationLayer} has pages for this engine to serve. Foy asks
+     * before it opens the application: an application made only of pages (no servlet, filter, listener,
+     * descriptor or initializer) is deployed when the engine answers {@code true}, and is not deployed
+     * otherwise. An application with other components is deployed whatever the answer, and the engine
+     * is opened for it. The default answers {@code true}: an engine that cannot tell says yes.
+     *
+     * @param applicationLayer the layer the application's pages are looked up in
+     */
+    default boolean hasPages(ModuleLayer applicationLayer) { return true; }
+
     /** Per-application state; Foy owns servlet init/destroy and closes this after undeployment. */
     interface Application extends AutoCloseable {
         /** Container default servlet for the JSP extension mappings. */
