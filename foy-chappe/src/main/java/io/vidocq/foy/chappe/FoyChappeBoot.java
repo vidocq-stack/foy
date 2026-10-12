@@ -232,12 +232,22 @@ public final class FoyChappeBoot {
         }
 
         /**
-         * How a discovered class is attributed to the jar or directory it comes from, for the
-         * exclusions of an absolute ordering and of {@code metadata-complete} fragments, and for
-         * the roots of the application: the code source of the class by default. A harness that
-         * loads the classes of several jars from one class loader (so their code source does not
-         * name their jar) supplies the real jar here. A {@code null} result means "unknown": the
-         * class is kept. An exception fails {@link #build()}.
+         * How a discovered class is attributed to the jar or directory it comes from: the code
+         * source of the class by default. It is used for four things: the exclusion of the classes
+         * of a jar excluded by an absolute ordering, the exclusion of the classes of a
+         * {@code metadata-complete} fragment, the roots of the application, and the attribution of
+         * a {@code ServletContainerInitializer} to its jar. It does not change the
+         * {@code @HandlesTypes} scan or the {@code META-INF/resources/} lookup, which are decided
+         * by the jar URLs. A harness that loads the classes of several jars from one class loader
+         * (so their code source does not name their jar) supplies the real jar here.
+         * <p>
+         * The hook must return the jar URL under the same spelling that the class loader reports
+         * for that jar's {@code META-INF/web-fragment.xml}. Nested-archive URLs (a jar inside a
+         * war) are cut at the outer archive and symbolic-link aliases are not resolved: such a
+         * class is not matched and is kept.
+         * <p>
+         * A {@code null} result means "unknown": the class is kept. An exception fails
+         * {@link #build()} with a {@link ServletException} that names the class.
          */
         public Builder componentSource(Function<Class<?>, URL> sourceOf) {
             this.componentSource = Objects.requireNonNull(sourceOf, "sourceOf");
@@ -468,7 +478,7 @@ public final class FoyChappeBoot {
             JspEngine engine;
             try {
                 engine = jspEngineLookup.apply(applicationLayer).orElse(null);
-            } catch (RuntimeException e) {
+            } catch (RuntimeException | ServiceConfigurationError e) {
                 throw new ServletException("Foy deployment failed: " + e.getMessage(), e);
             }
             boolean otherwiseEmpty = effective.isEmpty() && initializers.isEmpty() && annotated.servlets().isEmpty()

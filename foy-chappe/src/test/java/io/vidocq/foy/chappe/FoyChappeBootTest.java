@@ -36,7 +36,6 @@ import org.junit.jupiter.api.Test;
 
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
-import java.net.ServerSocket;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -87,10 +86,9 @@ class FoyChappeBootTest {
                 .build().orElseThrow();
         assertEquals(1, INITS.get(), "load-on-startup servlet initialised at deploy time");
 
-        int port;
-        try (var s = new ServerSocket(0)) { port = s.getLocalPort(); }
-        Server server = Server.builder().host("127.0.0.1").port(port).handler(mounted.handler()).build();
+        Server server = Server.builder().host("127.0.0.1").port(0).handler(mounted.handler()).build();
         server.start();
+        int port = server.port();
         try {
             var resp = HttpClient.newHttpClient().send(
                     HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port + "/hello")).build(),
@@ -331,6 +329,24 @@ class FoyChappeBootTest {
     }
 
     @Test
+    void aLookupFailingWithAServiceConfigurationErrorFailsTheBuildAsAServletException() {
+        var e = assertThrows(ServletException.class, () -> FoyChappeBoot.builder()
+                .classLoader(new ClassLoader(null) {})
+                .jspEngineLookup(layer -> { throw new java.util.ServiceConfigurationError("broken provider"); })
+                .build());
+        assertTrue(e.getMessage().contains("broken provider"), e.getMessage());
+    }
+
+    @Test
+    void aLookupFailingWithARuntimeExceptionFailsTheBuildAsAServletException() {
+        var e = assertThrows(ServletException.class, () -> FoyChappeBoot.builder()
+                .classLoader(new ClassLoader(null) {})
+                .jspEngineLookup(layer -> { throw new IllegalStateException("two engines"); })
+                .build());
+        assertTrue(e.getMessage().contains("two engines"), e.getMessage());
+    }
+
+    @Test
     void applicationLayerRejectsNull() {
         assertThrows(NullPointerException.class, () -> FoyChappeBoot.builder().applicationLayer(null));
     }
@@ -404,10 +420,9 @@ class FoyChappeBootTest {
                 .classLoader(getClass().getClassLoader())
                 .webXml(new ByteArrayInputStream(xml.getBytes()))
                 .build().orElseThrow();
-        int port;
-        try (var s = new ServerSocket(0)) { port = s.getLocalPort(); }
-        Server server = Server.builder().host("127.0.0.1").port(port).handler(mounted.handler()).build();
+        Server server = Server.builder().host("127.0.0.1").port(0).handler(mounted.handler()).build();
         server.start();
+        int port = server.port();
         try {
             var client = HttpClient.newHttpClient();
             assertEquals("hello still", client.send(
@@ -501,10 +516,9 @@ class FoyChappeBootTest {
         var router = Router.builder()
                 .mount(mounted.mountPrefix(), mounted.handler(), stripPrefix)
                 .build();
-        int port;
-        try (var s = new ServerSocket(0)) { port = s.getLocalPort(); }
-        Server server = Server.builder().host("127.0.0.1").port(port).handler(router).build();
+        Server server = Server.builder().host("127.0.0.1").port(0).handler(router).build();
         server.start();
+        int port = server.port();
         try {
             return HttpClient.newHttpClient().send(
                     HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port + path)).build(),
@@ -571,10 +585,9 @@ class FoyChappeBootTest {
         var mounted = FoyChappeBoot.builder().contextPath("/").discoverPluggability(false)
                 .classLoader(getClass().getClassLoader())
                 .webXml(new ByteArrayInputStream(xml.getBytes())).build().orElseThrow();
-        int port;
-        try (var s = new ServerSocket(0)) { port = s.getLocalPort(); }
-        Server server = Server.builder().host("127.0.0.1").port(port).handler(mounted.handler()).build();
+        Server server = Server.builder().host("127.0.0.1").port(0).handler(mounted.handler()).build();
         server.start();
+        int port = server.port();
         try {
             assertEquals(0, mounted.activeSessions());
             var client = HttpClient.newBuilder().cookieHandler(new java.net.CookieManager()).build();

@@ -28,7 +28,6 @@ import org.junit.jupiter.api.io.TempDir;
 
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
-import java.net.ServerSocket;
 import java.net.URI;
 import java.net.URL;
 import java.net.URLClassLoader;
@@ -173,10 +172,9 @@ public class FoyChappeBootFragmentsTest {
 
     /** Serves {@code mounted} and returns the status of each path, as {@code status:body}. */
     private static String[] get(FoyChappeBoot.Mounted mounted, String... paths) throws Exception {
-        int port;
-        try (var s = new ServerSocket(0)) { port = s.getLocalPort(); }
-        Server server = Server.builder().host("127.0.0.1").port(port).handler(mounted.handler()).build();
+        Server server = Server.builder().host("127.0.0.1").port(0).handler(mounted.handler()).build();
         server.start();
+        int port = server.port();
         try {
             var client = HttpClient.newHttpClient();
             String[] out = new String[paths.length];
@@ -436,10 +434,9 @@ public class FoyChappeBootFragmentsTest {
     /** Serves {@code mounted} and returns the response of each path. */
     private static java.util.List<HttpResponse<String>> fetch(FoyChappeBoot.Mounted mounted, String... paths)
             throws Exception {
-        int port;
-        try (var s = new ServerSocket(0)) { port = s.getLocalPort(); }
-        Server server = Server.builder().host("127.0.0.1").port(port).handler(mounted.handler()).build();
+        Server server = Server.builder().host("127.0.0.1").port(0).handler(mounted.handler()).build();
         server.start();
+        int port = server.port();
         try {
             var client = HttpClient.newHttpClient();
             var out = new java.util.ArrayList<HttpResponse<String>>();
@@ -484,11 +481,51 @@ public class FoyChappeBootFragmentsTest {
     }
 
     @Test
+    void aMetadataCompleteFragmentIsDroppedThroughComponentSource(@TempDir Path dir) throws Exception {
+        try (var h = sharedLoaderHarness(dir)) {
+            // The descriptor itself is not metadata-complete: only the fragment is, so the merge of the
+            // annotated classes of that fragment (mergeMerged) is what must drop them.
+            String xml = webXml("");
+            Path completeJar = compiledJar(dir, "complete.jar", SHARED_LOADER_SOURCES, java.util.Map.of(
+                    "META-INF/web-fragment.xml", "<web-fragment xmlns=\"https://jakarta.ee/xml/ns/jakartaee\" "
+                            + "version=\"6.1\" metadata-complete=\"true\"><name>Ex</name></web-fragment>"));
+            var parent = new URLClassLoader(new URL[] {h.shared().toUri().toURL()},
+                    FoyChappeBootFragmentsTest.class.getClassLoader());
+            try (var loader = new URLClassLoader(new URL[] {completeJar.toUri().toURL()}, parent)) {
+                URL fragmentJar = completeJar.toUri().toURL();
+                var boot = FoyChappeBoot.builder().classLoader(loader)
+                        .beanManager(beans(loader.loadClass("expkg.ExServlet"), loader.loadClass("expkg.ExFilter"),
+                                loader.loadClass("expkg.ExListener")))
+                        .webXml(new ByteArrayInputStream(xml.getBytes()));
+                System.clearProperty("expkg.exsci");
+                var before = fetch(boot.build().orElseThrow(), "/ex");
+                assertEquals(200, before.get(0).statusCode(), "without the hook the shared jar keeps the class");
+
+                var mounted = FoyChappeBoot.builder().classLoader(loader)
+                        .beanManager(beans(loader.loadClass("expkg.ExServlet"), loader.loadClass("expkg.ExFilter"),
+                                loader.loadClass("expkg.ExListener")))
+                        .webXml(new ByteArrayInputStream(xml.getBytes()))
+                        .componentSource(type -> type.getName().startsWith("expkg.") ? fragmentJar : null)
+                        .build().orElseThrow();
+                var responses = fetch(mounted, "/ex", "/app");
+                assertEquals(404, responses.get(0).statusCode());
+                assertEquals("app", responses.get(1).body(), "ExListener must not have run");
+                assertTrue(responses.get(1).headers().firstValue("X-Ex").isEmpty(), "ExFilter must not have run");
+            } finally {
+                parent.close();
+            }
+        } finally {
+            System.clearProperty("expkg.exsci");
+        }
+    }
+
+    @Test
     void aNullSourceKeepsTheComponent(@TempDir Path dir) throws Exception {
         try (var h = sharedLoaderHarness(dir)) {
             var responses = fetch(sharedLoaderBoot(h).componentSource(type -> null).build().orElseThrow(),
-                    "/ex", "/app");
+                    "/ex", "/app", "/exsci");
             assertEquals(200, responses.get(0).statusCode());
+            assertEquals(200, responses.get(2).statusCode(), "the initializer is kept too");
             assertEquals("app:1", responses.get(1).body(), "the listener of the kept component ran");
             assertEquals("1", responses.get(1).headers().firstValue("X-Ex").orElse(null));
         } finally {

@@ -31,7 +31,6 @@ import org.junit.jupiter.api.io.TempDir;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.InputStream;
-import java.net.ServerSocket;
 import java.net.URI;
 import java.net.URL;
 import java.net.URLClassLoader;
@@ -100,10 +99,9 @@ public class FoyChappeBootResourcesTest {
 
     /** Status, content type and body of each path, as {@code status:type:body}. */
     private static String[] get(FoyChappeBoot.Mounted mounted, String... paths) throws Exception {
-        int port;
-        try (var s = new ServerSocket(0)) { port = s.getLocalPort(); }
-        Server server = Server.builder().host("127.0.0.1").port(port).handler(mounted.handler()).build();
+        Server server = Server.builder().host("127.0.0.1").port(0).handler(mounted.handler()).build();
         server.start();
+        int port = server.port();
         try {
             var client = HttpClient.newHttpClient();
             String[] out = new String[paths.length];
