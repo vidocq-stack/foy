@@ -293,6 +293,43 @@ class FoyChappeBootTest {
         }
     }
 
+    private static JspEngine throwingHasPagesEngine(AtomicInteger asked) {
+        return new JspEngine() {
+            @Override
+            public Application deploy(jakarta.servlet.ServletContext context, ModuleLayer layer) {
+                return new Application() {
+                    @Override public Servlet servlet() { return new PageServlet(); }
+                    @Override public Servlet servletFor(String jspFile) { return new PageServlet(); }
+                    @Override public void close() {}
+                };
+            }
+
+            @Override
+            public boolean hasPages(ModuleLayer layer) {
+                asked.incrementAndGet();
+                throw new IllegalStateException("boom");
+            }
+        };
+    }
+
+    @Test
+    void hasPagesIsNotAskedForANonEmptyApp() throws Exception {
+        var asked = new AtomicInteger();
+        var engine = throwingHasPagesEngine(asked);
+        try (var mounted = plainApp(null).contextPath("/")
+                .jspEngineLookup(layer -> Optional.of(engine)).build().orElseThrow()) {
+            assertEquals("page", getThroughRouter(mounted, false, "/x.jsp").body());
+        }
+        assertEquals(0, asked.get());
+    }
+
+    @Test
+    void aThrowingHasPagesFailsTheBuild() {
+        var engine = throwingHasPagesEngine(new AtomicInteger());
+        assertThrows(ServletException.class, () -> FoyChappeBoot.builder()
+                .classLoader(new ClassLoader(null) {}).jspEngineLookup(layer -> Optional.of(engine)).build());
+    }
+
     @Test
     void applicationLayerRejectsNull() {
         assertThrows(NullPointerException.class, () -> FoyChappeBoot.builder().applicationLayer(null));

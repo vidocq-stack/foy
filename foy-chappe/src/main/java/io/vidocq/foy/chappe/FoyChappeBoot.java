@@ -436,10 +436,18 @@ public final class FoyChappeBoot {
             } catch (RuntimeException e) {
                 throw new ServletException("Foy deployment failed: " + e.getMessage(), e);
             }
-            boolean pages = engine != null && engine.hasPages(applicationLayer);
+            boolean otherwiseEmpty = effective.isEmpty() && initializers.isEmpty() && annotated.servlets().isEmpty()
+                    && annotated.filters().isEmpty() && annotated.listeners().isEmpty();
+            boolean pages = false;
+            if (otherwiseEmpty && engine != null) {
+                try {
+                    pages = engine.hasPages(applicationLayer);
+                } catch (RuntimeException e) {
+                    throw new ServletException("Foy deployment failed: " + e.getMessage(), e);
+                }
+            }
 
-            if (effective.isEmpty() && initializers.isEmpty() && annotated.servlets().isEmpty()
-                    && annotated.filters().isEmpty() && annotated.listeners().isEmpty() && !pages) {
+            if (otherwiseEmpty && !pages) {
                 LOG.log(System.Logger.Level.INFO,
                         "No @WebServlet / @WebFilter / @WebListener beans, web.xml, web fragment, "
                                 + "ServletContainerInitializer or JSP page discovered — Foy inactive");
