@@ -491,7 +491,7 @@ Statuts : `OPEN` → `INVESTIGATING` → `FIXED` (commit hash) → `CLOSED`.
 ## BUG-20261009-12 — dispatch query string decoded as UTF-8 regardless of the request encoding
 
 - **Date** : 2026-10-09
-- **Statut** : OPEN (low)
+- **Statut** : CLOSED (by design: every query string is decoded as UTF-8, as the request's own; 418ba09)
 - **Module touché** : `foy-core` (`ForwardedRequest`, `AsyncDispatchRequest` parameter merging)
 - **Symptôme** : the parameters of a dispatch query string (`getRequestDispatcher("/x?a=%E9")`,
   `AsyncContext.dispatch("/x?a=...")`) are always decoded as UTF-8, even when the request
@@ -502,6 +502,12 @@ Statuts : `OPEN` → `INVESTIGATING` → `FIXED` (commit hash) → `CLOSED`.
   `StandardCharsets.UTF_8` to the decoder instead of the request's effective encoding.
 - **Investigations** :
   - 2026-10-09 (Phase 4 final review) : found in review; not exercised by the TCK.
+  - 2026-10-13 : closed by design. The request's own query string is decoded as UTF-8
+    (`HttpServletRequestImpl`), so a dispatch query decoded with the request encoding would make one
+    parameter name decode differently depending on the dispatch type. The request encoding applies to the
+    form body only (documented in `usage.adoc`). Fixed the async parser: `AsyncDispatchRequest` now
+    uses `DispatchParameters.View` like forward and include (a malformed escape skips the pair instead
+    of throwing, target values precede the original ones), in 418ba09.
 
 ## BUG-20261009-13 — resource metadata and openStream may describe different roots
 
