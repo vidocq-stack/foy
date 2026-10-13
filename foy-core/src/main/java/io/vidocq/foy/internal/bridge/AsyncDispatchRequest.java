@@ -20,6 +20,7 @@
 package io.vidocq.foy.internal.bridge;
 
 import io.vidocq.foy.internal.dispatcher.DispatchTarget;
+import io.vidocq.foy.internal.http.RequestPaths;
 import jakarta.servlet.DispatcherType;
 import jakarta.servlet.ServletContext;
 import jakarta.servlet.http.HttpServletRequest;
@@ -111,8 +112,12 @@ public final class AsyncDispatchRequest extends HttpServletRequestWrapper {
     }
     @Override public String getRequestURI() {
         String ctx = getContextPath();
-        return ctx.equals("/") ? target.path() : ctx + target.path();
+        String path = RequestPaths.encodeUriPath(target.path());
+        return ctx.equals("/") ? path : ctx + path;
     }
+    @Override public StringBuffer getRequestURL() { return RequestUrls.of(this); }
+
+    DispatchTarget target() { return target; }
     // §2.3.3.3 : isAsyncStarted reste géré par la request originale
     // (false si consommé par dispatch, true si re-startAsync).
 }

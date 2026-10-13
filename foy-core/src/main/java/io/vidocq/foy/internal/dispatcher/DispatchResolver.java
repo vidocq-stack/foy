@@ -36,13 +36,17 @@ public final class DispatchResolver {
 
     /** {@code path}: path relative to the contextPath, can contain a query. */
     public Optional<DispatchTarget> resolve(String path) {
-        String justPath = path;
-        String queryString = null;
         int q = path.indexOf('?');
-        if (q >= 0) {
-            justPath = path.substring(0, q);
-            queryString = path.substring(q + 1);
-        }
+        return q < 0 ? resolve(path, null) : resolve(path.substring(0, q), path.substring(q + 1));
+    }
+
+    /**
+     * {@code path}: path relative to the contextPath, taken as a whole (a {@code ?} in it is a
+     * character of the path, not the start of a query); {@code queryString}: the target's query,
+     * or {@code null}.
+     */
+    public Optional<DispatchTarget> resolve(String path, String queryString) {
+        String justPath = path;
         // Dispatch paths (forward/include, async dispatch, error-page locations) are decoded
         // context-relative paths: normalise their dot segments, never decode them again.
         // A path without a leading slash (the empty context-root path) keeps its historical resolution.

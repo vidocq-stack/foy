@@ -93,6 +93,8 @@ public final class AsyncContextImpl implements AsyncContext {
     private final CompletableFuture<Void> signal = new CompletableFuture<>();
     private volatile long timeoutMs = DEFAULT_TIMEOUT_MS;
     private volatile String dispatchPath;
+    /** The query string of the dispatch, kept apart from its path. */
+    private volatile String dispatchQuery;
     private volatile ServletContext dispatchContext;
     /** complete() or dispatch() called, or the container completed the cycle. Guarded by {@code this}. */
     private volatile boolean completed;
@@ -127,16 +129,18 @@ public final class AsyncContextImpl implements AsyncContext {
         // qui a appelé startAsync. Le TCK peut wrapper la request via ServletRequestWrapper
         // (non-Http), on doit unwrap jusqu'au HttpServletRequest sous-jacent.
         jakarta.servlet.http.HttpServletRequest h = unwrapHttp(request);
-        String uri = null;
+        String path = null;
+        String qs = null;
         if (h != null) {
             // The container request's URI is raw (encoded, path parameters kept); the dispatch path
             // must be its canonical, context-relative form (section 3.5.2), found through any
-            // application wrapper.
-            uri = io.vidocq.foy.internal.bridge.HttpServletRequestImpl.canonicalDispatchPath(request);
-            String qs = h.getQueryString();
-            if (qs != null && !qs.isEmpty()) uri = uri + "?" + qs;
+            // application wrapper. That path is decoded, so it may hold a '?': it travels apart from
+            // the query string instead of being joined to it.
+            path = io.vidocq.foy.internal.bridge.HttpServletRequestImpl.canonicalDispatchPath(request);
+            qs = h.getQueryString();
+            if (qs != null && qs.isEmpty()) qs = null;
         }
-        dispatch(uri);
+        dispatch(servletContext, path, qs);
     }
 
     private static jakarta.servlet.http.HttpServletRequest unwrapHttp(ServletRequest r) {
@@ -150,10 +154,18 @@ public final class AsyncContextImpl implements AsyncContext {
 
     @Override public void dispatch(String path) { dispatch(servletContext, path); }
 
+    /** The path of the API methods may carry a query: it starts at the first {@code '?'}. */
     @Override public void dispatch(ServletContext ctx, String path) {
+        int q = path == null ? -1 : path.indexOf('?');
+        if (q < 0) dispatch(ctx, path, null);
+        else dispatch(ctx, path.substring(0, q), path.substring(q + 1));
+    }
+
+    private void dispatch(ServletContext ctx, String path, String query) {
         synchronized (this) {
             if (completed) throw new IllegalStateException("async already completed");
             this.dispatchPath = path;
+            this.dispatchQuery = query;
             this.dispatchContext = ctx;
             completed = true;
         }
@@ -316,7 +328,10 @@ public final class AsyncContextImpl implements AsyncContext {
     }
 
     public boolean hasDispatch() { return dispatchPath != null; }
+    /** The context-relative path of the dispatch, without its query string. */
     public String dispatchPath() { return dispatchPath; }
+    /** The query string of the dispatch, or {@code null}. */
+    public String dispatchQuery() { return dispatchQuery; }
     /** Target context of a cross-context dispatch — null for an intra-context dispatch. */
     public ServletContext dispatchContext() { return dispatchContext; }
     public boolean timedOut() { return timedOut; }

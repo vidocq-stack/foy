@@ -86,6 +86,34 @@ class RequestPathCanonicalisationTest {
         }
     }
 
+    /** Starts async on the request itself, then dispatches with no argument. */
+    public static class PlainAsync extends HttpServlet {
+        @Override protected void doGet(HttpServletRequest req, HttpServletResponse resp) throws IOException {
+            if (req.getDispatcherType() == jakarta.servlet.DispatcherType.ASYNC) {
+                resp.setCharacterEncoding("UTF-8");
+                resp.getWriter().write("ASYNC SP=" + req.getServletPath() + "|PI=" + req.getPathInfo()
+                        + "|QS=" + req.getQueryString() + "|URI=" + req.getRequestURI());
+                return;
+            }
+            req.startAsync().dispatch();
+        }
+    }
+
+    /** Includes the {@code to} parameter. */
+    public static class Includer extends HttpServlet {
+        @Override protected void doGet(HttpServletRequest req, HttpServletResponse resp)
+                throws ServletException, IOException {
+            req.getRequestDispatcher(req.getParameter("to")).include(req, resp);
+        }
+    }
+
+    /** Reports the include request URI attribute. */
+    public static class IncludeUri extends HttpServlet {
+        @Override protected void doGet(HttpServletRequest req, HttpServletResponse resp) throws IOException {
+            resp.getWriter().write("INCLUDE_URI=" + req.getAttribute("jakarta.servlet.include.request_uri"));
+        }
+    }
+
     public static class BadRequestPage extends HttpServlet {
         @Override protected void doGet(HttpServletRequest req, HttpServletResponse resp) throws IOException {
             resp.getWriter().write("BAD-REQUEST-PAGE " + req.getAttribute("jakarta.servlet.error.status_code"));
@@ -142,13 +170,14 @@ class RequestPathCanonicalisationTest {
         return new ServletDecl(name, type, f, List.of(patterns), Map.of(), -1, true);
     }
 
-    private void deploy(ErrorPageRegistry errors) {
+    private void deploy(ErrorPageRegistry errors, ServletDecl... extra) {
         var b = WebAppModel.builder("/ctx")
                 .servlet(servlet("exact", Paths.class, Paths::new, "/a b", "/a/b"))
                 .servlet(servlet("prefix", Paths.class, Paths::new, "/p/*"))
                 .servlet(servlet("fwd", Forwarder.class, Forwarder::new, "/fwd"))
                 .servlet(servlet("async", WrappedAsync.class, WrappedAsync::new, "/as ync/*"))
                 .servlet(servlet("bad", BadRequestPage.class, BadRequestPage::new, "/bad"));
+        for (ServletDecl d : extra) b.servlet(d);
         if (errors != null) b.errorPages(errors);
         deployment = WebAppDeployer.deploy(b.build(),
                 DeployOptions.defaults(getClass().getClassLoader()).withResourceProvider(new DirProvider(root)));
@@ -261,6 +290,40 @@ class RequestPathCanonicalisationTest {
     void zeroArgumentAsyncDispatchOfAWrappedRequestUsesTheCanonicalPath() throws Exception {
         deploy(null);
         var r = get("/ctx/as%20ync;p=1/caf%C3%A9");
+        assertEquals(200, r.status(), r.body());
+        assertEquals("ASYNC SP=/as ync|PI=/caf\u00e9", r.body());
+    }
+
+    @Test
+    void theForwardTargetRequestUriIsEncoded() throws Exception {
+        deploy(null, servlet("spaced", Paths.class, Paths::new, "/my file.txt"));
+        var r = get("/ctx/fwd?to=/my%20file.txt");
+        assertEquals(200, r.status(), r.body());
+        assertEquals("SP=/my file.txt|PI=null|URI=/ctx/my%20file.txt|URL=http://localhost:" + port
+                + "/ctx/my%20file.txt", r.body());
+    }
+
+    @Test
+    void theIncludeRequestUriAttributeIsEncoded() throws Exception {
+        deploy(null, servlet("inc", Includer.class, Includer::new, "/inc"),
+                servlet("spaced", IncludeUri.class, IncludeUri::new, "/my file.txt"));
+        var r = get("/ctx/inc?to=/my%20file.txt");
+        assertEquals(200, r.status(), r.body());
+        assertEquals("INCLUDE_URI=/ctx/my%20file.txt", r.body());
+    }
+
+    @Test
+    void zeroArgumentAsyncDispatchKeepsADecodedQuestionMarkInThePath() throws Exception {
+        deploy(null, servlet("qmark", PlainAsync.class, PlainAsync::new, "/a?b/*"));
+        var r = get("/ctx/a%3Fb/x");
+        assertEquals(200, r.status(), r.body());
+        assertEquals("ASYNC SP=/a?b|PI=/x|QS=null|URI=/ctx/a%3Fb/x", r.body());
+    }
+
+    @Test
+    void zeroArgumentAsyncDispatchAfterAForwardUsesTheForwardTargetPath() throws Exception {
+        deploy(null);
+        var r = get("/ctx/fwd?to=/as%20ync/caf%C3%A9");
         assertEquals(200, r.status(), r.body());
         assertEquals("ASYNC SP=/as ync|PI=/caf\u00e9", r.body());
     }

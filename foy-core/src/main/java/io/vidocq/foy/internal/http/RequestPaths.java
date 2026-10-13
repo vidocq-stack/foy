@@ -155,6 +155,47 @@ public final class RequestPaths {
         return out.isEmpty() ? "/" : out.toString();
     }
 
+    /**
+     * Encodes a decoded, context-relative dispatch path for a request URI (RFC 3986): every
+     * character other than a {@code pchar} or {@code /} is percent-encoded as UTF-8 bytes, so a
+     * decoded {@code ?} or space cannot be read back as a query or a separator. A {@code %} already
+     * followed by two hex digits is kept, any other {@code %} becomes {@code %25}; the encoding is
+     * therefore idempotent. Unlike the directory-redirect encoder of the bridge, {@code ;} (a
+     * sub-delim) is kept.
+     */
+    public static String encodeUriPath(String path) {
+        if (path == null) return null;
+        StringBuilder out = null;
+        int n = path.length();
+        for (int i = 0; i < n; i++) {
+            char c = path.charAt(i);
+            boolean plain = c == '%' ? i + 2 < n && isHex(path.charAt(i + 1)) && isHex(path.charAt(i + 2))
+                    : c < 0x80 && (isAsciiAlphaNumeric(c) || "-._~!$&'()*+,;=:@/".indexOf(c) >= 0);
+            if (plain) {
+                if (out != null) out.append(c);
+                continue;
+            }
+            if (out == null) out = new StringBuilder(n + 16).append(path, 0, i);
+            int end = Character.isHighSurrogate(c) && i + 1 < n ? i + 2 : i + 1;
+            for (byte b : path.substring(i, end).getBytes(StandardCharsets.UTF_8)) {
+                int v = b & 0xff;
+                out.append('%').append(HEX.charAt(v >> 4)).append(HEX.charAt(v & 15));
+            }
+            i = end - 1;
+        }
+        return out == null ? path : out.toString();
+    }
+
+    private static final String HEX = "0123456789ABCDEF";
+
+    private static boolean isHex(char c) {
+        return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
+    }
+
+    private static boolean isAsciiAlphaNumeric(char c) {
+        return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9');
+    }
+
     private static String stripPathParameters(String raw) {
         if (raw.indexOf(';') < 0) return raw;
         StringBuilder sb = new StringBuilder(raw.length());

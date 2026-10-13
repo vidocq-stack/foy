@@ -135,9 +135,9 @@ public final class HttpServletRequestImpl implements HttpServletRequest {
 
     /**
      * The decoded, canonical, context-relative path a zero-argument {@code AsyncContext.dispatch()}
-     * targets (section 2.3.3.3): the URI of the innermost container forward or async dispatch in
-     * the wrapper chain (already built from a decoded path) without its context path, else the
-     * canonical path of the container request. Application wrappers are looked through, so a
+     * targets (section 2.3.3.3): the decoded target path of the innermost container forward or
+     * async dispatch in the wrapper chain (not its encoded request URI), else the canonical path of
+     * the container request. Application wrappers are looked through, so a
      * wrapped request never falls back to the raw, encoded {@code getRequestURI()}. Returns
      * {@code null} when {@code request} wraps no HTTP request.
      */
@@ -147,8 +147,8 @@ public final class HttpServletRequestImpl implements HttpServletRequest {
             if (r instanceof HttpServletRequestImpl impl) {
                 return impl.canonicalPath == null ? withoutContextPath(impl) : impl.canonicalPath;
             }
-            if (r instanceof ForwardedRequest f && !f.isNamed()) return withoutContextPath(f);
-            if (r instanceof AsyncDispatchRequest a) return withoutContextPath(a);
+            if (r instanceof ForwardedRequest f && !f.isNamed()) return f.target().path();
+            if (r instanceof AsyncDispatchRequest a) return a.target().path();
             if (r instanceof jakarta.servlet.ServletRequestWrapper w) r = w.getRequest();
             else return r instanceof HttpServletRequest h ? withoutContextPath(h) : null;
         }

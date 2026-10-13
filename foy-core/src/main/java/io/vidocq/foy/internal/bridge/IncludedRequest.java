@@ -20,6 +20,7 @@
 package io.vidocq.foy.internal.bridge;
 
 import io.vidocq.foy.internal.dispatcher.DispatchTarget;
+import io.vidocq.foy.internal.http.RequestPaths;
 import jakarta.servlet.DispatcherType;
 import jakarta.servlet.RequestDispatcher;
 import jakarta.servlet.http.HttpServletRequest;
@@ -55,7 +56,7 @@ public final class IncludedRequest extends HttpServletRequestWrapper {
                 target.named() ? null : target.queryString(), StandardCharsets.UTF_8);
         if (!target.named()) {
             String ctx = original.getContextPath();
-            includeAttributes.put(RequestDispatcher.INCLUDE_REQUEST_URI, ctx + target.path());
+            includeAttributes.put(RequestDispatcher.INCLUDE_REQUEST_URI, ctx + RequestPaths.encodeUriPath(target.path()));
             includeAttributes.put(RequestDispatcher.INCLUDE_CONTEXT_PATH, ctx);
             includeAttributes.put(RequestDispatcher.INCLUDE_SERVLET_PATH, target.servletPath());
             includeAttributes.put(RequestDispatcher.INCLUDE_PATH_INFO, target.pathInfo());

@@ -20,6 +20,7 @@
 package io.vidocq.foy.internal.bridge;
 
 import io.vidocq.foy.internal.dispatcher.DispatchTarget;
+import io.vidocq.foy.internal.http.RequestPaths;
 import jakarta.servlet.DispatcherType;
 import jakarta.servlet.RequestDispatcher;
 import jakarta.servlet.http.HttpServletRequest;
@@ -70,6 +71,8 @@ public final class ForwardedRequest extends HttpServletRequestWrapper {
         }
     }
 
+    DispatchTarget target() { return target; }
+
     /** Whether this is a named forward, which keeps the caller's URI and paths. */
     public boolean isNamed() { return target.named(); }
 
@@ -101,18 +104,11 @@ public final class ForwardedRequest extends HttpServletRequestWrapper {
 
     @Override public String getRequestURI() {
         if (target.named()) return super.getRequestURI();
-        return getContextPath() + target.path();
+        return getContextPath() + RequestPaths.encodeUriPath(target.path());
     }
     @Override public StringBuffer getRequestURL() {
         if (target.named()) return super.getRequestURL();
-        StringBuffer sb = new StringBuffer();
-        String scheme = getScheme();
-        int port = getServerPort();
-        sb.append(scheme).append("://").append(getServerName());
-        if (("http".equals(scheme) && port != 80) || ("https".equals(scheme) && port != 443)) {
-            sb.append(':').append(port);
-        }
-        return sb.append(getRequestURI());
+        return RequestUrls.of(this);
     }
     @Override public String getServletPath() { return target.named() ? super.getServletPath() : target.servletPath(); }
     @Override public String getPathInfo() { return target.named() ? super.getPathInfo() : target.pathInfo(); }

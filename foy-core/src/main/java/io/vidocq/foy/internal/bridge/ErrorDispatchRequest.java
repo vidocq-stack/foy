@@ -20,6 +20,7 @@
 package io.vidocq.foy.internal.bridge;
 
 import io.vidocq.foy.internal.dispatcher.DispatchTarget;
+import io.vidocq.foy.internal.http.RequestPaths;
 import jakarta.servlet.http.HttpServletMapping;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletRequestWrapper;
@@ -48,18 +49,12 @@ final class ErrorDispatchRequest extends HttpServletRequestWrapper {
         return target.servletPath() != null ? target.pathInfo() : super.getPathInfo();
     }
     @Override public String getRequestURI() {
-        return target.path() != null ? getContextPath() + target.path() : super.getRequestURI();
+        if (target.path() == null) return super.getRequestURI();
+        return getContextPath() + RequestPaths.encodeUriPath(target.path());
     }
     @Override public StringBuffer getRequestURL() {
         if (target.path() == null) return super.getRequestURL();
-        StringBuffer sb = new StringBuffer();
-        String scheme = getScheme();
-        int port = getServerPort();
-        sb.append(scheme).append("://").append(getServerName());
-        if (("http".equals(scheme) && port != 80) || ("https".equals(scheme) && port != 443)) {
-            sb.append(':').append(port);
-        }
-        return sb.append(getRequestURI());
+        return RequestUrls.of(this);
     }
     @Override public HttpServletMapping getHttpServletMapping() {
         return target.mapping() != null ? target.mapping() : super.getHttpServletMapping();

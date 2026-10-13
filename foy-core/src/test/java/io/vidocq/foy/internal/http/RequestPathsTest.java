@@ -127,4 +127,24 @@ class RequestPathsTest {
     void dispatchPathEscapingTheContextRootIsRejected(String path) {
         assertNull(RequestPaths.normalize(path), path);
     }
+
+    @ParameterizedTest(name = "{0} -> {1}")
+    @CsvSource(delimiter = '|', value = {
+            "/my file.txt              | /my%20file.txt",
+            "/my%20file.txt            | /my%20file.txt",
+            "/a?b                      | /a%3Fb",
+            "/café                     | /caf%C3%A9",
+            "/100%                     | /100%25",
+            "/x%2                      | /x%252",
+    })
+    void encodesADecodedPathForARequestUri(String path, String expected) {
+        assertEquals(expected, RequestPaths.encodeUriPath(path));
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"/my file.txt", "/my%20file.txt", "/a?b", "/café", "/100%", "/x%2"})
+    void encodingAPathIsIdempotent(String path) {
+        String once = RequestPaths.encodeUriPath(path);
+        assertEquals(once, RequestPaths.encodeUriPath(once), path);
+    }
 }

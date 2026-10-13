@@ -48,9 +48,4 @@ public record DispatchTarget(Servlet servlet,
     public static DispatchTarget named(Servlet servlet, String servletName, boolean asyncSupported) {
         return new DispatchTarget(servlet, servletName, null, null, null, null, asyncSupported, null, true);
     }
-
-    /** Clone with a new queryString (used for async dispatches). */
-    public DispatchTarget withQueryString(String qs) {
-        return new DispatchTarget(servlet, servletName, path, servletPath, pathInfo, qs, asyncSupported, mapping, named);
-    }
 }

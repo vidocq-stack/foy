@@ -843,6 +843,7 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
                 return new AsyncEnd(ac, null);
             }
             String dispatchPath = ac.dispatchPath();
+            String qs = ac.dispatchQuery();
             ServletContext targetCtx = ac.dispatchContext();
             try {
                 if (targetCtx instanceof VidocqServletContext vctx
@@ -851,16 +852,11 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
                     // cible en utilisant son resolver/invoker.
                     // AsyncContext#dispatch(ServletContext, String): the path is relative to the target context.
                     String tgtCtxPath = vctx.getContextPath();
-                    String relative = dispatchPath;
-                    String qs = null;
-                    int q = relative.indexOf('?');
-                    if (q >= 0) { qs = relative.substring(q + 1); relative = relative.substring(0, q); }
                     var resolver = vctx.dispatchResolver();
                     var invoker = vctx.dispatchInvoker();
                     if (resolver == null || invoker == null) return new AsyncEnd(ac, null);
-                    var target = resolver.resolve(relative).orElse(null);
+                    var target = resolver.resolve(dispatchPath, qs).orElse(null);
                     if (target == null) return new AsyncEnd(ac, null);
-                    if (qs != null) target = target.withQueryString(qs);
                     setAsyncAttributes(req);
                     var wrapped = new AsyncDispatchRequest(req, target, vctx, tgtCtxPath);
                     req.clearAsyncContext();
@@ -868,13 +864,8 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
                     invoker.invoke(target, wrapped, res, DispatcherType.ASYNC);
                 } else {
                     // AsyncContext#dispatch(String): the path is relative to this context.
-                    String relative = dispatchPath;
-                    String qs = null;
-                    int q = relative.indexOf('?');
-                    if (q >= 0) { qs = relative.substring(q + 1); relative = relative.substring(0, q); }
-                    var target = new DispatchResolver(dispatcher).resolve(relative).orElse(null);
+                    var target = new DispatchResolver(dispatcher).resolve(dispatchPath, qs).orElse(null);
                     if (target == null) return new AsyncEnd(ac, null);
-                    if (qs != null) target = target.withQueryString(qs);
                     setAsyncAttributes(req);
                     var wrapped = new AsyncDispatchRequest(req, target);
                     req.clearAsyncContext();
