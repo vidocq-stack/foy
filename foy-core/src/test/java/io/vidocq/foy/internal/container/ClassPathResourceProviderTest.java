@@ -34,6 +34,7 @@ import java.util.jar.JarEntry;
 import java.util.jar.JarOutputStream;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 class ClassPathResourceProviderTest {
 
@@ -258,5 +259,39 @@ class ClassPathResourceProviderTest {
         assertEquals(Set.of("/a/ok.txt", "/a/inside.txt"), p.listPaths("/a/"));
         assertEquals("OK", read(p.openStream("/a/ok.txt")));
         assertEquals("OK", read(p.openStream("/a/inside.txt")), "a link staying under the root works");
+    }
+
+    @Test
+    void aPathThatDiffersInCaseFromTheRealNameIsMissing(@TempDir Path dir) throws Exception {
+        Path res = dir.resolve("app/META-INF/resources/static");
+        Files.createDirectories(res);
+        Files.writeString(res.resolve("x.txt"), "x");
+        assumeTrue(Files.exists(res.resolveSibling("STATIC").resolve("X.TXT")),
+                "only meaningful on a case-insensitive file system");
+        var p = new ClassPathResourceProvider(loader(), List.of(dir.resolve("app").toUri().toURL()));
+        assertEquals("x", read(p.openStream("/static/x.txt")));
+        assertNotNull(p.metadata("/static/x.txt"));
+        assertNotNull(p.toUrl("/static/x.txt"));
+        assertNull(p.openStream("/STATIC/x.txt"));
+        assertNull(p.openStream("/static/X.txt"));
+        assertNull(p.metadata("/STATIC/x.txt"));
+        assertNull(p.toUrl("/STATIC/x.txt"));
+        assertNull(p.toUrl("/static/X.txt"));
+    }
+
+    @Test
+    void anInRootSymbolicLinkKeepsItsOwnNameAndIsCaseChecked(@TempDir Path dir) throws Exception {
+        Path res = dir.resolve("app/META-INF/resources");
+        Files.createDirectories(res.resolve("static"));
+        Files.writeString(res.resolve("static/x.txt"), "x");
+        assumeTrue(Files.exists(res.resolve("STATIC/X.TXT")), "only meaningful on a case-insensitive file system");
+        try {
+            Files.createSymbolicLink(res.resolve("link"), res.resolve("static"));
+        } catch (UnsupportedOperationException | java.io.IOException e) {
+            org.junit.jupiter.api.Assumptions.abort("symbolic links unavailable: " + e);
+        }
+        var p = new ClassPathResourceProvider(loader(), List.of(dir.resolve("app").toUri().toURL()));
+        assertEquals("x", read(p.openStream("/link/x.txt")));
+        assertNull(p.openStream("/LINK/x.txt"));
     }
 }

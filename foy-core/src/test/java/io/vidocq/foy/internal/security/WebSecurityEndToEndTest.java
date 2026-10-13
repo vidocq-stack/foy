@@ -49,6 +49,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 import static io.vidocq.foy.internal.security.SecureApp.constraint;
 import static org.junit.jupiter.api.Assertions.*;
+import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 class WebSecurityEndToEndTest {
 
@@ -251,6 +252,22 @@ class WebSecurityEndToEndTest {
             assertEquals("Basic realm=\"Restricted\", charset=\"UTF-8\"", r.headers().firstValue("WWW-Authenticate").orElse(""));
             assertTrue(r.headers().firstValue("Location").isEmpty());
             assertEquals(302, app.send("GET", "/secret", "alice:a-secret").statusCode());
+        }
+    }
+
+    @Test
+    void aResourceRequestedWithAnotherCaseIsNotServedAroundAConstraint() throws Exception {
+        Files.createDirectories(root.resolve("static"));
+        Files.writeString(root.resolve("static/x.txt"), "static x");
+        assumeTrue(Files.exists(root.resolve("STATIC/X.TXT")), "only meaningful on a case-insensitive file system");
+        var model = WebAppModel.builder("/")
+                .securityConstraints(List.of(constraint(List.of("/static/*"), List.of(), List.of(), List.of("admin"), null)))
+                .build();
+        try (var app = new SecureApp(model, root)) {
+            assertEquals(401, app.get("/static/x.txt").statusCode());
+            var r = app.get("/STATIC/x.txt");
+            assertEquals(404, r.statusCode(), r.body());
+            assertFalse(r.body().contains("static x"));
         }
     }
 

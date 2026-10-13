@@ -692,7 +692,7 @@ Statuts : `OPEN` → `INVESTIGATING` → `FIXED` (commit hash) → `CLOSED`.
 ## BUG-20261011-05 — case-sensitive constraint matching vs a case-insensitive file system
 
 - **Date** : 2026-10-11
-- **Statut** : OPEN (security follow-up, not fixed in Phase 6)
+- **Statut** : FIXED (real-name case check in ClassPathResourceProvider and DefaultServlet)
 - **Module touché** : `foy-core` (`ConstraintTable`, container default servlet, resource providers)
 - **Symptôme** : security constraints match url-patterns case-sensitively, as the specification
   requires, but a resource provider over a case-insensitive file system (macOS directory roots, Windows)
@@ -706,6 +706,10 @@ Statuts : `OPEN` → `INVESTIGATING` → `FIXED` (commit hash) → `CLOSED`.
   delegated to a file system that folds case.
 - **Fix envisagé** : make the default servlet (or the resource provider) refuse a resource whose resolved
   real name differs in case from the request path (404), so the served path is always the matched one.
+- **Investigation 2026-10-13** : fixed by `ResourcePaths.realNameMatches` (real name via `toRealPath(NOFOLLOW_LINKS)`),
+  applied in `ClassPathResourceProvider.DirLoc.resolve` and `DefaultServlet.locate` (any `file:` provider).
+  Pinned by `ClassPathResourceProviderTest.aPathThatDiffersInCaseFromTheRealNameIsMissing` and
+  `WebSecurityEndToEndTest.aResourceRequestedWithAnotherCaseIsNotServedAroundAConstraint` (skipped on case-sensitive file systems).
 
 ## BUG-20261011-06 — CallbackSerializerTest.holdWaitsForTheRunningCallbackAndDefersTheQueuedOnes is flaky
 

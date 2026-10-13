@@ -379,6 +379,7 @@ public final class ClassPathResourceProvider implements ResourceProvider {
                 Path p = path.resolve(rel).normalize();
                 if (!p.startsWith(base)) return new Missing();
                 if (Files.exists(p) && !p.toRealPath().startsWith(realBase)) return new Missing();
+                if (!ResourcePaths.realNameMatches(p, rel)) return new Missing();
                 return new DirLoc(base, realBase, p);
             } catch (java.nio.file.InvalidPathException | IOException e) {
                 return new Missing();

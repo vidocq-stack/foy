@@ -263,6 +263,22 @@ public final class DefaultServlet extends GenericServlet {
     }
 
     /**
+     * Whether a {@code file:} resource behind {@code path} is stored under exactly that spelling.
+     * A case-insensitive file system would serve {@code /STATIC/x} from {@code static/x}, around a
+     * constraint matched on the requested path (BUG-20261011-05). Other schemes (jar entries) are
+     * case-sensitive already.
+     */
+    private static boolean caseMatches(jakarta.servlet.ServletContext ctx, String path) {
+        try {
+            URL url = ctx.getResource(path);
+            if (url == null || !"file".equalsIgnoreCase(url.getProtocol())) return true;
+            return ResourcePaths.realNameMatches(Path.of(url.toURI()), path.substring(1));
+        } catch (java.net.MalformedURLException | java.net.URISyntaxException | IllegalArgumentException e) {
+            return true;
+        }
+    }
+
+    /**
      * The resource behind {@code path}, or {@code null} when refused, missing or a directory. A
      * client request may not reach {@code WEB-INF/} or {@code META-INF/}; a dispatch may
      * (section 10.5). Metadata comes from the provider ({@link VidocqServletContext.ResourceProvider#metadata})
@@ -274,6 +290,7 @@ public final class DefaultServlet extends GenericServlet {
                 ? ResourcePaths.isServable(path) : ResourcePaths.isDispatchable(path);
         if (!allowed || path.endsWith("/")) return null;
         var ctx = getServletContext();
+        if (!caseMatches(ctx, path)) return null;
         long length = -1;
         long lastModified = -1;
         URL url = null;

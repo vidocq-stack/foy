@@ -19,6 +19,11 @@
  */
 package io.vidocq.foy.internal.container;
 
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.LinkOption;
+import java.nio.file.Path;
+import java.util.Arrays;
 import java.util.Locale;
 
 /**
@@ -98,5 +103,30 @@ public final class ResourcePaths {
             if (code.equals("2e") || code.equals("2f") || code.equals("5c") || code.equals("00")) return true;
         }
         return false;
+    }
+
+    /**
+     * Whether the real name of {@code file}, as stored by the file system, spells the last segments
+     * exactly as {@code relative} does. A case-insensitive file system (macOS, Windows) finds
+     * {@code /STATIC/x} at {@code static/x}, while the container matches security constraints on
+     * the requested path case-sensitively: serving that file would bypass a {@code /static/*}
+     * constraint (BUG-20261011-05). Symbolic links are not followed, so an in-root link keeps its
+     * own name. A missing file matches (the caller reports absence); an I/O failure does not.
+     */
+    static boolean realNameMatches(Path file, String relative) {
+        if (!Files.exists(file, LinkOption.NOFOLLOW_LINKS)) return true;
+        String[] want = Arrays.stream(relative.split("/")).filter(s -> !s.isEmpty()).toArray(String[]::new);
+        Path real;
+        try {
+            real = file.toRealPath(LinkOption.NOFOLLOW_LINKS);
+        } catch (IOException e) {
+            return false;
+        }
+        int n = real.getNameCount();
+        if (want.length > n) return false;
+        for (int i = 0; i < want.length; i++) {
+            if (!real.getName(n - want.length + i).toString().equals(want[i])) return false;
+        }
+        return true;
     }
 }
