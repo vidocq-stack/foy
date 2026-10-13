@@ -148,6 +148,16 @@ class DefaultServletTest {
         @Override public InputStream openStream(String path) { return new DirProvider(root).openStream(path); }
     }
 
+    /** Serves bytes, but names the file with a {@code file:} URL that is not a valid URI (an unencoded space). */
+    record UnparsableUrlProvider(Path root) implements VidocqServletContext.ResourceProvider {
+        @Override public Set<String> listPaths(String path) { return null; }
+        @Override public InputStream openStream(String path) { return new DirProvider(root).openStream(path); }
+        @Override public URL toUrl(String path) {
+            try { return new URL("file:/tmp/a b/x.txt"); }
+            catch (java.net.MalformedURLException e) { throw new IllegalStateException(e); }
+        }
+    }
+
     private static final Instant MTIME = Instant.parse("2026-01-02T03:04:05Z");
     private static final DateTimeFormatter IMF_FIXDATE =
             DateTimeFormatter.ofPattern("EEE, dd MMM yyyy HH:mm:ss 'GMT'", java.util.Locale.US);
@@ -310,6 +320,12 @@ class DefaultServletTest {
                 HttpResponse.BodyHandlers.ofByteArray());
         byte[] expected = "before|caf\u00e9|after".getBytes(java.nio.charset.StandardCharsets.ISO_8859_1);
         assertArrayEquals(expected, r.body(), new String(r.body(), java.nio.charset.StandardCharsets.ISO_8859_1));
+    }
+
+    @Test
+    void aFileUrlThatCannotBecomeAPathIsRefused() throws Exception {
+        deploy(WebAppModel.builder("/ctx").build(), new UnparsableUrlProvider(root));
+        assertEquals(404, get("/ctx/digits.txt").statusCode(), "fails closed, although the stream exists");
     }
 
     @Test

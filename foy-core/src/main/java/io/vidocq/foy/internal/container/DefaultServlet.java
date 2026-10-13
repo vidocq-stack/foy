@@ -266,15 +266,19 @@ public final class DefaultServlet extends GenericServlet {
      * Whether a {@code file:} resource behind {@code path} is stored under exactly that spelling.
      * A case-insensitive file system would serve {@code /STATIC/x} from {@code static/x}, around a
      * constraint matched on the requested path (BUG-20261011-05). Other schemes (jar entries) are
-     * case-sensitive already.
+     * case-sensitive already. A provider aliasing a path to a file of another name is refused (404),
+     * and so is a request in another Unicode normalisation form than the stored name (NFD on
+     * HFS+): both fail closed.
      */
     private static boolean caseMatches(jakarta.servlet.ServletContext ctx, String path) {
         try {
             URL url = ctx.getResource(path);
             if (url == null || !"file".equalsIgnoreCase(url.getProtocol())) return true;
             return ResourcePaths.realNameMatches(Path.of(url.toURI()), path.substring(1));
-        } catch (java.net.MalformedURLException | java.net.URISyntaxException | IllegalArgumentException e) {
-            return true;
+        } catch (java.net.MalformedURLException e) {
+            return true; // locate() reports the same failure as a missing resource
+        } catch (java.net.URISyntaxException | IllegalArgumentException e) {
+            return false; // a file: URL that is no path fails closed
         }
     }
 

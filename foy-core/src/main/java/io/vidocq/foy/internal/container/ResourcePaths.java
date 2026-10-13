@@ -111,7 +111,9 @@ public final class ResourcePaths {
      * {@code /STATIC/x} at {@code static/x}, while the container matches security constraints on
      * the requested path case-sensitively: serving that file would bypass a {@code /static/*}
      * constraint (BUG-20261011-05). Symbolic links are not followed, so an in-root link keeps its
-     * own name. A missing file matches (the caller reports absence); an I/O failure does not.
+     * own name. A missing file matches (the caller reports absence); an I/O failure does not. A
+     * request in another Unicode normalisation form than the stored name (NFD on HFS+) does not
+     * match either: this fails closed.
      */
     static boolean realNameMatches(Path file, String relative) {
         if (!Files.exists(file, LinkOption.NOFOLLOW_LINKS)) return true;

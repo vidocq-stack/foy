@@ -272,6 +272,23 @@ class WebSecurityEndToEndTest {
     }
 
     @Test
+    void aWelcomeFileRequestedWithAnotherCaseIsNotServedAroundAConstraint() throws Exception {
+        Files.createDirectories(root.resolve("static"));
+        Files.writeString(root.resolve("static/index.html"), "static index");
+        assumeTrue(Files.exists(root.resolve("STATIC/INDEX.HTML")), "only meaningful on a case-insensitive file system");
+        var model = WebAppModel.builder("/").welcomeFiles(List.of("index.html"))
+                .securityConstraints(List.of(constraint(List.of("/static/*"), List.of(), List.of(), List.of("admin"), null)))
+                .build();
+        try (var app = new SecureApp(model, root)) {
+            assertEquals(401, app.get("/static/").statusCode());
+            var r = app.get("/STATIC/");
+            assertNotEquals(200, r.statusCode(), r.body());
+            assertFalse(r.body().contains("static index"));
+            assertEquals(404, r.statusCode());
+        }
+    }
+
+    @Test
     void theWelcomeTargetIsChecked() throws Exception {
         files();
         var model = WebAppModel.builder("/").welcomeFiles(List.of("index.html"))
