@@ -47,8 +47,14 @@ public final class DependencyHints {
             "jakarta/servlet/annotation/HandlesTypes");
 
     /**
-     * Resource the processor writes in its final round whenever it generated at least one component or
-     * one class-index entry. Its content is a single line, {@code foy-processor <version>}. A jar that
+     * Resource the processor writes in its final round whenever the processor processed at least one type.
+     * Its content is {@code key=value} lines, so that a caller can extend it later:
+     * <pre>
+     * processor=foy-processor
+     * version=&lt;version or unknown&gt;
+     * </pre>
+     * Under {@code --processor-module-path} the version reads {@code unknown}, because a named module's
+     * {@code Package} has no implementation version. A jar that
      * already carries it was processed, at its own build or by an earlier {@code vidocq:generate}, and
      * is skipped, so a Foy-built library never gets a second set of components.
      */

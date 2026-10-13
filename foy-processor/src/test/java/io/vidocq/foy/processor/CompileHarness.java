@@ -116,6 +116,31 @@ final class CompileHarness {
         }
     }
 
+    /**
+     * Compiles every generated source under {@code out/generated} with {@code -proc:none}, against the
+     * dependency classes plus the test classpath, as a caller must after a {@code -proc:only} run.
+     */
+    static Result compileGenerated(Path out) throws Exception {
+        JavaCompiler compiler = ToolProvider.getSystemJavaCompiler();
+        Path generated = out.resolve("generated");
+        Path target = Files.createDirectories(out.resolve("generated-classes"));
+        List<File> files;
+        try (var walk = Files.walk(generated)) {
+            files = walk.filter(p -> p.toString().endsWith(".java")).map(Path::toFile).toList();
+        }
+        var diags = new DiagnosticCollector<JavaFileObject>();
+        try (StandardJavaFileManager fm = compiler.getStandardFileManager(diags, Locale.ROOT, null)) {
+            fm.setLocation(StandardLocation.CLASS_OUTPUT, List.of(target.toFile()));
+            List<File> cp = new ArrayList<>();
+            cp.add(out.resolve("dependency").toFile());
+            cp.addAll(testClasspath());
+            fm.setLocation(StandardLocation.CLASS_PATH, cp);
+            boolean ok = compiler.getTask(null, fm, diags, List.of("-proc:none"), null,
+                    fm.getJavaFileObjectsFromFiles(files)).call();
+            return new Result(null, diags.getDiagnostics(), ok, out);
+        }
+    }
+
     private static List<File> testClasspath() throws Exception {
         Set<File> cp = new LinkedHashSet<>();
         for (String e : System.getProperty("java.class.path", "").split(File.pathSeparator)) {

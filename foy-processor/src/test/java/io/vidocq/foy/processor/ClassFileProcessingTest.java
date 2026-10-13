@@ -39,24 +39,43 @@ class ClassFileProcessingTest {
             public class S extends jakarta.servlet.http.HttpServlet {
                 @jakarta.servlet.annotation.WebListener
                 public static class L implements jakarta.servlet.ServletContextListener {}
+                static Object anonymous() {
+                    return new jakarta.servlet.ServletContextListener() {};
+                }
+                static void local() {
+                    @jakarta.servlet.annotation.WebListener
+                    class Loc implements jakarta.servlet.ServletContextListener {}
+                }
             }
             """);
 
     @Test
     void processingCompiledClassesGeneratesTheCompanions() throws Exception {
-        var r = CompileHarness.processClasses(out, SOURCES, List.of("a.S"));
+        var r = CompileHarness.processClasses(out, SOURCES, ALL_CLASSES);
         assertTrue(r.success(), r.messages());
+        assertGeneratedSourcesCompile();
+        assertFalse(Files.exists(out.resolve("generated/a/S$1$$FoyComponent.java")), "anonymous class");
+        assertFalse(Files.exists(out.resolve("generated/a/S$1Loc$$FoyComponent.java")), "local class");
         assertTrue(Files.exists(out.resolve("generated/a/S$$FoyComponent.java")), r.messages());
         assertTrue(Files.exists(out.resolve("generated/a/S$L$$FoyComponent.java")), r.messages());
         String services = r.resource("META-INF/services/io.vidocq.foy.spi.gen.WebComponent");
         assertTrue(services.contains("a.S$$FoyComponent"), services);
         assertTrue(services.contains("a.S$L$$FoyComponent"), services);
+        assertFalse(services.contains("$1"), services);
+    }
+
+    private static final List<String> ALL_CLASSES = List.of("a.S", "a.S$L", "a.S$1", "a.S$1Loc");
+
+    private void assertGeneratedSourcesCompile() throws Exception {
+        var c = CompileHarness.compileGenerated(out);
+        assertTrue(c.success(), c.messages());
     }
 
     @Test
     void passingANestedTypeAsWellAsItsOwnerDoesNotRecreateAFile() throws Exception {
         var r = CompileHarness.processClasses(out, SOURCES, List.of("a.S", "a.S$L"));
         assertTrue(r.success(), r.messages());
+        assertGeneratedSourcesCompile();
         assertFalse(r.messages().contains("recreate"), r.messages());
         assertTrue(Files.exists(out.resolve("generated/a/S$L$$FoyComponent.java")), r.messages());
     }
@@ -65,7 +84,8 @@ class ClassFileProcessingTest {
     void theMarkerIsWrittenWhenComponentsAreGenerated() throws Exception {
         var r = CompileHarness.processClasses(out, SOURCES, List.of("a.S"));
         assertTrue(r.success(), r.messages());
-        assertTrue(r.resource(DependencyHints.MARKER).startsWith("foy-processor "), r.resource(DependencyHints.MARKER));
+        assertGeneratedSourcesCompile();
+        assertMarker(r.resource(DependencyHints.MARKER));
     }
 
     @Test
@@ -75,7 +95,14 @@ class ClassFileProcessingTest {
         assertTrue(r.success(), r.messages());
         assertFalse(Files.exists(out.resolve("generated/a/Plain$$FoyComponent.java")));
         assertTrue(Files.exists(out.resolve("classes/META-INF/foy/class-index.list")));
-        assertTrue(r.resource(DependencyHints.MARKER).startsWith("foy-processor "));
+        assertMarker(r.resource(DependencyHints.MARKER));
+    }
+
+    private static void assertMarker(String content) {
+        var lines = content.lines().toList();
+        assertEquals(2, lines.size(), content);
+        assertEquals("processor=foy-processor", lines.get(0), content);
+        assertTrue(lines.get(1).startsWith("version=") && lines.get(1).length() > "version=".length(), content);
     }
 
     @Test

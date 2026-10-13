@@ -24,6 +24,7 @@ import javax.annotation.processing.RoundEnvironment;
 import javax.annotation.processing.SupportedAnnotationTypes;
 import javax.lang.model.SourceVersion;
 import javax.lang.model.element.Element;
+import javax.lang.model.element.NestingKind;
 import javax.lang.model.element.TypeElement;
 import javax.tools.Diagnostic;
 import javax.tools.FileObject;
@@ -69,6 +70,10 @@ public final class FoyWebComponentProcessor extends AbstractProcessor {
 
     private void visit(Element element) {
         if (!(element instanceof TypeElement type)) {
+            return;
+        }
+        // Source mode never visits these; class-file mode would, and they cannot get a companion.
+        if (type.getNestingKind() == NestingKind.ANONYMOUS || type.getNestingKind() == NestingKind.LOCAL) {
             return;
         }
         if (!visited.add(processingEnv.getElementUtils().getBinaryName(type).toString())) {
@@ -121,7 +126,7 @@ public final class FoyWebComponentProcessor extends AbstractProcessor {
             FileObject f = processingEnv.getFiler().createResource(StandardLocation.CLASS_OUTPUT, "",
                     DependencyHints.MARKER, anyOrigin != null ? anyOrigin : firstType);
             try (Writer w = f.openWriter()) {
-                w.write("foy-processor " + (version != null ? version : "unknown") + "\n");
+                w.write("processor=foy-processor\nversion=" + (version != null ? version : "unknown") + "\n");
             }
         } catch (IOException e) {
             processingEnv.getMessager().printMessage(Diagnostic.Kind.ERROR,
