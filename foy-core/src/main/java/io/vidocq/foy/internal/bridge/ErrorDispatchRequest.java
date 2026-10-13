@@ -29,6 +29,8 @@ import jakarta.servlet.http.HttpServletRequestWrapper;
  * path elements, the request URI and the servlet mapping are those of the error-page location,
  * as for a forward to it. The query string, the parameters and the attributes (the
  * {@code jakarta.servlet.error.*} ones describe the failing request) stay the original request's.
+ * The location's own query string, if any, is ignored: the query string and the parameters stay
+ * those of the failing request.
  */
 final class ErrorDispatchRequest extends HttpServletRequestWrapper {
 

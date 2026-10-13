@@ -295,6 +295,11 @@ Statuts : `OPEN` → `INVESTIGATING` → `FIXED` (commit hash) → `CLOSED`.
     and overrides `getServletPath`, `getPathInfo`, `getRequestURI`, `getRequestURL` and
     `getHttpServletMapping` from the `DispatchTarget` (Servlet 6.1 section 10.9.1); the query string,
     parameters and `jakarta.servlet.error.*` attributes are unchanged. Static error pages still pass.
+    Pinned by `ErrorPageDispatchTest#anErrorPageSeesTheLocationsServletPath`,
+    `anErrorPageAfterAnExceptionSeesTheLocationsPaths`, `theHttpServletMappingOfAnErrorPageIsTheLocations`,
+    `aPathMappedErrorPageSeesTheServletPathAndPathInfoOfItsLocation`,
+    `anErrorPageRequestUrlEndsWithItsLocationPath` and
+    `anErrorInsideAForwardGivesTheErrorPageItsLocationButTheOriginalErrorUri`.
 
 ## BUG-20261009-04 — decoded paths leak into dispatch URIs (query split, wrapper URIs)
 

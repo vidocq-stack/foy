@@ -142,6 +142,57 @@ class ErrorPageDispatchTest {
         assertEquals("/err", get("/t").body());
     }
 
+    private void startMapped(String errPattern, HttpServlet errorServlet, String[] otherPatterns,
+                             HttpServlet... others) {
+        var ctx = new VidocqServletContext("/");
+        ctx.setErrorPages(pages);
+        var mappings = new java.util.ArrayList<ServletDispatcher.Mapping>();
+        mappings.add(new ServletDispatcher.Mapping(
+                io.vidocq.foy.internal.dispatcher.UrlPatternMatcher.of(errPattern), errorServlet, "ERR", true));
+        for (int i = 0; i < others.length; i++) {
+            mappings.add(new ServletDispatcher.Mapping(
+                    io.vidocq.foy.internal.dispatcher.UrlPatternMatcher.of(otherPatterns[i]),
+                    others[i], "S" + i, true));
+        }
+        var bridge = new ChappeServletBridge(new ServletDispatcher(mappings),
+                new FilterRegistry(List.of()), TestSecurity.permitAll(ctx), null, "/");
+        var r = TestServerLauncherAccess.start(bridge);
+        this.server = r.server();
+        this.port = r.port();
+    }
+
+    @Test
+    void aPathMappedErrorPageSeesTheServletPathAndPathInfoOfItsLocation() throws Exception {
+        pages.register(500, "/err/x");
+        startMapped("/err/*", new HttpServlet() {
+            @Override protected void doGet(HttpServletRequest req, HttpServletResponse res) throws IOException {
+                res.getWriter().print(req.getServletPath() + "|" + req.getPathInfo());
+            }
+        }, new String[] {"/t"}, thrower((q, r) -> r.sendError(500)));
+        assertEquals("/err|/x", get("/t").body());
+    }
+
+    @Test
+    void anErrorPageRequestUrlEndsWithItsLocationPath() throws Exception {
+        pages.register(500, "/err");
+        startMapped("/err", new HttpServlet() {
+            @Override protected void doGet(HttpServletRequest req, HttpServletResponse res) throws IOException {
+                res.getWriter().print(req.getRequestURL());
+            }
+        }, new String[] {"/t"}, thrower((q, r) -> r.sendError(500)));
+        var body = get("/t").body();
+        assertTrue(body.endsWith(":" + port + "/err"), body);
+    }
+
+    @Test
+    void anErrorInsideAForwardGivesTheErrorPageItsLocationButTheOriginalErrorUri() throws Exception {
+        pages.register(RuntimeException.class, "/err");
+        startMapped("/err", pathsReporter(), new String[] {"/t", "/f"},
+                thrower((q, r) -> q.getRequestDispatcher("/f").forward(q, r)),
+                thrower((q, r) -> { throw new IllegalStateException("fwd"); }));
+        assertEquals("/err|/err|/t", get("/t").body());
+    }
+
     @Test
     void statusErrorPageGetsTheMessage() throws Exception {
         pages.register(411, "/err");
