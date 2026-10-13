@@ -138,11 +138,20 @@ public final class ClassPathResourceProvider implements ResourceProvider {
         return out.isEmpty() ? null : new LinkedHashSet<>(out);
     }
 
+    /**
+     * The file of the first root holding {@code path}, the one {@link #metadata} describes. When it
+     * cannot be opened the result is {@code null}: falling through to the next root would stream
+     * another file than the length and date announced for it (BUG-20261009-13).
+     */
     @Override public InputStream openStream(String path) {
         if (!safe(path) || path.endsWith("/")) return null;
         for (Loc loc : locate(path.substring(1))) {
             if (loc.isFile()) {
-                try { return loc.open(); } catch (IOException e) { /* try the next root */ }
+                try {
+                    return loc.open();
+                } catch (IOException e) {
+                    return null;
+                }
             }
         }
         return null;

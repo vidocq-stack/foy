@@ -452,7 +452,9 @@ Statuts : `OPEN` → `INVESTIGATING` → `FIXED` (commit hash) → `CLOSED`.
 ## BUG-20261009-13 — resource metadata and openStream may describe different roots
 
 - **Date** : 2026-10-09
-- **Statut** : OPEN (low)
+- **Statut** : FIXED — `openStream` now opens only the first root's file, the one `metadata`
+  describes, and returns `null` when it cannot be opened instead of streaming the next root's file;
+  pinned by `ClassPathResourceProviderTest.metadataAndStreamDescribeTheSameRoot`.
 - **Module touché** : `foy-core` (`ClassPathResourceProvider.metadata` / `openStream`)
 - **Symptôme** : `metadata(path)` reports the first root holding a file at `path`, while
   `openStream(path)` falls through to the next root when opening the first one fails: the default

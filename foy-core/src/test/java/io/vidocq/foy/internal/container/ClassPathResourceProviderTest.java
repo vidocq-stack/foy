@@ -85,6 +85,35 @@ class ClassPathResourceProviderTest {
         assertEquals("B", read(reversed.openStream("/index.html")));
     }
 
+    /**
+     * BUG-20261009-13: the metadata and the stream of a path describe the same file. When the first
+     * root's file cannot be opened, the stream does not fall through to the next root's file, whose
+     * length and date the metadata does not describe.
+     */
+    @Test
+    void metadataAndStreamDescribeTheSameRoot(@TempDir Path dir) throws Exception {
+        Path first = dir.resolve("first");
+        Path second = dir.resolve("second");
+        Files.createDirectories(first.resolve("META-INF/resources"));
+        Files.createDirectories(second.resolve("META-INF/resources"));
+        Path unreadable = first.resolve("META-INF/resources/x.txt");
+        Files.writeString(unreadable, "FIRST-LONGER");
+        Files.writeString(second.resolve("META-INF/resources/x.txt"), "2ND");
+        assumeTrue(unreadable.toFile().setReadable(false, false) && !Files.isReadable(unreadable),
+                "needs a file system that enforces read permissions (not root)");
+        try {
+            var p = new ClassPathResourceProvider(loader(),
+                    List.of(first.toUri().toURL(), second.toUri().toURL()));
+            var meta = p.metadata("/x.txt");
+            assertNotNull(meta);
+            assertEquals("FIRST-LONGER".length(), meta.length());
+            InputStream in = p.openStream("/x.txt");
+            assertNull(in, "the stream must not come from another root than the metadata");
+        } finally {
+            unreadable.toFile().setReadable(true, false);
+        }
+    }
+
     @Test
     void urlsAreJarUrlsForJarsAndFileUrlsForExplodedRoots(@TempDir Path dir) throws Exception {
         var p = twoJars(dir, false);
