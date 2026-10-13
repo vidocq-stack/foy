@@ -1,5 +1,23 @@
 # BUG.md — foy
 
+## BUG-20261013-02 — forward and include put the container wrapper above an HTTP application wrapper instead of under it
+
+- Date: 2026-10-13 (review of the BUG-20261009-01 fix).
+- Symptom: when an application passes an `HttpServletRequestWrapper` (or `HttpServletResponseWrapper`)
+  to `forward`/`include`, the target does not receive the object the application passed (section
+  6.2.2): it receives the container's `ForwardedRequest`/`IncludedRequest` wrapping it. The application
+  wrapper's overrides of `getParameter*`, the path methods and `getAttribute` are hidden, because the
+  dispatch wrapper answers them itself. Tomcat puts its dispatch wrapper under the application's chain
+  for HTTP wrappers too (`ApplicationDispatcher.wrapRequest`).
+- Minimal repro: servlet `C` calls `getRequestDispatcher("/T").forward(new HttpServletRequestWrapper(req) {
+  getParameter -> "h" }, resp)`; `T` reads `getParameter("p")` → `null` instead of `h`.
+  `DispatcherSemanticsTest.anHttpWrapperIsStillPassedAsBefore` pins today's behaviour through a
+  delegated method (`getHeader`).
+- Cause: `RequestDispatcherImpl` only hooks the lowest *non-HTTP* wrapper (BUG-20261009-01). When the
+  outer object is HTTP, it still wraps the outer object in the dispatch wrapper.
+- Status: OPEN. Before changing it, gate on a full `run-official-tck-servlet6.1.sh --all` run before
+  and after the change: the request-dispatcher and wrapper suites wrap requests in filters.
+
 ## BUG-20261013-02 — FoyChappeBoot fails on the module path: foy-core does not declare `uses CdiContextListeners`
 
 - Date: 2026-10-13 (vidocq PR 245, `vidocq-runtime-it-foy-servlet` red in CI).
