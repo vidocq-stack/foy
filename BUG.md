@@ -1,5 +1,19 @@
 # BUG.md — foy
 
+## BUG-20261013-04 — an async cycle started in an error page never runs
+
+- Date: 2026-10-13 (final fix wave of the dispatch batch).
+- Symptom: an error page that calls `startAsync()` (or `startAsync(req, res)`) and then
+  `AsyncContext.dispatch()` gets an empty response. The dispatch never runs, and no exception tells the
+  application.
+- Minimal repro: a servlet calls `sendError(500)`. The `<error-page>` location is async-supported; it calls
+  `startAsync(req, res)` then `dispatch()`. The client receives an empty body.
+- Cause: `ChappeServletBridge` runs the async cycles (`runAsyncCycles`) before the error handling
+  (`maybeHandleError`), so a cycle opened by the ERROR dispatch is never driven. A zero-argument
+  `startAsync()` also binds the container request, not the `ErrorDispatchRequest`.
+- Status: OPEN. Fix direction: either drive the async cycles after an ERROR dispatch, or refuse
+  `startAsync()` during an ERROR dispatch with an `IllegalStateException` so the gap is no longer silent.
+
 ## BUG-20261013-03 — forward and include put the container wrapper above an HTTP application wrapper instead of under it
 
 - Date: 2026-10-13 (review of the BUG-20261009-01 fix).
