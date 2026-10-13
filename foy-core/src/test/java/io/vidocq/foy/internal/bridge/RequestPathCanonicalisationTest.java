@@ -99,6 +99,26 @@ class RequestPathCanonicalisationTest {
         }
     }
 
+    /** Dispatches asynchronously to {@code /t}. */
+    public static class AsyncToT extends HttpServlet {
+        @Override protected void doGet(HttpServletRequest req, HttpServletResponse resp) {
+            req.startAsync().dispatch("/t");
+        }
+    }
+
+    /** Forwards by name to the {@code async} servlet; reports the paths when dispatched back. */
+    public static class NamedForwarder extends HttpServlet {
+        @Override protected void doGet(HttpServletRequest req, HttpServletResponse resp)
+                throws ServletException, IOException {
+            if (req.getDispatcherType() == jakarta.servlet.DispatcherType.ASYNC) {
+                resp.setCharacterEncoding("UTF-8");
+                resp.getWriter().write("BACK SP=" + req.getServletPath() + "|PI=" + req.getPathInfo());
+                return;
+            }
+            getServletContext().getNamedDispatcher("async").forward(req, resp);
+        }
+    }
+
     /** Includes the {@code to} parameter. */
     public static class Includer extends HttpServlet {
         @Override protected void doGet(HttpServletRequest req, HttpServletResponse resp)
@@ -326,6 +346,33 @@ class RequestPathCanonicalisationTest {
         var r = get("/ctx/fwd?to=/as%20ync/caf%C3%A9");
         assertEquals(200, r.status(), r.body());
         assertEquals("ASYNC SP=/as ync|PI=/caf\u00e9", r.body());
+    }
+
+    @Test
+    void anErrorPageRequestUriIsEncoded() throws Exception {
+        deploy(new ErrorPageRegistry().register(400, "/err page"),
+                servlet("errpage", Paths.class, Paths::new, "/err page"));
+        var r = get("/ctx/a%2fb");
+        assertEquals(400, r.status(), r.body());
+        assertEquals("SP=/err page|PI=null|URI=/ctx/err%20page|URL=http://localhost:" + port
+                + "/ctx/err%20page", r.body());
+    }
+
+    @Test
+    void anAsyncDispatchTargetReportsTheUrlOfItsOwnPath() throws Exception {
+        deploy(null, servlet("asyncToT", AsyncToT.class, AsyncToT::new, "/go/*"),
+                servlet("t", Paths.class, Paths::new, "/t"));
+        var r = get("/ctx/go/x");
+        assertEquals(200, r.status(), r.body());
+        assertEquals("SP=/t|PI=null|URI=/ctx/t|URL=http://localhost:" + port + "/ctx/t", r.body());
+    }
+
+    @Test
+    void zeroArgumentAsyncDispatchAfterANamedForwardUsesTheCallerPath() throws Exception {
+        deploy(null, servlet("named", NamedForwarder.class, NamedForwarder::new, "/nf ward/*"));
+        var r = get("/ctx/nf%20ward/caf%C3%A9");
+        assertEquals(200, r.status(), r.body());
+        assertEquals("BACK SP=/nf ward|PI=/caf\u00e9", r.body());
     }
 
     @Test

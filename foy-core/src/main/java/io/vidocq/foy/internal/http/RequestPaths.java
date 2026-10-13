@@ -160,7 +160,10 @@ public final class RequestPaths {
      * character other than a {@code pchar} or {@code /} is percent-encoded as UTF-8 bytes, so a
      * decoded {@code ?} or space cannot be read back as a query or a separator. A {@code %} already
      * followed by two hex digits is kept, any other {@code %} becomes {@code %25}; the encoding is
-     * therefore idempotent. Unlike the directory-redirect encoder of the bridge, {@code ;} (a
+     * therefore idempotent. Existing {@code %XX} triplets are kept as they are, so a dispatch path
+     * that literally holds {@code %20} yields a URI that decodes to a space: the deliberate
+     * trade-off that avoids double encoding. A lone or mismatched surrogate is encoded as U+FFFD
+     * ({@code %EF%BF%BD}). Unlike the directory-redirect encoder of the bridge, {@code ;} (a
      * sub-delim) is kept.
      */
     public static String encodeUriPath(String path) {
@@ -176,12 +179,17 @@ public final class RequestPaths {
                 continue;
             }
             if (out == null) out = new StringBuilder(n + 16).append(path, 0, i);
-            int end = Character.isHighSurrogate(c) && i + 1 < n ? i + 2 : i + 1;
-            for (byte b : path.substring(i, end).getBytes(StandardCharsets.UTF_8)) {
+            String chars;
+            if (i + 1 < n && Character.isSurrogatePair(c, path.charAt(i + 1))) {
+                chars = path.substring(i, i + 2);
+                i++;
+            } else {
+                chars = Character.isSurrogate(c) ? "\uFFFD" : String.valueOf(c); // lone surrogate
+            }
+            for (byte b : chars.getBytes(StandardCharsets.UTF_8)) {
                 int v = b & 0xff;
                 out.append('%').append(HEX.charAt(v >> 4)).append(HEX.charAt(v & 15));
             }
-            i = end - 1;
         }
         return out == null ? path : out.toString();
     }

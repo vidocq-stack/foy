@@ -136,13 +136,31 @@ class RequestPathsTest {
             "/café                     | /caf%C3%A9",
             "/100%                     | /100%25",
             "/x%2                      | /x%252",
+            "/a;b:c@d                  | /a;b:c@d",
+            "/%zz                      | /%25zz",
+            "/a%2fb                    | /a%2fb",
     })
     void encodesADecodedPathForARequestUri(String path, String expected) {
         assertEquals(expected, RequestPaths.encodeUriPath(path));
     }
 
+    @Test
+    void encodingTheEmptyPathGivesTheEmptyPath() {
+        assertEquals("", RequestPaths.encodeUriPath(""));
+    }
+
+    @Test
+    void surrogatePairsAreEncodedTogetherAndLoneSurrogatesAsReplacementCharacters() {
+        assertEquals("/%F0%9F%98%80", RequestPaths.encodeUriPath("/\uD83D\uDE00"));
+        assertEquals("%EF%BF%BD%41", RequestPaths.encodeUriPath("\uD800%41"));
+        assertEquals("/%EF%BF%BD", RequestPaths.encodeUriPath("/\uDC00"));
+        assertEquals("/%EF%BF%BDa", RequestPaths.encodeUriPath("/\uD800a"));
+        assertEquals("/%EF%BF%BD", RequestPaths.encodeUriPath("/\uD800"));
+    }
+
     @ParameterizedTest
-    @ValueSource(strings = {"/my file.txt", "/my%20file.txt", "/a?b", "/café", "/100%", "/x%2"})
+    @ValueSource(strings = {"/my file.txt", "/my%20file.txt", "/a?b", "/café", "/100%", "/x%2",
+            "/a;b:c@d", "/%zz", "/a%2fb", ""})
     void encodingAPathIsIdempotent(String path) {
         String once = RequestPaths.encodeUriPath(path);
         assertEquals(once, RequestPaths.encodeUriPath(once), path);
