@@ -172,7 +172,7 @@ class DefaultServletTest {
         }
     }
 
-    private static final Instant MTIME =Instant.parse("2026-01-02T03:04:05Z");
+    private static final Instant MTIME = Instant.parse("2026-01-02T03:04:05Z");
     private static final DateTimeFormatter IMF_FIXDATE =
             DateTimeFormatter.ofPattern("EEE, dd MMM yyyy HH:mm:ss 'GMT'", java.util.Locale.US);
     private static final String MTIME_HTTP = IMF_FIXDATE.format(MTIME.atOffset(ZoneOffset.UTC));
