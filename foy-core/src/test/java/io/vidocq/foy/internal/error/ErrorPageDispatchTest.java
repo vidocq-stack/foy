@@ -323,4 +323,22 @@ class ErrorPageDispatchTest {
         this.port = r.port();
         assertEquals("/t|FWD", get("/t").body());
     }
+
+    @Test
+    void aRelativeIncludeFromAnErrorPageResolvesAgainstTheLocation() throws Exception {
+        pages.register(500, "/err/page");
+        startMapped("/err/*", new HttpServlet() {
+            @Override protected void doGet(HttpServletRequest req, HttpServletResponse res)
+                    throws IOException, ServletException {
+                req.getRequestDispatcher("footer").include(req, res);
+            }
+        }, new String[] {"/t", "/err/footer"}, thrower((q, r) -> r.sendError(500)),
+                new HttpServlet() {
+                    @Override protected void doGet(HttpServletRequest req, HttpServletResponse res)
+                            throws IOException {
+                        res.getWriter().print("footer-marker");
+                    }
+                });
+        assertEquals("footer-marker", get("/t").body());
+    }
 }

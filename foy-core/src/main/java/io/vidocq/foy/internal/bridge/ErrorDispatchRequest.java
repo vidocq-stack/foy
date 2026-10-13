@@ -21,6 +21,7 @@ package io.vidocq.foy.internal.bridge;
 
 import io.vidocq.foy.internal.dispatcher.DispatchTarget;
 import io.vidocq.foy.internal.http.RequestPaths;
+import jakarta.servlet.RequestDispatcher;
 import jakarta.servlet.http.HttpServletMapping;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletRequestWrapper;
@@ -31,7 +32,8 @@ import jakarta.servlet.http.HttpServletRequestWrapper;
  * as for a forward to it. The query string, the parameters and the attributes (the
  * {@code jakarta.servlet.error.*} ones describe the failing request) stay the original request's.
  * The location's own query string, if any, is ignored: the query string and the parameters stay
- * those of the failing request.
+ * those of the failing request. A relative {@link #getRequestDispatcher(String) request dispatcher}
+ * path is resolved against the location's path, as for a forward.
  */
 final class ErrorDispatchRequest extends HttpServletRequestWrapper {
 
@@ -55,6 +57,13 @@ final class ErrorDispatchRequest extends HttpServletRequestWrapper {
     @Override public StringBuffer getRequestURL() {
         if (target.path() == null) return super.getRequestURL();
         return RequestUrls.of(this);
+    }
+    /** Section 9.1: a relative path is resolved against the error-page location. */
+    @Override public RequestDispatcher getRequestDispatcher(String path) {
+        if (path == null || path.startsWith("/") || target.servletPath() == null) {
+            return super.getRequestDispatcher(path);
+        }
+        return super.getRequestDispatcher(DispatchParameters.resolveRelative(getServletPath(), getPathInfo(), path));
     }
     @Override public HttpServletMapping getHttpServletMapping() {
         return target.mapping() != null ? target.mapping() : super.getHttpServletMapping();
