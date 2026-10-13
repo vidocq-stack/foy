@@ -62,6 +62,10 @@ public final class HttpSessionImpl implements HttpSession {
     private volatile boolean invalidated;
     /** Requests currently using the session; guarded by {@code this}. */
     private int accessCount;
+    /** {@code sessionIdChanged} notifications in progress; guarded by {@code this}. */
+    private int idChanges;
+    /** An invalidation was claimed during an id change and completes when it ends; guarded by {@code this}. */
+    private boolean destructionDeferred;
     private final ConcurrentMap<String, Object> attributes = new ConcurrentHashMap<>();
     /**
      * Container-private values (authentication state). They are not attributes: no listener, no
@@ -148,6 +152,14 @@ public final class HttpSessionImpl implements HttpSession {
      * invalidation.
      */
     void completeInvalidation() {
+        synchronized (this) {
+            // An id-change listener is running: it must not see a destroyed session, and the
+            // invalidating thread must not wait for it. The id change completes the invalidation.
+            if (idChanges > 0) {
+                destructionDeferred = true;
+                return;
+            }
+        }
         try {
             manager.listenerRegistry().fireSessionDestroyed(this);
         } catch (RuntimeException e) {
@@ -176,6 +188,20 @@ public final class HttpSessionImpl implements HttpSession {
      * id change and an invalidation never interleave.
      */
     synchronized boolean isLive() { return !invalidating && !invalidated; }
+
+    /** An id change claimed under this session's monitor is about to notify its listeners. */
+    synchronized void beginIdChange() { idChanges++; }
+
+    /** The id-change listeners returned: completes an invalidation claimed meanwhile, if any. */
+    void endIdChange() {
+        boolean complete;
+        synchronized (this) {
+            idChanges--;
+            complete = idChanges == 0 && destructionDeferred;
+            if (complete) destructionDeferred = false;
+        }
+        if (complete) completeInvalidation();
+    }
 
     /** Re-keys the session ({@link SessionManager#changeSessionId}, under this session's monitor). */
     void setId(String newId) { this.id = newId; }

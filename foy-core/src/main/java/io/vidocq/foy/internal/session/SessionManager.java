@@ -61,16 +61,20 @@ public final class SessionManager implements AutoCloseable {
     private final Object renameLock = new Object();
     private ScheduledExecutorService reaper;
     private final ClassLoader applicationLoader;
-    /** Set by {@link #close()}: no session is created afterwards. */
-    private volatile boolean closed;
+    /** Set by {@link #close()}: no session is created afterwards. Guarded by {@link #creationLock}. */
+    private boolean closed;
     /**
-     * {@link #createNew()} holds the read lock from its {@code closed} check until
-     * {@code sessionCreated} returned; {@link #close()} sets {@code closed} under the write lock.
-     * So every session created before the close is in the store, fully announced, when close
-     * scans it, and none is created afterwards.
+     * Guards {@link #closed} and {@link #creating}. {@link #createNew()} checks {@code closed} and
+     * counts itself under it, then fires {@code sessionCreated} after releasing it;
+     * {@link #close()} sets {@code closed} and waits until no creation is being announced. So every
+     * session created before the close is in the store, fully announced, when close scans it,
+     * none is created afterwards, and no listener runs under the lock (BUG-20261009-14).
      */
-    private final java.util.concurrent.locks.ReadWriteLock closeLock =
-            new java.util.concurrent.locks.ReentrantReadWriteLock();
+    private final java.util.concurrent.locks.ReentrantLock creationLock =
+            new java.util.concurrent.locks.ReentrantLock();
+    private final java.util.concurrent.locks.Condition creationsAnnounced = creationLock.newCondition();
+    /** Sessions stored whose {@code sessionCreated} has not returned yet. Guarded by {@link #creationLock}. */
+    private int creating;
 
     public SessionManager(SessionStore store, ServletContext servletContext,
                           int defaultMaxInactiveSeconds) {
@@ -127,17 +131,27 @@ public final class SessionManager implements AutoCloseable {
      *         application is being undeployed): {@code getSession(true)} then throws it too
      */
     public HttpSessionImpl createNew() {
-        closeLock.readLock().lock();
+        HttpSessionImpl s;
+        creationLock.lock();
         try {
             if (closed) throw new IllegalStateException("the web application is being undeployed");
-            String id = generateId();
-            HttpSessionImpl s = new HttpSessionImpl(id, servletContext, this, defaultMaxInactiveSeconds);
+            s = new HttpSessionImpl(generateId(), servletContext, this, defaultMaxInactiveSeconds);
             store.put(s);
-            listenerRegistry.fireSessionCreated(s);
-            return s;
+            creating++;
         } finally {
-            closeLock.readLock().unlock();
+            creationLock.unlock();
         }
+        try {
+            listenerRegistry.fireSessionCreated(s);
+        } finally {
+            creationLock.lock();
+            try {
+                if (--creating == 0) creationsAnnounced.signalAll();
+            } finally {
+                creationLock.unlock();
+            }
+        }
+        return s;
     }
 
     /**
@@ -145,19 +159,21 @@ public final class SessionManager implements AutoCloseable {
      * re-keys it in the store (attributes, creation and access times are kept) and fires
      * {@code HttpSessionIdListener.sessionIdChanged} once. Returns the new id.
      *
-     * <p>The change runs under the session's monitor, which every invalidation claim takes too:
-     * a session whose invalidation already started is refused with
-     * {@link IllegalStateException}, and an invalidation that starts during the change waits
-     * until {@code sessionIdChanged} returned, so the listener never sees a destroyed session.
-     * The store is re-keyed under {@code renameLock}, which {@link #onInvalidated} takes to
-     * remove the session, so that a dead session is never re-inserted under its new id. Lock
-     * order: session monitor, then {@code renameLock}.</p>
+     * <p>The change is claimed under the session's monitor, which every invalidation claim takes
+     * too: a session whose invalidation already started is refused with
+     * {@link IllegalStateException}. {@code sessionIdChanged} then fires outside every lock; an
+     * invalidation claimed meanwhile is completed (with {@code sessionDestroyed}) only once the
+     * listener returned, so the listener never sees a destroyed session and never blocks the
+     * invalidating thread (BUG-20261009-14). The store is re-keyed under {@code renameLock}, which
+     * {@link #onInvalidated} takes to remove the session, so that a dead session is never
+     * re-inserted under its new id. Lock order: session monitor, then {@code renameLock}.</p>
      */
     public String changeSessionId(HttpSessionImpl session) {
+        String oldId;
+        String newId;
         synchronized (session) {
             if (!session.isLive()) throw new IllegalStateException("session invalidated");
-            String oldId = session.getId();
-            String newId;
+            oldId = session.getId();
             synchronized (renameLock) {
                 do {
                     newId = generateId();
@@ -165,9 +181,14 @@ public final class SessionManager implements AutoCloseable {
                 session.setId(newId);
                 store.rename(oldId, session);
             }
-            listenerRegistry.fireSessionIdChanged(session, oldId);
-            return newId;
+            session.beginIdChange();
         }
+        try {
+            listenerRegistry.fireSessionIdChanged(session, oldId);
+        } finally {
+            session.endIdChange();
+        }
+        return newId;
     }
 
     /** Callback from {@link HttpSessionImpl#completeInvalidation()}. */
@@ -239,11 +260,13 @@ public final class SessionManager implements AutoCloseable {
      */
     @Override
     public void close() {
-        closeLock.writeLock().lock();
+        creationLock.lock();
         try {
             closed = true;
+            // Every session already stored is announced before close announces its destruction.
+            while (creating > 0) creationsAnnounced.awaitUninterruptibly();
         } finally {
-            closeLock.writeLock().unlock();
+            creationLock.unlock();
         }
         ScheduledExecutorService r;
         synchronized (this) {

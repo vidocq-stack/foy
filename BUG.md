@@ -469,7 +469,11 @@ Statuts : `OPEN` → `INVESTIGATING` → `FIXED` (commit hash) → `CLOSED`.
 ## BUG-20261009-14 — session listeners invoked while session or manager locks are held
 
 - **Date** : 2026-10-09
-- **Statut** : OPEN (low)
+- **Statut** : FIXED — `createNew` counts itself under a `ReentrantLock` and fires `sessionCreated`
+  after releasing it (`close` sets `closed` at once and waits for the creations being announced);
+  `changeSessionId` claims the change under the session monitor and fires `sessionIdChanged` outside
+  it, an invalidation claimed meanwhile completing once the listener returned. Pinned by
+  `SessionListenerLockingTest` (both scenarios blocked 2 s before the fix).
 - **Module touché** : `foy-core` (`SessionManager.createNew`, `SessionManager.changeSessionId`, `HttpSessionImpl` invalidation)
 - **Symptôme** : `sessionCreated` runs under the manager's close read lock and `sessionIdChanged`
   under the session monitor; a listener that blocks or calls back into another session (or waits
