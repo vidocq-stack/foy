@@ -63,7 +63,6 @@ import jakarta.servlet.SessionTrackingMode;
 import jakarta.servlet.UnavailableException;
 import jakarta.servlet.http.Cookie;
 import jakarta.servlet.http.HttpServletRequest;
-import jakarta.servlet.http.HttpServletRequestWrapper;
 import jakarta.servlet.http.HttpServletResponse;
 import jakarta.servlet.http.HttpUpgradeHandler;
 
@@ -765,17 +764,12 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
     }
 
     /**
-     * The request an error dispatch hands its target. The container default servlet finds the
-     * resource from the servlet path, so a static error page (for example {@code /error.html})
-     * sees the location's paths; other targets keep the original request (unchanged behaviour,
-     * to be generalised: BUG-20261009-03).
+     * The request an error dispatch hands its target: an error page sees the path elements, the
+     * request URI and the servlet mapping of its location (Servlet 6.1 section 10.9.1), which is
+     * also how the default servlet finds a static error page.
      */
     private static HttpServletRequest errorTargetRequest(HttpServletRequestImpl req, DispatchTarget target) {
-        if (!(target.servlet() instanceof DefaultServlet)) return req;
-        return new HttpServletRequestWrapper(req) {
-            @Override public String getServletPath() { return target.servletPath(); }
-            @Override public String getPathInfo() { return target.pathInfo(); }
-        };
+        return new ErrorDispatchRequest(req, target);
     }
 
     private boolean errorPageHandled(HttpServletRequestImpl req) {

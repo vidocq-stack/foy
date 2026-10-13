@@ -108,6 +108,40 @@ class ErrorPageDispatchTest {
                         HttpResponse.BodyHandlers.ofString());
     }
 
+    private static HttpServlet pathsReporter() {
+        return new HttpServlet() {
+            @Override protected void doGet(HttpServletRequest req, HttpServletResponse res) throws IOException {
+                res.getWriter().print(req.getServletPath() + "|" + req.getRequestURI() + "|"
+                        + req.getAttribute("jakarta.servlet.error.request_uri"));
+            }
+        };
+    }
+
+    @Test
+    void anErrorPageSeesTheLocationsServletPath() throws Exception {
+        pages.register(500, "/err");
+        start(pathsReporter(), thrower((q, r) -> r.sendError(500)));
+        assertEquals("/err|/err|/t", get("/t").body());
+    }
+
+    @Test
+    void anErrorPageAfterAnExceptionSeesTheLocationsPaths() throws Exception {
+        pages.register(ServletException.class, "/err");
+        start(pathsReporter(), thrower((q, r) -> { throw new ServletException("boom"); }));
+        assertEquals("/err|/err|/t", get("/t").body());
+    }
+
+    @Test
+    void theHttpServletMappingOfAnErrorPageIsTheLocations() throws Exception {
+        pages.register(500, "/err");
+        start(new HttpServlet() {
+            @Override protected void doGet(HttpServletRequest req, HttpServletResponse res) throws IOException {
+                res.getWriter().print(req.getHttpServletMapping().getPattern());
+            }
+        }, thrower((q, r) -> r.sendError(500)));
+        assertEquals("/err", get("/t").body());
+    }
+
     @Test
     void statusErrorPageGetsTheMessage() throws Exception {
         pages.register(411, "/err");
