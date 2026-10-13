@@ -97,6 +97,18 @@ class LayeredProvidersTest {
         assertSame(child, found.getFirst().sci().getClass().getModule().getLayer());
     }
 
+    /**
+     * {@code ServiceLoader.load} runs in this module, so on the module path this module must declare
+     * {@code uses} for every service {@code FoyChappeBoot} looks up through {@code providers}
+     * (vidocq PR 245: the Servlet module-path IT failed with ServiceConfigurationError).
+     */
+    @Test
+    void theModuleMayLoadTheCdiContextListenersService() {
+        assertTrue(ApplicationSources.class.getModule().isNamed(), "the tests run in the named module");
+        assertDoesNotThrow(() -> ApplicationSources.providers(
+                io.vidocq.foy.spi.cdi.CdiContextListeners.class, getClass().getClassLoader()));
+    }
+
     private ClassLoader childLoader() {
         return child.findLoader(MODULE);
     }

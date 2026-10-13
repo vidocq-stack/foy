@@ -1,5 +1,18 @@
 # BUG.md — foy
 
+## BUG-20261013-02 — FoyChappeBoot fails on the module path: foy-core does not declare `uses CdiContextListeners`
+
+- Date: 2026-10-13 (vidocq PR 245, `vidocq-runtime-it-foy-servlet` red in CI).
+- Symptom: booting through `FoyChappeBoot` with Foy on the module path fails with
+  `ServiceConfigurationError: io.vidocq.foy.spi.cdi.CdiContextListeners: module io.vidocq.foy.core does
+  not declare 'uses'` (`FoyServletModulePathTest`, `FoyServletContextPathTest` in vidocq).
+- Minimal repro: `LayeredProvidersTest.theModuleMayLoadTheCdiContextListenersService`.
+- Cause: the BUG-20261012-02 fix (foy#38) moved the `ServiceLoader.load` call for the CDI context
+  listeners from `foy-chappe` (which declares `uses`) to `ApplicationSources.providers` in `foy-core`,
+  whose `module-info.java` did not declare the service. The foy unit tests that ran it did so on a
+  class path or with a service already declared, so only the runtime's module-path IT saw it.
+- Status: FIXED by `uses io.vidocq.foy.spi.cdi.CdiContextListeners;` in `foy-core`'s `module-info.java`.
+
 ## BUG-20261013-01 — the case check does not detect case folding on Linux case-insensitive mounts
 
 - Date: 2026-10-13 (final review of the security batch).

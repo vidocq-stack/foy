@@ -34,6 +34,8 @@ module io.vidocq.foy.core {
     uses io.vidocq.foy.spi.gen.WebComponent;
     uses jakarta.servlet.ServletContainerInitializer;
     uses io.vidocq.foy.spi.jsp.JspEngine;
+    // ApplicationSources.providers runs ServiceLoader.load here for FoyChappeBoot.
+    uses io.vidocq.foy.spi.cdi.CdiContextListeners;
 
     exports io.vidocq.foy.internal.async;
     exports io.vidocq.foy.internal.boot;
