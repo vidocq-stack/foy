@@ -33,7 +33,7 @@ import jakarta.servlet.http.HttpServletRequestWrapper;
 public final class AsyncDispatchRequest extends HttpServletRequestWrapper {
 
     private final DispatchTarget target;
-    private final java.util.Map<String, String[]> dispatchParams;
+    private final DispatchParameters.View parameters;
     private final ServletContext overrideContext;
     private final String overrideContextPath;
 
@@ -50,52 +50,16 @@ public final class AsyncDispatchRequest extends HttpServletRequestWrapper {
                                 ServletContext overrideContext, String overrideContextPath) {
         super(original);
         this.target = target;
-        this.dispatchParams = parseQuery(target.queryString());
+        this.parameters = new DispatchParameters.View(super::getParameterMap, target.queryString(),
+                java.nio.charset.StandardCharsets.UTF_8);
         this.overrideContext = overrideContext;
         this.overrideContextPath = overrideContextPath;
     }
 
-    private static java.util.Map<String, String[]> parseQuery(String qs) {
-        if (qs == null || qs.isEmpty()) return null;
-        var out = new java.util.LinkedHashMap<String, java.util.List<String>>();
-        for (String pair : qs.split("&")) {
-            int eq = pair.indexOf('=');
-            String k = eq < 0 ? pair : pair.substring(0, eq);
-            String v = eq < 0 ? "" : pair.substring(eq + 1);
-            if (k.isEmpty()) continue;
-            k = java.net.URLDecoder.decode(k, java.nio.charset.StandardCharsets.UTF_8);
-            v = java.net.URLDecoder.decode(v, java.nio.charset.StandardCharsets.UTF_8);
-            out.computeIfAbsent(k, _ -> new java.util.ArrayList<>()).add(v);
-        }
-        var result = new java.util.LinkedHashMap<String, String[]>();
-        for (var e : out.entrySet()) result.put(e.getKey(), e.getValue().toArray(new String[0]));
-        return result;
-    }
-
-    @Override public String getParameter(String name) {
-        if (dispatchParams != null && dispatchParams.containsKey(name)) {
-            String[] v = dispatchParams.get(name);
-            return v.length == 0 ? null : v[0];
-        }
-        return super.getParameter(name);
-    }
-    @Override public String[] getParameterValues(String name) {
-        if (dispatchParams != null && dispatchParams.containsKey(name)) return dispatchParams.get(name);
-        return super.getParameterValues(name);
-    }
-    @Override public java.util.Map<String, String[]> getParameterMap() {
-        if (dispatchParams == null) return super.getParameterMap();
-        var out = new java.util.LinkedHashMap<>(super.getParameterMap());
-        out.putAll(dispatchParams);
-        return java.util.Collections.unmodifiableMap(out);
-    }
-    @Override public java.util.Enumeration<String> getParameterNames() {
-        if (dispatchParams == null) return super.getParameterNames();
-        var union = new java.util.LinkedHashSet<String>();
-        super.getParameterNames().asIterator().forEachRemaining(union::add);
-        union.addAll(dispatchParams.keySet());
-        return java.util.Collections.enumeration(union);
-    }
+    @Override public String getParameter(String name) { return parameters.first(name); }
+    @Override public String[] getParameterValues(String name) { return parameters.values(name); }
+    @Override public java.util.Map<String, String[]> getParameterMap() { return parameters.map(); }
+    @Override public java.util.Enumeration<String> getParameterNames() { return parameters.names(); }
 
     @Override public DispatcherType getDispatcherType() { return DispatcherType.ASYNC; }
     @Override public jakarta.servlet.http.HttpServletMapping getHttpServletMapping() {

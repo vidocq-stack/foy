@@ -297,6 +297,7 @@ public class Router extends HttpServlet {
 `ForwardedRequest` and `IncludedRequest` inject the standard attributes (`jakarta.servlet.forward.*`, `jakarta.servlet.include.*`) and reuse the Chappe routing. The semantics, all covered by the TCK `requestdispatcher` and `srlistener` suites:
 
 * The query string of the target is merged with the original parameters: the target's values come first, the original ones follow.
+* Every query string is decoded as UTF-8, the request's own as well as those of forward, include and async dispatch, whatever the request character encoding; the encoding applies to the form body only. A pair with a malformed escape is skipped.
 * `getNamedDispatcher(name)` reaches every registered servlet, mapped or not, and sets no `forward.*` attribute.
 * A nested forward keeps the attributes of the first forward (the original request), and the `forward.*` attributes are visible only to the forwarded target, the `include.*` ones only to the included target.
 * An exception thrown by the target propagates unchanged to the caller. After a forward returns, the response is closed: whatever the forwarding servlet writes afterwards is dropped.

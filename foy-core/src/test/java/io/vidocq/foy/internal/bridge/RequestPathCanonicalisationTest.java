@@ -99,6 +99,22 @@ class RequestPathCanonicalisationTest {
         }
     }
 
+    /** Dispatches asynchronously to {@code /q} with the query string given by the {@code to} parameter. */
+    public static class AsyncWithQuery extends HttpServlet {
+        @Override protected void doGet(HttpServletRequest req, HttpServletResponse resp) {
+            req.startAsync().dispatch("/q?" + req.getParameter("to"));
+        }
+    }
+
+    /** Reports the parameters it sees. */
+    public static class Params extends HttpServlet {
+        @Override protected void doGet(HttpServletRequest req, HttpServletResponse resp) throws IOException {
+            resp.setCharacterEncoding("UTF-8");
+            resp.getWriter().write("a=" + java.util.Arrays.toString(req.getParameterValues("a"))
+                    + "|b=" + req.getParameter("b"));
+        }
+    }
+
     /** Dispatches asynchronously to {@code /t}. */
     public static class AsyncToT extends HttpServlet {
         @Override protected void doGet(HttpServletRequest req, HttpServletResponse resp) {
@@ -356,6 +372,24 @@ class RequestPathCanonicalisationTest {
         assertEquals(400, r.status(), r.body());
         assertEquals("SP=/err page|PI=null|URI=/ctx/err%20page|URL=http://localhost:" + port
                 + "/ctx/err%20page", r.body());
+    }
+
+    @Test
+    void aMalformedEscapeInAnAsyncDispatchQueryIsSkipped() throws Exception {
+        deploy(null, servlet("goQ", AsyncWithQuery.class, AsyncWithQuery::new, "/go-q"),
+                servlet("q", Params.class, Params::new, "/q"));
+        var r = get("/ctx/go-q?to=a%3D%25ZZ%26b%3D1");
+        assertEquals(200, r.status(), r.body());
+        assertEquals("a=null|b=1", r.body());
+    }
+
+    @Test
+    void asyncDispatchQueryParametersPrecedeTheOriginalOnes() throws Exception {
+        deploy(null, servlet("goQ", AsyncWithQuery.class, AsyncWithQuery::new, "/go-q"),
+                servlet("q", Params.class, Params::new, "/q"));
+        var r = get("/ctx/go-q?to=a%3D2&a=1");
+        assertEquals(200, r.status(), r.body());
+        assertEquals("a=[2, 1]|b=null", r.body());
     }
 
     @Test
