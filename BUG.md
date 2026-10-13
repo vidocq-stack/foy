@@ -11,7 +11,8 @@
 - Cause: `ChappeServletBridge` runs the async cycles (`runAsyncCycles`) before the error handling
   (`maybeHandleError`), so a cycle opened by the ERROR dispatch is never driven. A zero-argument
   `startAsync()` also binds the container request, not the `ErrorDispatchRequest`.
-- Status: OPEN. Fix direction: either drive the async cycles after an ERROR dispatch, or refuse
+- Status: FIXED (d32ec2d). `startAsync()` and `startAsync(req, res)` throw `IllegalStateException` during an ERROR
+  dispatch, so the gap is no longer silent. Driving the cycle after an ERROR dispatch stays out of scope.
   `startAsync()` during an ERROR dispatch with an `IllegalStateException` so the gap is no longer silent.
 
 ## BUG-20261013-03 — forward and include put the container wrapper above an HTTP application wrapper instead of under it
