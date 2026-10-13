@@ -294,6 +294,6 @@ A request body has exactly one owner, decided by the first reader: the applicati
 * Multipart: the body parameters of a multipart request are decided by the servlet executing when the parameters are first read; the epilogue after the closing delimiter is read by Foy within the caps, and what a client sends after the response is drained by Chappe, which bounds that drain (`maxDrainSize`, 1 MiB by default); no aggregate in-memory cap on the stored parts beyond the body size (each part stays under `fileSizeThreshold` in memory, the parts together under the body cap); reading the parameters reads the form fields (parts without a file name) whole into memory, so their total size is checked against `maxFormBodySize` first.
 * WebSocket Servlet 6.1: not implemented (planned, no date).
 * JSP: not supported by Foy itself; planned through a JSP-engine SPI that Ibarra (Jakarta Pages 4.0) plugs into.
-* Security: DIGEST is not supported (it fails closed with `403`); security constraints match url-patterns case-sensitively, which a resource served from a case-insensitive file system can bypass (BUG-20261011-05).
+* Security: DIGEST is not supported (it fails closed with `403`); security constraints match url-patterns case-sensitively, and a resource is served only under its exact real name, so a request that differs in case gets 404 even on a case-insensitive file system (BUG-20261011-05).
 
 No comparative numbers (Tomcat, Jetty) have been recorded yet — a `BENCH.md` will be created with the first measured run (workspace convention).

@@ -171,7 +171,7 @@ public class EchoUpgradeServlet extends HttpServlet {
 ----
 
 * The handler is instantiated by the container, through the same component factory as servlets, filters and listeners (CDI included); an instantiation failure is a `ServletException`.
-* `upgrade` throws `IOException` on HTTP/1.0 and HTTP/2, and `IllegalStateException` after `startAsync()` or when called twice; `startAsync()` after `upgrade()` throws `IllegalStateException` too.
+* `upgrade` throws `IOException` on HTTP/1.0 and HTTP/2, and `IllegalStateException` after `startAsync()` or when called twice; `startAsync()` after `upgrade()` throws `IllegalStateException` too. `upgrade` also throws `IllegalStateException` during an async dispatch.
 * A status other than `101` is sent as set, with a warning in the log. A status or header that cannot go into the upgrade head (an invalid header name or value) is logged as a warning and answered with a `500`; the handler is then never initialised, and `destroy()` is not called.
 * `WebConnection.getInputStream()` and `getOutputStream()` are blocking by default and support `ReadListener` and `WriteListener`.
 * `destroy()` is called once, when the connection ends: `WebConnection.close()`, a read or write error, or the undeployment of the application (which closes every upgraded connection it still holds).
@@ -315,6 +315,7 @@ Foy deploys a container default servlet, named `foy.default`, mapped to `/` unle
 * `Content-Type` comes from `mime-mapping` and the built-in table, `Last-Modified` from the file time (or the jar entry time) and a weak `ETag` from length and time. `If-None-Match` wins over `If-Modified-Since`; both answer 304.
 * A single `Range` (`bytes=a-b`, `a-`, `-n`) answers 206, an unsatisfiable one 416. Several ranges answer 200 with the whole body (no `multipart/byteranges`). `If-Range` is honoured by date.
 * A client request cannot reach `WEB-INF/` or `META-INF/` (404, in any case and with trailing dots or spaces), whichever servlet the path would map to: the request bridge refuses it before mapping, and `/WEB-INF` without a slash is not redirected. A forward, include, async or error dispatch can, for instance an error page kept under `WEB-INF/`.
+* A resource is served only under its exact real name: on a case-insensitive file system, a request whose path differs in case from the file name answers 404, so a security constraint matched by case cannot be bypassed.
 * A custom `ResourceProvider` may implement `metadata(path)` to give the length and the modification time without opening the resource. `ClassPathResourceProvider` does, and never opens a jar connection per request.
 
 [source,java]

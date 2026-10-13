@@ -761,6 +761,9 @@ Statuts : `OPEN` → `INVESTIGATING` → `FIXED` (commit hash) → `CLOSED`.
   `MergeSlots.Keyed` slot used for `init-param` (which records the source and reports a conflict).
 - **Fix envisagé** : merge fragment role refs through a `Keyed<String>` per servlet (web.xml entries
   override, equal values from two fragments are not a conflict), and fail the deployment otherwise.
+- **Investigation** : 2026-10-13, fixed on `pr/ybl/foy-security-batch`. Fragment role refs are merged through
+  `MergeSlots.Keyed`; web.xml wins per role-name, equal values are not a conflict, and a disagreement fails the
+  deployment. Pinned by `FragmentMergerTest.securityRoleRefConflictBetweenFragmentsFails`.
 
 ## BUG-20261011-09 — InMemoryIdentityStore digest encodes the password with Charset.encode
 
