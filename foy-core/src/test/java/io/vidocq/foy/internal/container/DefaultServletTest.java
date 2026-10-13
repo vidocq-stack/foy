@@ -158,7 +158,21 @@ class DefaultServletTest {
         }
     }
 
-    private static final Instant MTIME = Instant.parse("2026-01-02T03:04:05Z");
+    /**
+     * Aliases {@code /ALIAS.txt} to the lowercase {@code alias.txt}, on any file system: what a
+     * case-insensitive one does, made portable (BUG-20261011-05).
+     */
+    record AliasingProvider(Path root) implements VidocqServletContext.ResourceProvider {
+        @Override public Set<String> listPaths(String path) { return null; }
+        @Override public InputStream openStream(String path) {
+            return "/ALIAS.txt".equals(path) ? new DirProvider(root).openStream("/alias.txt") : null;
+        }
+        @Override public URL toUrl(String path) {
+            return "/ALIAS.txt".equals(path) ? new DirProvider(root).toUrl("/alias.txt") : null;
+        }
+    }
+
+    private static final Instant MTIME =Instant.parse("2026-01-02T03:04:05Z");
     private static final DateTimeFormatter IMF_FIXDATE =
             DateTimeFormatter.ofPattern("EEE, dd MMM yyyy HH:mm:ss 'GMT'", java.util.Locale.US);
     private static final String MTIME_HTTP = IMF_FIXDATE.format(MTIME.atOffset(ZoneOffset.UTC));
@@ -326,6 +340,13 @@ class DefaultServletTest {
     void aFileUrlThatCannotBecomeAPathIsRefused() throws Exception {
         deploy(WebAppModel.builder("/ctx").build(), new UnparsableUrlProvider(root));
         assertEquals(404, get("/ctx/digits.txt").statusCode(), "fails closed, although the stream exists");
+    }
+
+    @Test
+    void aProviderAliasingToAnotherSpellingIsRefused() throws Exception {
+        Files.writeString(root.resolve("alias.txt"), "aliased");
+        deploy(WebAppModel.builder("/ctx").build(), new AliasingProvider(root));
+        assertEquals(404, get("/ctx/ALIAS.txt").statusCode(), "the real name is alias.txt, not ALIAS.txt");
     }
 
     @Test
