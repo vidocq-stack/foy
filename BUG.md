@@ -1,5 +1,20 @@
 # BUG.md — foy
 
+## BUG-20261013-01 — the case check does not detect case folding on Linux case-insensitive mounts
+
+- Date: 2026-10-13 (final review of the security batch).
+- Symptom: on a Linux case-insensitive mount (ext4 casefold, vfat/exFAT, CIFS, some container bind
+  mounts), a directory resource root still serves `/STATIC/x.txt` from `static/x.txt`, around a
+  `/static/*` constraint: the BUG-20261011-05 bypass remains there.
+- Minimal repro: by code reading; deploy a directory resource root on a casefold or vfat mount with a
+  constraint on `/static/*` and request `/STATIC/x.txt`. Not pinned by a test (no such mount on CI).
+- Cause: `ResourcePaths.realNameMatches` reads the real name through `toRealPath(NOFOLLOW_LINKS)`, which
+  corrects the case only where the JDK's file system reports case-insensitive-and-preserving (macOS,
+  and the real path on Windows). On Linux it returns the requested spelling.
+- Status: OPEN (documented limit, in the `realNameMatches` Javadoc, `usage.adoc` and `internals.adoc`:
+  serve static resources from jars or from a case-sensitive file system on such hosts). Fix direction:
+  a per-segment exact-name check against the directory listing, at a cost per request.
+
 ## BUG-20261012-02 — a provider module in two layers registers its CDI context listeners twice
 
 - Date: 2026-10-12 (foy#38).

@@ -114,6 +114,12 @@ public final class ResourcePaths {
      * own name. A missing file matches (the caller reports absence); an I/O failure does not. A
      * request in another Unicode normalisation form than the stored name (NFD on HFS+) does not
      * match either: this fails closed.
+     *
+     * <p><b>Limit.</b> {@code toRealPath} corrects the case only where the JDK reports the file
+     * system as case-insensitive and case-preserving (macOS, and the real path on Windows). On a
+     * Linux case-insensitive mount (ext4 casefold, vfat/exFAT, CIFS, some container bind mounts) it
+     * returns the requested spelling, so the check cannot see the folding there (BUG-20261013-01):
+     * serve static resources from jars or from a case-sensitive file system on such hosts.</p>
      */
     static boolean realNameMatches(Path file, String relative) {
         if (!Files.exists(file, LinkOption.NOFOLLOW_LINKS)) return true;

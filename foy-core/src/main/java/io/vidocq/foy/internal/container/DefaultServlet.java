@@ -268,7 +268,9 @@ public final class DefaultServlet extends GenericServlet {
      * constraint matched on the requested path (BUG-20261011-05). Other schemes (jar entries) are
      * case-sensitive already. A provider aliasing a path to a file of another name is refused (404),
      * and so is a request in another Unicode normalisation form than the stored name (NFD on
-     * HFS+): both fail closed.
+     * HFS+): both fail closed. A null URL matches: a custom {@code ResourceProvider} that serves
+     * files through {@code openStream} without a {@code file:} {@code toUrl} is responsible for its
+     * own case handling.
      */
     private static boolean caseMatches(jakarta.servlet.ServletContext ctx, String path) {
         try {
