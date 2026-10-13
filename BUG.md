@@ -196,7 +196,7 @@ Statuts : `OPEN` → `INVESTIGATING` → `FIXED` (commit hash) → `CLOSED`.
 ## BUG-20261009-01 — forward/include drop a non-HTTP application wrapper passed to the dispatcher
 
 - **Date** : 2026-10-09
-- **Statut** : OPEN
+- **Statut** : FIXED (the dispatch wrapper goes under the lowest non-HTTP application wrapper, restored in a finally, 1de5b96)
 - **Module touché** : `foy-core` (`RequestDispatcherImpl.unwrapHttp` / `unwrapHttpResponse`)
 - **Symptôme** : when a servlet or filter passes a plain `ServletRequestWrapper` (or
   `ServletResponseWrapper`) that is not an `HttpServletRequest` to `forward`/`include`, the target
@@ -211,6 +211,17 @@ Statuts : `OPEN` → `INVESTIGATING` → `FIXED` (commit hash) → `CLOSED`.
   application's wrapper chain (Tomcat `ApplicationDispatcher.wrapRequest`).
 - **Investigations** :
   - 2026-10-09 : noted during the Task 4.4 fix round; no failing TCK test identified.
+  - 2026-10-13 : fixed in 1de5b96. `RequestDispatcherImpl` sets the `ForwardedRequest` /
+    `IncludedRequest` / `IncludedResponse` under the lowest non-HTTP wrapper with
+    `setRequest`/`setResponse` and restores it in a `finally`; `Invoker.invoke` takes
+    `ServletRequest`/`ServletResponse`. Pinned by `DispatcherSemanticsTest`
+    (`aPlainRequestWrapperPassedToIncludeReachesTheTarget`,
+    `aPlainRequestWrapperPassedToForwardReachesTheTarget`,
+    `aPlainResponseWrapperPassedToIncludeReachesTheTarget`,
+    `theApplicationChainIsRestoredAfterTheDispatch`,
+    `nestedDispatchesUnwindTheApplicationChainInOrder`, `anHttpWrapperIsStillPassedAsBefore`).
+    Out of scope: the async dispatch path (`ChappeServletBridge` async `dispatch`) still wraps the
+    container request, not `AsyncContext.getRequest()`.
 
 ## BUG-20261009-02 — getServletPath/getPathInfo are not percent-decoded
 
