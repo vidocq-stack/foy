@@ -595,6 +595,74 @@ class DispatcherSemanticsTest {
         assertEquals("INCLUDE|after", get("/c"));
     }
 
+    @Test
+    void aFilterWrapperOverAnApplicationWrapperComposesWithASecondDispatchAndBothChainsAreRestored()
+            throws Exception {
+        var applied = new java.util.concurrent.atomic.AtomicReference<ServletRequestWrapper>();
+        var filtered = new java.util.concurrent.atomic.AtomicReference<ServletRequestWrapper>();
+        Filter wrapping = (req, res, chain) -> {
+            var w = new HttpServletRequestWrapper((HttpServletRequest) req);
+            filtered.set(w);
+            chain.doFilter(w, res);
+        };
+        var filters = List.of(new FilterMapping(UrlPatternMatcher.of("/t"), wrapping, "wrapping",
+                EnumSet.of(DispatcherType.FORWARD)));
+        startWith(filters, map("/c", servlet((req, resp) -> {
+                    var a = httpWrapper(req);
+                    applied.set(a);
+                    req.getRequestDispatcher("/t").forward(a, resp);
+                    events.add("outer=" + (a.getRequest() == req));
+                }), "c"),
+                map("/t", servlet((req, resp) -> {
+                    ServletRequestWrapper a = applied.get();
+                    ServletRequest forwarded = a.getRequest();
+                    req.getRequestDispatcher("/i").include(req, resp);
+                    events.add("inner=" + (req == filtered.get()) + "," + (filtered.get().getRequest() == a)
+                            + "," + (a.getRequest() == forwarded));
+                    resp.getWriter().write("|after");
+                }), "t"),
+                map("/i", servlet((req, resp) -> resp.getWriter().write(req.getDispatcherType() + "|"
+                        + req.getParameter("p"))), "i"));
+        assertEquals("INCLUDE|h|after", get("/c"));
+        awaitEvents(2); // the caller records the restore after the forward closed the response
+        assertEquals(List.of("inner=true,true,true", "outer=true"), events);
+    }
+
+    /** An application-implemented request that delegates to the container's without wrapping it. */
+    private static HttpServletRequest delegatingNonWrapper(HttpServletRequest req) {
+        return (HttpServletRequest) java.lang.reflect.Proxy.newProxyInstance(
+                HttpServletRequest.class.getClassLoader(), new Class<?>[]{HttpServletRequest.class},
+                (proxy, method, args) -> {
+                    try {
+                        return method.invoke(req, args);
+                    } catch (java.lang.reflect.InvocationTargetException e) {
+                        throw e.getCause();
+                    }
+                });
+    }
+
+    @Test
+    void aRequestThatDoesNotWrapTheContainersIsRejected() throws Exception {
+        start(map("/c", servlet((req, resp) -> {
+                    var sb = new StringBuilder();
+                    for (String mode : List.of("forward", "include")) {
+                        try {
+                            var rd = req.getRequestDispatcher("/t");
+                            if (mode.equals("forward")) rd.forward(delegatingNonWrapper(req), resp);
+                            else rd.include(delegatingNonWrapper(req), resp);
+                            sb.append(mode).append("=none;");
+                        } catch (ServletException e) {
+                            sb.append(mode).append('=').append(e.getMessage()).append(';');
+                        }
+                    }
+                    resp.getWriter().write(sb.toString());
+                }), "c"),
+                map("/t", servlet((req, resp) -> resp.getWriter().write("reached")), "t"));
+        String expected = "the request and response must be, or wrap, the objects the container passed"
+                + " (RequestDispatcher)";
+        assertEquals("forward=" + expected + ";include=" + expected + ";", get("/c"));
+    }
+
     // ---- Exceptions propagate unchanged ----
 
     @Test

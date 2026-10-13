@@ -67,6 +67,13 @@ public final class RequestDispatcherImpl implements RequestDispatcher {
                 throws IOException, ServletException;
     }
 
+    /**
+     * The RequestDispatcher Javadoc requires the objects passed to forward/include to be the ones the
+     * container passed to the calling servlet, or wrappers of them.
+     */
+    private static final String NOT_THE_CONTAINER_OBJECTS =
+            "the request and response must be, or wrap, the objects the container passed (RequestDispatcher)";
+
     private final DispatchTarget target;
     private final Invoker invoker;
 
@@ -98,7 +105,7 @@ public final class RequestDispatcherImpl implements RequestDispatcher {
         HttpServletRequest req = containerRequest(request);
         HttpServletResponse res = unwrapHttpResponse(response);
         if (req == null || res == null) {
-            throw new ServletException("non-HTTP dispatch");
+            throw new ServletException(NOT_THE_CONTAINER_OBJECTS);
         }
         if (res.isCommitted()) {
             throw new IllegalStateException("response already committed");
@@ -155,7 +162,7 @@ public final class RequestDispatcherImpl implements RequestDispatcher {
         HttpServletRequest req = containerRequest(request);
         HttpServletResponse res = containerResponse(response);
         if (req == null || res == null) {
-            throw new ServletException("non-HTTP dispatch");
+            throw new ServletException(NOT_THE_CONTAINER_OBJECTS);
         }
         // The include.* attributes (none for a named include) and the merged parameters live in the
         // wrapper: they last for the include only. Exceptions of the target propagate unchanged.
