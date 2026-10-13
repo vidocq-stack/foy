@@ -277,7 +277,7 @@ Statuts : `OPEN` → `INVESTIGATING` → `FIXED` (commit hash) → `CLOSED`.
 ## BUG-20261009-03 — error dispatch shows the error-page location's paths only to the default servlet
 
 - **Date** : 2026-10-09
-- **Statut** : OPEN
+- **Statut** : FIXED (`ErrorDispatchRequest` gives every error-page target the location's paths, URI and mapping, 926deae)
 - **Module touché** : `foy-core` (`ChappeServletBridge.maybeHandleError` / `errorTargetRequest`)
 - **Symptôme** : on an ERROR dispatch the target receives the original request, whose
   `getServletPath`/`getPathInfo` describe the failing request, not the error-page location
@@ -291,6 +291,10 @@ Statuts : `OPEN` → `INVESTIGATING` → `FIXED` (commit hash) → `CLOSED`.
   is checked.
 - **Investigations** :
   - 2026-10-09 : special case introduced by Task 4.5; generalisation deferred.
+  - 2026-10-13 : fixed in 926deae. `ErrorDispatchRequest` replaces the `DefaultServlet`-only wrapper
+    and overrides `getServletPath`, `getPathInfo`, `getRequestURI`, `getRequestURL` and
+    `getHttpServletMapping` from the `DispatchTarget` (Servlet 6.1 section 10.9.1); the query string,
+    parameters and `jakarta.servlet.error.*` attributes are unchanged. Static error pages still pass.
 
 ## BUG-20261009-04 — decoded paths leak into dispatch URIs (query split, wrapper URIs)
 
