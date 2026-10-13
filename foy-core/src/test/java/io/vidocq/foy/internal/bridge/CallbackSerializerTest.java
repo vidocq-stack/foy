@@ -101,6 +101,13 @@ class CallbackSerializerTest {
             serializer.hold();
             events.add("held");
         });
+        // The first callback may end only once hold() took effect, or the drain thread would start
+        // the queued one first (BUG-20261011-06).
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+        while (!serializer.isHeld()) {
+            assertTrue(System.nanoTime() < deadline, "hold() never took effect");
+            Thread.onSpinWait();
+        }
         proceed.countDown();
         holder.join(5_000);
         assertFalse(holder.isAlive());

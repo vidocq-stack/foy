@@ -751,7 +751,9 @@ Statuts : `OPEN` → `INVESTIGATING` → `FIXED` (commit hash) → `CLOSED`.
 ## BUG-20261011-06 — CallbackSerializerTest.holdWaitsForTheRunningCallbackAndDefersTheQueuedOnes is flaky
 
 - **Date** : 2026-10-11
-- **Statut** : OPEN (test only; seen during Phase 6 Task 6.1)
+- **Statut** : FIXED (test only; the test now releases the first callback only once `hold()` took
+  effect, through `CallbackSerializer.isHeld()`; reproduced deterministically by delaying the holder
+  thread 300 ms, which fails the old test at the same assertion and passes the new one)
 - **Module touché** : `foy-core` tests (`CallbackSerializerTest`)
 - **Symptôme** : the test failed once in three full `./mvnw -ntp clean install` runs, at line 108
   (`assertFalse(second.await(200, ms))` got `true`: the queued callback ran although `hold()` was

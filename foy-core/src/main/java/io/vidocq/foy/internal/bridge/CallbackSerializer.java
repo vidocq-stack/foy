@@ -133,6 +133,16 @@ final class CallbackSerializer {
         }
     }
 
+    /** Whether {@link #hold()} has taken effect (no queued callback starts until {@link #release()}). */
+    boolean isHeld() {
+        lock.lock();
+        try {
+            return held;
+        } finally {
+            lock.unlock();
+        }
+    }
+
     /** Whether the calling thread is the one running callbacks (it is inside a callback). */
     boolean isCallbackThread() {
         lock.lock();
