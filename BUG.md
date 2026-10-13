@@ -598,7 +598,7 @@ Statuts : `OPEN` → `INVESTIGATING` → `FIXED` (commit hash) → `CLOSED`.
 ## BUG-20261010-06 — upgrade() called during an ASYNC dispatch is silently dropped
 
 - **Date** : 2026-10-10
-- **Statut** : FIXED (upgrade() throws IllegalStateException outside the REQUEST dispatch the bridge reads)
+- **Statut** : FIXED (3abdaff, 0c03460 — upgrade() throws IllegalStateException outside the REQUEST dispatch the bridge reads)
 - **Module touché** : `foy-core` (`HttpServletRequestImpl.upgrade`, `ChappeServletBridge`)
 - **Symptôme** : a servlet reached by `AsyncContext.dispatch()` that calls `upgrade(...)` gets no
   exception, the response switches to discard mode, and the client receives an empty plain HTTP
@@ -716,7 +716,7 @@ Statuts : `OPEN` → `INVESTIGATING` → `FIXED` (commit hash) → `CLOSED`.
 ## BUG-20261011-05 — case-sensitive constraint matching vs a case-insensitive file system
 
 - **Date** : 2026-10-11
-- **Statut** : FIXED (real-name case check in ClassPathResourceProvider and DefaultServlet)
+- **Statut** : FIXED (a182b8b, e5bf01d — real-name case check in ClassPathResourceProvider and DefaultServlet)
 - **Module touché** : `foy-core` (`ConstraintTable`, container default servlet, resource providers)
 - **Symptôme** : security constraints match url-patterns case-sensitively, as the specification
   requires, but a resource provider over a case-insensitive file system (macOS directory roots, Windows)
@@ -771,7 +771,7 @@ Statuts : `OPEN` → `INVESTIGATING` → `FIXED` (commit hash) → `CLOSED`.
 ## BUG-20261011-08 — a fragment conflict on security-role-ref is silently resolved
 
 - **Date** : 2026-10-11
-- **Statut** : FIXED (fragment role refs merged through MergeSlots.Keyed)
+- **Statut** : FIXED (c2c421f — fragment role refs merged through MergeSlots.Keyed)
 - **Module touché** : `foy-core` (`ComponentMerger.servlets`)
 - **Symptôme** : when two `web-fragment.xml` declare the same servlet with a `security-role-ref` of the
   same `role-name` but different `role-link`s, and `web.xml` does not reference that role-name, the
@@ -791,7 +791,7 @@ Statuts : `OPEN` → `INVESTIGATING` → `FIXED` (commit hash) → `CLOSED`.
 ## BUG-20261011-09 — InMemoryIdentityStore digest encodes the password with Charset.encode
 
 - **Date** : 2026-10-11
-- **Statut** : FIXED (strict UTF-8 encoder into an exact-size wiped buffer)
+- **Statut** : FIXED (392c400 — strict UTF-8 encoder into an exact-size wiped buffer)
 - **Module touché** : `foy-core` (`InMemoryIdentityStore.digest`)
 - **Symptôme** : the password is encoded with `StandardCharsets.UTF_8.encode(CharBuffer)`, whose
   coding error action is REPLACE: two passwords differing only by lone (unpaired) surrogates encode to the
