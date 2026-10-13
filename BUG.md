@@ -79,8 +79,10 @@
 - Minimal repro: Java 25, local Vauban 0.4.0-SNAPSHOT, `./mvnw -o -ntp -pl foy-cdi-vauban -am test -Dtest=FoyWebExtensionTest#requestScopedThroughFoyChappeBoot -Dsurefire.failIfNoSpecifiedTests=false`.
 - Cause hypothesis: existing Vauban request activation gap, also referenced as
   vauban#147 in BUG-20261010-07; unrelated to JSP service discovery.
-- Status: OPEN; reproduced on unchanged `origin/main` and the JSP-engine branch.
-  The JSP changes pass the Foy Core suite. No test exclusion is committed.
+- Status: FIXED upstream by Vauban `f420ea84` (`RequestContextController` and
+  `@ActivateRequestContext`, vauban#147). Verified 2026-10-13: `FoyWebExtensionTest` passes in full
+  (11/11, `requestScopedThroughFoyChappeBoot` included) against the current Vauban 0.4.0-SNAPSHOT,
+  with no Foy change.
 
 Suivi des bugs reproductibles. Convention : voir `../CLAUDE.md` (workspace root).
 
