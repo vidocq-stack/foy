@@ -60,4 +60,39 @@ class ClassFileProcessingTest {
         assertFalse(r.messages().contains("recreate"), r.messages());
         assertTrue(Files.exists(out.resolve("generated/a/S$L$$FoyComponent.java")), r.messages());
     }
+
+    @Test
+    void theMarkerIsWrittenWhenComponentsAreGenerated() throws Exception {
+        var r = CompileHarness.processClasses(out, SOURCES, List.of("a.S"));
+        assertTrue(r.success(), r.messages());
+        assertTrue(r.resource(DependencyHints.MARKER).startsWith("foy-processor "), r.resource(DependencyHints.MARKER));
+    }
+
+    @Test
+    void aPlainClassIsIndexedSoItAlsoGetsTheMarker() throws Exception {
+        // The class index lists every compiled type, so any compilation with a type has index entries.
+        var r = CompileHarness.compile(out, Map.of("a.Plain", "package a; public class Plain {}"));
+        assertTrue(r.success(), r.messages());
+        assertFalse(Files.exists(out.resolve("generated/a/Plain$$FoyComponent.java")));
+        assertTrue(Files.exists(out.resolve("classes/META-INF/foy/class-index.list")));
+        assertTrue(r.resource(DependencyHints.MARKER).startsWith("foy-processor "));
+    }
+
+    @Test
+    void noMarkerWhenNothingIsGenerated() throws Exception {
+        // No type at all: no component and no class-index entry.
+        var r = CompileHarness.compile(out, Map.of("a.package-info", "package a;"));
+        assertTrue(r.success(), r.messages());
+        assertFalse(Files.exists(out.resolve("classes").resolve(DependencyHints.MARKER)));
+    }
+
+    @Test
+    void dependencyHintsMatchTheServletAnnotations() {
+        for (Class<?> c : List.of(jakarta.servlet.annotation.WebServlet.class,
+                jakarta.servlet.annotation.WebFilter.class, jakarta.servlet.annotation.WebListener.class,
+                jakarta.servlet.annotation.HandlesTypes.class)) {
+            String internal = c.getName().replace('.', '/');
+            assertTrue(DependencyHints.CLASS_BYTE_HINTS.stream().anyMatch(internal::startsWith), internal);
+        }
+    }
 }

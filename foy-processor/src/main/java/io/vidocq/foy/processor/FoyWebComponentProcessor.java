@@ -47,6 +47,7 @@ public final class FoyWebComponentProcessor extends AbstractProcessor {
     /** Binary names already visited: a nested type can be a root as well as a member of its owner. */
     private final Set<String> visited = new HashSet<>();
     private Element anyOrigin;
+    private Element firstType;
     private ClassIndexWriter classIndex;
 
     @Override
@@ -74,6 +75,9 @@ public final class FoyWebComponentProcessor extends AbstractProcessor {
             return;
         }
         classIndex().add(type);
+        if (firstType == null) {
+            firstType = type;
+        }
         var model = ComponentModel.from(type, processingEnv);
         if (model.isPresent()) {
             String reason = ComponentModel.notGeneratableReason(type);
@@ -107,6 +111,24 @@ public final class FoyWebComponentProcessor extends AbstractProcessor {
         return classIndex;
     }
 
+    /** Writes {@link DependencyHints#MARKER} when a component or a class-index entry was produced. */
+    private void writeMarker() {
+        if (generated.isEmpty() && classIndex == null) {
+            return;
+        }
+        String version = FoyWebComponentProcessor.class.getPackage().getImplementationVersion();
+        try {
+            FileObject f = processingEnv.getFiler().createResource(StandardLocation.CLASS_OUTPUT, "",
+                    DependencyHints.MARKER, anyOrigin != null ? anyOrigin : firstType);
+            try (Writer w = f.openWriter()) {
+                w.write("foy-processor " + (version != null ? version : "unknown") + "\n");
+            }
+        } catch (IOException e) {
+            processingEnv.getMessager().printMessage(Diagnostic.Kind.ERROR,
+                    "foy: cannot write the processed marker: " + e);
+        }
+    }
+
     private void finish() {
         if (classIndex != null) {
             try {
@@ -116,6 +138,7 @@ public final class FoyWebComponentProcessor extends AbstractProcessor {
                         "foy: cannot write the class index: " + e);
             }
         }
+        writeMarker();
         if (generated.isEmpty()) {
             return;
         }
