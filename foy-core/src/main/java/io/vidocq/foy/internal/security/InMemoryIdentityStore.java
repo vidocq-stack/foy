@@ -24,6 +24,9 @@ import io.vidocq.foy.spi.security.IdentityStore;
 
 import java.nio.ByteBuffer;
 import java.nio.CharBuffer;
+import java.nio.charset.CharsetEncoder;
+import java.nio.charset.CoderResult;
+import java.nio.charset.CodingErrorAction;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -56,7 +59,8 @@ public final class InMemoryIdentityStore implements IdentityStore {
 
     private final Map<String, User> users;
     private final byte[] decoySalt = salt();
-    private final byte[] decoyDigest = digest(decoySalt, new char[] {'\0'});
+    private static final char[] DECOY_PASSWORD = {'\0'};
+    private final byte[] decoyDigest = digest(decoySalt, DECOY_PASSWORD);
 
     /** A declared subject: its roles, and its RFC 2253 form lower-cased, the strict comparison key. */
     private record CertificateUser(Set<String> roles, String strictName) {}
@@ -74,10 +78,18 @@ public final class InMemoryIdentityStore implements IdentityStore {
     public Optional<Identity> validate(String username, char[] password) {
         if (username == null || password == null) return Optional.empty();
         User user = users.get(username);
-        byte[] candidate = digest(user == null ? decoySalt : user.salt(), password);
+        byte[] candidate;
+        boolean encodable = true;
+        try {
+            candidate = digest(user == null ? decoySalt : user.salt(), password);
+        } catch (IllegalArgumentException e) {
+            // Not valid UTF-16: pay the same cost, then refuse whatever the user is.
+            candidate = digest(decoySalt, DECOY_PASSWORD);
+            encodable = false;
+        }
         try {
             boolean equal = MessageDigest.isEqual(candidate, user == null ? decoyDigest : user.digest());
-            return equal && user != null ? Optional.of(user.identity()) : Optional.empty();
+            return encodable && equal && user != null ? Optional.of(user.identity()) : Optional.empty();
         } finally {
             Arrays.fill(candidate, (byte) 0);
         }
@@ -104,21 +116,32 @@ public final class InMemoryIdentityStore implements IdentityStore {
         return s;
     }
 
-    /** SHA-256 over salt then the UTF-8 password; every intermediate buffer is wiped. */
+    /**
+     * SHA-256 over salt then the UTF-8 password; every intermediate buffer is wiped. The encoding is
+     * strict, into a buffer of the exact upper-bound size so it never grows (no unwiped copy).
+     *
+     * @throws IllegalArgumentException when the password is not valid UTF-16 (a lone surrogate); the
+     *     message never mentions the password
+     */
     static byte[] digest(byte[] salt, char[] password) {
-        ByteBuffer encoded = StandardCharsets.UTF_8.encode(CharBuffer.wrap(password));
-        byte[] bytes = new byte[encoded.remaining()];
-        encoded.get(bytes);
+        CharsetEncoder encoder = StandardCharsets.UTF_8.newEncoder()
+                .onMalformedInput(CodingErrorAction.REPORT)
+                .onUnmappableCharacter(CodingErrorAction.REPORT);
+        byte[] buffer = new byte[(int) Math.ceil(encoder.maxBytesPerChar() * (double) password.length)];
+        ByteBuffer out = ByteBuffer.wrap(buffer);
         try {
+            CoderResult r = encoder.encode(CharBuffer.wrap(password), out, true);
+            if (!r.isUnderflow()) throw new IllegalArgumentException("the password is not valid UTF-16");
+            r = encoder.flush(out);
+            if (!r.isUnderflow()) throw new IllegalArgumentException("the password is not valid UTF-16");
             MessageDigest md = MessageDigest.getInstance("SHA-256");
             md.update(salt);
-            md.update(bytes);
+            md.update(buffer, 0, out.position());
             return md.digest();
         } catch (NoSuchAlgorithmException e) {
             throw new IllegalStateException("SHA-256 is required of every Java platform", e);
         } finally {
-            Arrays.fill(bytes, (byte) 0);
-            if (encoded.hasArray()) Arrays.fill(encoded.array(), (byte) 0);
+            Arrays.fill(buffer, (byte) 0);
         }
     }
 

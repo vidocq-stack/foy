@@ -764,7 +764,7 @@ Statuts : `OPEN` → `INVESTIGATING` → `FIXED` (commit hash) → `CLOSED`.
 ## BUG-20261011-09 — InMemoryIdentityStore digest encodes the password with Charset.encode
 
 - **Date** : 2026-10-11
-- **Statut** : OPEN (final Phase 6 review, by code reading)
+- **Statut** : FIXED (strict UTF-8 encoder into an exact-size wiped buffer)
 - **Module touché** : `foy-core` (`InMemoryIdentityStore.digest`)
 - **Symptôme** : the password is encoded with `StandardCharsets.UTF_8.encode(CharBuffer)`, whose
   coding error action is REPLACE: two passwords differing only by lone (unpaired) surrogates encode to the
@@ -778,6 +778,11 @@ Statuts : `OPEN` → `INVESTIGATING` → `FIXED` (commit hash) → `CLOSED`.
 - **Fix envisagé** : use `UTF_8.newEncoder().onMalformedInput(REPORT).onUnmappableCharacter(REPORT)`
   into a `ByteBuffer` sized `maxBytesPerChar * length` (exact upper bound, no reallocation), refuse a
   password that does not encode (no identity), and wipe that buffer's backing array.
+- **Investigation** : 2026-10-13, fixed on `pr/ybl/foy-security-batch`. `digest` now throws
+  `IllegalArgumentException` on a password that is not valid UTF-16; `Builder.user` rejects it before
+  registering anything; `validate` digests the decoy then refuses it. Pinned by
+  `InMemoryIdentityStoreTest.aMalformedCandidateIsRefused` (and `aPasswordWithALoneSurrogateDoesNotDigest`,
+  `aMalformedPasswordCannotBeRegistered`).
 
 ## BUG-20261011-10 — FoyVaubanBootstrap offers no way to configure an IdentityStore
 

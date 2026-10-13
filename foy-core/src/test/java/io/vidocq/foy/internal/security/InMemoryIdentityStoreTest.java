@@ -66,4 +66,41 @@ class InMemoryIdentityStoreTest {
         var b = InMemoryIdentityStore.builder().user("alice", "p".toCharArray());
         assertThrows(IllegalArgumentException.class, () -> b.user("alice", "q".toCharArray()));
     }
+
+    @Test
+    void aPasswordWithALoneSurrogateDoesNotDigest() {
+        // Before the fix both encoded to "a?" and digested to the same value.
+        assertThrows(IllegalArgumentException.class,
+                () -> InMemoryIdentityStore.digest(new byte[16], "a\uD800".toCharArray()));
+        assertThrows(IllegalArgumentException.class,
+                () -> InMemoryIdentityStore.digest(new byte[16], "a\uDC00".toCharArray()));
+    }
+
+    @Test
+    void anEmptyPasswordStillDigests() {
+        assertEquals(32, InMemoryIdentityStore.digest(new byte[16], new char[0]).length);
+    }
+
+    @Test
+    void aMalformedPasswordCannotBeRegistered() {
+        var b = InMemoryIdentityStore.builder();
+        var e = assertThrows(IllegalArgumentException.class, () -> b.user("u", "a\uD800".toCharArray()));
+        assertEquals("the password is not valid UTF-16", e.getMessage());
+        // The failed call leaves the builder unchanged: the name is still free.
+        assertDoesNotThrow(() -> b.user("u", "ok".toCharArray()));
+    }
+
+    @Test
+    void aMalformedCandidateIsRefused() {
+        var s = InMemoryIdentityStore.builder().user("u", "a?".toCharArray()).build();
+        // Before the fix "a\uD800" encoded to "a?" and authenticated as u.
+        assertTrue(s.validate("u", "a\uD800".toCharArray()).isEmpty());
+        assertTrue(s.validate("nobody", "a\uD800".toCharArray()).isEmpty());
+    }
+
+    @Test
+    void aValidNonAsciiPasswordStillAuthenticates() {
+        var s = InMemoryIdentityStore.builder().user("u", "p\u00e4ssw\u00f6rd\uD83D\uDE00".toCharArray(), "r").build();
+        assertTrue(s.validate("u", "p\u00e4ssw\u00f6rd\uD83D\uDE00".toCharArray()).isPresent());
+    }
 }
