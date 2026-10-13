@@ -11,9 +11,10 @@
 - Cause: `ChappeServletBridge` runs the async cycles (`runAsyncCycles`) before the error handling
   (`maybeHandleError`), so a cycle opened by the ERROR dispatch is never driven. A zero-argument
   `startAsync()` also binds the container request, not the `ErrorDispatchRequest`.
+- Investigation: pinned by `ErrorPageDispatchTest.startAsyncInAnErrorPageThrowsIse` and
+  `startAsyncWithRequestAndResponseInAnErrorPageThrowsIse`.
 - Status: FIXED (d32ec2d). `startAsync()` and `startAsync(req, res)` throw `IllegalStateException` during an ERROR
   dispatch, so the gap is no longer silent. Driving the cycle after an ERROR dispatch stays out of scope.
-  `startAsync()` during an ERROR dispatch with an `IllegalStateException` so the gap is no longer silent.
 
 ## BUG-20261013-03 — forward and include put the container wrapper above an HTTP application wrapper instead of under it
 
@@ -38,12 +39,15 @@
   `DispatcherSemanticsTest.anHttpWrapperPassedTo{Forward,Include}IsTheObjectTheTargetReceives`,
   `anHttpResponseWrapperPassedToIncludeIsTheObjectTheTargetReceives`,
   `theHttpWrapperChainIsRestoredAfterForwardAndInclude`,
-  `aFilterWrappingOnForwardComposesWithASecondDispatch` and
-  `anHttpWrapperDelegatesTheDispatchPathsToTheDispatchWrapper`. Official TCK subset (dispatch, wrapper,
+  `aFilterWrappingOnForwardComposesWithASecondDispatch`,
+  `anHttpWrapperDelegatesTheDispatchPathsToTheDispatchWrapper` and
+  `aFilterWrapperOverAnApplicationWrapperComposesWithASecondDispatchAndBothChainsAreRestored`.
+  Full official TCK (`run-official-tck-servlet6.1.sh --all`, branch build): 1714 tests, 5 known JSP
+  errors, identical per class to the run before the change. Official TCK subset (dispatch, wrapper,
   filter-dispatcher, dispatcher-type, async and error-page classes): 309 tests, 0 failures, 0 errors.
-- Stricter behaviour (48d534f): a request or response that is neither a container object nor wraps
-  one (for example an application-implemented `HttpServletRequest` that only delegates) is now
-  rejected by forward and include with `ServletException("the request and response must be, or wrap,
+- Stricter behaviour (48d534f): the request (and, for include, the response) must be, or wrap, the
+  container's objects. A request that is neither a container object nor wraps one (for example an application-implemented `HttpServletRequest` that only delegates) is now
+  rejected with `ServletException("the request and response must be, or wrap,
   the objects the container passed (RequestDispatcher)")`, as the `RequestDispatcher` Javadoc requires.
   Pinned by `DispatcherSemanticsTest.aRequestThatDoesNotWrapTheContainersIsRejected`.
 
