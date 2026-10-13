@@ -361,22 +361,63 @@ class DispatcherSemanticsTest {
         assertEquals("w|FORWARD|false", get("/c"));
     }
 
+    /** A plain (non-HTTP) response wrapper whose writer prefixes every {@code write(String)} with {@code [}. */
+    static final class PrefixingResponse extends ServletResponseWrapper {
+        private java.io.PrintWriter writer;
+        PrefixingResponse(ServletResponse r) { super(r); }
+        @Override public java.io.PrintWriter getWriter() throws IOException {
+            if (writer == null) {
+                writer = new java.io.PrintWriter(super.getWriter()) {
+                    @Override public void write(String s) { super.write("[" + s); }
+                };
+            }
+            return writer;
+        }
+    }
+
     @Test
     void aPlainResponseWrapperPassedToIncludeReachesTheTarget() throws Exception {
-        start(map("/c", servlet((req, resp) -> req.getRequestDispatcher("/t").include(req,
-                        new ServletResponseWrapper(resp) {
-                            private java.io.PrintWriter writer;
-                            @Override public java.io.PrintWriter getWriter() throws IOException {
-                                if (writer == null) {
-                                    writer = new java.io.PrintWriter(super.getWriter()) {
-                                        @Override public void write(String s) { super.write("[" + s); }
-                                    };
-                                }
-                                return writer;
-                            }
-                        })), "c"),
+        start(map("/c", servlet((req, resp) -> req.getRequestDispatcher("/t").include(req, new PrefixingResponse(resp))),
+                        "c"),
                 map("/t", plain((req, resp) -> resp.getWriter().write("x")), "t"));
-        assertTrue(get("/c").contains("[x"));
+        assertEquals("[x", get("/c"));
+    }
+
+    @Test
+    void aPlainResponseWrapperPassedToForwardReachesTheTarget() throws Exception {
+        var passed = new java.util.concurrent.atomic.AtomicReference<ServletResponse>();
+        start(map("/c", servlet((req, resp) -> {
+                    var wrapper = new PrefixingResponse(resp);
+                    passed.set(wrapper);
+                    req.getRequestDispatcher("/t").forward(req, wrapper);
+                }), "c"),
+                map("/t", plain((req, resp) -> {
+                    events.add("same=" + (resp == passed.get()));
+                    resp.getWriter().write("x");
+                }), "t"));
+        assertEquals("[x", get("/c"));
+        assertEquals(List.of("same=true"), events);
+    }
+
+    @Test
+    void theApplicationChainIsRestoredAfterAForward() throws Exception {
+        start(map("/c", servlet((req, resp) -> {
+                    ServletRequestWrapper request = plainWrapper(req);
+                    ServletResponseWrapper response = new PrefixingResponse(resp);
+                    try {
+                        req.getRequestDispatcher("/boom").forward(request, response);
+                        events.add("no exception");
+                    } catch (ServletException expected) {
+                        events.add("afterThrow=" + (request.getRequest() == req) + "," + (response.getResponse() == resp));
+                    }
+                    req.getRequestDispatcher("/t").forward(request, response);
+                    events.add("afterReturn=" + (request.getRequest() == req) + "," + (response.getResponse() == resp));
+                }), "c"),
+                map("/t", plain((req, resp) -> resp.getWriter().write("x")), "t"),
+                map("/boom", plain((req, resp) -> { throw new ServletException("boom"); }), "boom"));
+        assertEquals("[x", get("/c"));
+        awaitEvents(2); // the caller records the restore after the forward closed the response
+        assertEquals(List.of("afterThrow=true,true", "afterReturn=true,true"), events);
     }
 
     @Test
@@ -487,6 +528,11 @@ class DispatcherSemanticsTest {
     }
 
     // ---- helpers ----
+
+    private void awaitEvents(int count) throws InterruptedException {
+        long deadline = System.nanoTime() + Duration.ofSeconds(5).toNanos();
+        while (events.size() < count && System.nanoTime() < deadline) Thread.sleep(5);
+    }
 
     private void start(ServletDispatcher.Mapping... mappings) {
         startWith(List.of(), mappings);
