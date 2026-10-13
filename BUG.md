@@ -583,7 +583,7 @@ Statuts : `OPEN` → `INVESTIGATING` → `FIXED` (commit hash) → `CLOSED`.
 ## BUG-20261010-06 — upgrade() called during an ASYNC dispatch is silently dropped
 
 - **Date** : 2026-10-10
-- **Statut** : OPEN (found by the Phase 5 final fix-wave review)
+- **Statut** : FIXED (upgrade() throws IllegalStateException during an async dispatch)
 - **Module touché** : `foy-core` (`HttpServletRequestImpl.upgrade`, `ChappeServletBridge`)
 - **Symptôme** : a servlet reached by `AsyncContext.dispatch()` that calls `upgrade(...)` gets no
   exception, the response switches to discard mode, and the client receives an empty plain HTTP
@@ -597,6 +597,7 @@ Statuts : `OPEN` → `INVESTIGATING` → `FIXED` (commit hash) → `CLOSED`.
 - **Fix envisagé** : throw `IllegalStateException` from `upgrade()` when the dispatcher type is
   `ASYNC` (or whenever an async cycle exists), mirroring "upgrade() after startAsync()". No TCK
   test exercises this path.
+- **Investigation 2026-10-13** : fixed with a dedicated `inAsyncDispatch` flag set by the bridge around both async-dispatch invocations (the dispatcher type is untouched). Pinned by `ServletUpgradeEndToEndTest.upgradeDuringAsyncDispatchThrowsIse`.
 
 ## BUG-20261010-07 — no CDI context on AsyncContext.start() threads nor in AsyncListener.onComplete
 

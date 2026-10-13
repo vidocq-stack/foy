@@ -811,6 +811,10 @@ public final class HttpServletRequestImpl implements HttpServletRequest {
         if (type != null) this.dispatcherType = type;
     }
     @Override public DispatcherType getDispatcherType() { return dispatcherType; }
+
+    private boolean inAsyncDispatch;
+    /** Marks the span of an async dispatch; unlike the dispatcher type it only guards {@link #upgrade}. */
+    public void asyncDispatch(boolean inAsyncDispatch) { this.inAsyncDispatch = inAsyncDispatch; }
     @Override public ServletContext getServletContext() { return servletContext; }
     @Override public RequestDispatcher getRequestDispatcher(String path) {
         if (path == null) return null;
@@ -1228,6 +1232,8 @@ public final class HttpServletRequestImpl implements HttpServletRequest {
         if (upgradeHandler != null) throw new IllegalStateException("the request is already upgraded");
         // An async request keeps the HTTP lifecycle (its cycles, its body pump): it cannot also leave it.
         if (isAsyncStarted()) throw new IllegalStateException("upgrade() after startAsync()");
+        // An async dispatch belongs to a cycle the container ends itself: it cannot leave HTTP either.
+        if (inAsyncDispatch) throw new IllegalStateException("upgrade() during an async dispatch");
         var response = boundResponse instanceof HttpServletResponseImpl impl ? impl : null;
         if (response != null && response.isCommitted()) {
             throw new IllegalStateException("the response is already committed");

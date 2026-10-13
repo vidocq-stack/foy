@@ -312,6 +312,35 @@ class ServletUpgradeEndToEndTest {
     }
 
     @Test
+    void upgradeDuringAsyncDispatchThrowsIse() throws Exception {
+        start(new HttpServlet() {
+            @Override
+            protected void doPost(HttpServletRequest req, HttpServletResponse resp) throws IOException, ServletException {
+                if (req.getDispatcherType() == jakarta.servlet.DispatcherType.ASYNC) {
+                    resp.setStatus(101);
+                    resp.setHeader("Upgrade", "x");
+                    try {
+                        req.upgrade(ClosingHandler.class);
+                        resp.getWriter().print("upgraded");
+                    } catch (IllegalStateException e) {
+                        resp.setStatus(200);
+                        resp.getWriter().print("ise");
+                    }
+                    return;
+                }
+                req.startAsync().dispatch("/up");
+            }
+        });
+        try (var client = new Client(port)) {
+            client.send(tckHead().replace("Connection: Upgrade", "Connection: close"));
+            String response = client.readAll();
+            assertTrue(response.startsWith("HTTP/1.1 200"), response);
+            assertTrue(response.endsWith("ise"), response);
+        }
+        assertEquals(0, probe.destroyCalls.get());
+    }
+
+    @Test
     void startAsyncAfterUpgradeThrowsIse() throws Exception {
         start(new HttpServlet() {
             @Override
