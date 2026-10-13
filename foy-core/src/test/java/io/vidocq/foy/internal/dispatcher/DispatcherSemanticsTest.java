@@ -26,10 +26,17 @@ import io.vidocq.foy.internal.bridge.ChappeServletBridge;
 import io.vidocq.foy.internal.container.VidocqServletContext;
 import jakarta.servlet.DispatcherType;
 import jakarta.servlet.Filter;
+import jakarta.servlet.GenericServlet;
+import jakarta.servlet.Servlet;
 import jakarta.servlet.ServletException;
+import jakarta.servlet.ServletRequest;
+import jakarta.servlet.ServletRequestWrapper;
+import jakarta.servlet.ServletResponse;
+import jakarta.servlet.ServletResponseWrapper;
 import jakarta.servlet.http.HttpServlet;
 import jakarta.servlet.http.HttpServletMapping;
 import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletRequestWrapper;
 import jakarta.servlet.http.HttpServletResponse;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -75,7 +82,22 @@ class DispatcherSemanticsTest {
         };
     }
 
-    private static ServletDispatcher.Mapping map(String path, HttpServlet s, String name) {
+    @FunctionalInterface
+    interface PlainBody {
+        void run(ServletRequest req, ServletResponse resp) throws IOException, ServletException;
+    }
+
+    /** A servlet that accepts non-HTTP request and response objects, unlike {@link HttpServlet}. */
+    private static Servlet plain(PlainBody body) {
+        return new GenericServlet() {
+            @Override public void service(ServletRequest req, ServletResponse resp)
+                    throws IOException, ServletException {
+                body.run(req, resp);
+            }
+        };
+    }
+
+    private static ServletDispatcher.Mapping map(String path, Servlet s, String name) {
         return new ServletDispatcher.Mapping(UrlPatternMatcher.of(path), s, name);
     }
 
@@ -309,6 +331,106 @@ class DispatcherSemanticsTest {
                         String.valueOf(req.getAttribute("jakarta.servlet.forward.request_uri")))), "T"));
         assertEquals("/C", get("/C"));
         assertEquals(List.of(NO_ATTRS), events);
+    }
+
+    // ---- Application wrappers reach the target (sections 6.2.2, 9.1; BUG-20261009-01) ----
+
+    /** A plain (non-HTTP) request wrapper overriding {@code getParameter}. */
+    private static ServletRequestWrapper plainWrapper(ServletRequest req) {
+        return new ServletRequestWrapper(req) {
+            @Override public String getParameter(String n) { return "w"; }
+        };
+    }
+
+    private static Servlet wrapperReporter() {
+        return plain((req, resp) -> resp.getWriter().write(req.getParameter("p") + "|"
+                + req.getDispatcherType() + "|" + (req instanceof HttpServletRequest)));
+    }
+
+    @Test
+    void aPlainRequestWrapperPassedToIncludeReachesTheTarget() throws Exception {
+        start(map("/c", servlet((req, resp) -> req.getRequestDispatcher("/t").include(plainWrapper(req), resp)), "c"),
+                map("/t", wrapperReporter(), "t"));
+        assertEquals("w|INCLUDE|false", get("/c"));
+    }
+
+    @Test
+    void aPlainRequestWrapperPassedToForwardReachesTheTarget() throws Exception {
+        start(map("/c", servlet((req, resp) -> req.getRequestDispatcher("/t").forward(plainWrapper(req), resp)), "c"),
+                map("/t", wrapperReporter(), "t"));
+        assertEquals("w|FORWARD|false", get("/c"));
+    }
+
+    @Test
+    void aPlainResponseWrapperPassedToIncludeReachesTheTarget() throws Exception {
+        start(map("/c", servlet((req, resp) -> req.getRequestDispatcher("/t").include(req,
+                        new ServletResponseWrapper(resp) {
+                            private java.io.PrintWriter writer;
+                            @Override public java.io.PrintWriter getWriter() throws IOException {
+                                if (writer == null) {
+                                    writer = new java.io.PrintWriter(super.getWriter()) {
+                                        @Override public void write(String s) { super.write("[" + s); }
+                                    };
+                                }
+                                return writer;
+                            }
+                        })), "c"),
+                map("/t", plain((req, resp) -> resp.getWriter().write("x")), "t"));
+        assertTrue(get("/c").contains("[x"));
+    }
+
+    @Test
+    void theApplicationChainIsRestoredAfterTheDispatch() throws Exception {
+        start(map("/c", servlet((req, resp) -> {
+                    ServletRequestWrapper wrapper = plainWrapper(req);
+                    req.getRequestDispatcher("/t").include(wrapper, resp);
+                    boolean afterReturn = wrapper.getRequest() == req;
+                    boolean afterThrow;
+                    try {
+                        req.getRequestDispatcher("/boom").include(wrapper, resp);
+                        afterThrow = false;
+                    } catch (ServletException expected) {
+                        afterThrow = wrapper.getRequest() == req;
+                    }
+                    resp.getWriter().write(afterReturn && afterThrow ? "restored" : "leaked");
+                }), "c"),
+                map("/t", plain((req, resp) -> { }), "t"),
+                map("/boom", plain((req, resp) -> { throw new ServletException("boom"); }), "boom"));
+        assertEquals("restored", get("/c"));
+    }
+
+    @Test
+    void nestedDispatchesUnwindTheApplicationChainInOrder() throws Exception {
+        start(map("/c", servlet((req, resp) -> {
+                    ServletRequestWrapper outer = plainWrapper(req);
+                    req.getRequestDispatcher("/i").include(outer, resp);
+                    resp.getWriter().write("|" + (outer.getRequest() == req ? "restored" : "leaked"));
+                }), "c"),
+                map("/i", plain((req, resp) -> {
+                    var wrapper = (ServletRequestWrapper) req;
+                    ServletRequest included = wrapper.getRequest();
+                    req.getRequestDispatcher("/t").forward(new ServletRequestWrapper(req), resp);
+                    resp.getWriter().write("|" + (wrapper.getRequest() == included ? "inner-restored" : "inner-leaked"));
+                }), "i"),
+                map("/t", wrapperReporter(), "t"));
+        assertEquals("w|FORWARD|false|inner-restored|restored", get("/c"));
+    }
+
+    /**
+     * An HTTP wrapper still goes under the container's dispatch wrapper, as before: its overrides of
+     * methods the dispatch wrapper delegates (here {@code getHeader}) reach the target. The dispatch
+     * wrapper computes the parameters from {@code getParameterMap}, so a {@code getParameter}
+     * override alone is not seen.
+     */
+    @Test
+    void anHttpWrapperIsStillPassedAsBefore() throws Exception {
+        start(map("/c", servlet((req, resp) -> req.getRequestDispatcher("/t").forward(
+                        new HttpServletRequestWrapper(req) {
+                            @Override public String getHeader(String n) { return "h"; }
+                        }, resp)), "c"),
+                map("/t", servlet((req, resp) -> resp.getWriter().write(req.getHeader("X-P") + "|"
+                        + req.getDispatcherType())), "t"));
+        assertEquals("h|FORWARD", get("/c"));
     }
 
     // ---- Exceptions propagate unchanged ----

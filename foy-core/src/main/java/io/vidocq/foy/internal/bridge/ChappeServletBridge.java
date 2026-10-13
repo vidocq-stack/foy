@@ -57,6 +57,7 @@ import jakarta.servlet.ServletContext;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.ServletRequest;
 import jakarta.servlet.ServletRequestWrapper;
+import jakarta.servlet.ServletResponse;
 import jakarta.servlet.SessionCookieConfig;
 import jakarta.servlet.SessionTrackingMode;
 import jakarta.servlet.UnavailableException;
@@ -83,7 +84,7 @@ import java.util.function.Supplier;
  *   <li>Resolves servlet via {@link ServletDispatcher}</li>
  *   <li>Constructs the applicable filter chain via {@link FilterRegistry}</li>
  *   <li>Constructed {@link HttpServletRequestImpl} + {@link HttpServletResponseImpl}</li>
- *   <li>Delegate to {@link #invoke(DispatchTarget, HttpServletRequest, HttpServletResponse, DispatcherType) dispatch interne}
+ *   <li>Delegate to {@link #invoke(DispatchTarget, ServletRequest, ServletResponse, DispatcherType) dispatch interne}
  *       reused by {@link RequestDispatcherImpl} for forward/include</li>
  *   <li>Emits {@code Set-Cookie JSESSIONID} if a session has been created</li>
  *   <li>Materializes the response Immutable Chappe</li>
@@ -1051,14 +1052,14 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
      * forward/include and by {@link #handle(Request)} for REQUEST.
      */
     @Override
-    public void invoke(DispatchTarget target, HttpServletRequest req, HttpServletResponse res,
+    public void invoke(DispatchTarget target, ServletRequest req, ServletResponse res,
                        DispatcherType type) throws IOException, ServletException {
         // Section 6.2.5: a named dispatch matches no URL pattern, only the target's servlet-name mappings.
         String filterPath = target.named() ? null : target.path();
         invoke(target, req, res, type, filterRegistry.chain(filterPath, type, target.servletName()));
     }
 
-    private void invoke(DispatchTarget target, HttpServletRequest req, HttpServletResponse res,
+    private void invoke(DispatchTarget target, ServletRequest req, ServletResponse res,
                         DispatcherType type, FilterRegistry.Chain chain) throws IOException, ServletException {
         List<Filter> filters = chain.filters();
         // §2.3.3.3 / ServletRequest#isAsyncSupported: async stays enabled only while the request is

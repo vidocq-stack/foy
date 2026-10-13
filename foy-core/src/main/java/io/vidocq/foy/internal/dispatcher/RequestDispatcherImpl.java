@@ -28,7 +28,9 @@ import jakarta.servlet.DispatcherType;
 import jakarta.servlet.RequestDispatcher;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.ServletRequest;
+import jakarta.servlet.ServletRequestWrapper;
 import jakarta.servlet.ServletResponse;
+import jakarta.servlet.ServletResponseWrapper;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 
@@ -46,12 +48,18 @@ import java.io.IOException;
  * attributes expose the included path for the duration of the include.</p>
  *
  * <p>Named dispatchers (section 9.1) set no dispatch attribute and keep the caller's paths.</p>
+ *
+ * <p>The target receives the objects the caller passed (sections 6.2.2 and 9.1). When the caller
+ * passes a non-HTTP application wrapper, the container's dispatch wrapper goes under it, through
+ * {@link ServletRequestWrapper#setRequest} / {@link ServletResponseWrapper#setResponse}, and the
+ * application's chain is restored once the dispatch returns or throws (as Tomcat's
+ * {@code ApplicationDispatcher.wrapRequest} does).</p>
  */
 public final class RequestDispatcherImpl implements RequestDispatcher {
 
     public interface Invoker {
         /** Executes the dispatch: filter chain applicable + service() on the target servlet. */
-        void invoke(DispatchTarget target, HttpServletRequest req, HttpServletResponse res,
+        void invoke(DispatchTarget target, ServletRequest req, ServletResponse res,
                     DispatcherType type)
                 throws IOException, ServletException;
     }
@@ -95,8 +103,21 @@ public final class RequestDispatcherImpl implements RequestDispatcher {
         res.resetBuffer();
 
         // Exceptions of the target reach the caller unchanged (no wrapping). The forward.* attributes
-        // (section 9.4.2) live in the ForwardedRequest, so they last for the forward only.
-        invoker.invoke(target, new ForwardedRequest(req, target), res, DispatcherType.FORWARD);
+        // (section 9.4.2) live in the ForwardedRequest, so they last for the forward only. A non-HTTP
+        // application wrapper is kept: the ForwardedRequest goes under it for the forward only. The
+        // response chain is passed as is.
+        ForwardedRequest dispatched = new ForwardedRequest(req, target);
+        ServletRequestWrapper hook = lowestNonHttpWrapper(request);
+        if (hook == null) {
+            invoker.invoke(target, dispatched, response, DispatcherType.FORWARD);
+        } else {
+            hook.setRequest(dispatched);
+            try {
+                invoker.invoke(target, request, response, DispatcherType.FORWARD);
+            } finally {
+                hook.setRequest(req);
+            }
+        }
 
         // Section 9.4: the response is committed and closed once the forward returns, unless the
         // target started async processing or the forward happens inside an include (the including
@@ -135,8 +156,54 @@ public final class RequestDispatcherImpl implements RequestDispatcher {
         }
         // The include.* attributes (none for a named include) and the merged parameters live in the
         // wrapper: they last for the include only. Exceptions of the target propagate unchanged.
-        invoker.invoke(target, new IncludedRequest(req, target), new IncludedResponse(res),
-                DispatcherType.INCLUDE);
+        // Non-HTTP application wrappers are kept: the dispatch wrappers go under them for the include
+        // only.
+        IncludedRequest dispatchedRequest = new IncludedRequest(req, target);
+        IncludedResponse dispatchedResponse = new IncludedResponse(res);
+        ServletRequestWrapper requestHook = lowestNonHttpWrapper(request);
+        ServletResponseWrapper responseHook = lowestNonHttpResponseWrapper(response);
+        if (requestHook != null) requestHook.setRequest(dispatchedRequest);
+        try {
+            if (responseHook != null) responseHook.setResponse(dispatchedResponse);
+            try {
+                invoker.invoke(target,
+                        requestHook == null ? dispatchedRequest : request,
+                        responseHook == null ? dispatchedResponse : response,
+                        DispatcherType.INCLUDE);
+            } finally {
+                if (responseHook != null) responseHook.setResponse(res);
+            }
+        } finally {
+            if (requestHook != null) requestHook.setRequest(req);
+        }
+    }
+
+    /**
+     * The wrapper whose wrapped request is the first HTTP request of the chain, or null when the
+     * outer request is HTTP (or the chain holds no HTTP request).
+     */
+    private static ServletRequestWrapper lowestNonHttpWrapper(ServletRequest outer) {
+        ServletRequest r = outer;
+        while (r instanceof ServletRequestWrapper w && !(r instanceof HttpServletRequest)) {
+            ServletRequest inner = w.getRequest();
+            if (inner instanceof HttpServletRequest) return w;
+            r = inner;
+        }
+        return null;
+    }
+
+    /**
+     * The wrapper whose wrapped response is the first HTTP response of the chain, or null when the
+     * outer response is HTTP (or the chain holds no HTTP response).
+     */
+    private static ServletResponseWrapper lowestNonHttpResponseWrapper(ServletResponse outer) {
+        ServletResponse r = outer;
+        while (r instanceof ServletResponseWrapper w && !(r instanceof HttpServletResponse)) {
+            ServletResponse inner = w.getResponse();
+            if (inner instanceof HttpServletResponse) return w;
+            r = inner;
+        }
+        return null;
     }
 
     /**
