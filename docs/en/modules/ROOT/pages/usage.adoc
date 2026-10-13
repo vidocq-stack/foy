@@ -298,6 +298,8 @@ public class Router extends HttpServlet {
 
 * The query string of the target is merged with the original parameters: the target's values come first, the original ones follow.
 * Every query string is decoded as UTF-8, the request's own as well as those of forward, include and async dispatch, whatever the request character encoding; the encoding applies to the form body only. A pair with a malformed escape is skipped.
+* A request or response wrapper that is not an `HttpServletRequest` or `HttpServletResponse` wrapper, passed to `forward` or `include`, reaches the target: the container's own wrapper sits under the application chain for the duration of the dispatch and is restored afterwards.
+* The request URI and URL of a forward or async dispatch, the `jakarta.servlet.include.request_uri` attribute and the error page URI are percent-encoded; existing `%XX` triplets are kept. A zero-argument `AsyncContext.dispatch()` keeps a decoded `?` in the path.
 * `getNamedDispatcher(name)` reaches every registered servlet, mapped or not, and sets no `forward.*` attribute.
 * A nested forward keeps the attributes of the first forward (the original request), and the `forward.*` attributes are visible only to the forwarded target, the `include.*` ones only to the included target.
 * An exception thrown by the target propagates unchanged to the caller. After a forward returns, the response is closed: whatever the forwarding servlet writes afterwards is dropped.
@@ -350,7 +352,7 @@ A path outside the context path (`/app2/x` for context `/app`) is 404; the conte
 
 == Error pages
 
-`<error-page>` entries match an exception type (the class hierarchy is walked first, then, for a `ServletException`, its root cause) or a status code. The error attributes `jakarta.servlet.error.status_code`, `message`, `exception`, `exception_type`, `request_uri`, `servlet_name` and, new in 6.1, `error.query_string` are set on the error dispatch, which uses `DispatcherType.ERROR`. If the response is already committed when an exception escapes, no error page is dispatched, the committed content stands and the exception is logged at `ERROR`.
+`<error-page>` entries match an exception type (the class hierarchy is walked first, then, for a `ServletException`, its root cause) or a status code. The error attributes `jakarta.servlet.error.status_code`, `message`, `exception`, `exception_type`, `request_uri`, `servlet_name` and, new in 6.1, `error.query_string` are set on the error dispatch, which uses `DispatcherType.ERROR`. The error page sees the path elements of its own location (servlet path, path info, request URI and URL, and mapping), whatever resource it is; the original values stay in the `jakarta.servlet.error.*` attributes. If the response is already committed when an exception escapes, no error page is dispatched, the committed content stands and the exception is logged at `ERROR`.
 
 == Response semantics
 

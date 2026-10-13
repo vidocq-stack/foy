@@ -507,7 +507,9 @@ Statuts : `OPEN` → `INVESTIGATING` → `FIXED` (commit hash) → `CLOSED`.
     parameter name decode differently depending on the dispatch type. The request encoding applies to the
     form body only (documented in `usage.adoc`). Fixed the async parser: `AsyncDispatchRequest` now
     uses `DispatchParameters.View` like forward and include (a malformed escape skips the pair instead
-    of throwing, target values precede the original ones), in 418ba09.
+    of throwing, target values precede the original ones), in 418ba09. Pinned by
+    `RequestPathCanonicalisationTest#aMalformedEscapeInAnAsyncDispatchQueryIsSkipped` and
+    `#asyncDispatchQueryParametersPrecedeTheOriginalOnes`.
 
 ## BUG-20261009-13 — resource metadata and openStream may describe different roots
 
