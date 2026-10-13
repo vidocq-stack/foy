@@ -73,6 +73,49 @@ final class CompileHarness {
         }
     }
 
+    /**
+     * Compiles {@code sources} with {@code -proc:none} into {@code out/dependency}, then runs
+     * {@code -proc:only} with {@link FoyWebComponentProcessor} over the given binary class names, the way a
+     * dependency jar's classes are processed.
+     */
+    static Result processClasses(Path out, Map<String, String> sources, List<String> classNames) throws Exception {
+        JavaCompiler compiler = ToolProvider.getSystemJavaCompiler();
+        Path src = Files.createDirectories(out.resolve("src"));
+        Path dependency = Files.createDirectories(out.resolve("dependency"));
+        Path classes = Files.createDirectories(out.resolve("classes"));
+        Path generated = Files.createDirectories(out.resolve("generated"));
+        List<File> files = new ArrayList<>();
+        for (var e : sources.entrySet()) {
+            Path p = src.resolve(e.getKey().replace('.', '/') + ".java");
+            Files.createDirectories(p.getParent());
+            Files.writeString(p, e.getValue());
+            files.add(p.toFile());
+        }
+        var diags = new DiagnosticCollector<JavaFileObject>();
+        try (StandardJavaFileManager fm = compiler.getStandardFileManager(diags, Locale.ROOT, null)) {
+            fm.setLocation(StandardLocation.CLASS_OUTPUT, List.of(dependency.toFile()));
+            fm.setLocation(StandardLocation.CLASS_PATH, testClasspath());
+            boolean compiled = compiler.getTask(null, fm, diags, List.of("-proc:none"), null,
+                    fm.getJavaFileObjectsFromFiles(files)).call();
+            if (!compiled) {
+                return new Result(null, diags.getDiagnostics(), false, out);
+            }
+        }
+        var diags2 = new DiagnosticCollector<JavaFileObject>();
+        try (StandardJavaFileManager fm = compiler.getStandardFileManager(diags2, Locale.ROOT, null)) {
+            fm.setLocation(StandardLocation.CLASS_OUTPUT, List.of(classes.toFile()));
+            fm.setLocation(StandardLocation.SOURCE_OUTPUT, List.of(generated.toFile()));
+            List<File> cp = new ArrayList<>();
+            cp.add(dependency.toFile());
+            cp.addAll(testClasspath());
+            fm.setLocation(StandardLocation.CLASS_PATH, cp);
+            var task = compiler.getTask(null, fm, diags2, List.of("-proc:only"), classNames, null);
+            task.setProcessors(List.of(new FoyWebComponentProcessor()));
+            boolean ok = task.call();
+            return new Result(null, diags2.getDiagnostics(), ok, out);
+        }
+    }
+
     private static List<File> testClasspath() throws Exception {
         Set<File> cp = new LinkedHashSet<>();
         for (String e : System.getProperty("java.class.path", "").split(File.pathSeparator)) {

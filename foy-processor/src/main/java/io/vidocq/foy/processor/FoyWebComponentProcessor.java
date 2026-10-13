@@ -30,6 +30,7 @@ import javax.tools.FileObject;
 import javax.tools.StandardLocation;
 import java.io.IOException;
 import java.io.Writer;
+import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.Set;
 
@@ -43,6 +44,8 @@ public final class FoyWebComponentProcessor extends AbstractProcessor {
     private static final String SERVICE = "io.vidocq.foy.spi.gen.WebComponent";
 
     private final Set<String> generated = new LinkedHashSet<>();
+    /** Binary names already visited: a nested type can be a root as well as a member of its owner. */
+    private final Set<String> visited = new HashSet<>();
     private Element anyOrigin;
     private ClassIndexWriter classIndex;
 
@@ -65,6 +68,9 @@ public final class FoyWebComponentProcessor extends AbstractProcessor {
 
     private void visit(Element element) {
         if (!(element instanceof TypeElement type)) {
+            return;
+        }
+        if (!visited.add(processingEnv.getElementUtils().getBinaryName(type).toString())) {
             return;
         }
         classIndex().add(type);
