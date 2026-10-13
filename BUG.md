@@ -1,6 +1,6 @@
 # BUG.md — foy
 
-## BUG-20261013-02 — forward and include put the container wrapper above an HTTP application wrapper instead of under it
+## BUG-20261013-03 — forward and include put the container wrapper above an HTTP application wrapper instead of under it
 
 - Date: 2026-10-13 (review of the BUG-20261009-01 fix).
 - Symptom: when an application passes an `HttpServletRequestWrapper` (or `HttpServletResponseWrapper`)
