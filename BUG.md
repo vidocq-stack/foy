@@ -304,7 +304,7 @@ Statuts : `OPEN` → `INVESTIGATING` → `FIXED` (commit hash) → `CLOSED`.
 ## BUG-20261009-04 — decoded paths leak into dispatch URIs (query split, wrapper URIs)
 
 - **Date** : 2026-10-09
-- **Statut** : OPEN (low)
+- **Statut** : FIXED (dispatch URIs are percent-encoded and a zero-argument async dispatch keeps its path and query apart, 363b082)
 - **Module touché** : `foy-core` (`AsyncContextImpl.dispatch()`, `ForwardedRequest`, `IncludedRequest`, `AsyncDispatchRequest`)
 - **Symptôme** : (1) a zero-argument `AsyncContext.dispatch()` builds its target from the decoded
   canonical path; an encoded `%3F` in the request path decodes to `?`, which the dispatch then
@@ -319,6 +319,14 @@ Statuts : `OPEN` → `INVESTIGATING` → `FIXED` (commit hash) → `CLOSED`.
   passes a path through the string-based `dispatch(String)` API that splits on `?`.
 - **Investigations** :
   - 2026-10-09 : found in the Task 4.5b review; not exercised by the TCK.
+  - 2026-10-13 : fixed in 363b082. `RequestPaths.encodeUriPath` re-encodes the dispatch path in the
+    request URI of `ForwardedRequest`, `AsyncDispatchRequest` and `ErrorDispatchRequest` and in
+    `jakarta.servlet.include.request_uri`; `AsyncContextImpl` passes the path and the query apart and
+    `DispatchResolver.resolve(path, query)` no longer splits the path; `canonicalDispatchPath` reads
+    the target's decoded path. Pinned by `RequestPathsTest.encodesADecodedPathForARequestUri` /
+    `encodingAPathIsIdempotent` and `RequestPathCanonicalisationTest.theForwardTargetRequestUriIsEncoded`,
+    `theIncludeRequestUriAttributeIsEncoded`, `zeroArgumentAsyncDispatchKeepsADecodedQuestionMarkInThePath`
+    and `zeroArgumentAsyncDispatchAfterAForwardUsesTheForwardTargetPath`.
 
 ## BUG-20261009-05 — changeSessionId throws UnsupportedOperationException; HttpSessionIdListener ignored
 
