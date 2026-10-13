@@ -117,6 +117,28 @@ The `io.vidocq.foy.internal.*` packages are exported to allow advanced integrati
 * **`FoyWebExtension`** (in `foy-cdi-vauban`) is a CDI Build Compatible Extension. It runs inside `vauban-processor`, which is itself **build-time only**: unscoped web components become `@Dependent`, duplicate servlet or filter names fail the build, and a synthetic `@Singleton` `io.vidocq.foy.spi.cdi.CdiWebComponents` bean lists the components for `WebAppDiscovery`, which merges the beans of the application and of every library archive. A web-annotated `Servlet`, `Filter` or `EventListener` bean missing from every index (its archive was built without `foy-cdi-vauban` on the processor path) is still discovered, with one `WARNING` per class.
 * See xref:internals.adoc#component-resolution-tiers[Component resolution tiers] for the runtime side and xref:usage.adoc#build-time-code-generation[Usage] for the setup.
 
+=== Processing dependency jars
+
+A library built without `foy-processor` can still have companions generated for it, for example a `@WebListener` shipped in Vaadin's `flow-server.jar`. To do so, run the processor over its compiled classes with `javac -proc:only` and the binary names of its types, and write the output into an enriched copy of the jar. `vidocq:generate` does this (https://codefloe.com/Vidocq/vidocq/issues/246[vidocq#246]). Top-level and nested names may both be passed: each type is visited once.
+
+`io.vidocq.foy.processor.DependencyHints` holds the constants such a tool needs, so it does not have to hard-code them:
+
+[cols="1,3"]
+|===
+| Constant | Meaning
+
+| `RESOURCE_HINTS`
+| A jar is worth processing when it holds one of these resources: `META-INF/services/jakarta.servlet.ServletContainerInitializer` or `META-INF/web-fragment.xml`.
+
+| `CLASS_BYTE_HINTS`
+| A jar is also worth processing when one of these byte strings appears in one of its class files: `jakarta/servlet/annotation/Web` (`@WebServlet`, `@WebFilter`, `@WebListener`) or `jakarta/servlet/annotation/HandlesTypes`. It is a byte search over the constant pools, not a parse.
+
+| `MARKER`
+| `META-INF/io.vidocq.foy/generated`, written by the processor whenever it processed at least one type. Its content is `foy-processor <version>`. A jar that already holds it was processed, either when it was built or by an earlier enrichment, and is skipped.
+|===
+
+Each run writes a fresh `META-INF/services/io.vidocq.foy.spi.gen.WebComponent` and `META-INF/foy/class-index.list`. Merging them with the files the jar already holds is the caller's job.
+
 == Public API: `FoyChappeBoot`
 
 [cols="1,3",options="header"]
