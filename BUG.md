@@ -40,6 +40,11 @@
   `aFilterWrappingOnForwardComposesWithASecondDispatch` and
   `anHttpWrapperDelegatesTheDispatchPathsToTheDispatchWrapper`. Official TCK subset (dispatch, wrapper,
   filter-dispatcher, dispatcher-type, async and error-page classes): 309 tests, 0 failures, 0 errors.
+- Stricter behaviour (48d534f): a request or response that is neither a container object nor wraps
+  one (for example an application-implemented `HttpServletRequest` that only delegates) is now
+  rejected by forward and include with `ServletException("the request and response must be, or wrap,
+  the objects the container passed (RequestDispatcher)")`, as the `RequestDispatcher` Javadoc requires.
+  Pinned by `DispatcherSemanticsTest.aRequestThatDoesNotWrapTheContainersIsRejected`.
 
 ## BUG-20261013-02 — FoyChappeBoot fails on the module path: foy-core does not declare `uses CdiContextListeners`
 
