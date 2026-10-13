@@ -124,6 +124,33 @@ class ErrorPageDispatchTest {
         assertEquals("/err|/err|/t", get("/t").body());
     }
 
+    private static HttpServlet asyncStarter(boolean twoArgs) {
+        return new HttpServlet() {
+            @Override protected void doGet(HttpServletRequest req, HttpServletResponse res) throws IOException {
+                try {
+                    if (twoArgs) req.startAsync(req, res); else req.startAsync();
+                    res.getWriter().print("started");
+                } catch (IllegalStateException e) {
+                    res.getWriter().print("ise");
+                }
+            }
+        };
+    }
+
+    @Test
+    void startAsyncInAnErrorPageThrowsIse() throws Exception {
+        pages.register(500, "/err");
+        start(asyncStarter(false), thrower((q, r) -> r.sendError(500)));
+        assertEquals("ise", get("/t").body());
+    }
+
+    @Test
+    void startAsyncWithRequestAndResponseInAnErrorPageThrowsIse() throws Exception {
+        pages.register(500, "/err");
+        start(asyncStarter(true), thrower((q, r) -> r.sendError(500)));
+        assertEquals("ise", get("/t").body());
+    }
+
     @Test
     void anErrorPageAfterAnExceptionSeesTheLocationsPaths() throws Exception {
         pages.register(ServletException.class, "/err");

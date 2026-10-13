@@ -1303,6 +1303,9 @@ public final class HttpServletRequestImpl implements HttpServletRequest {
             throw new IllegalStateException(
                     "async not supported on this servlet/filter chain");
         }
+        // The bridge drives async cycles before the error handling: a cycle opened by an error page
+        // would never run (BUG-20261013-04).
+        if (dispatcherType == DispatcherType.ERROR) throw new IllegalStateException("startAsync() in an error page");
         // §2.3.3.1 : startAsync doit throw ISE si un async est déjà en place sur
         // cette request (completed OU dispatched OU en cours). Le bridge reset
         // explicitement via clearAsyncContext() avant un ré-invoke ASYNC.
