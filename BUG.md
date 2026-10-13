@@ -304,7 +304,7 @@ Statuts : `OPEN` → `INVESTIGATING` → `FIXED` (commit hash) → `CLOSED`.
 ## BUG-20261009-04 — decoded paths leak into dispatch URIs (query split, wrapper URIs)
 
 - **Date** : 2026-10-09
-- **Statut** : FIXED (dispatch URIs are percent-encoded and a zero-argument async dispatch keeps its path and query apart, 363b082)
+- **Statut** : FIXED (dispatch URIs are percent-encoded and a zero-argument async dispatch keeps its path and query apart, 363b082, cae4c77)
 - **Module touché** : `foy-core` (`AsyncContextImpl.dispatch()`, `ForwardedRequest`, `IncludedRequest`, `AsyncDispatchRequest`)
 - **Symptôme** : (1) a zero-argument `AsyncContext.dispatch()` builds its target from the decoded
   canonical path; an encoded `%3F` in the request path decodes to `?`, which the dispatch then
@@ -327,6 +327,12 @@ Statuts : `OPEN` → `INVESTIGATING` → `FIXED` (commit hash) → `CLOSED`.
     `encodingAPathIsIdempotent` and `RequestPathCanonicalisationTest.theForwardTargetRequestUriIsEncoded`,
     `theIncludeRequestUriAttributeIsEncoded`, `zeroArgumentAsyncDispatchKeepsADecodedQuestionMarkInThePath`
     and `zeroArgumentAsyncDispatchAfterAForwardUsesTheForwardTargetPath`.
+  - 2026-10-13 : review follow-up in cae4c77. A lone or mismatched surrogate is encoded as U+FFFD
+    instead of swallowing the next character as `?`. Pinned by
+    `RequestPathsTest.surrogatePairsAreEncodedTogetherAndLoneSurrogatesAsReplacementCharacters` and
+    `RequestPathCanonicalisationTest.anErrorPageRequestUriIsEncoded`,
+    `anAsyncDispatchTargetReportsTheUrlOfItsOwnPath` and
+    `zeroArgumentAsyncDispatchAfterANamedForwardUsesTheCallerPath`.
 
 ## BUG-20261009-05 — changeSessionId throws UnsupportedOperationException; HttpSessionIdListener ignored
 
