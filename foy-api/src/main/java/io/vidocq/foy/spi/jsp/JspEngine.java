@@ -22,6 +22,10 @@ package io.vidocq.foy.spi.jsp;
 import jakarta.servlet.Servlet;
 import jakarta.servlet.ServletContext;
 import jakarta.servlet.ServletException;
+import jakarta.servlet.RequestDispatcher;
+import jakarta.servlet.ServletRequest;
+import jakarta.servlet.ServletResponse;
+import java.io.IOException;
 import java.util.EventListener;
 import java.util.List;
 import java.util.Objects;
@@ -30,6 +34,21 @@ import java.util.function.Supplier;
 /** Optional, container-neutral binding for precompiled or translated page engines. */
 @FunctionalInterface
 public interface JspEngine {
+    /**
+     * Optional container dispatcher for JSP forwards that end an inclusion chain.
+     * The page engine clears its JSP buffers first and passes the current application
+     * request/response wrappers unchanged. The dispatcher owns Servlet buffer reset,
+     * forward response policy and completion, including asynchronous dispatch.
+     * The target receives a forwarding view wrapping the current response chain;
+     * application wrapper delegates are preserved. Operations through that view,
+     * including retained writers and streams, apply forward policy. Original
+     * INCLUDE response references retain their INCLUDE policy. Concurrent forwarded
+     * operations on a shared response require application coordination.
+     */
+    interface ForwardDispatcher extends RequestDispatcher {
+        void forwardFromJsp(ServletRequest request, ServletResponse currentResponse)
+                throws ServletException, IOException;
+    }
     /** Constructor-based TLD listener; the type is the exact factory class, deduplicated before construction. */
     record Listener(Class<? extends EventListener> type, Supplier<? extends EventListener> factory) {
         public Listener { Objects.requireNonNull(type, "type"); Objects.requireNonNull(factory, "factory"); }

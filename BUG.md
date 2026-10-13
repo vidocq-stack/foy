@@ -1,5 +1,32 @@
 # BUG.md — foy
 
+## BUG-20261013-05 — JSP forwards cannot preserve application wrappers inside an include
+
+- Date: 2026-10-13.
+- Symptom: a page engine forwarding its current application response chain during an
+  INCLUDE gets ignored status/header/reset operations and no forward completion;
+  peeling response wrappers instead loses application transformations and cached writers.
+- Minimal repro: include twice, add application response wrappers with writers cached
+  before forwarding, write pending caller content, and forward to a target setting
+  status 207 and writing `target`. Ordinary dispatch retains `discardTARGET`, status
+  200 and no target headers. Retained asynchronous responses also lose target policy.
+- Cause: the normal Servlet forward intentionally preserves the enclosing INCLUDE
+  response policy. JSP forwarding needs an explicit container operation ending the
+  page inclusion chain, without changing opaque application wrapper delegates.
+- Status: FIXED. Additive `JspEngine.ForwardDispatcher.forwardFromJsp` retains the
+  current wrapper chain and applies forward policy per operation only to Foy-owned
+  INCLUDE scopes. Servlet reset and completion remain container-owned. Async dispatch
+  retains the response captured by `startAsync(request, response)`. Ownership is
+  confined to the operating thread, and partial scope acquisition is rolled back.
+- Validation: nine HTTP regressions in `JspForwardDispatcherTest` cover nested
+  wrappers, cached writers/streams, asynchronous completion/dispatch, exceptions,
+  missing targets through HTTP and generic wrappers, concurrent original references
+  and partial acquisition cleanup. Four original behavior failures, the thread-policy
+  leak and generic-wrapper silent 200 were reproduced before their fixes. The focused
+  dispatch/async/error suite passes 101 tests with zero failures, errors or skips:
+  `./mvnw -o -ntp -pl foy-core -am '-Dtest=JspForwardDispatcherTest,DispatcherSemanticsTest,ServletDispatcherTest,AsyncSupportedDispatchTest,*Async*Test,ErrorPageDispatchTest' -Dsurefire.failIfNoSpecifiedTests=false test`.
+  Related Ibarra tracking: IBARRA-119 and IBARRA-130.
+
 ## BUG-20261013-04 — an async cycle started in an error page never runs
 
 - Date: 2026-10-13 (final fix wave of the dispatch batch).

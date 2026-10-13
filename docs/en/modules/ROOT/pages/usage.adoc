@@ -355,6 +355,28 @@ A path outside the context path (`/app2/x` for context `/app`) is 404; the conte
 
 `<error-page>` entries match an exception type (the class hierarchy is walked first, then, for a `ServletException`, its root cause) or a status code. The error attributes `jakarta.servlet.error.status_code`, `message`, `exception`, `exception_type`, `request_uri`, `servlet_name` and, new in 6.1, `error.query_string` are set on the error dispatch, which uses `DispatcherType.ERROR`. The error page sees the path elements of its own location (servlet path, path info, request URI and URL, and mapping), whatever resource it is; the original values stay in the `jakarta.servlet.error.*` attributes. If the response is already committed when an exception escapes, no error page is dispatched, the committed content stands and the exception is logged at `ERROR`.
 
+== JSP forwarding from an included page
+
+Page-engine bindings can use the optional `JspEngine.ForwardDispatcher` interface
+on Foy request dispatchers. After validating and clearing its JSP buffers, the
+engine calls `forwardFromJsp(request, currentResponse)` with its current application
+wrapper chain. Foy owns the Servlet response buffer reset and forward completion;
+the engine must not reset the Servlet buffer again.
+
+Foy gives the destination a forwarding view of that chain, preserving application
+wrapper delegates and cached writer or stream transformations. Each operation
+through the view temporarily applies forward policy to Foy-owned INCLUDE scopes.
+Original INCLUDE references keep their header and reset restrictions, including
+on other virtual threads. Retained forwarding writers and streams re-enter the
+same policy when used after the call returns. A started or queued async cycle
+keeps the response open and dispatches through its captured response chain.
+Concurrent forwarding operations on one response require application coordination;
+conflicting scope ownership fails explicitly and releases any scopes already acquired.
+
+The interface adds no dependency on a particular page engine and needs no new
+exports or opens. Ordinary Servlet `forward` and `include` remain available through
+`RequestDispatcher`.
+
 == Response semantics
 
 `sendError` and `sendRedirect` reset the buffer and the declared `Content-Length` and commit the response. `setStatus`, headers, `setLocale`, `setContentType` and charset changes are ignored once the response is committed (on buffer overflow, after `flushBuffer`, or once the declared `Content-Length` is reached; see <<streaming-and-response-buffering>>). A cookie with a `Max-Age` also carries an `Expires` attribute (RFC 6265). The default character encoding follows `<response-character-encoding>`, then the `ISO-8859-1` default, and a `Content-Type` charset or locale-encoding mapping overrides it until `getWriter` is called.

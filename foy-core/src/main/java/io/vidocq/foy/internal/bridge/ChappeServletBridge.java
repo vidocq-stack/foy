@@ -860,7 +860,7 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
                     var wrapped = new AsyncDispatchRequest(req, target, vctx, tgtCtxPath);
                     req.clearAsyncContext();
                     req.setAsyncSupported(true); // §2.3.3.3: an async dispatch starts a new cycle
-                    invoker.invoke(target, wrapped, res, DispatcherType.ASYNC);
+                    invoker.invoke(target, wrapped, ac.getResponse(), DispatcherType.ASYNC);
                 } else {
                     // AsyncContext#dispatch(String): the path is relative to this context.
                     var target = new DispatchResolver(dispatcher).resolve(dispatchPath, qs).orElse(null);
@@ -869,7 +869,7 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
                     var wrapped = new AsyncDispatchRequest(req, target);
                     req.clearAsyncContext();
                     req.setAsyncSupported(true); // §2.3.3.3: an async dispatch starts a new cycle
-                    invoke(target, wrapped, res, DispatcherType.ASYNC);
+                    invoke(target, wrapped, ac.getResponse(), DispatcherType.ASYNC);
                 }
             } catch (ServletException | IOException | RuntimeException e) {
                 pending = e;

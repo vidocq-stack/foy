@@ -58,7 +58,7 @@ import java.io.IOException;
  * application's chain is restored once the dispatch returns or throws (as Tomcat's
  * {@code ApplicationDispatcher.wrapRequest} does).</p>
  */
-public final class RequestDispatcherImpl implements RequestDispatcher {
+public final class RequestDispatcherImpl implements io.vidocq.foy.spi.jsp.JspEngine.ForwardDispatcher {
 
     public interface Invoker {
         /** Executes the dispatch: filter chain applicable + service() on the target servlet. */
@@ -84,7 +84,18 @@ public final class RequestDispatcherImpl implements RequestDispatcher {
 
     /** Dispatcher stub for a path without resources — forward/include emit 404. */
     public static RequestDispatcher notFound(String path) {
-        return new RequestDispatcher() {
+        return new io.vidocq.foy.spi.jsp.JspEngine.ForwardDispatcher() {
+            @Override public void forwardFromJsp(ServletRequest request, ServletResponse response)
+                    throws ServletException, IOException {
+                var forwarded = PageForwardResponse.wrap(response);
+                var httpResponse = unwrapHttpResponse(forwarded);
+                if (httpResponse == null) throw new ServletException("non-HTTP JSP forward");
+                if (forwarded.isCommitted()) throw new IllegalStateException("response already committed");
+                forwarded.resetBuffer();
+                PageForwardResponse.sendError(forwarded, httpResponse, HttpServletResponse.SC_NOT_FOUND, "No resource at " + path);
+                var http = unwrapHttp(request);
+                if (http == null || !asyncEntered(http)) close(forwarded);
+            }
             @Override public void forward(ServletRequest request, ServletResponse response)
                     throws IOException {
                 if (response instanceof HttpServletResponse res) {
@@ -100,7 +111,18 @@ public final class RequestDispatcherImpl implements RequestDispatcher {
     }
 
     @Override
+    public void forwardFromJsp(ServletRequest request, ServletResponse response)
+            throws ServletException, IOException {
+        forward(request, PageForwardResponse.wrap(response), true);
+    }
+
+    @Override
     public void forward(ServletRequest request, ServletResponse response)
+            throws ServletException, IOException {
+        forward(request, response, false);
+    }
+
+    private void forward(ServletRequest request, ServletResponse response, boolean fromJsp)
             throws ServletException, IOException {
         HttpServletRequest req = containerRequest(request);
         HttpServletResponse res = unwrapHttpResponse(response);
@@ -132,7 +154,7 @@ public final class RequestDispatcherImpl implements RequestDispatcher {
         // Section 9.4: the response is committed and closed once the forward returns, unless the
         // target started async processing or the forward happens inside an include (the including
         // servlet still owns the response).
-        if (!asyncEntered(req) && !insideInclude(response)) close(response);
+        if (!asyncEntered(req) && (fromJsp || !insideInclude(response))) close(response);
     }
 
     /**
