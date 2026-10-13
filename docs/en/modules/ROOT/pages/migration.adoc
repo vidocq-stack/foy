@@ -208,6 +208,14 @@ The multipart and request body work (Servlet 6.1 sections 3.1, 3.2 and 3.12) cha
 
 See xref:usage.adoc#file-upload[File upload] and xref:reference.adoc#request-body-limits[Request body limits].
 
+== Behaviour changes in the next version
+
+Applications that pass wrappers to `forward`, `include` or `startAsync` see these changes:
+
+* **Every application wrapper, HTTP or not, now reaches the forward/include target.** The dispatch wrapper sits under the application's, so a wrapper's overrides win. A framework wrapper that caches the request URI at construction time shows the original URI to the target, as on Tomcat.
+* **A request (and, for include, a response) that neither is nor wraps the container's object is rejected** with a `ServletException`.
+* **`startAsync()` throws `IllegalStateException` in an error page**, for both the zero-argument and the `(request, response)` forms.
+
 == Common pitfalls
 
 * **`ServletContainerInitializer`s and fragments are discovered at boot.** `ApplicationSources` loads the initializers through `ServiceLoader` (`META-INF/services` or `provides`) and the `META-INF/web-fragment.xml` of every root, then orders them per §8.2.2 and §8.2.4. Component classes themselves are still never scanned.
