@@ -38,6 +38,7 @@ import jakarta.servlet.http.HttpServletMapping;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletRequestWrapper;
 import jakarta.servlet.http.HttpServletResponse;
+import jakarta.servlet.http.HttpServletResponseWrapper;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
@@ -458,20 +459,140 @@ class DispatcherSemanticsTest {
     }
 
     /**
-     * An HTTP wrapper still goes under the container's dispatch wrapper, as before: its overrides of
-     * methods the dispatch wrapper delegates (here {@code getHeader}) reach the target. The dispatch
-     * wrapper computes the parameters from {@code getParameterMap}, so a {@code getParameter}
-     * override alone is not seen.
+     * The container's dispatch wrapper goes under an HTTP application wrapper too (BUG-20261013-03):
+     * the methods the application wrapper does not override (here the path methods) reach the
+     * dispatch wrapper, and its overrides (here {@code getHeader}) reach the target.
      */
     @Test
-    void anHttpWrapperIsStillPassedAsBefore() throws Exception {
+    void anHttpWrapperDelegatesTheDispatchPathsToTheDispatchWrapper() throws Exception {
         start(map("/c", servlet((req, resp) -> req.getRequestDispatcher("/t").forward(
                         new HttpServletRequestWrapper(req) {
                             @Override public String getHeader(String n) { return "h"; }
                         }, resp)), "c"),
                 map("/t", servlet((req, resp) -> resp.getWriter().write(req.getHeader("X-P") + "|"
-                        + req.getDispatcherType())), "t"));
-        assertEquals("h|FORWARD", get("/c"));
+                        + req.getDispatcherType() + "|" + req.getServletPath())), "t"));
+        assertEquals("h|FORWARD|/t", get("/c"));
+    }
+
+    /** An HTTP request wrapper overriding {@code getParameter}. */
+    private static HttpServletRequestWrapper httpWrapper(HttpServletRequest req) {
+        return new HttpServletRequestWrapper(req) {
+            @Override public String getParameter(String n) { return "h"; }
+        };
+    }
+
+    @Test
+    void anHttpWrapperPassedToForwardIsTheObjectTheTargetReceives() throws Exception {
+        var passed = new java.util.concurrent.atomic.AtomicReference<ServletRequest>();
+        start(map("/c", servlet((req, resp) -> {
+                    var wrapper = httpWrapper(req);
+                    passed.set(wrapper);
+                    req.getRequestDispatcher("/t").forward(wrapper, resp);
+                }), "c"),
+                map("/t", servlet((req, resp) -> {
+                    events.add("same=" + (req == passed.get()));
+                    resp.getWriter().write(req.getParameter("p") + "|" + req.getDispatcherType() + "|"
+                            + req.getServletPath());
+                }), "t"));
+        assertEquals("h|FORWARD|/t", get("/c"));
+        assertEquals(List.of("same=true"), events);
+    }
+
+    @Test
+    void anHttpWrapperPassedToIncludeIsTheObjectTheTargetReceives() throws Exception {
+        var passed = new java.util.concurrent.atomic.AtomicReference<ServletRequest>();
+        start(map("/c", servlet((req, resp) -> {
+                    var wrapper = httpWrapper(req);
+                    passed.set(wrapper);
+                    req.getRequestDispatcher("/t").include(wrapper, resp);
+                }), "c"),
+                map("/t", servlet((req, resp) -> {
+                    events.add("same=" + (req == passed.get()));
+                    // During an include the path methods are the includer's; the included path is in
+                    // the include.* attributes.
+                    resp.getWriter().write(req.getParameter("p") + "|" + req.getDispatcherType() + "|"
+                            + req.getServletPath() + "|" + req.getAttribute("jakarta.servlet.include.servlet_path"));
+                }), "t"));
+        assertEquals("h|INCLUDE|/c|/t", get("/c"));
+        assertEquals(List.of("same=true"), events);
+    }
+
+    /** An HTTP response wrapper whose writer prefixes every {@code write(String)} with {@code [}. */
+    static final class PrefixingHttpResponse extends HttpServletResponseWrapper {
+        private java.io.PrintWriter writer;
+        PrefixingHttpResponse(HttpServletResponse r) { super(r); }
+        @Override public java.io.PrintWriter getWriter() throws IOException {
+            if (writer == null) {
+                writer = new java.io.PrintWriter(super.getWriter()) {
+                    @Override public void write(String s) { super.write("[" + s); }
+                };
+            }
+            return writer;
+        }
+    }
+
+    @Test
+    void anHttpResponseWrapperPassedToIncludeIsTheObjectTheTargetReceives() throws Exception {
+        var passed = new java.util.concurrent.atomic.AtomicReference<ServletResponse>();
+        start(map("/c", servlet((req, resp) -> {
+                    var wrapper = new PrefixingHttpResponse(resp);
+                    passed.set(wrapper);
+                    req.getRequestDispatcher("/t").include(req, wrapper);
+                    wrapper.getWriter().flush();
+                }), "c"),
+                map("/t", servlet((req, resp) -> {
+                    events.add("same=" + (resp == passed.get()));
+                    resp.getWriter().write("x");
+                }), "t"));
+        assertEquals("[x", get("/c"));
+        assertEquals(List.of("same=true"), events);
+    }
+
+    @Test
+    void theHttpWrapperChainIsRestoredAfterForwardAndInclude() throws Exception {
+        start(map("/c", servlet((req, resp) -> {
+                    var request = httpWrapper(req);
+                    var response = new PrefixingHttpResponse(resp);
+                    var sb = new StringBuilder();
+                    try {
+                        req.getRequestDispatcher("/boom").include(request, response);
+                    } catch (ServletException expected) {
+                        sb.append("includeThrow=").append(request.getRequest() == req)
+                                .append(',').append(response.getResponse() == resp).append(';');
+                    }
+                    req.getRequestDispatcher("/t").include(request, response);
+                    sb.append("includeReturn=").append(request.getRequest() == req)
+                            .append(',').append(response.getResponse() == resp).append(';');
+                    try {
+                        req.getRequestDispatcher("/boom").forward(request, response);
+                    } catch (ServletException expected) {
+                        sb.append("forwardThrow=").append(request.getRequest() == req).append(';');
+                    }
+                    req.getRequestDispatcher("/t").forward(request, response);
+                    sb.append("forwardReturn=").append(request.getRequest() == req);
+                    events.add(sb.toString());
+                }), "c"),
+                map("/t", servlet((req, resp) -> resp.getWriter().write("x")), "t"),
+                map("/boom", servlet((req, resp) -> { throw new ServletException("boom"); }), "boom"));
+        assertEquals("[x", get("/c"));
+        awaitEvents(1); // the caller records the restore after the forward closed the response
+        assertEquals(List.of("includeThrow=true,true;includeReturn=true,true;forwardThrow=true;forwardReturn=true"),
+                events);
+    }
+
+    @Test
+    void aFilterWrappingOnForwardComposesWithASecondDispatch() throws Exception {
+        Filter wrapping = (req, res, chain) ->
+                chain.doFilter(new HttpServletRequestWrapper((HttpServletRequest) req), res);
+        var filters = List.of(new FilterMapping(UrlPatternMatcher.of("/t"), wrapping, "wrapping",
+                EnumSet.of(DispatcherType.FORWARD)));
+        startWith(filters, map("/c", servlet((req, resp) -> req.getRequestDispatcher("/t").forward(req, resp)), "c"),
+                map("/t", servlet((req, resp) -> {
+                    req.getRequestDispatcher("/i").include(req, resp);
+                    resp.getWriter().write("|after");
+                }), "t"),
+                map("/i", servlet((req, resp) -> resp.getWriter().write(String.valueOf(req.getDispatcherType()))), "i"));
+        assertEquals("INCLUDE|after", get("/c"));
     }
 
     // ---- Exceptions propagate unchanged ----

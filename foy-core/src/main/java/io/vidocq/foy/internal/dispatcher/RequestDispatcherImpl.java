@@ -19,6 +19,8 @@
  */
 package io.vidocq.foy.internal.dispatcher;
 
+import io.vidocq.foy.internal.bridge.AsyncDispatchRequest;
+import io.vidocq.foy.internal.bridge.ErrorDispatchRequest;
 import io.vidocq.foy.internal.bridge.ForwardedRequest;
 import io.vidocq.foy.internal.bridge.HttpServletRequestImpl;
 import io.vidocq.foy.internal.bridge.HttpServletResponseImpl;
@@ -49,8 +51,9 @@ import java.io.IOException;
  *
  * <p>Named dispatchers (section 9.1) set no dispatch attribute and keep the caller's paths.</p>
  *
- * <p>The target receives the objects the caller passed (sections 6.2.2 and 9.1). When the caller
- * passes a non-HTTP application wrapper, the container's dispatch wrapper goes under it, through
+ * <p>The target receives the objects the caller passed (sections 6.2.2 and 9.1). Every application
+ * wrapper the caller passes, HTTP or not, is kept: the container's dispatch wrapper goes under the
+ * whole application chain, right above the first container object, through
  * {@link ServletRequestWrapper#setRequest} / {@link ServletResponseWrapper#setResponse}, and the
  * application's chain is restored once the dispatch returns or throws (as Tomcat's
  * {@code ApplicationDispatcher.wrapRequest} does).</p>
@@ -92,7 +95,7 @@ public final class RequestDispatcherImpl implements RequestDispatcher {
     @Override
     public void forward(ServletRequest request, ServletResponse response)
             throws ServletException, IOException {
-        HttpServletRequest req = unwrapHttp(request);
+        HttpServletRequest req = containerRequest(request);
         HttpServletResponse res = unwrapHttpResponse(response);
         if (req == null || res == null) {
             throw new ServletException("non-HTTP dispatch");
@@ -103,11 +106,11 @@ public final class RequestDispatcherImpl implements RequestDispatcher {
         res.resetBuffer();
 
         // Exceptions of the target reach the caller unchanged (no wrapping). The forward.* attributes
-        // (section 9.4.2) live in the ForwardedRequest, so they last for the forward only. A non-HTTP
-        // application wrapper is kept: the ForwardedRequest goes under it for the forward only. The
-        // response chain is passed as is.
+        // (section 9.4.2) live in the ForwardedRequest, so they last for the forward only. Every
+        // application wrapper is kept (section 6.2.2): the ForwardedRequest goes under the application
+        // chain for the forward only. The response chain is passed as is.
         ForwardedRequest dispatched = new ForwardedRequest(req, target);
-        ServletRequestWrapper hook = lowestNonHttpWrapper(request);
+        ServletRequestWrapper hook = hookAbove(request);
         if (hook == null) {
             invoker.invoke(target, dispatched, response, DispatcherType.FORWARD);
         } else {
@@ -149,19 +152,19 @@ public final class RequestDispatcherImpl implements RequestDispatcher {
     @Override
     public void include(ServletRequest request, ServletResponse response)
             throws ServletException, IOException {
-        HttpServletRequest req = unwrapHttp(request);
-        HttpServletResponse res = unwrapHttpResponse(response);
+        HttpServletRequest req = containerRequest(request);
+        HttpServletResponse res = containerResponse(response);
         if (req == null || res == null) {
             throw new ServletException("non-HTTP dispatch");
         }
         // The include.* attributes (none for a named include) and the merged parameters live in the
         // wrapper: they last for the include only. Exceptions of the target propagate unchanged.
-        // Non-HTTP application wrappers are kept: the dispatch wrappers go under them for the include
-        // only.
+        // Every application wrapper is kept (section 6.2.2): the dispatch wrappers go under the
+        // application chains for the include only.
         IncludedRequest dispatchedRequest = new IncludedRequest(req, target);
         IncludedResponse dispatchedResponse = new IncludedResponse(res);
-        ServletRequestWrapper requestHook = lowestNonHttpWrapper(request);
-        ServletResponseWrapper responseHook = lowestNonHttpResponseWrapper(response);
+        ServletRequestWrapper requestHook = hookAbove(request);
+        ServletResponseWrapper responseHook = hookAbove(response);
         if (requestHook != null) requestHook.setRequest(dispatchedRequest);
         try {
             if (responseHook != null) responseHook.setResponse(dispatchedResponse);
@@ -179,31 +182,65 @@ public final class RequestDispatcherImpl implements RequestDispatcher {
     }
 
     /**
-     * The wrapper whose wrapped request is the first HTTP request of the chain, or null when the
-     * outer request is HTTP (or the chain holds no HTTP request).
+     * The application wrapper whose wrapped request is the first container request of the chain, or
+     * null when the outer request is itself a container request (or the chain holds none).
      */
-    private static ServletRequestWrapper lowestNonHttpWrapper(ServletRequest outer) {
+    private static ServletRequestWrapper hookAbove(ServletRequest outer) {
         ServletRequest r = outer;
-        while (r instanceof ServletRequestWrapper w && !(r instanceof HttpServletRequest)) {
+        while (r instanceof ServletRequestWrapper w && !isContainerRequest(r)) {
             ServletRequest inner = w.getRequest();
-            if (inner instanceof HttpServletRequest) return w;
+            if (isContainerRequest(inner)) return w;
             r = inner;
         }
         return null;
     }
 
     /**
-     * The wrapper whose wrapped response is the first HTTP response of the chain, or null when the
-     * outer response is HTTP (or the chain holds no HTTP response).
+     * The application wrapper whose wrapped response is the first container response of the chain,
+     * or null when the outer response is itself a container response (or the chain holds none).
      */
-    private static ServletResponseWrapper lowestNonHttpResponseWrapper(ServletResponse outer) {
+    private static ServletResponseWrapper hookAbove(ServletResponse outer) {
         ServletResponse r = outer;
-        while (r instanceof ServletResponseWrapper w && !(r instanceof HttpServletResponse)) {
+        while (r instanceof ServletResponseWrapper w && !isContainerResponse(r)) {
             ServletResponse inner = w.getResponse();
-            if (inner instanceof HttpServletResponse) return w;
+            if (isContainerResponse(inner)) return w;
             r = inner;
         }
         return null;
+    }
+
+    /** The first container request of the chain, or null when it holds none. */
+    private static HttpServletRequest containerRequest(ServletRequest outer) {
+        ServletRequest r = outer;
+        while (r != null) {
+            if (isContainerRequest(r)) return (HttpServletRequest) r;
+            if (r instanceof ServletRequestWrapper w) r = w.getRequest();
+            else return null;
+        }
+        return null;
+    }
+
+    /** The first container response of the chain, or null when it holds none. */
+    private static HttpServletResponse containerResponse(ServletResponse outer) {
+        ServletResponse r = outer;
+        while (r != null) {
+            if (isContainerResponse(r)) return (HttpServletResponse) r;
+            if (r instanceof ServletResponseWrapper w) r = w.getResponse();
+            else return null;
+        }
+        return null;
+    }
+
+    /** The request types the container creates, as opposed to the application's wrappers. */
+    private static boolean isContainerRequest(ServletRequest r) {
+        return r instanceof HttpServletRequestImpl || r instanceof ForwardedRequest
+                || r instanceof IncludedRequest || r instanceof AsyncDispatchRequest
+                || r instanceof ErrorDispatchRequest;
+    }
+
+    /** The response types the container creates, as opposed to the application's wrappers. */
+    private static boolean isContainerResponse(ServletResponse r) {
+        return r instanceof HttpServletResponseImpl || r instanceof IncludedResponse;
     }
 
     /**
@@ -234,18 +271,6 @@ public final class RequestDispatcherImpl implements RequestDispatcher {
         while (r != null) {
             if (r instanceof HttpServletResponseImpl i) return i;
             if (r instanceof jakarta.servlet.ServletResponseWrapper w) r = w.getResponse();
-            else return null;
-        }
-        return null;
-    }
-
-    /** Unwrap via {@link jakarta.servlet.ServletRequestWrapper#getRequest()} until
-     *  finding a {@link HttpServletRequest}. Allows a base (non-HTTP)
-     *  {@link jakarta.servlet.ServletRequestWrapper} to trigger forward/include. */
-    private static HttpServletRequest unwrapHttp(ServletRequest r) {
-        while (r != null) {
-            if (r instanceof HttpServletRequest h) return h;
-            if (r instanceof jakarta.servlet.ServletRequestWrapper w) r = w.getRequest();
             else return null;
         }
         return null;

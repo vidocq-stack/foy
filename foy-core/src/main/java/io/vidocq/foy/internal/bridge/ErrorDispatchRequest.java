@@ -35,7 +35,7 @@ import jakarta.servlet.http.HttpServletRequestWrapper;
  * those of the failing request. A relative {@link #getRequestDispatcher(String) request dispatcher}
  * path is resolved against the location's path, as for a forward.
  */
-final class ErrorDispatchRequest extends HttpServletRequestWrapper {
+public final class ErrorDispatchRequest extends HttpServletRequestWrapper {
 
     private final DispatchTarget target;
 
