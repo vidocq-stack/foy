@@ -747,7 +747,7 @@ Statuts : `OPEN` → `INVESTIGATING` → `FIXED` (commit hash) → `CLOSED`.
 ## BUG-20261011-08 — a fragment conflict on security-role-ref is silently resolved
 
 - **Date** : 2026-10-11
-- **Statut** : OPEN (final Phase 6 review, by code reading)
+- **Statut** : FIXED (fragment role refs merged through MergeSlots.Keyed)
 - **Module touché** : `foy-core` (`ComponentMerger.servlets`)
 - **Symptôme** : when two `web-fragment.xml` declare the same servlet with a `security-role-ref` of the
   same `role-name` but different `role-link`s, and `web.xml` does not reference that role-name, the

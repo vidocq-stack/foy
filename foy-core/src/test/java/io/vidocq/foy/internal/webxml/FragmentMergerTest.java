@@ -146,6 +146,30 @@ class FragmentMergerTest {
     }
 
     @Test
+    void securityRoleRefConflictBetweenFragmentsFails() {
+        var e = assertThrows(ServletException.class, () -> FragmentMerger.merge(web(""), List.of(
+                frag("F1", servlet("s", "a.S", roleRef("MGR", "admin"))),
+                frag("F2", servlet("s", "a.S", roleRef("MGR", "user"))))));
+        assertConflict(e, "<security-role-ref>", "'MGR'", "'s'", "F1", "F2");
+    }
+
+    @Test
+    void securityRoleRefConflictBetweenFragmentsIsResolvedByWebXml() throws Exception {
+        var m = FragmentMerger.merge(web(servlet("s", "a.S", roleRef("MGR", "boss"))), List.of(
+                frag("F1", servlet("s", "a.S", roleRef("MGR", "admin"))),
+                frag("F2", servlet("s", "a.S", roleRef("MGR", "user")))));
+        assertEquals(Map.of("MGR", "boss"), servletNamed(m, "s").securityRoleRefs());
+    }
+
+    @Test
+    void anEqualSecurityRoleRefInTwoFragmentsIsNotAConflict() throws Exception {
+        var m = FragmentMerger.merge(web(""), List.of(
+                frag("F1", servlet("s", "a.S", roleRef("MGR", "admin"))),
+                frag("F2", servlet("s", "a.S", roleRef("MGR", "admin")))));
+        assertEquals(Map.of("MGR", "admin"), servletNamed(m, "s").securityRoleRefs());
+    }
+
+    @Test
     void initParamConflictBetweenFragmentsFails() throws Exception {
         var e = assertThrows(ServletException.class, () -> FragmentMerger.merge(web(""), List.of(
                 frag("F1", servlet("s", "a.S", param("k", "1"))),

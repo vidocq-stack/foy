@@ -61,13 +61,14 @@ final class ComponentMerger {
         boolean enabled = true;
         String runAs;
         String jspFile;
-        final Map<String, String> roleRefs = new LinkedHashMap<>();
+        final Keyed<String> roleRefs;
 
         Component(String kind, String name, boolean inWebXml) {
             this.kind = kind;
             this.name = name;
             this.inWebXml = inWebXml;
             this.params = new Keyed<>("<init-param>", " for " + kind + " '" + name + "'");
+            this.roleRefs = new Keyed<>("<security-role-ref>", " for " + kind + " '" + name + "'");
         }
 
         void fromWebXml(String cls, Map<String, String> initParams, Boolean asyncSupported) {
@@ -107,7 +108,7 @@ final class ComponentMerger {
             c.enabled = d.enabled();
             c.runAs = d.runAs();
             c.jspFile = d.jspFile();
-            c.roleRefs.putAll(d.securityRoleRefs());
+            c.roleRefs.webXml(d.securityRoleRefs());
         }
         for (Fragment f : ordered) {
             for (ServletDef d : f.descriptor().servlets()) {
@@ -117,8 +118,9 @@ final class ComponentMerger {
                 if (c.multipart == null) c.multipart = d.multipartConfig();
                 if (c.runAs == null) c.runAs = d.runAs();
                 if (c.jspFile == null) c.jspFile = d.jspFile();
-                // web.xml wins per role-name; fragments add the role-names it does not reference.
-                d.securityRoleRefs().forEach(c.roleRefs::putIfAbsent);
+                // web.xml wins per role-name; fragments add the others, and two fragments that disagree on a
+                // role-name fail the deployment (§8.2.3).
+                c.roleRefs.fragment(f.id(), d.securityRoleRefs());
                 // web.xml decides <enabled>; between fragments, one "false" disables the servlet.
                 // Approximation: the parser keeps <enabled> as a plain boolean (absent = true), so an
                 // explicit <enabled>true</enabled> in a fragment cannot override another's false.
@@ -128,7 +130,7 @@ final class ComponentMerger {
         var out = new ArrayList<ServletDef>();
         for (Component c : byName.values()) {
             out.add(new ServletDef(c.name, c.className, c.params(), c.async, c.loadOnStartup,
-                    c.multipart, c.enabled, c.runAs, c.jspFile, c.roleRefs));
+                    c.multipart, c.enabled, c.runAs, c.jspFile, new LinkedHashMap<>(c.roleRefs.values())));
         }
         return out;
     }
