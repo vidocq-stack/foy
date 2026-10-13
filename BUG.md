@@ -583,7 +583,7 @@ Statuts : `OPEN` → `INVESTIGATING` → `FIXED` (commit hash) → `CLOSED`.
 ## BUG-20261010-06 — upgrade() called during an ASYNC dispatch is silently dropped
 
 - **Date** : 2026-10-10
-- **Statut** : FIXED (upgrade() throws IllegalStateException during an async dispatch)
+- **Statut** : FIXED (upgrade() throws IllegalStateException outside the REQUEST dispatch the bridge reads)
 - **Module touché** : `foy-core` (`HttpServletRequestImpl.upgrade`, `ChappeServletBridge`)
 - **Symptôme** : a servlet reached by `AsyncContext.dispatch()` that calls `upgrade(...)` gets no
   exception, the response switches to discard mode, and the client receives an empty plain HTTP
@@ -598,6 +598,14 @@ Statuts : `OPEN` → `INVESTIGATING` → `FIXED` (commit hash) → `CLOSED`.
   `ASYNC` (or whenever an async cycle exists), mirroring "upgrade() after startAsync()". No TCK
   test exercises this path.
 - **Investigation 2026-10-13** : fixed with a dedicated `inAsyncDispatch` flag set by the bridge around both async-dispatch invocations (the dispatcher type is untouched). Pinned by `ServletUpgradeEndToEndTest.upgradeDuringAsyncDispatchThrowsIse`.
+- **Investigation 2026-10-13 (final review)** : an error page dispatched after the REQUEST invocation
+  (`maybeHandleError`) passed the async-only guard and lost its body to the same dropped upgrade. The
+  guard is now a whitelist: the bridge sets a `volatile upgradable` flag only around the REQUEST
+  invocation whose `upgradeHandler()` it reads (nested forwards and includes stay upgradable) and
+  clears it in a `finally`; `upgrade()` throws `IllegalStateException` ("upgrade() outside the request
+  dispatch") whenever the flag is down, so the `inAsyncDispatch` flag and its async-dispatch wrappers are
+  gone. Pinned by `ServletUpgradeEndToEndTest.upgradeFromAnErrorPageThrowsIse` (and
+  `upgradeDuringAsyncDispatchThrowsIse`).
 
 ## BUG-20261010-07 — no CDI context on AsyncContext.start() threads nor in AsyncListener.onComplete
 

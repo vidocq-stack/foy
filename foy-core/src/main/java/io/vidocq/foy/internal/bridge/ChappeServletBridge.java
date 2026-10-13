@@ -447,7 +447,15 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
             try {
                 // The original path, then the welcome target it resolved to (a constraint on either applies).
                 allowed = admitted(req, res, requestPath) && (requestPath.equals(path) || admitted(req, res, path));
-                if (allowed) invoke(target, req, res, DispatcherType.REQUEST, requestChain);
+                if (allowed) {
+                    // The one span where upgrade() is allowed: the handler is read right below.
+                    req.upgradable(true);
+                    try {
+                        invoke(target, req, res, DispatcherType.REQUEST, requestChain);
+                    } finally {
+                        req.upgradable(false);
+                    }
+                }
             } catch (ServletException | IOException | RuntimeException e) {
                 // A failing check fails closed: the target never ran, the error handling below answers.
                 thrown = e;
@@ -821,12 +829,7 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
                     var wrapped = new AsyncDispatchRequest(req, target, vctx, tgtCtxPath);
                     req.clearAsyncContext();
                     req.setAsyncSupported(true); // §2.3.3.3: an async dispatch starts a new cycle
-                    req.asyncDispatch(true);
-                    try {
-                        invoker.invoke(target, wrapped, res, DispatcherType.ASYNC);
-                    } finally {
-                        req.asyncDispatch(false);
-                    }
+                    invoker.invoke(target, wrapped, res, DispatcherType.ASYNC);
                 } else {
                     // AsyncContext#dispatch(String): the path is relative to this context.
                     String relative = dispatchPath;
@@ -840,12 +843,7 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
                     var wrapped = new AsyncDispatchRequest(req, target);
                     req.clearAsyncContext();
                     req.setAsyncSupported(true); // §2.3.3.3: an async dispatch starts a new cycle
-                    req.asyncDispatch(true);
-                    try {
-                        invoke(target, wrapped, res, DispatcherType.ASYNC);
-                    } finally {
-                        req.asyncDispatch(false);
-                    }
+                    invoke(target, wrapped, res, DispatcherType.ASYNC);
                 }
             } catch (ServletException | IOException | RuntimeException e) {
                 pending = e;

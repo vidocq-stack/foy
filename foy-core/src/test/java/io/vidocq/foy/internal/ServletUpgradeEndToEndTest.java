@@ -340,6 +340,43 @@ class ServletUpgradeEndToEndTest {
         assertEquals(0, probe.destroyCalls.get());
     }
 
+    /**
+     * BUG-20261010-06: only the REQUEST dispatch whose result the bridge reads may upgrade. An error
+     * page dispatched afterwards would otherwise lose its body to an upgrade that never happens.
+     */
+    @Test
+    void upgradeFromAnErrorPageThrowsIse() throws Exception {
+        HttpServlet failing = new HttpServlet() {
+            @Override
+            protected void doPost(HttpServletRequest req, HttpServletResponse resp) throws IOException {
+                resp.sendError(500);
+            }
+        };
+        HttpServlet errorPage = new HttpServlet() {
+            @Override
+            protected void service(HttpServletRequest req, HttpServletResponse resp) throws IOException, ServletException {
+                try {
+                    req.upgrade(ClosingHandler.class);
+                    resp.getWriter().print("upgraded");
+                } catch (IllegalStateException e) {
+                    resp.getWriter().print("ise");
+                }
+            }
+        };
+        var ctx = new VidocqServletContext("/");
+        ctx.setErrorPages(new io.vidocq.foy.internal.error.ErrorPageRegistry().register(500, "/err"));
+        start(ctx, List.of(
+                new ServletDispatcher.Mapping(UrlPatternMatcher.of("/up"), failing, "S"),
+                new ServletDispatcher.Mapping(UrlPatternMatcher.of("/err"), errorPage, "E")));
+        try (var client = new Client(port)) {
+            client.send(tckHead().replace("Connection: Upgrade", "Connection: close"));
+            String response = client.readAll();
+            assertTrue(response.startsWith("HTTP/1.1 500"), response);
+            assertTrue(response.endsWith("ise"), response);
+        }
+        assertEquals(0, probe.destroyCalls.get());
+    }
+
     @Test
     void startAsyncAfterUpgradeThrowsIse() throws Exception {
         start(new HttpServlet() {
@@ -837,8 +874,12 @@ class ServletUpgradeEndToEndTest {
     }
 
     private void start(HttpServlet servlet) {
-        var mappings = List.of(new ServletDispatcher.Mapping(UrlPatternMatcher.of("/up"), servlet, "S"));
-        context = new VidocqServletContext("/");
+        start(new VidocqServletContext("/"),
+                List.of(new ServletDispatcher.Mapping(UrlPatternMatcher.of("/up"), servlet, "S")));
+    }
+
+    private void start(VidocqServletContext ctx, List<ServletDispatcher.Mapping> mappings) {
+        context = ctx;
         var bridge = new ChappeServletBridge(new ServletDispatcher(mappings),
                 new FilterRegistry(List.of()), TestSecurity.permitAll(context), null, "/");
         var r = TestServerLauncher.start(bridge);

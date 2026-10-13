@@ -812,9 +812,13 @@ public final class HttpServletRequestImpl implements HttpServletRequest {
     }
     @Override public DispatcherType getDispatcherType() { return dispatcherType; }
 
-    private boolean inAsyncDispatch;
-    /** Marks the span of an async dispatch; unlike the dispatcher type it only guards {@link #upgrade}. */
-    public void asyncDispatch(boolean inAsyncDispatch) { this.inAsyncDispatch = inAsyncDispatch; }
+    private volatile boolean upgradable;
+    /**
+     * Opens or closes the only span in which {@link #upgrade} is allowed: the REQUEST dispatch whose
+     * result the bridge reads (nested forwards and includes included). Error, async and any later
+     * dispatch run outside it, so an upgrade there could never be carried out. Closed by default.
+     */
+    void upgradable(boolean upgradable) { this.upgradable = upgradable; }
     @Override public ServletContext getServletContext() { return servletContext; }
     @Override public RequestDispatcher getRequestDispatcher(String path) {
         if (path == null) return null;
@@ -1220,8 +1224,9 @@ public final class HttpServletRequestImpl implements HttpServletRequest {
      *
      * @throws IOException over HTTP/2 or HTTP/1.0, where the HTTP/1.1 Upgrade mechanism does not exist
      * @throws ServletException when the handler cannot be instantiated
-     * @throws IllegalStateException when the request is already upgraded, async-started, or its
-     *         response already committed
+     * @throws IllegalStateException when the request is already upgraded, async-started, outside
+     *         the REQUEST dispatch the bridge reads the handler from (an async dispatch or an error
+     *         page, for example), or its response already committed
      */
     @Override public <T extends HttpUpgradeHandler> T upgrade(Class<T> handlerClass)
             throws IOException, jakarta.servlet.ServletException {
@@ -1232,8 +1237,9 @@ public final class HttpServletRequestImpl implements HttpServletRequest {
         if (upgradeHandler != null) throw new IllegalStateException("the request is already upgraded");
         // An async request keeps the HTTP lifecycle (its cycles, its body pump): it cannot also leave it.
         if (isAsyncStarted()) throw new IllegalStateException("upgrade() after startAsync()");
-        // An async dispatch belongs to a cycle the container ends itself: it cannot leave HTTP either.
-        if (inAsyncDispatch) throw new IllegalStateException("upgrade() during an async dispatch");
+        // A whitelist: only the REQUEST dispatch the bridge reads the handler from may leave HTTP. An
+        // async dispatch, an error page or any later dispatch belongs to a cycle the container ends itself.
+        if (!upgradable) throw new IllegalStateException("upgrade() outside the request dispatch");
         var response = boundResponse instanceof HttpServletResponseImpl impl ? impl : null;
         if (response != null && response.isCommitted()) {
             throw new IllegalStateException("the response is already committed");
