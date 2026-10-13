@@ -363,10 +363,14 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
                 // A client tracked by URL keeps its session across the redirect.
                 redirected.setUrlSessionId(finalUrlSessionId);
                 redirected.accessRequestedSession();
-                Response refused = gate(redirected, res, requestPath);
-                if (refused != null) return refused;
-                try { res.sendRedirect(res.encodeRedirectURL(redirect)); } catch (IOException ignored) {}
-                return completed(redirected, res);
+                // Inside the request listeners: a denial may dispatch an error page or a login page
+                // (BUG-20261011-07).
+                return insideRequestListeners(redirected, () -> {
+                    Response refused = gate(redirected, res, requestPath);
+                    if (refused != null) return refused;
+                    try { res.sendRedirect(res.encodeRedirectURL(redirect)); } catch (IOException ignored) {}
+                    return completed(redirected, res);
+                });
             }
             String welcome = path.endsWith("/") ? welcomeTarget(path) : null;
             if (welcome != null) {
@@ -388,33 +392,44 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
             req.bindResponse(res);
             req.setUrlSessionId(finalUrlSessionId);
             req.accessRequestedSession();
-            // No request listener has fired yet: nothing needs ending on a denial.
-            // The original path, then the welcome target it may have resolved to, as in the main branch.
-            Response refused = gate(req, res, requestPath);
-            if (refused == null && !requestPath.equals(path)) refused = gate(req, res, path);
-            if (refused != null) return refused;
-            List<Filter> filters = filterRegistry.chainFor(path, DispatcherType.REQUEST);
-            if (filters.isEmpty()) {
-                // Pas de mapping ni de filtre : 404 + error-page si mappée (§9.9.1).
-                try { res.sendError(404); } catch (IOException ignored) {}
-                try { maybeHandleError(req, res, null, null); }
-                catch (ServletException e) { return failed(res, req, e); }
-                if (!errorPageHandled(req)) return respond(res, ChappeServletBridge::notFound);
-                return respond(res, () -> toChappeResponse(res));
-            }
-
+            final String unmappedPath = path;
+            // The denial, the 404 error page and the filters all run inside the request listeners
+            // (BUG-20261010-08, BUG-20261011-07): the CDI scope listeners unbind in requestDestroyed.
             registry.fireRequestInitialized(servletContext, req);
-            // On every way out: the CDI request and session scope listeners unbind in requestDestroyed.
+            Response early;
             Exception thrown = null;
             try {
-                new VidocqFilterChain(filters, null).doFilter(req, res);
-            } catch (ServletException | IOException | RuntimeException e) {
-                thrown = e;
-            } catch (Error e) {
-                endRequest(registry, req, e);
-                throw e;
+                // The original path, then the welcome target it may have resolved to, as in the main branch.
+                early = gate(req, res, requestPath);
+                if (early == null && !requestPath.equals(unmappedPath)) early = gate(req, res, unmappedPath);
+                List<Filter> filters = early != null ? List.of()
+                        : filterRegistry.chainFor(unmappedPath, DispatcherType.REQUEST);
+                if (early == null && filters.isEmpty()) {
+                    // No mapping and no filter: 404, through the error page when one is mapped (section 9.9.1).
+                    try { res.sendError(404); } catch (IOException ignored) {}
+                    try {
+                        maybeHandleError(req, res, null, null);
+                        early = errorPageHandled(req) ? respond(res, () -> toChappeResponse(res))
+                                : respond(res, ChappeServletBridge::notFound);
+                    } catch (ServletException e) {
+                        early = failed(res, req, e);
+                    }
+                }
+                if (early == null) {
+                    try {
+                        new VidocqFilterChain(filters, null).doFilter(req, res);
+                    } catch (ServletException | IOException | RuntimeException e) {
+                        thrown = e;
+                    }
+                }
+            } catch (Throwable t) {
+                endRequest(registry, req, t);
+                throw t;
             }
+            // On every way out: the CDI request and session scope listeners unbind in requestDestroyed;
+            // a listener failure joins a filter failure in flight rather than replacing it.
             endRequest(registry, req, thrown);
+            if (early != null) return early;
             return thrown != null ? failed(res, req, thrown) : completed(req, res);
         }
 
@@ -461,12 +476,14 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
                 thrown = e;
             }
             if (!allowed && thrown == null) {
-                // Denied: the mechanism produced the response (401, 403 or a challenge). requestDestroyed
-                // fires outside the inner try, so a listener failure is not caught there and fired a
-                // second time below; then the denial goes through the error pages, as sendError does.
+                // Denied: the mechanism produced the response (401, 403 or a challenge); it goes through
+                // the error pages, as sendError does, still inside the request listeners
+                // (BUG-20261010-08). requestDestroyed fires outside the inner try, so a listener
+                // failure is not caught there and fired a second time below.
+                Response response = denied(req, res, target.servletName());
                 requestDestroyed = true;
                 registry.fireRequestDestroyed(servletContext, req);
-                return denied(req, res, target.servletName());
+                return response;
             }
             // Section 2.3.3.5: an upgraded request leaves the HTTP lifecycle here (no async or error
             // machinery). A servlet that threw after upgrade() gets the regular error handling instead.
@@ -485,9 +502,6 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
                 thrown = end.thrown();
                 lastCycle = end.lastCycle();
             }
-            requestDestroyed = true;
-            registry.fireRequestDestroyed(servletContext, req);
-
             Throwable failure = null;
             try {
                 maybeHandleError(req, res, thrown, target.servletName());
@@ -497,6 +511,11 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
             if (failure == null && thrown != null && !errorPageHandled(req)) failure = thrown;
             // Section 2.3.3.3: onComplete closes the whole async processing, error dispatch included.
             if (lastCycle != null) lastCycle.endCycle();
+            // requestDestroyed comes last, as in Tomcat: the error page and onComplete run with the
+            // CDI request and session contexts the request listeners bind (BUG-20261010-08,
+            // BUG-20261010-07). A listener failure joins a failure in flight rather than replacing it.
+            requestDestroyed = true;
+            endRequest(registry, req, failure);
             return failure != null ? failed(res, req, failure) : completed(req, res);
         } catch (Throwable t) {
             // An Error, or a failure of the container's own code: requestDestroyed must not mask it.
@@ -710,16 +729,38 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
         var req = new HttpServletRequestImpl(request, servletContext, contextPath, "", null, sessionManager);
         requests.add(req);
         req.bindResponse(res);
-        try { res.sendError(status); } catch (IOException ignored) {}
-        try { maybeHandleError(req, res, null, null); }
-        catch (ServletException e) { return failed(res, null, e); }
-        if (errorPageHandled(req)) return respond(res, () -> toChappeResponse(res));
-        if (status == 404) return respond(res, ChappeServletBridge::notFound);
-        return respond(res, () -> Response.builder()
-                .status(StatusCode.of(status))
-                .header("Content-Type", "text/plain")
-                .body(Body.of("Bad Request".getBytes(StandardCharsets.US_ASCII)))
-                .build());
+        // The error page runs inside the request listeners (BUG-20261010-08).
+        return insideRequestListeners(req, () -> {
+            try { res.sendError(status); } catch (IOException ignored) {}
+            try { maybeHandleError(req, res, null, null); }
+            catch (ServletException e) { return failed(res, null, e); }
+            if (errorPageHandled(req)) return respond(res, () -> toChappeResponse(res));
+            if (status == 404) return respond(res, ChappeServletBridge::notFound);
+            return respond(res, () -> Response.builder()
+                    .status(StatusCode.of(status))
+                    .header("Content-Type", "text/plain")
+                    .body(Body.of("Bad Request".getBytes(StandardCharsets.US_ASCII)))
+                    .build());
+        });
+    }
+
+    /**
+     * Runs {@code body} between {@code requestInitialized} and {@code requestDestroyed}, the latter
+     * on every way out: the CDI request and session scope listeners bind there, so a login page, an
+     * error page or a filter run with their contexts.
+     */
+    private Response insideRequestListeners(HttpServletRequestImpl req, Supplier<Response> body) {
+        ListenerRegistry registry = servletContext.listenerRegistry();
+        registry.fireRequestInitialized(servletContext, req);
+        Response response;
+        try {
+            response = body.get();
+        } catch (Throwable t) {
+            endRequest(registry, req, t);
+            throw t;
+        }
+        registry.fireRequestDestroyed(servletContext, req);
+        return response;
     }
 
     /**

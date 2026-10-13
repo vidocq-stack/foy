@@ -646,7 +646,13 @@ Statuts : `OPEN` → `INVESTIGATING` → `FIXED` (commit hash) → `CLOSED`.
 ## BUG-20261010-07 — no CDI context on AsyncContext.start() threads nor in AsyncListener.onComplete
 
 - **Date** : 2026-10-10
-- **Statut** : OPEN (documented gap; by code reading, not pinned by a test)
+- **Statut** : FIXED — `onComplete` now fires before `requestDestroyed` (on the pipeline thread, contexts
+  bound), and `AsyncContextImpl.start` runs the `Runnable` with the container's context listeners
+  (`addFirst`/`registerFirst`, i.e. the CDI ones) bound on its thread through
+  `ListenerRegistry.bindingContainerContexts`, with a request wrapper as the event's request so a listener
+  keyed by request keeps the serving thread's state. The start thread shares the session and gets a request
+  context of its own. The application's request listeners are not fired again. Pinned by
+  `AsyncContainerContextsTest`.
 - **Module touché** : `foy-core` (`AsyncContextImpl`, `ChappeServletBridge`)
 - **Symptôme** : a `@RequestScoped` or `@SessionScoped` bean used from the `Runnable` given to
   `AsyncContext.start()`, or from `AsyncListener.onComplete`, fails with `ContextNotActiveException`.
@@ -674,8 +680,10 @@ Statuts : `OPEN` → `INVESTIGATING` → `FIXED` (commit hash) → `CLOSED`.
 ## BUG-20261010-08 — error pages run without the CDI request and session contexts
 
 - **Date** : 2026-10-10
-- **Statut** : OPEN (the fix changes the listener order of every error dispatch and needs a full official
-  TCK run)
+- **Statut** : FIXED — on the mapped path `requestDestroyed` fires after `maybeHandleError` and after
+  `onComplete`; a denial's error page runs before it; `rejected(...)` and the unmapped-path branch run their
+  error page inside `requestInitialized`/`requestDestroyed`. Pinned by `RequestListenersAroundErrorPagesTest`;
+  full official TCK run recorded in the commit.
 - **Module touché** : `foy-core` (`ChappeServletBridge`)
 - **Symptôme** : an error page (a `<error-page>` location dispatched after an exception, after
   `sendError(...)`, or after an async timeout) runs with no CDI context driven by Foy's request
@@ -777,7 +785,8 @@ Statuts : `OPEN` → `INVESTIGATING` → `FIXED` (commit hash) → `CLOSED`.
 ## BUG-20261011-07 — a security denial on the redirect or unmapped branch runs without request listeners
 
 - **Date** : 2026-10-11
-- **Statut** : OPEN (cosmetic, by code reading)
+- **Statut** : FIXED — the directory-redirect and unmapped-path branches run the security gate inside the
+  request listeners. Pinned by `RequestListenersAroundErrorPagesTest.aDenialOnTheDirectoryRedirectRunsInsideTheRequestListeners`.
 - **Module touché** : `foy-core` (`ChappeServletBridge.gate`)
 - **Symptôme** : on the directory-redirect branch of the default servlet and on the unmapped-path branch,
   `WebSecurity.admit` (and a FORM forward to the login page) runs before any `requestInitialized`: a

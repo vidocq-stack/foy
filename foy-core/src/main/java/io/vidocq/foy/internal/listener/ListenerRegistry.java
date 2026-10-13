@@ -50,6 +50,8 @@ import java.util.List;
  */
 public final class ListenerRegistry {
 
+    private static final System.Logger LOG = System.getLogger(ListenerRegistry.class.getName());
+
     private final List<ServletContextListener> contextListeners = new ArrayList<>();
     private final List<ServletContextAttributeListener> contextAttrListeners = new ArrayList<>();
     private final List<ServletRequestListener> requestListeners = new ArrayList<>();
@@ -98,6 +100,7 @@ public final class ListenerRegistry {
     public void addFirst(ServletRequestListener listener) {
         all.add(0, listener);
         requestListeners.add(0, listener);
+        containerRequestListeners.add(0, listener);
     }
 
     /**
@@ -108,8 +111,58 @@ public final class ListenerRegistry {
      */
     public void registerFirst(EventListener listener) {
         all.add(0, listener);
-        if (listener instanceof ServletRequestListener l) requestListeners.add(0, l);
+        if (listener instanceof ServletRequestListener l) {
+            requestListeners.add(0, l);
+            containerRequestListeners.add(0, l);
+        }
         if (listener instanceof HttpSessionListener l) sessionListeners.add(0, l);
+    }
+
+    /**
+     * The container's own request listeners ({@link #addFirst}, {@link #registerFirst}): the ones
+     * that bind the CDI contexts to the thread serving a request.
+     */
+    private final List<ServletRequestListener> containerRequestListeners =
+            new java.util.concurrent.CopyOnWriteArrayList<>();
+
+    /**
+     * {@code task} with the container's context listeners bound around it on the thread that runs
+     * it (BUG-20261010-07): {@code requestInitialized} before, {@code requestDestroyed} after, in
+     * reverse order, with the request {@code threadRequest} supplies as the event's request. That request must not be
+     * the one the serving thread announced, since a listener may key its state by the request. The
+     * application's listeners are not told: for them the request is still the one being served.
+     * A failing listener is logged; the task runs regardless.
+     */
+    public Runnable bindingContainerContexts(ServletContext ctx,
+                                             java.util.function.Supplier<ServletRequest> threadRequest,
+                                             Runnable task) {
+        List<ServletRequestListener> bound = List.copyOf(containerRequestListeners);
+        if (bound.isEmpty()) return task;
+        ServletRequest request = threadRequest.get();
+        if (request == null) return task;
+        return () -> {
+            var event = new ServletRequestEvent(ctx, request);
+            List<ServletRequestListener> initialized = new java.util.ArrayList<>();
+            for (ServletRequestListener l : bound) {
+                try {
+                    l.requestInitialized(event);
+                    initialized.add(l);
+                } catch (RuntimeException e) {
+                    LOG.log(System.Logger.Level.WARNING, "container request listener failed on an async thread", e);
+                }
+            }
+            try {
+                task.run();
+            } finally {
+                for (int i = initialized.size() - 1; i >= 0; i--) {
+                    try {
+                        initialized.get(i).requestDestroyed(event);
+                    } catch (RuntimeException e) {
+                        LOG.log(System.Logger.Level.WARNING, "container request listener failed on an async thread", e);
+                    }
+                }
+            }
+        };
     }
 
     public boolean isProgrammatic(EventListener l) {

@@ -186,12 +186,26 @@ public final class AsyncContextImpl implements AsyncContext {
      * response (BUG-20261010-02). A throwing runnable fails the cycle.
      */
     @Override public void start(Runnable run) {
+        // The container's context listeners (CDI request and session scopes) are bound on the new
+        // thread around the runnable (BUG-20261010-07); a wrapper keeps that thread's request apart
+        // from the one the serving thread announced, since a listener may key its state by it.
+        Runnable bound = servletContext instanceof io.vidocq.foy.internal.container.VidocqServletContext v
+                ? v.listenerRegistry().bindingContainerContexts(servletContext, this::threadRequest, run)
+                : run;
         Thread thread = Thread.ofVirtual().name("foy-async-" + ASYNC_THREADS.incrementAndGet()).unstarted(() -> {
-            try { run.run(); }
+            try { bound.run(); }
             catch (Throwable t) { fail(t); }
         });
         startedThreads.add(thread);
         thread.start();
+    }
+
+    /** A request distinct from the cycle's own, for the container listeners of a {@link #start} thread. */
+    private ServletRequest threadRequest() {
+        if (request == null) return null;
+        return request instanceof jakarta.servlet.http.HttpServletRequest http
+                ? new jakarta.servlet.http.HttpServletRequestWrapper(http)
+                : new jakarta.servlet.ServletRequestWrapper(request);
     }
 
     /** The threads {@link #start} created for this cycle. */
