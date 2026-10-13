@@ -214,7 +214,7 @@ Statuts : `OPEN` → `INVESTIGATING` → `FIXED` (commit hash) → `CLOSED`.
 ## BUG-20261009-01 — forward/include drop a non-HTTP application wrapper passed to the dispatcher
 
 - **Date** : 2026-10-09
-- **Statut** : FIXED (the dispatch wrapper goes under the lowest non-HTTP application wrapper, restored in a finally, 1de5b96)
+- **Statut** : FIXED (the dispatch wrapper goes under the lowest non-HTTP application wrapper, restored in a finally, 1de5b96; review round 37a7de4)
 - **Module touché** : `foy-core` (`RequestDispatcherImpl.unwrapHttp` / `unwrapHttpResponse`)
 - **Symptôme** : when a servlet or filter passes a plain `ServletRequestWrapper` (or
   `ServletResponseWrapper`) that is not an `HttpServletRequest` to `forward`/`include`, the target
@@ -238,6 +238,8 @@ Statuts : `OPEN` → `INVESTIGATING` → `FIXED` (commit hash) → `CLOSED`.
     `aPlainResponseWrapperPassedToIncludeReachesTheTarget`,
     `theApplicationChainIsRestoredAfterTheDispatch`,
     `nestedDispatchesUnwindTheApplicationChainInOrder`, `anHttpWrapperIsStillPassedAsBefore`).
+    Review round 37a7de4 added `theApplicationChainIsRestoredAfterAForward` and
+    `aPlainResponseWrapperPassedToForwardReachesTheTarget`.
     Out of scope: the async dispatch path (`ChappeServletBridge` async `dispatch`) still wraps the
     container request, not `AsyncContext.getRequest()`.
 
@@ -277,7 +279,7 @@ Statuts : `OPEN` → `INVESTIGATING` → `FIXED` (commit hash) → `CLOSED`.
 ## BUG-20261009-03 — error dispatch shows the error-page location's paths only to the default servlet
 
 - **Date** : 2026-10-09
-- **Statut** : FIXED (`ErrorDispatchRequest` gives every error-page target the location's paths, URI and mapping, 926deae)
+- **Statut** : FIXED (`ErrorDispatchRequest` gives every error-page target the location's paths, URI and mapping, 926deae; relative dispatcher resolved against the location, 3fd3288)
 - **Module touché** : `foy-core` (`ChappeServletBridge.maybeHandleError` / `errorTargetRequest`)
 - **Symptôme** : on an ERROR dispatch the target receives the original request, whose
   `getServletPath`/`getPathInfo` describe the failing request, not the error-page location
