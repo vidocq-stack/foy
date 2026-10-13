@@ -25,12 +25,21 @@
   for HTTP wrappers too (`ApplicationDispatcher.wrapRequest`).
 - Minimal repro: servlet `C` calls `getRequestDispatcher("/T").forward(new HttpServletRequestWrapper(req) {
   getParameter -> "h" }, resp)`; `T` reads `getParameter("p")` → `null` instead of `h`.
-  `DispatcherSemanticsTest.anHttpWrapperIsStillPassedAsBefore` pins today's behaviour through a
+  `DispatcherSemanticsTest.anHttpWrapperIsStillPassedAsBefore` pinned the old behaviour through a
   delegated method (`getHeader`).
 - Cause: `RequestDispatcherImpl` only hooks the lowest *non-HTTP* wrapper (BUG-20261009-01). When the
   outer object is HTTP, it still wraps the outer object in the dispatch wrapper.
-- Status: OPEN. Before changing it, gate on a full `run-official-tck-servlet6.1.sh --all` run before
-  and after the change: the request-dispatcher and wrapper suites wrap requests in filters.
+- Status: FIXED by 99d40d1. `RequestDispatcherImpl` now finds the first *container* request/response
+  of the chain (`HttpServletRequestImpl`, `ForwardedRequest`, `IncludedRequest`, `AsyncDispatchRequest`,
+  `ErrorDispatchRequest`; `HttpServletResponseImpl`, `IncludedResponse`) and hooks the dispatch wrapper
+  under the application wrapper right above it (`hookAbove`), HTTP or not, restoring the chain in
+  `finally`. `ErrorDispatchRequest` became public for the check. Pinned by
+  `DispatcherSemanticsTest.anHttpWrapperPassedTo{Forward,Include}IsTheObjectTheTargetReceives`,
+  `anHttpResponseWrapperPassedToIncludeIsTheObjectTheTargetReceives`,
+  `theHttpWrapperChainIsRestoredAfterForwardAndInclude`,
+  `aFilterWrappingOnForwardComposesWithASecondDispatch` and
+  `anHttpWrapperDelegatesTheDispatchPathsToTheDispatchWrapper`. Official TCK subset (dispatch, wrapper,
+  filter-dispatcher, dispatcher-type, async and error-page classes): 309 tests, 0 failures, 0 errors.
 
 ## BUG-20261013-02 — FoyChappeBoot fails on the module path: foy-core does not declare `uses CdiContextListeners`
 
