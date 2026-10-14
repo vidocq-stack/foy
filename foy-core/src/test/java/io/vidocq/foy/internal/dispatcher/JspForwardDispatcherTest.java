@@ -286,6 +286,26 @@ class JspForwardDispatcherTest {
     }
 
     @Test
+    void aGenericApplicationResponseWrapperResetsThroughTheCurrentChainBeforeForward() throws Exception {
+        var resets = new java.util.concurrent.atomic.AtomicInteger();
+        start(map("/caller", (request, response) -> {
+                    response.getWriter().write("discard");
+                    request.getRequestDispatcher("/included").include(request, response);
+                }), map("/included", (request, response) -> {
+                    var application = new ServletResponseWrapper(response) {
+                        @Override public void resetBuffer() { resets.incrementAndGet(); super.resetBuffer(); }
+                    };
+                    var dispatcher = new RequestDispatcherImpl(DispatchTarget.named(null, "target", true), (target, forwardedRequest, forwardedResponse, type) ->
+                            forwardedResponse.getWriter().write("TARGET"));
+                    dispatcher.forwardFromJsp(request, application);
+                    assertSame(response, application.getResponse());
+                }));
+        var result = get();
+        assertAll(() -> assertEquals(200, result.statusCode()),
+                () -> assertEquals("TARGET", result.body()), () -> assertEquals(1, resets.get()));
+    }
+
+    @Test
     void aMissingTargetWithAGenericApplicationResponseWrapperStillUsesTyped404() throws Exception {
         var resets = new java.util.concurrent.atomic.AtomicInteger();
         start(map("/caller", (request, response) -> request.getRequestDispatcher("/included").include(request, response)),

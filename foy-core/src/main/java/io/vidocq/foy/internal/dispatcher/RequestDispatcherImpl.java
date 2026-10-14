@@ -93,7 +93,7 @@ public final class RequestDispatcherImpl implements io.vidocq.foy.spi.jsp.JspEng
                 if (forwarded.isCommitted()) throw new IllegalStateException("response already committed");
                 forwarded.resetBuffer();
                 PageForwardResponse.sendError(forwarded, httpResponse, HttpServletResponse.SC_NOT_FOUND, "No resource at " + path);
-                var http = unwrapHttp(request);
+                var http = containerRequest(request);
                 if (http == null || !asyncEntered(http)) close(forwarded);
             }
             @Override public void forward(ServletRequest request, ServletResponse response)
@@ -132,7 +132,8 @@ public final class RequestDispatcherImpl implements io.vidocq.foy.spi.jsp.JspEng
         if (res.isCommitted()) {
             throw new IllegalStateException("response already committed");
         }
-        res.resetBuffer();
+        if (fromJsp) response.resetBuffer();
+        else res.resetBuffer();
 
         // Exceptions of the target reach the caller unchanged (no wrapping). The forward.* attributes
         // (section 9.4.2) live in the ForwardedRequest, so they last for the forward only. Every

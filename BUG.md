@@ -18,13 +18,19 @@
   INCLUDE scopes. Servlet reset and completion remain container-owned. Async dispatch
   retains the response captured by `startAsync(request, response)`. Ownership is
   confined to the operating thread, and partial scope acquisition is rolled back.
-- Validation: nine HTTP regressions in `JspForwardDispatcherTest` cover nested
+- Validation: ten HTTP regressions in `JspForwardDispatcherTest` cover nested
   wrappers, cached writers/streams, asynchronous completion/dispatch, exceptions,
   missing targets through HTTP and generic wrappers, concurrent original references
   and partial acquisition cleanup. Four original behavior failures, the thread-policy
-  leak and generic-wrapper silent 200 were reproduced before their fixes. The focused
-  dispatch/async/error suite passes 101 tests with zero failures, errors or skips:
+  leak and generic-wrapper silent 200 were reproduced before their fixes. On 2026-10-14,
+  a generic wrapper forwarding to an existing target reproduced `discardTARGET`
+  instead of `TARGET` and zero application resets instead of one. Reset now uses
+  the current forwarding response view, so INCLUDE scope policy and application
+  overrides both apply. The initial focused dispatch/async/error suite passed
+  101 tests with zero failures, errors or skips:
   `./mvnw -o -ntp -pl foy-core -am '-Dtest=JspForwardDispatcherTest,DispatcherSemanticsTest,ServletDispatcherTest,AsyncSupportedDispatchTest,*Async*Test,ErrorPageDispatchTest' -Dsurefire.failIfNoSpecifiedTests=false test`.
+  Final rebased normal reactor: `./mvnw -o -ntp -Dmaven.repo.local=/private/tmp/ibarra-forward-m2 test`
+  passes 1307 tests with zero failures, errors or skips, including all ten HTTP regressions.
   Related Ibarra tracking: IBARRA-119 and IBARRA-130.
 
 ## BUG-20261013-04 — an async cycle started in an error page never runs
