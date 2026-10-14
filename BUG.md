@@ -30,7 +30,10 @@
     `componentSource`. Its set was `null` before the fix; it now holds the module's formatters.
   - `scanRootsLeavesOutAJrtRootOfAnUnknownModule` and
     `scanRootsDeduplicatesJrtRootsAndLeavesOutRootsBelowAModule` cover the edge cases.
-  - The reporter's Vaadin image has not been rebuilt against this fix yet.
+  - On 2026-10-15 the Vidocq session rebuilt its Vaadin 25 jlink image from e7c6f65.
+    `LookupServletContainerInitializer` now receives its classes, and the "LookupInitializer
+    should always be present" failure is gone. The boot then stops on a Vauban `uses` issue
+    (`InstantiatorFactory`), which is unrelated to Foy.
 - Not covered: the other discovery steps, `web-fragment.xml` and static resources, under
   `jrt:` roots. They are not exercised by the report.
 
