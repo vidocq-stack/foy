@@ -863,7 +863,7 @@ Statuts : `OPEN` → `INVESTIGATING` → `FIXED` (commit hash) → `CLOSED`.
 ## BUG-20261011-04 — SecFormTests.test2 and test2_anno need a JSP engine
 
 - **Date** : 2026-10-11
-- **Statut** : ACCEPTED GAP (until a JSP-engine SPI exists)
+- **Statut** : ACCEPTED GAP (the JSP-engine SPI exists; waiting on Ibarra milestones I8/I9)
 - **Module touché** : `foy-tck` (no Foy defect)
 - **Symptôme** : `servlet.tck.spec.security.secform.SecFormTests.test2` and `test2_anno` fail: after
   a failed login, the expected error page content is never produced.
@@ -872,8 +872,20 @@ Statuts : `OPEN` → `INVESTIGATING` → `FIXED` (commit hash) → `CLOSED`.
   has no JSP engine, so the page is not executed.
 - **Hypothèse de cause** : the TCK test application uses JSP pages for its login error page. FORM
   authentication itself behaves (the 23 other SecForm tests pass).
-- **Fix envisagé** : the JSP-engine SPI plugged by Ibarra (Jakarta Pages 4.0), like the 3 JSP tests of
-  `ServletContext40Tests`.
+- **Fix envisagé** : run these tests, and the 3 JSP tests of `ServletContext40Tests`, with Ibarra
+  (Jakarta Pages 4.0) plugged into Foy's JSP-engine SPI, through an optional `foy-tck` profile.
+- **Investigations** :
+  - 2026-10-14 : the SPI is delivered (`io.vidocq.foy.spi.jsp.JspEngine` in `foy-api`, discovered
+    with `ServiceLoader` in the application layer), and Ibarra provides it in `ibarra-foy`. Two things
+    still block the TCK run:
+    - Ibarra serves only pages compiled at build time. Its runtime translation is milestone I9, and the
+      TCK WARs ship JSP source.
+    - The `foy-tck` Arquillian adapter deploys WARs on the class path, with no application layer, so
+      it looks up no engine.
+    The precompiling WAR adapter is Ibarra's milestone I8, and its TCK deployment model is open
+    question 2 of Ibarra's `PLAN.md`. Decision: wait for I8, then reuse a WAR-precompiling adapter
+    shared by Ibarra, or wait for I9; Foy then adds the `foy-tck` profile. Foy does not duplicate the
+    adapter.
 
 ## BUG-20261011-05 — case-sensitive constraint matching vs a case-insensitive file system
 

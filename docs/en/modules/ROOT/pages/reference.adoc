@@ -608,7 +608,7 @@ On a TLS connection the five Servlet 6.1 section 3.10 attributes are seeded when
 
 | JSP
 | ❌
-| Not supported by Foy itself; planned through a JSP-engine SPI plugged by xref:ibarra::index.adoc[Ibarra] (Jakarta Pages 4.0).
+| Not supported by Foy itself. Foy offers a JSP-engine service (<<jsp-engine>>) that a page engine such as xref:ibarra::index.adoc[Ibarra] (Jakarta Pages 4.0) plugs into.
 |===
 
 [#other-containers]
@@ -625,6 +625,7 @@ Foy does not need Vauban: give `FoyChappeBoot` the `BeanManager` of any CDI 4 co
 
 [.tag-new]#NEW# The session scope has its own pair of modules, never published, running the same HTTP scenarios from `foy-it-session-scenarios`: `foy-it-weld-servlet`, the reference, where Weld's servlet integration manages the session context, and `foy-it-vauban-session`, where `vauban-webcontexts` does. Both check one cart per session across requests, two carts for two clients, a new and empty cart after `invalidate()` with the old one's `@PreDestroy` run, and the session events.
 
+[#jsp-engine]
 == Optional JSP-engine service
 
 `foy-api` exports `io.vidocq.foy.spi.jsp.JspEngine`; Foy core discovers it

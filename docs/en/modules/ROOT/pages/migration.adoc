@@ -103,7 +103,7 @@ No real-world migration has been documented yet — the Tomcat and Jetty tables 
 * **HTTP/2 server push** — not supported; `newPushBuilder()` returns `null` (push is deprecated in Servlet 6.1).
 * **Directory listings and `multipart/byteranges`** — the default servlet serves single files only (404 for a directory) and answers several ranges with the whole body.
 * **WebSocket Servlet 6.1 / Jakarta WebSocket 2.2** — not implemented (planned, no date).
-* **JSP** — not supported by Foy itself; planned through a JSP-engine SPI that xref:ibarra::index.adoc[Ibarra] (Jakarta Pages 4.0) plugs into. For dynamic pages use xref:cassini::index.adoc[Cassini] (REST) or HTML-emitting Servlets.
+* **JSP** — not supported by Foy itself; a page engine such as xref:ibarra::index.adoc[Ibarra] (Jakarta Pages 4.0) plugs into the xref:reference.adoc#jsp-engine[JSP-engine service]. For dynamic pages use xref:cassini::index.adoc[Cassini] (REST) or HTML-emitting Servlets.
 * **DIGEST not supported** — it fails closed (`403`). CLIENT-CERT is supported: see xref:usage.adoc#client-cert[Client certificates].
 
 Cross-context dispatch (`ServletContext.getContext`) **is implemented** via `CrossContextRegistry` — strict contextPath match on the contexts deployed in the same JVM.

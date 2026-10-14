@@ -84,7 +84,7 @@ The full run reports `Skipped: 7`, all in `spec.serverpush.ServerPushTests`:
 
 No other test battery is excluded. Two more product decisions show up as errors rather than skips:
 
-* **No JSP engine in Foy itself** — the 3 JSP-dependent `ServletContext40Tests` fail. A JSP-engine SPI in Foy, plugged by xref:ibarra::index.adoc[Ibarra] (Jakarta Pages 4.0), is the planned way to run them. For dynamic pages today, use xref:cassini::index.adoc[Cassini] (REST) or pure Servlets.
+* **No JSP engine in Foy itself** — the 3 JSP-dependent `ServletContext40Tests` fail. Foy has the JSP-engine service (xref:reference.adoc#jsp-engine[Optional JSP-engine service]), but the TCK runs without a page engine. The TCK WARs ship JSP source, and xref:ibarra::index.adoc[Ibarra] (Jakarta Pages 4.0) serves only pages compiled at build time for now; the TCK will run these tests with Ibarra once Ibarra can precompile a WAR at deployment or translate pages at runtime (BUG-20261011-04). For dynamic pages today, use xref:cassini::index.adoc[Cassini] (REST) or pure Servlets.
 * **Hang safety net** — some TCK clients read raw sockets without `SO_TIMEOUT` and would hang forever on an unanswered request; `foy-tck` sets a global JUnit 120 s timeout (`SEPARATE_THREAD` mode). No test hits it at the Phase 7 exit.
 
 [#signature-test]
