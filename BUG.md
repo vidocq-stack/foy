@@ -8,20 +8,29 @@
   com.vaadin.flow.di.LookupInitializer should always be present", then "Foy deployment failed:
   The application Lookup instance is not found in VaadinContext". The same application boots
   under run, dev and package.
-- Minimal repro: in an image, call `ApplicationSources.scanRoots` with `jrt:/java.logging`,
-  the code source of a linked module. It returns an empty list, so
-  `ClassFileHandlesTypesScanner` never scans that module.
+- Minimal repro: on any JDK (the JDK is itself an image), call `ApplicationSources.scanRoots`
+  with `jrt:/java.logging`, the form of a linked module's code source. It returns an empty list,
+  so `ClassFileHandlesTypesScanner` never scans that module. At boot, an initializer whose
+  component source is `jrt:/java.logging` and that handles `java.util.logging.Formatter`
+  receives `null`.
 - Cause: `scanRoots` kept only `file:` roots. In a jlink image every module's code source is
-  `jrt:/<module>`. Since vidocq#246, jars copied with brick enrichment do not carry the
-  whole-jar `META-INF/foy/class-index.list`. For such jars Foy relies on the class-bytes scan,
-  which skipped every module of the image.
+  `jrt:/<module>`. Since vidocq#246, jars copied with brick enrichment carry no
+  `META-INF/foy/class-index.list`: the processors see only the hinted classes, so the index
+  cannot cover the whole jar. For such jars Foy relies on the class-bytes scan, which skipped
+  every module of the image. A module that does carry an index is still answered from it.
 - Status: FIXED (28318c9). `scanRoots` maps a `jrt:/<module>` root to that module's directory in the
-  `jrt` file system, `/modules/<module>`, and leaves the root out when the image has no such
-  module. The scanner walks that directory like any other.
-- Validation: `ApplicationSourcesTest.scanRootsKeepsJrtModuleRootsOfALinkedImage` and
-  `ClassFileHandlesTypesScannerTest.jrtModuleRootIsScanned` both failed before the fix. The
-  second one finds `java.util.logging.SimpleFormatter` as a `Formatter` subtype in
-  `jrt:/java.logging`. `scanRootsLeavesOutAJrtRootOfAnUnknownModule` covers a missing module.
+  `jrt` file system, `/modules/<module>`. It leaves the root out when the image has no such
+  module, or when the root is below a module. The scanner walks that directory like any other.
+- Validation:
+  - `ApplicationSourcesTest.scanRootsKeepsJrtModuleRootsOfALinkedImage` and
+    `ClassFileHandlesTypesScannerTest.jrtModuleRootIsScanned` both failed before the fix. The
+    second one finds `java.util.logging.SimpleFormatter` as a `Formatter` subtype in
+    `jrt:/java.logging`.
+  - The boot-level `FoyChappeBootJrtRootsTest` maps an initializer to `jrt:/java.logging` through
+    `componentSource`. Its set was `null` before the fix; it now holds the module's formatters.
+  - `scanRootsLeavesOutAJrtRootOfAnUnknownModule` and
+    `scanRootsDeduplicatesJrtRootsAndLeavesOutRootsBelowAModule` cover the edge cases.
+  - The reporter's Vaadin image has not been rebuilt against this fix yet.
 - Not covered: the other discovery steps, `web-fragment.xml` and static resources, under
   `jrt:` roots. They are not exercised by the report.
 

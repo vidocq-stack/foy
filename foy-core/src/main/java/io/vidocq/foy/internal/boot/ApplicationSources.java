@@ -248,7 +248,8 @@ public final class ApplicationSources {
      * The jars and directories among {@code roots}, normalised, deduplicated and in order, as the
      * {@code @HandlesTypes} class-bytes scan expects them. A {@code jrt:/<module>} root, the code
      * source of every module in a linked image, becomes that module's directory in the {@code jrt}
-     * file system, or is left out when the image has no such module. Other roots that are not
+     * file system, or is left out when the image has no such module; a root below a module
+     * ({@code jrt:/<module>/<path>}) is left out too. Other roots that are not
      * {@code file:} locations (remote or nested archives) are left out: they cannot be walked.
      */
     public static List<Path> scanRoots(Collection<URL> roots) {
@@ -259,8 +260,9 @@ public final class ApplicationSources {
                 if ("file".equalsIgnoreCase(uri.getScheme()) && uri.getAuthority() == null) {
                     out.add(Path.of(uri));
                 } else if ("jrt".equalsIgnoreCase(uri.getScheme())) {
+                    // Only a whole module, /modules/<module>: a deeper root would yield wrong class names.
                     Path module = Path.of(uri);
-                    if (Files.isDirectory(module)) out.add(module);
+                    if (module.getNameCount() == 2 && Files.isDirectory(module)) out.add(module);
                 }
             } catch (IllegalArgumentException | FileSystemNotFoundException e) {
                 // not a local location: not scanned

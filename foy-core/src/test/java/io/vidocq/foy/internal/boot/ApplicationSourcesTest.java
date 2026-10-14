@@ -310,4 +310,11 @@ class ApplicationSourcesTest {
     void scanRootsLeavesOutAJrtRootOfAnUnknownModule() throws Exception {
         assertEquals(List.of(), ApplicationSources.scanRoots(List.of(URI.create("jrt:/no.such.module").toURL())));
     }
+
+    @Test
+    void scanRootsDeduplicatesJrtRootsAndLeavesOutRootsBelowAModule() throws Exception {
+        List<Path> roots = ApplicationSources.scanRoots(List.of(URI.create("jrt:/java.logging").toURL(),
+                URI.create("jrt:/java.logging/").toURL(), URI.create("jrt:/java.logging/java/util").toURL()));
+        assertEquals(List.of("/modules/java.logging"), roots.stream().map(Path::toString).toList());
+    }
 }
