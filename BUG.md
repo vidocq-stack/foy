@@ -1,5 +1,30 @@
 # BUG.md — foy
 
+## BUG-20261015-01 — @HandlesTypes gets null in a jlink image
+
+- Date: 2026-10-15 (reported by the Vidocq session, PRs Vidocq/vidocq#257 and Vidocq/vauban#165).
+- Symptom: a Vaadin 25 application linked with `vidocq:jlink` fails at boot. The log shows
+  "ServletContainerInitializer is called but the provided set of classes is 'null'. class
+  com.vaadin.flow.di.LookupInitializer should always be present", then "Foy deployment failed:
+  The application Lookup instance is not found in VaadinContext". The same application boots
+  under run, dev and package.
+- Minimal repro: in an image, call `ApplicationSources.scanRoots` with `jrt:/java.logging`,
+  the code source of a linked module. It returns an empty list, so
+  `ClassFileHandlesTypesScanner` never scans that module.
+- Cause: `scanRoots` kept only `file:` roots. In a jlink image every module's code source is
+  `jrt:/<module>`. Since vidocq#246, jars copied with brick enrichment do not carry the
+  whole-jar `META-INF/foy/class-index.list`. For such jars Foy relies on the class-bytes scan,
+  which skipped every module of the image.
+- Status: FIXED (28318c9). `scanRoots` maps a `jrt:/<module>` root to that module's directory in the
+  `jrt` file system, `/modules/<module>`, and leaves the root out when the image has no such
+  module. The scanner walks that directory like any other.
+- Validation: `ApplicationSourcesTest.scanRootsKeepsJrtModuleRootsOfALinkedImage` and
+  `ClassFileHandlesTypesScannerTest.jrtModuleRootIsScanned` both failed before the fix. The
+  second one finds `java.util.logging.SimpleFormatter` as a `Formatter` subtype in
+  `jrt:/java.logging`. `scanRootsLeavesOutAJrtRootOfAnUnknownModule` covers a missing module.
+- Not covered: the other discovery steps, `web-fragment.xml` and static resources, under
+  `jrt:` roots. They are not exercised by the report.
+
 ## BUG-20261013-05 — JSP forwards cannot preserve application wrappers inside an include
 
 - Date: 2026-10-13.
