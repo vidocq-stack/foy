@@ -503,10 +503,13 @@ On a forward the mapping is that of the target; `jakarta.servlet.forward.mapping
 
 == Request identity and connection
 
-`getRequestId()` is unique per request (a JVM-wide counter). `getServletConnection()` reports the protocol, the `isSecure()` flag, and a connection id derived from the socket address pair (`remote-ip:port-local-ip:port`, `?-?` when Chappe gives no address). Two limits come from the Chappe `Request` API, which exposes neither a connection identity nor the HTTP/2 stream id (BUG-20261009-09, open, a Chappe follow-up):
+`getRequestId()` is unique per request (a JVM-wide counter). `getServletConnection()` reports the protocol, the `isSecure()` flag, and a connection id:
 
-* the connection id is not unique for the lifetime of the JVM: two connections reusing the same ephemeral port get the same id;
-* `getProtocolRequestId()` is `""` for HTTP/2 instead of the stream id, and `getProtocolConnectionId()` is `""` on every protocol.
+* the connection id is Chappe's connection counter, a decimal string unique for the lifetime of the JVM and shared by every request of the connection (HTTP/1.1 keep-alive, or every stream of an HTTP/2 connection);
+* a `Request` that carries no Chappe connection id (not one built by Chappe) falls back to the socket address pair (`remote-ip:port-local-ip:port`, `?` for an unknown address), which a later connection may reuse;
+* `getProtocolRequestId()` is `""` on HTTP/1.x and the stream identifier on HTTP/2;
+* `getProtocolConnectionId()` is `""`;
+* `getProtocol()` is `HTTP/1.0`, `HTTP/1.1` or `HTTP/2.0`.
 
 On a TLS connection the five Servlet 6.1 section 3.10 attributes are seeded when the request is created, without firing `ServletRequestAttributeListener`s, and are the application's afterwards. Authentication never reads them: it reads the connection.
 

@@ -210,11 +210,13 @@ See xref:usage.adoc#file-upload[File upload] and xref:reference.adoc#request-bod
 
 == Behaviour changes in the next version
 
-Applications that pass wrappers to `forward`, `include` or `startAsync` see these changes:
+These changes may need attention:
 
-* **Every application wrapper, HTTP or not, now reaches the forward/include target.** The dispatch wrapper sits under the application's, so a wrapper's overrides win. A framework wrapper that caches the request URI at construction time shows the original URI to the target, as on Tomcat.
-* **A request (and, for include, a response) that neither is nor wraps the container's object is rejected** with a `ServletException`.
-* **`startAsync()` throws `IllegalStateException` in an error page**, for both the zero-argument and the `(request, response)` forms.
+* **Wrappers: every application wrapper, HTTP or not, now reaches the forward/include target.** The dispatch wrapper sits under the application's, so a wrapper's overrides win. A framework wrapper that caches the request URI at construction time shows the original URI to the target, as on Tomcat.
+* **Wrappers: a request (and, for include, a response) that neither is nor wraps the container's object is rejected** with a `ServletException`.
+* **Wrappers: `startAsync()` throws `IllegalStateException` in an error page**, for both the zero-argument and the `(request, response)` forms.
+* **`getProtocol()` returns `HTTP/2.0` on HTTP/2** (it was `HTTP/2`), as the Servlet Javadoc requires.
+* **`getServletConnection().getConnectionId()` is now a decimal counter** unique for the JVM, shared by every request of a connection; it is no longer the socket address pair. `getProtocolRequestId()` is the stream id on HTTP/2.
 
 == Common pitfalls
 

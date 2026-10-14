@@ -498,7 +498,7 @@ Statuts : `OPEN` → `INVESTIGATING` → `FIXED` (commit hash) → `CLOSED`.
 ## BUG-20261009-09 — getServletConnection id not unique for the JVM lifetime; no HTTP/2 protocol request id
 
 - **Date** : 2026-10-09
-- **Statut** : OPEN (chappe follow-up)
+- **Statut** : FIXED (8f781b5)
 - **Module touché** : `foy-core` (`HttpServletRequestImpl.getServletConnection`, `getProtocolRequestId`); needs `chappe-api` `Request`
 - **Symptôme** : `getServletConnection().getConnectionId()` is the socket address pair
   (`remote-ip:port-local-ip:port`, `?-?` when Chappe gives no address): two connections that
@@ -515,6 +515,11 @@ Statuts : `OPEN` → `INVESTIGATING` → `FIXED` (commit hash) → `CLOSED`.
     stream id to `io.vidocq.chappe.api.Request`; Foy then maps them to `getConnectionId()`,
     `getProtocolConnectionId()` (HTTP/2: `""`, HTTP/3: the QUIC connection id) and
     `getProtocolRequestId()`. The chappe repository is not modified here.
+  - 2026-10-14 (chappe CHAPPE-035) : Chappe's `Request` now exposes `connectionId()` and
+    `streamId()`. Foy maps the connection id to `getServletConnection().getConnectionId()` (the
+    address pair stays as fallback for a `Request` that carries none) and the stream id to
+    `getProtocolRequestId()`. `getProtocol()` now reports `HTTP/2.0` on HTTP/2, as the Servlet
+    Javadoc requires, and the trailer check on a declared `Content-Length` follows.
 
 ## BUG-20261009-10 — dispatch paths stripped of a context-path prefix they never carried
 
