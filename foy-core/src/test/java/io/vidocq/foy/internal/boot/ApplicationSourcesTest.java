@@ -294,4 +294,20 @@ class ApplicationSourcesTest {
         assertEquals(Set.of(f.b().jar()), ApplicationSources.excludedJars(List.of(f.a(), f.b()), List.of(f.a())));
         assertEquals(Set.of(), ApplicationSources.excludedJars(List.of(f.a(), f.b()), List.of(f.b(), f.a())));
     }
+
+    @Test
+    void scanRootsKeepsJrtModuleRootsOfALinkedImage() throws Exception {
+        // In a jlink image every module's code source is jrt:/<module>.
+        List<Path> roots = ApplicationSources.scanRoots(List.of(URI.create("jrt:/java.logging").toURL()));
+        assertEquals(1, roots.size());
+        Path root = roots.getFirst();
+        assertEquals("jrt", root.getFileSystem().provider().getScheme());
+        assertEquals("/modules/java.logging", root.toString());
+        assertTrue(Files.isDirectory(root));
+    }
+
+    @Test
+    void scanRootsLeavesOutAJrtRootOfAnUnknownModule() throws Exception {
+        assertEquals(List.of(), ApplicationSources.scanRoots(List.of(URI.create("jrt:/no.such.module").toURL())));
+    }
 }

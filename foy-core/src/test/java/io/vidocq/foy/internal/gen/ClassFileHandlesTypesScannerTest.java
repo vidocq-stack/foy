@@ -242,4 +242,14 @@ class ClassFileHandlesTypesScannerTest {
                                                            String name) {
         return entries.stream().filter(e -> e.name().equals(name)).findFirst().orElseThrow();
     }
+
+    @Test
+    void jrtModuleRootIsScanned() throws Exception {
+        // A linked image exposes each module as jrt:/<module>; its classes must be scanned like a directory.
+        var roots = io.vidocq.foy.internal.boot.ApplicationSources.scanRoots(
+                List.of(java.net.URI.create("jrt:/java.logging").toURL()));
+        var entries = ClassFileHandlesTypesScanner.scan(roots, ClassLoader.getSystemClassLoader());
+        assertTrue(entry(entries, "java.util.logging.SimpleFormatter").supertypes()
+                .contains("java.util.logging.Formatter"));
+    }
 }

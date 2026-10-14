@@ -31,6 +31,7 @@ import java.net.MalformedURLException;
 import java.net.URI;
 import java.net.URL;
 import java.nio.file.FileSystemNotFoundException;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.CodeSource;
 import java.util.ArrayList;
@@ -245,8 +246,10 @@ public final class ApplicationSources {
 
     /**
      * The jars and directories among {@code roots}, normalised, deduplicated and in order, as the
-     * {@code @HandlesTypes} class-bytes scan expects them. Roots that are not {@code file:} locations
-     * (remote or nested archives) are left out: they cannot be walked.
+     * {@code @HandlesTypes} class-bytes scan expects them. A {@code jrt:/<module>} root, the code
+     * source of every module in a linked image, becomes that module's directory in the {@code jrt}
+     * file system, or is left out when the image has no such module. Other roots that are not
+     * {@code file:} locations (remote or nested archives) are left out: they cannot be walked.
      */
     public static List<Path> scanRoots(Collection<URL> roots) {
         var out = new LinkedHashSet<Path>();
@@ -255,6 +258,9 @@ public final class ApplicationSources {
                 URI uri = URI.create(Fragment.sourceKey(root));
                 if ("file".equalsIgnoreCase(uri.getScheme()) && uri.getAuthority() == null) {
                     out.add(Path.of(uri));
+                } else if ("jrt".equalsIgnoreCase(uri.getScheme())) {
+                    Path module = Path.of(uri);
+                    if (Files.isDirectory(module)) out.add(module);
                 }
             } catch (IllegalArgumentException | FileSystemNotFoundException e) {
                 // not a local location: not scanned
