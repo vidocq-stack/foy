@@ -216,10 +216,13 @@ public final class HttpServletRequestImpl implements HttpServletRequest {
 
     @Override public String getAuthType() { return authType; }
     @Override public String getMethod() { return chappe.method().name(); }
+    /** {@code protocol/major.minor}, as the Servlet Javadoc requires: HTTP/2 is {@code HTTP/2.0}. */
     @Override public String getProtocol() {
-        // Chappe expose HttpVersion sous forme "HTTP_1_1" — la spec Servlet attend
-        // la forme HTTP standard "HTTP/1.1".
-        return chappe.version().toString().replace('_', '.').replaceFirst("\\.", "/");
+        return switch (chappe.version()) {
+            case HTTP_1_0 -> "HTTP/1.0";
+            case HTTP_1_1 -> "HTTP/1.1";
+            case HTTP_2 -> "HTTP/2.0";
+        };
     }
     @Override public String getScheme() { return chappe.scheme(); }
     @Override public boolean isSecure() { return chappe.isSecure(); }
@@ -257,11 +260,11 @@ public final class HttpServletRequestImpl implements HttpServletRequest {
 
     @Override public String getRequestId() { return requestId; }
 
-    /**
-     * {@code ""}: HTTP/1.x has no request identifier, and Chappe does not expose the HTTP/2
-     * stream id to the request API (BUG-20261009-09).
-     */
-    @Override public String getProtocolRequestId() { return ""; }
+    /** {@code ""} on HTTP/1.x; on HTTP/2, the stream identifier Chappe reports. */
+    @Override public String getProtocolRequestId() {
+        var stream = chappe.streamId();
+        return stream.isPresent() ? Integer.toString(stream.getAsInt()) : "";
+    }
 
     // ---- Headers ----
 
@@ -1346,17 +1349,19 @@ public final class HttpServletRequestImpl implements HttpServletRequest {
         return asyncContext;
     }
     /**
-     * The connection as Chappe describes it. Chappe exposes no connection object, so the
-     * connection id is the pair of socket addresses: the same for every request of one connection
-     * and distinct between open connections; a later connection may reuse a closed one's ephemeral
-     * port, hence its id (BUG-20261009-09). The protocol is the ALPN identifier ({@code http/1.0}, {@code http/1.1},
-     * {@code h2} over TLS, {@code h2c} in clear text); no HTTP/1.x or HTTP/2 connection id is
-     * exposed ({@code getProtocolConnectionId()} is {@code ""}).
+     * The connection as Chappe describes it. The connection id is Chappe's connection id, unique
+     * for the lifetime of the JVM and shared by every request of the connection. A {@code Request}
+     * that carries none falls back to the pair of socket addresses, which a later connection may
+     * reuse. The protocol is the ALPN identifier ({@code http/1.0}, {@code http/1.1}, {@code h2}
+     * over TLS, {@code h2c} in clear text). {@code getProtocolConnectionId()} is {@code ""}, which
+     * is correct for HTTP/1.x and HTTP/2 alike.
      */
     @Override public ServletConnection getServletConnection() {
         var remote = chappe.remoteAddress();
         var local = chappe.localAddress();
-        String id = endpoint(remote) + "-" + endpoint(local);
+        var connectionId = chappe.connectionId();
+        String id = connectionId.isPresent() ? Long.toString(connectionId.getAsLong())
+                : endpoint(remote) + "-" + endpoint(local);
         String protocol = switch (chappe.version()) {
             case HTTP_1_0 -> "http/1.0";
             case HTTP_1_1 -> "http/1.1";

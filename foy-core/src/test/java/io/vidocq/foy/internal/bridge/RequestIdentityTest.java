@@ -32,6 +32,8 @@ import java.net.InetSocketAddress;
 import java.net.URI;
 import java.util.HashSet;
 import java.util.Map;
+import java.util.OptionalInt;
+import java.util.OptionalLong;
 import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -40,7 +42,8 @@ import static org.junit.jupiter.api.Assertions.*;
 class RequestIdentityTest {
 
     record FakeRequest(HttpVersion version, boolean isSecure, InetSocketAddress remoteAddress,
-                       InetSocketAddress localAddress) implements Request {
+                       InetSocketAddress localAddress, OptionalLong connectionId, OptionalInt streamId)
+            implements Request {
         @Override public HttpMethod method() { return HttpMethod.GET; }
         @Override public URI uri() { return URI.create("http://localhost/x"); }
         @Override public String path() { return "/x"; }
@@ -54,7 +57,13 @@ class RequestIdentityTest {
     private static final InetSocketAddress LOCAL = new InetSocketAddress("127.0.0.1", 8080);
 
     private static HttpServletRequestImpl request(HttpVersion version, boolean secure, int remotePort) {
-        var chappe = new FakeRequest(version, secure, new InetSocketAddress("127.0.0.1", remotePort), LOCAL);
+        return request(version, secure, remotePort, OptionalLong.empty(), OptionalInt.empty());
+    }
+
+    private static HttpServletRequestImpl request(HttpVersion version, boolean secure, int remotePort,
+                                                  OptionalLong connectionId, OptionalInt streamId) {
+        var chappe = new FakeRequest(version, secure, new InetSocketAddress("127.0.0.1", remotePort), LOCAL,
+                connectionId, streamId);
         return new HttpServletRequestImpl(chappe, new VidocqServletContext("/ctx"), "/ctx", "/x", null);
     }
 
@@ -93,5 +102,36 @@ class RequestIdentityTest {
         assertEquals("h2", tls.getProtocol());
         assertTrue(tls.isSecure());
         assertEquals("h2c", request(HttpVersion.HTTP_2, false, 40005).getServletConnection().getProtocol());
+    }
+
+    @Test
+    void theConnectionIdIsChappesConnectionId() {
+        var a = request(HttpVersion.HTTP_1_1, false, 40010, OptionalLong.of(42), OptionalInt.empty());
+        var sameConnection = request(HttpVersion.HTTP_1_1, false, 40010, OptionalLong.of(42), OptionalInt.empty());
+        // Same addresses, another connection: the address pair would collide, Chappe's id does not.
+        var reusedPort = request(HttpVersion.HTTP_1_1, false, 40010, OptionalLong.of(43), OptionalInt.empty());
+        assertEquals("42", a.getServletConnection().getConnectionId());
+        assertEquals("42", sameConnection.getServletConnection().getConnectionId());
+        assertEquals("43", reusedPort.getServletConnection().getConnectionId());
+    }
+
+    @Test
+    void withoutAChappeConnectionIdTheAddressPairIsUsed() {
+        String id = request(HttpVersion.HTTP_1_1, false, 40011).getServletConnection().getConnectionId();
+        assertEquals("127.0.0.1:40011-127.0.0.1:8080", id);
+    }
+
+    @Test
+    void protocolRequestIdIsTheHttp2StreamId() {
+        var r = request(HttpVersion.HTTP_2, true, 40012, OptionalLong.of(7), OptionalInt.of(5));
+        assertEquals("5", r.getProtocolRequestId());
+        assertEquals("", r.getServletConnection().getProtocolConnectionId());
+    }
+
+    @Test
+    void protocolIsMajorDotMinor() {
+        assertEquals("HTTP/1.0", request(HttpVersion.HTTP_1_0, false, 40013).getProtocol());
+        assertEquals("HTTP/1.1", request(HttpVersion.HTTP_1_1, false, 40013).getProtocol());
+        assertEquals("HTTP/2.0", request(HttpVersion.HTTP_2, true, 40013).getProtocol());
     }
 }

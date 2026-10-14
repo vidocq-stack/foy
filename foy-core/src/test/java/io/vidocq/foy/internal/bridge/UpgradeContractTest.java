@@ -46,6 +46,6 @@ class UpgradeContractTest {
                 new InetSocketAddress("127.0.0.1", 50000), local);
         var request = new HttpServletRequestImpl(chappe, new VidocqServletContext("/ctx"), "/ctx", "/x", null);
         var e = assertThrows(IOException.class, () -> request.upgrade(Handler.class));
-        assertEquals("HTTP upgrade is not supported over HTTP/2", e.getMessage());
+        assertEquals("HTTP upgrade is not supported over HTTP/2.0", e.getMessage());
     }
 }

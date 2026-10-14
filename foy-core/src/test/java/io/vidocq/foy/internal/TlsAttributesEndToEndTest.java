@@ -158,8 +158,8 @@ class TlsAttributesEndToEndTest {
     /** GETs {@code /a}, and checks the version really negotiated: chappe offers h2 through ALPN by default. */
     private String get(HttpClient.Version version, SSLContext ssl) throws Exception {
         String body = get(client(version, ssl), "/a");
-        String expected = version == HttpClient.Version.HTTP_2 ? "protocol=HTTP/2" : "protocol=HTTP/1.1";
-        assertTrue(body.contains(expected), body);
+        String expected = version == HttpClient.Version.HTTP_2 ? "protocol=HTTP/2.0" : "protocol=HTTP/1.1";
+        assertTrue(body.lines().anyMatch(expected::equals), body);
         return body;
     }
 

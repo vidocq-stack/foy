@@ -20,11 +20,16 @@
 package io.vidocq.foy.internal.bridge;
 
 import io.vidocq.chappe.api.Headers;
+import io.vidocq.chappe.api.HttpVersion;
+import io.vidocq.foy.internal.container.VidocqServletContext;
 import org.junit.jupiter.api.Test;
 
+import java.net.InetSocketAddress;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.OptionalInt;
+import java.util.OptionalLong;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -99,5 +104,28 @@ class ResponseTrailerFieldsTest {
         java.util.function.Supplier<Map<String, String>> supplier = Map::of;
         res.setTrailerFields(supplier);
         assertSame(supplier, res.getTrailerFields());
+    }
+
+    private static HttpServletRequestImpl boundTo(HttpVersion version) {
+        var chappe = new RequestIdentityTest.FakeRequest(version, true,
+                new InetSocketAddress("127.0.0.1", 40100), new InetSocketAddress("127.0.0.1", 8443),
+                OptionalLong.empty(), OptionalInt.empty());
+        return new HttpServletRequestImpl(chappe, new VidocqServletContext("/ctx"), "/ctx", "/x", null);
+    }
+
+    @Test
+    void http2AcceptsTrailersWithADeclaredContentLength() {
+        var res = new HttpServletResponseImpl();
+        res.bindRequest(boundTo(HttpVersion.HTTP_2));
+        res.setContentLength(3);
+        assertDoesNotThrow(() -> res.setTrailerFields(() -> Map.of("grpc-status", "0")));
+    }
+
+    @Test
+    void http11RefusesTrailersWithADeclaredContentLength() {
+        var res = new HttpServletResponseImpl();
+        res.bindRequest(boundTo(HttpVersion.HTTP_1_1));
+        res.setContentLength(3);
+        assertThrows(IllegalStateException.class, () -> res.setTrailerFields(() -> Map.of("x", "1")));
     }
 }

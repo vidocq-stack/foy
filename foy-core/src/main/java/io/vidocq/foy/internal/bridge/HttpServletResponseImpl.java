@@ -278,7 +278,7 @@ public final class HttpServletResponseImpl implements HttpServletResponse {
         if ("HTTP/1.0".equals(protocol) || "HTTP/0.9".equals(protocol)) {
             throw new IllegalStateException("trailer fields are not supported on " + protocol);
         }
-        if (contentLength >= 0 && !"HTTP/2".equals(protocol)) {
+        if (contentLength >= 0 && !"HTTP/2.0".equals(protocol)) {
             throw new IllegalStateException("trailer fields need a chunked response, but a Content-Length was declared");
         }
         this.trailerFields = supplier;
