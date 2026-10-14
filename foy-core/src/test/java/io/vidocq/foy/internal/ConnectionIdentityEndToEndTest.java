@@ -86,10 +86,16 @@ class ConnectionIdentityEndToEndTest {
     void keepAliveRequestsShareTheConnectionIdAndSeparateConnectionsDoNot() throws Exception {
         var r = TestServerLauncher.start(bridge());
         server = r.server;
-        var first = HttpClient.newBuilder().version(HttpClient.Version.HTTP_1_1).build();
-        String a = get(first, "http", r.port);
-        String b = get(first, "http", r.port);
-        String c = get(HttpClient.newBuilder().version(HttpClient.Version.HTTP_1_1).build(), "http", r.port);
+        String a;
+        String b;
+        String c;
+        try (var first = HttpClient.newBuilder().version(HttpClient.Version.HTTP_1_1).build()) {
+            a = get(first, "http", r.port);
+            b = get(first, "http", r.port);
+        }
+        try (var second = HttpClient.newBuilder().version(HttpClient.Version.HTTP_1_1).build()) {
+            c = get(second, "http", r.port);
+        }
         assertTrue(field(a, "conn").matches("[0-9]+"), a);
         assertEquals(field(a, "conn"), field(b, "conn"), "keep-alive: one connection");
         assertNotEquals(field(a, "conn"), field(c, "conn"), "another client, another connection");
@@ -103,10 +109,13 @@ class ConnectionIdentityEndToEndTest {
     void http2RequestsCarryTheirStreamIdAndShareTheConnectionId() throws Exception {
         var r = TestServerLauncher.startTls(bridge(), CERTS.serverContext(), ClientAuth.WANT);
         server = r.server;
-        var client = HttpClient.newBuilder().sslContext(CERTS.clientContext("alice"))
-                .version(HttpClient.Version.HTTP_2).build();
-        String a = get(client, "https", r.port);
-        String b = get(client, "https", r.port);
+        String a;
+        String b;
+        try (var client = HttpClient.newBuilder().sslContext(CERTS.clientContext("alice"))
+                .version(HttpClient.Version.HTTP_2).build()) {
+            a = get(client, "https", r.port);
+            b = get(client, "https", r.port);
+        }
         assertEquals("HTTP/2.0", field(a, "protocol"), a);
         assertEquals("HTTP/2.0", field(b, "protocol"), b);
         assertTrue(field(a, "conn").matches("[0-9]+"), a);
