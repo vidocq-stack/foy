@@ -21,6 +21,7 @@ package io.vidocq.foy.internal.boot;
 
 import io.vidocq.chappe.api.Server;
 import io.vidocq.foy.internal.boot.WebAppModel.*;
+import io.vidocq.foy.spi.jsp.JspEngine;
 import jakarta.servlet.*;
 import jakarta.servlet.annotation.WebServlet;
 import jakarta.servlet.http.HttpServlet;
@@ -30,11 +31,13 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.*;
@@ -68,6 +71,14 @@ class WebAppDeployerEndToEndTest {
         port = r.port();
     }
 
+    private void deploy(WebAppModel model, JspEngine engine) {
+        deployment = WebAppDeployer.deploy(model, DeployOptions.defaults(getClass().getClassLoader()),
+                ModuleLayer.boot(), engine);
+        var r = io.vidocq.foy.internal.TestServerLauncherAccess.start(deployment.handler());
+        server = r.server();
+        port = r.port();
+    }
+
     private HttpResponse<String> get(String path) throws Exception {
         return HttpClient.newHttpClient().send(
                 HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port + path)).GET().build(),
@@ -96,6 +107,31 @@ class WebAppDeployerEndToEndTest {
         assertEquals("a:v-a", get("/x").body());
         assertEquals("a:v-a", get("/y").body());
         assertEquals(List.of("init:a"), EVENTS);
+    }
+
+    @Test
+    void jspPropertyGroupMappingsTakePrecedenceOverServletMappings() throws Exception {
+        var jspConfig = io.vidocq.foy.internal.webxml.WebXmlParser.parse(new ByteArrayInputStream("""
+                <web-app>
+                  <jsp-config>
+                    <jsp-property-group><url-pattern>/specific/svr/page/*</url-pattern></jsp-property-group>
+                    <jsp-property-group><url-pattern>/identical/willSee.jsp</url-pattern></jsp-property-group>
+                  </jsp-config>
+                </web-app>
+                """.getBytes(StandardCharsets.UTF_8))).jspConfigDescriptor();
+        JspEngine engine = (context, layer) -> new JspEngine.Application() {
+            @Override public Servlet servlet() { return new Recording("jsp"); }
+            @Override public Servlet servletFor(String jspFile) { return new Recording("jsp-file"); }
+            @Override public void close() { }
+        };
+
+        deploy(WebAppModel.builder("/")
+                .servlet(decl("mapped", Integer.MIN_VALUE, "/specific/svr/*", "/identical/willSee.jsp"))
+                .jspConfigDescriptor(jspConfig)
+                .build(), engine);
+
+        assertEquals("jsp:null", get("/specific/svr/page/willSee.jsp").body());
+        assertEquals("jsp:null", get("/identical/willSee.jsp").body());
     }
 
     public static class Pass implements Filter {

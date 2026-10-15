@@ -514,6 +514,7 @@ public final class WebAppDeployer {
         }
         var live = new ArrayList<ServletDispatcher.Mapping>();
         var named = new ArrayList<ServletDispatcher.NamedServlet>();
+        addJspPropertyGroupMappings(ctx, servlets, failures, live);
         for (ServletUnit s : servlets) {
             Servlet stub = failures.get(s.instance());
             named.add(stub != null ? new ServletDispatcher.NamedServlet(s.name(), stub, true)
@@ -527,6 +528,30 @@ public final class WebAppDeployer {
         }
         appendContainerDefault(ctx, live);
         return new ServletDispatcher(live, named);
+    }
+
+    /**
+     * Pages 4.0 section 3.3: the most-specific JSP property-group pattern takes precedence over
+     * a servlet mapping; an identical pattern also selects the JSP engine. Add those routes first
+     * so the dispatcher's stable sort preserves that tie-breaker.
+     */
+    private static void addJspPropertyGroupMappings(VidocqServletContext ctx, List<ServletUnit> servlets,
+                                                     Map<Servlet, Servlet> failures,
+                                                     List<ServletDispatcher.Mapping> live) {
+        if (!ctx.isJspRegistration("jsp")) return;
+        ServletUnit jsp = servlets.stream().filter(s -> s.name().equals("jsp")).findFirst().orElse(null);
+        var config = ctx.getJspConfigDescriptor();
+        if (jsp == null || config == null) return;
+
+        Servlet stub = failures.get(jsp.instance());
+        for (var group : config.getJspPropertyGroups()) {
+            for (String pattern : group.getUrlPatterns()) {
+                live.add(stub != null
+                        ? new ServletDispatcher.Mapping(UrlPatternMatcher.of(pattern), stub, jsp.name())
+                        : new ServletDispatcher.Mapping(UrlPatternMatcher.of(pattern), jsp.instance(), jsp.name(),
+                                jsp.asyncSupported()));
+            }
+        }
     }
 
     /**

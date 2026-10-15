@@ -37,6 +37,26 @@
 - Not covered: the other discovery steps, `web-fragment.xml` and static resources, under
   `jrt:` roots. They are not exercised by the report.
 
+## BUG-20261015-02 — JSP property-group patterns do not dispatch to the JSP engine
+
+- Date: 2026-10-15.
+- Module: `foy-core` (`WebAppDeployer`).
+- Symptom: when a request matches a servlet mapping and a JSP property-group pattern,
+  Foy dispatches to the application servlet even when the JSP pattern is more specific
+  or identical.
+- Minimal repro: `WebAppDeployerEndToEndTest.jspPropertyGroupMappingsTakePrecedenceOverServletMappings`;
+  the official Pages TCK reproduces it in `URLClientIT`.
+- Cause: the live dispatcher only contained servlet registration mappings, so it never
+  considered JSP property-group patterns when selecting a target.
+- Status: FIXED on branch `fix-jsp-property-group-precedence`. The deployed JSP servlet
+  now receives the group routes before servlet mappings, preserving the dispatcher's
+  normal specificity ordering and the JSP servlet's initialization-failure response.
+- Validation: the regression failed before the change and passes after it (both the
+  more-specific and identical-pattern cases). In the official Pages TCK, two of the
+  three `URLClientIT` methods now pass; the remaining prefix-pattern case reaches Ibarra
+  but returns 404 because its router reads `getServletPath()` without `getPathInfo()`.
+  That follow-up belongs to the Ibarra adapter.
+
 ## BUG-20261013-05 — JSP forwards cannot preserve application wrappers inside an include
 
 - Date: 2026-10-13.
