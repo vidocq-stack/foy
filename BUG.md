@@ -920,7 +920,7 @@ Statuts : `OPEN` → `INVESTIGATING` → `FIXED` (commit hash) → `CLOSED`.
 ## BUG-20261011-04 — SecFormTests.test2 and test2_anno need a JSP engine
 
 - **Date** : 2026-10-11
-- **Statut** : ACCEPTED GAP (the JSP-engine SPI exists; waiting on Ibarra milestones I8/I9)
+- **Statut** : FIXED (2026-10-18: `foy-tck` compiles the war's pages with Ibarra at deployment)
 - **Module touché** : `foy-tck` (no Foy defect)
 - **Symptôme** : `servlet.tck.spec.security.secform.SecFormTests.test2` and `test2_anno` fail: after
   a failed login, the expected error page content is never produced.
@@ -943,6 +943,19 @@ Statuts : `OPEN` → `INVESTIGATING` → `FIXED` (commit hash) → `CLOSED`.
     question 2 of Ibarra's `PLAN.md`. Decision: wait for I8, then reuse a WAR-precompiling adapter
     shared by Ibarra, or wait for I9; Foy then adds the `foy-tck` profile. Foy does not duplicate the
     adapter.
+  - 2026-10-18 : Ibarra's I8 is complete (Pages TCK 682/682), but its adapter cannot be reused: it lives in
+    `ibarra-tck`'s test sources, starts a modular host JVM, and refuses wars with Servlet annotations or
+    initializers, which these TCK wars have. `foy-tck` reuses Ibarra's public `PagePrecompiler` instead
+    (`WarPages`): when a war holds a page, a tag file or a tag library descriptor (its own or in a
+    `WEB-INF/lib` jar), its pages are compiled at deployment into the module `foy.tck.pages`, and the
+    harness hands Foy the engine (`IbarraJspEngine`) and the layer through the new
+    `ServletTestHarness.Builder.jsp(ModuleLayer, JspEngine)`. The harness runs on the class path, so
+    the layer's class loaders all end at the test class loader: the modules the pages require are
+    resolved from their real descriptors in a parent layer defined to a relay loader that defines
+    nothing, and the pages module reads the test loader's unnamed module. No profile is needed: Ibarra
+    is a test dependency of `foy-tck`, which only builds under `-Ptck`. Result: `SecFormTests` 25/25,
+    `ServletContext40Tests` 12/12, full suite 1707/1714, 7 skipped, 0 errors, no class regressed.
+    `WarPagesTest` covers the detection, the layer and a served page.
 
 ## BUG-20261011-05 — case-sensitive constraint matching vs a case-insensitive file system
 

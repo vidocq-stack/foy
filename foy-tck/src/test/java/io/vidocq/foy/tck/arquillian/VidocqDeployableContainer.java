@@ -65,6 +65,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.function.Function;
 import java.util.function.Predicate;
@@ -95,6 +96,8 @@ public class VidocqDeployableContainer implements DeployableContainer<VidocqCont
     private final java.util.LinkedHashMap<String, ServletTestHarness> harnessesByArchive = new java.util.LinkedHashMap<>();
     /** The component registry of each deployed archive, for the undeploy tier statistics. */
     private final java.util.Map<String, WebComponentRegistry> registriesByArchive = new java.util.HashMap<>();
+    /** The working directory of the pages compiled for each archive (BUG-20261011-04). */
+    private final java.util.Map<String, java.nio.file.Path> pagesWorkByArchive = new java.util.HashMap<>();
 
     @Override
     public Class<VidocqContainerConfiguration> getConfigurationClass() {
@@ -184,10 +187,25 @@ public class VidocqDeployableContainer implements DeployableContainer<VidocqCont
         // dynamic addMapping of it is refused and reported in the conflict set.
         for (var m : effective.servletMappings()) if (m.urlPattern() != null) reservedPatterns.add(m.urlPattern());
 
+        // BUG-20261011-04: the war's JSP pages, compiled by Ibarra and served through Foy's JSP engine SPI.
+        Optional<WarPages.Pages> pages;
+        java.nio.file.Path pagesWork = null;
+        try {
+            pagesWork = java.nio.file.Files.createTempDirectory("foy-tck-jsp-");
+            pages = WarPages.compile(war, cl, pagesWork);
+        } catch (java.io.IOException | RuntimeException e) {
+            deleteTree(pagesWork);
+            throw new DeploymentException("[VidocqTCK] cannot compile the JSP pages of " + archiveName + ": " + e.getMessage(), e);
+        }
+        if (pages.isEmpty()) deleteTree(pagesWork);
+        else pagesWorkByArchive.put(archive.getName(), pagesWork);
+
         ServletTestHarness harness;
         try {
             host = host();
-            harness = ServletTestHarness.builder()
+            var builder = ServletTestHarness.builder();
+            pages.ifPresent(p -> builder.jsp(p.layer(), p.engine()));
+            harness = builder
                 .host(host)
                 .model(model)
                 .registry(registry)
@@ -320,9 +338,20 @@ public class VidocqDeployableContainer implements DeployableContainer<VidocqCont
     public void undeploy(Archive<?> archive) {
         ServletTestHarness h = harnessesByArchive.remove(archive.getName());
         if (h != null) h.close();
+        deleteTree(pagesWorkByArchive.remove(archive.getName()));
         WebComponentRegistry registry = registriesByArchive.remove(archive.getName());
         if (registry != null) {
             System.err.println("[VidocqTCK] undeploy archive=" + archive.getName() + " tiers=" + registry.stats());
+        }
+    }
+
+    /** Removes {@code root} and everything under it; nothing when it is {@code null}. */
+    private static void deleteTree(java.nio.file.Path root) {
+        if (root == null) return;
+        try (var files = java.nio.file.Files.walk(root)) {
+            files.sorted(java.util.Comparator.reverseOrder()).forEach(file -> file.toFile().delete());
+        } catch (java.io.IOException ignored) {
+            // A temporary directory left behind is harmless.
         }
     }
 

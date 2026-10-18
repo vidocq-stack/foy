@@ -32,6 +32,7 @@ import io.vidocq.foy.internal.boot.WebAppModel.ServletDecl;
 import io.vidocq.foy.internal.container.VidocqServletContext;
 import io.vidocq.foy.internal.gen.RegistryComponentFactory;
 import io.vidocq.foy.internal.gen.WebComponentRegistry;
+import io.vidocq.foy.spi.jsp.JspEngine;
 import io.vidocq.foy.spi.security.IdentityStore;
 import jakarta.servlet.DispatcherType;
 import jakarta.servlet.Filter;
@@ -288,6 +289,18 @@ public final class ServletTestHarness implements AutoCloseable {
         /** Overrides the class-index {@code @HandlesTypes} resolution (TCK wars carry no index). */
         public Builder handlesTypes(HandlesTypesResolver r) { this.handlesTypes = r; return this; }
 
+        private ModuleLayer pagesLayer = ModuleLayer.boot();
+        private JspEngine jspEngine;
+        /**
+         * The JSP engine, and the layer its precompiled pages are found in; none by default. The
+         * harness runs on the class path, where {@link WebAppDeployer} looks up no engine.
+         */
+        public Builder jsp(ModuleLayer layer, JspEngine engine) {
+            this.pagesLayer = java.util.Objects.requireNonNull(layer, "layer");
+            this.jspEngine = java.util.Objects.requireNonNull(engine, "engine");
+            return this;
+        }
+
         public ServletTestHarness start() {
             var cl = Thread.currentThread().getContextClassLoader();
             var reg = registry != null ? registry : WebComponentRegistry.forClassLoader(cl);
@@ -301,7 +314,7 @@ public final class ServletTestHarness implements AutoCloseable {
                     .withResourceProvider(resourceProvider)
                     .withReserved(reservedServletNames, reservedFilterNames, reservedUrlPatterns);
             if (handlesTypes != null) options = options.withHandlesTypes(handlesTypes);
-            Deployment d = WebAppDeployer.deploy(built, options);
+            Deployment d = WebAppDeployer.deploy(built, options, pagesLayer, jspEngine);
             boolean owned = host == null;
             ServletTestHost mountHost = owned ? new ServletTestHost() : host;
             try {

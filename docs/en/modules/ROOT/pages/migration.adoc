@@ -6,7 +6,7 @@ Foy honours the Jakarta Servlet 6.1 spec to the letter — your `web.xml`, your 
 
 [CAUTION]
 ====
-Foy is at **{project-version}** and the official TCK passes **99.3 %** over the full suite: 1702 passing / 1714 run, 7 skipped (`api.*` 856/859, `pluggability.*` 646/646, `spec.*` 198/207, `compat.*` 2/2); the remaining errors are JSP (see xref:tck.adoc[TCK status]). Migration is not recommended in production until the listed gaps are closed.
+Foy is at **{project-version}** and the official TCK passes **99.6 %** over the full suite: 1707 passing / 1714 run, 7 skipped (`api.*` 859/859, `pluggability.*` 646/646, `spec.*` 200/207, `compat.*` 2/2); every test that runs passes, the JSP tests with Ibarra as the page engine (see xref:tck.adoc[TCK status]). Migration is not recommended in production until the listed gaps are closed.
 ====
 
 == From Tomcat

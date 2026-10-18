@@ -43,9 +43,10 @@ module to become an independent project usable outside the Vidocq Runtime ecosys
 The reactor (`foy-api`, `foy-core`, `foy-cdi-vauban`, `foy-chappe`) compiles without
 blocking warnings.
 
-**TCK at the CLIENT-CERT exit (2026-10-12)** — full official Jakarta Servlet 6.1 suite:
-**1702 passing / 1714 run, 7 skipped (99.3 %)**: `api.*` 856/859, `pluggability.*` 646/646,
-`spec.*` 198/207 (7 skipped), `compat.*` 2/2. On top of the Phase 4 core (default servlet,
+**TCK at the JSP exit (2026-10-18)** — full official Jakarta Servlet 6.1 suite:
+**1707 passing / 1714 run, 7 skipped (99.6 %)**: `api.*` 859/859, `pluggability.*` 646/646,
+`spec.*` 200/207 (7 skipped), `compat.*` 2/2. Every test that runs passes; `foy-tck` runs the JSP
+pages of the TCK with Ibarra (Jakarta Pages 4.0) as the page engine. On top of the Phase 4 core (default servlet,
 welcome files, `HttpServletMapping`, dispatcher semantics, sessions, legacy descriptors), Foy
 now streams responses (commit on buffer overflow and `flushBuffer`), sends response trailers,
 runs the full async lifecycle (timeout to an error dispatch, `AsyncListener` events), supports

@@ -48,7 +48,7 @@ servlet.tck.api.jakarta_servlet.servletcontext304.ServletContext304Tests 1 0 0
 servlet.tck.api.jakarta_servlet.servletcontext305.ServletContext305Tests 10 0 0
 servlet.tck.api.jakarta_servlet.servletcontext306.ServletContext306Tests 7 0 0
 servlet.tck.api.jakarta_servlet.servletcontext31.ServletContext31Tests 1 0 0
-servlet.tck.api.jakarta_servlet.servletcontext40.ServletContext40Tests 12 3 0
+servlet.tck.api.jakarta_servlet.servletcontext40.ServletContext40Tests 12 0 0
 servlet.tck.api.jakarta_servlet.servletexception.ServletExceptionTests 5 0 0
 servlet.tck.api.jakarta_servlet.servletinputstream.ServletInputStreamTests 1 0 0
 servlet.tck.api.jakarta_servlet.servletoutputstream.ServletOutputStreamTests 15 0 0
@@ -197,7 +197,7 @@ servlet.tck.spec.security.clientcertanno.ClientCertAnnoTests 1 0 0
 servlet.tck.spec.security.denyUncovered.DenyUncoveredTests 5 0 0
 servlet.tck.spec.security.metadatacomplete.MetaDataCompleteTests 6 0 0
 servlet.tck.spec.security.secbasic.SecBasicTests 14 0 0
-servlet.tck.spec.security.secform.SecFormTests 25 2 0
+servlet.tck.spec.security.secform.SecFormTests 25 0 0
 servlet.tck.spec.serverpush.ServerPushTests 8 0 7
 servlet.tck.spec.servletcontext.ServletContextTests 1 0 0
 servlet.tck.spec.servletmapping.ServletMappingTests 4 0 0

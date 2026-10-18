@@ -6,13 +6,13 @@ This page consolidates the status of the official Jakarta Servlet 6.1 TCK runs a
 
 == Summary
 
-This is a **measurement**, not a conformance claim. At the latest full run (`jakarta.tck:servlet-tck-runtime:6.1.0`, CLIENT-CERT exit, 2026-10-12):
+This is a **measurement**, not a conformance claim. At the latest full run (`jakarta.tck:servlet-tck-runtime:6.1.0`, JSP exit, 2026-10-18):
 
-* **1714** tests run: **1702 passing**, 7 skipped, 0 failures / 5 errors — **99.3 %** of the tests run pass (Phase 7 exit: 1700; Phase 6 exit: 1692; Phase 5 exit: 1659). A skipped test is never counted as passing;
+* **1714** tests run: **1707 passing**, 7 skipped, 0 failures / 0 errors — **99.6 %** of the tests run pass, and every test that runs passes (CLIENT-CERT exit: 1702; Phase 7 exit: 1700; Phase 6 exit: 1692). A skipped test is never counted as passing;
+* [.tag-new]#NEW# The JSP exit runs the JSP pages of the TCK wars with xref:ibarra::index.adoc[Ibarra] (Jakarta Pages 4.0) plugged into Foy's JSP-engine service (see <<jsp-pages>>): the 3 JSP tests of `ServletContext40Tests` and the 2 FORM tests whose error page is a JSP now pass; no class regressed;
 * The CLIENT-CERT exit added TLS client authentication (`ClientCertTests` and `ClientCertAnnoTests` now pass, against an `https` Arquillian container, see <<https-container>>) and the Servlet 6.1 section 3.10 TLS request attributes; no class regressed.
 * Phase 7 added streamed multipart (RFC 7578: `@MultipartConfig`, `<multipart-config>` and `setMultipartConfig` reach the request, parts above `fileSizeThreshold` go to owner-only temporary files deleted at the end of the request, form fields are request parameters) and container request body limits; `PartTests` and `Part1Tests` now pass 7 of 7 each, no class regressed and 2 improved (8 tests);
 * Phase 6 added security enforcement: `<security-constraint>` and `@ServletSecurity` per url-pattern, `deny-uncovered-http-methods`, the transport guarantee, BASIC and FORM login, `security-role-ref`, programmatic `login`/`logout`/`authenticate`, `setServletSecurity` and `declareRoles`; no class regressed and 5 improved (33 tests). The `spec.security.*` family passes 55 of its 59 tests (Phase 5 exit: 22);
-* the 5 remaining errors are JSP-dependent tests (3 `ServletContext40Tests` + 2 FORM tests whose error page is a JSP); see <<security-status>>;
 * the API signature test (`ServletSigTest`, `sigtest` profile) passes; see <<signature-test>>;
 * the 7 skipped tests are HTTP/2 server push, an accepted gap (see <<what-is-skipped>>).
 
@@ -24,10 +24,10 @@ Per-family breakdown (passing / run):
 
 | `api.*` (core engine)
 | 859
-| 856
+| 859
 | 0
-| 99.7 %
-| ✅ The Servlet engine itself is solid; the rest is JSP (3). Family mode also runs `GetServletRegistrationsTest`: 857 / 860
+| 100 %
+| ✅ The Servlet engine, JSP pages included (with Ibarra). Family mode also runs `GetServletRegistrationsTest` (one more test, not part of `--all`)
 
 | `pluggability.*`
 | 646
@@ -38,10 +38,10 @@ Per-family breakdown (passing / run):
 
 | `spec.*` (behavioral, including security)
 | 207
-| 198
+| 200
 | 7
-| 95.7 % (198 / 207)
-| ✅ Security 57/59 (2 FORM tests need JSP); server push skipped (7)
+| 100 % of the tests run (200 / 200)
+| ✅ Security 59/59; server push skipped (7)
 
 | `compat.*`
 | 2
@@ -67,7 +67,7 @@ Exact figures live in `target/surefire-reports/` after an `--all` run and in lin
 | `denyUncovered.DenyUncoveredTests` | 5 | 5 |
 | `metadatacomplete.MetaDataCompleteTests` | 6 | 6 |
 | `secbasic.SecBasicTests` | 14 | 14 |
-| `secform.SecFormTests` | 25 | 23 | `test2`, `test2_anno`: accepted gap, the failed login forwards to `/error.jsp`, which needs a JSP engine
+| `secform.SecFormTests` | 25 | 25 | `test2`, `test2_anno`: the failed login forwards to `/error.jsp`, run by Ibarra (<<jsp-pages>>)
 | `clientcert.ClientCertTests` | 1 | 1 | served by the `https` container, <<https-container>>
 | `clientcertanno.ClientCertAnnoTests` | 1 | 1 | same
 |===
@@ -82,10 +82,20 @@ The full run reports `Skipped: 7`, all in `spec.serverpush.ServerPushTests`:
 
 * **HTTP/2 server push** is an accepted gap: chappe has no h2c Upgrade nor PUSH_PROMISE writer, and push is deprecated in Servlet 6.1 in favour of 103 Early Hints. `HttpServletRequest.newPushBuilder()` returns `null`, and the TCK's own switch `servlet.tck.support.http2Push=false` (a surefire system property of the `tck` profile in `foy-tck/pom.xml`) skips the 7 tests that need push. The eighth test of the class runs and passes.
 
-No other test battery is excluded. Two more product decisions show up as errors rather than skips:
+No other test battery is excluded. One more harness setting:
 
-* **No JSP engine in Foy itself** — the 3 JSP-dependent `ServletContext40Tests` fail. Foy has the JSP-engine service (xref:reference.adoc#jsp-engine[Optional JSP-engine service]), but the TCK runs without a page engine. The TCK WARs ship JSP source, and xref:ibarra::index.adoc[Ibarra] (Jakarta Pages 4.0) serves only pages compiled at build time for now; the TCK will run these tests with Ibarra once Ibarra can precompile a WAR at deployment or translate pages at runtime (BUG-20261011-04). For dynamic pages today, use xref:cassini::index.adoc[Cassini] (REST) or pure Servlets.
 * **Hang safety net** — some TCK clients read raw sockets without `SO_TIMEOUT` and would hang forever on an unanswered request; `foy-tck` sets a global JUnit 120 s timeout (`SEPARATE_THREAD` mode). No test hits it at the Phase 7 exit.
+
+[#jsp-pages]
+== JSP pages [.tag-new]#NEW#
+
+Foy has no JSP engine of its own: a page engine plugs into its xref:reference.adoc#jsp-engine[JSP-engine service]. The TCK wars ship JSP source, and `foy-tck` runs them with xref:ibarra::index.adoc[Ibarra] (Jakarta Pages 4.0), which serves pages compiled ahead of time:
+
+* when a war holds a page, a tag file or a tag library descriptor (its own, or in a `WEB-INF/lib` jar), `foy-tck` compiles its pages at deployment with Ibarra's `PagePrecompiler` into a module, `foy.tck.pages`;
+* the harness runs on the class path, where Foy looks up no engine: it hands Foy the engine and the module layer of the compiled pages. The layer's class loaders all end at the test class loader, so the pages use the Servlet, Pages and Ibarra classes Foy uses;
+* Ibarra (`ibarra-foy`, `ibarra-compiler`) is a test dependency of `foy-tck` only. Foy itself does not depend on it.
+
+This closes BUG-20261011-04. A war without pages deploys as before, with no engine.
 
 [#signature-test]
 == Signature test
