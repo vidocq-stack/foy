@@ -181,9 +181,19 @@ public class EchoUpgradeServlet extends HttpServlet {
 
 WebSocket is not built on top of this yet (Jakarta WebSocket is not implemented).
 
+[#http2-server-push]
 == HTTP/2 server push
 
-Not supported. `HttpServletRequest.newPushBuilder()` returns `null`, which Servlet 6.1 allows when push is unavailable; push is deprecated in Servlet 6.1 in favour of `103 Early Hints`. Chappe has neither an h2c Upgrade nor a PUSH_PROMISE writer.
+Not supported. `HttpServletRequest.newPushBuilder()` returns `null`, which Servlet 6.1 allows when push is unavailable: code that pushes resources must check for `null`.
+
+Why:
+
+* push is deprecated in Servlet 6.1, and browsers no longer accept it: a pushed resource was often already in the client's cache;
+* Chappe, Foy's transport, sends no `PUSH_PROMISE` frame, and has no `Upgrade: h2c` handshake (cleartext HTTP/2 works with prior knowledge only), see xref:chappe::usage.adoc#http2[Chappe HTTP/2].
+
+The replacement the HTTP world settled on, `103 Early Hints` (RFC 8297), is not offered either: Servlet 6.1 has no API to send it, and Chappe sends no informational response other than `100 Continue`. To get a resource loaded early, send a `Link: <...>; rel=preload` header on the final response.
+
+The 7 push tests of the official TCK are skipped through the TCK's own switch, see xref:tck.adoc#what-is-skipped[What is skipped].
 
 [#file-upload]
 == File upload (`@MultipartConfig`)

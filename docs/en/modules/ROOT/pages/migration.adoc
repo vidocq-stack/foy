@@ -100,7 +100,7 @@ No real-world migration has been documented yet — the Tomcat and Jetty tables 
 
 == Known gaps
 
-* **HTTP/2 server push** — not supported; `newPushBuilder()` returns `null` (push is deprecated in Servlet 6.1).
+* **HTTP/2 server push** — not supported; `newPushBuilder()` returns `null` (push is deprecated in Servlet 6.1, and Chappe sends no `PUSH_PROMISE`). `103 Early Hints` are not offered either. xref:usage.adoc#http2-server-push[Details].
 * **Directory listings and `multipart/byteranges`** — the default servlet serves single files only (404 for a directory) and answers several ranges with the whole body.
 * **WebSocket Servlet 6.1 / Jakarta WebSocket 2.2** — not implemented (planned, no date).
 * **JSP** — not supported by Foy itself; a page engine such as xref:ibarra::index.adoc[Ibarra] (Jakarta Pages 4.0) plugs into the xref:reference.adoc#jsp-engine[JSP-engine service]. For dynamic pages use xref:cassini::index.adoc[Cassini] (REST) or HTML-emitting Servlets.
@@ -142,7 +142,7 @@ The streaming, async and non-blocking I/O work (Servlet 6.1 sections 2.3.3, 3.7 
 * **Servlet code runs on a Foy virtual thread, not on Chappe's connection thread.** Filters, servlets and listeners run on `foy-request-<n>`. Chappe's `RequestContext.CURRENT` is re-bound there, but any other `ThreadLocal` or `ScopedValue` that a Chappe filter or handler set on the connection thread is not visible to servlet code: pass such state through request attributes instead.
 * **Responses above the buffer size are streamed.** A response larger than `getBufferSize()` (8192 bytes by default) is committed at the overflowing write and sent while the servlet writes; without a declared `Content-Length` it is chunked on HTTP/1.1 (before, the whole body was held until the servlet returned and sent with a `Content-Length`). `flushBuffer()` now sends the head and the buffered bytes at once. Set a `Content-Length`, or a larger `setBufferSize`, to keep a fixed-length body.
 * **An async timeout answers `500` through the error-page mechanism instead of a bare `503`.** When no `AsyncListener` completes or dispatches in `onTimeout`, the container raises an error dispatch with status `500`; an `<error-page>` for `500` now renders it.
-* **`newPushBuilder()` returns `null`.** Code that pushed resources must check for `null` (the specification allows it); 103 Early Hints are the replacement.
+* **`newPushBuilder()` returns `null`.** Code that pushed resources must check for `null` (the specification allows it). `103 Early Hints` are not offered (no Servlet 6.1 API, no informational response in Chappe): send a `Link: <...>; rel=preload` header on the final response instead.
 * **A connection whose upload the application stopped reading is closed after the response.** When a `ReadListener` still waits for upload bytes at the end of the request, the response is delivered and the connection is then closed rather than kept alive.
 * **An exception after the commit aborts the response.** Once the response is streaming, a late exception can no longer turn into an error page: it is logged and the body is aborted (connection aborted on HTTP/1.x, stream reset with `RST_STREAM` `INTERNAL_ERROR` on HTTP/2), so the client sees a truncated body.
 

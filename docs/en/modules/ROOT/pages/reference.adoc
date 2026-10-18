@@ -584,7 +584,7 @@ On a TLS connection the five Servlet 6.1 section 3.10 attributes are seeded when
 
 | HTTP/2 server push (`PushBuilder`)
 | ❌
-| Not supported: `newPushBuilder()` returns `null` (deprecated in Servlet 6.1).
+| Not supported: `newPushBuilder()` returns `null` (deprecated in Servlet 6.1; Chappe sends no `PUSH_PROMISE`). xref:usage.adoc#http2-server-push[Why].
 
 | Multipart (`@MultipartConfig`)
 | ✅
