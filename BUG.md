@@ -115,8 +115,11 @@
     `LookupServletContainerInitializer` now receives its classes, and the "LookupInitializer
     should always be present" failure is gone. The boot then stops on a Vauban `uses` issue
     (`InstantiatorFactory`), which is unrelated to Foy.
-- Not covered: the other discovery steps, `web-fragment.xml` and static resources, under
-  `jrt:` roots. They are not exercised by the report.
+- Static resources under `jrt:` roots work. With Vidocq/vauban#168 also applied, the same image
+  served `GET /` with status 200 and served the main bundle `VAADIN/build/generated-*.js` from a
+  `jrt:` module (Vidocq session report).
+- Not covered: `web-fragment.xml` discovery under `jrt:` roots. Neither the report nor the tests
+  exercise it.
 
 ## BUG-20261015-02 — JSP property-group patterns do not dispatch to the JSP engine
 
