@@ -79,7 +79,8 @@
                 <artifactId>maven-surefire-plugin</artifactId>
                 <configuration>
                     <!-- Keep the module path; only add the JDK module the test reads. -->
-                    <argLine>--add-modules java.compiler --add-reads io.vidocq.foy.core=java.compiler</argLine>
+                    <!-- @{argLine} keeps the JaCoCo agent of the quality profile (vidocq-parent). -->
+                    <argLine>@{argLine} --add-modules java.compiler --add-reads io.vidocq.foy.core=java.compiler</argLine>
                 </configuration>
             </plugin>
         </plugins>

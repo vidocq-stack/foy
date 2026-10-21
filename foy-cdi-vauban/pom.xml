@@ -105,7 +105,8 @@
                 <artifactId>maven-surefire-plugin</artifactId>
                 <configuration>
                     <!-- Keep the module path; only add the JDK modules the test reads. -->
-                    <argLine>--add-modules java.compiler,java.net.http --add-reads io.vidocq.foy.cdi.vauban=java.compiler,java.net.http</argLine>
+                    <!-- @{argLine} keeps the JaCoCo agent of the quality profile (vidocq-parent). -->
+                    <argLine>@{argLine} --add-modules java.compiler,java.net.http --add-reads io.vidocq.foy.cdi.vauban=java.compiler,java.net.http</argLine>
                 </configuration>
             </plugin>
         </plugins>

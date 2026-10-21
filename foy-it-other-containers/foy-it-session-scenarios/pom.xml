@@ -16,6 +16,11 @@
         foy-it-weld-servlet, the reference where Weld manages the session context, and
         foy-it-vauban-session, where Vauban's web contexts do. Never published.</description>
 
+    <properties>
+        <!-- SonarQube: a test vehicle, its main code only exists to be run by the tests (Vidocq/vidocq#284). -->
+        <sonar.skip>true</sonar.skip>
+    </properties>
+
     <!-- A test vehicle: the scenarios are main code so both test modules can run them. The APIs are
          at compile scope so that each test module gets them with the scenarios. -->
     <dependencies>

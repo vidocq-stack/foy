@@ -298,7 +298,8 @@
                                  Java HttpClient refuse par défaut (JDK-8203771).
                                  La propriété doit être passée en argLine car elle
                                  est lue au static init de jdk.internal.net.http. -->
-                            <argLine>-Djdk.httpclient.allowRestrictedHeaders=host,connection,content-length,expect,upgrade,origin,date,via,cookie</argLine>
+                            <!-- @{argLine} keeps the JaCoCo agent of the quality profile (vidocq-parent). -->
+                            <argLine>@{argLine} -Djdk.httpclient.allowRestrictedHeaders=host,connection,content-length,expect,upgrade,origin,date,via,cookie</argLine>
                         </configuration>
                     </plugin>
                 </plugins>
