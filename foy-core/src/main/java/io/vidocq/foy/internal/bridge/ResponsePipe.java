@@ -162,7 +162,10 @@ final class ResponsePipe {
         if (callback != null) callback.run();
     }
 
-    /** Abnormal end: the reader's next read throws IOException, which makes chappe drop the connection. */
+    /**
+     * Abnormal end: once the bytes already in the pipe are read, the next read throws IOException,
+     * which makes chappe drop the connection.
+     */
     void abort(Throwable cause) {
         Runnable callback;
         lock.lock();
@@ -207,9 +210,11 @@ final class ResponsePipe {
             lock.lock();
             try {
                 while (true) {
-                    if (aborted != null) throw new IOException("response aborted", aborted);
                     if (broken) throw new IOException("pipe closed");
+                    // Bytes in the pipe were flushed by the servlet: they reach the client even when
+                    // the body was aborted after them (BUG-20261021-01); the abort ends what follows.
                     if (count > 0) break;
+                    if (aborted != null) throw new IOException("response aborted", aborted);
                     if (finished) return -1;
                     try {
                         readable.await();
@@ -235,7 +240,7 @@ final class ResponsePipe {
         public int available() {
             lock.lock();
             try {
-                return aborted != null || broken ? 0 : count;
+                return broken ? 0 : count;
             } finally {
                 lock.unlock();
             }

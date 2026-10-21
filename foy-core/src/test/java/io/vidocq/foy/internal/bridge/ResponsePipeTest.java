@@ -131,14 +131,23 @@ class ResponsePipeTest {
         assertInstanceOf(IOException.class, outcome.get(5, TimeUnit.SECONDS));
     }
 
+    /**
+     * BUG-20261021-01: the bytes already in the pipe were flushed by the servlet, so they reach the
+     * client before the abort ends the body; dropping them lost a committed head and its first chunk.
+     */
     @Test
-    void abortMakesTheReaderThrow() throws Exception {
+    void abortDeliversTheBufferedBytesThenMakesTheReaderThrow() throws Exception {
         var pipe = new ResponsePipe(64);
         pipe.write(bytes("partial"), 0, 7);
         pipe.abort(new IllegalStateException("boom"));
         pipe.finish(); // no effect after an abort
         InputStream in = pipe.reader();
-        IOException e = assertThrows(IOException.class, () -> in.read(new byte[16]));
+        assertEquals(7, in.available(), "the flushed bytes are still there to read");
+        byte[] buf = new byte[16];
+        assertEquals(7, in.read(buf));
+        assertEquals("partial", new String(buf, 0, 7, StandardCharsets.US_ASCII));
+        assertEquals(0, in.available());
+        IOException e = assertThrows(IOException.class, () -> in.read(buf));
         assertInstanceOf(IllegalStateException.class, e.getCause());
     }
 

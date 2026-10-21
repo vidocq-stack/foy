@@ -23,15 +23,21 @@
   (`connection closed before the status line`), then passed on the next run with the same Foy and the
   same Chappe code: the client saw the connection close before any byte of the response, although the
   servlet had written `partial` and called `flushBuffer()` before throwing.
-- Minimal repro: the test itself, intermittent: it failed in run 181 of Vidocq/chappe (pull request #38,
-  job `pr-validate`, `foy-core`) and passed in the next run of the same pull request.
-- Cause (hypothesis, to confirm): after the commit, an exception makes `ChappeServletBridge` call
-  `res.abortBody(...)`, and Chappe drops the connection. The head and the first chunk travel through the
-  body pipe that Chappe's writer drains; when the abort wins the race against that drain, the flushed
-  bytes are discarded and never reach the socket. `flushBuffer()` should mean the bytes were written to
-  the client (Servlet 6.1, `ServletResponse.flushBuffer`), so the abort must not drop what a flush
-  already handed over. If confirmed, a deterministic test can hold the writer before the abort.
-- Status: OPEN (intermittent; not reproduced locally yet).
+- Minimal repro: the test itself. On Linux CI it failed in 2 of 4 runs (Vidocq/chappe runs 181 and 199,
+  job `pr-validate`, `foy-core`); on macOS (Apple M5 Max) it failed 20 times out of 20.
+  `ResponsePipeTest.abortDeliversTheBufferedBytesThenMakesTheReaderThrow` is the deterministic form:
+  write `partial`, abort, then read.
+- Cause (confirmed): after the commit, an exception makes `ChappeServletBridge` call `res.abortBody(...)`.
+  The head and the first chunk travel through `ResponsePipe`, which Chappe drains; `ResponsePipe`'s reader
+  checked the abort before the buffered bytes, and `available()` reported 0 once aborted. When the abort
+  came before Chappe's first read, the flushed bytes were dropped, and Chappe, which writes the head
+  together with the first body bytes, never wrote the head. `flushBuffer()` means the bytes were written
+  to the client (Servlet 6.1, `ServletResponse.flushBuffer`).
+- Status: FIXED on `fix/abort-delivers-flushed-bytes`: the reader hands out the bytes already in the
+  pipe, then fails; `available()` reports them. The client receives the head and `partial`, then the
+  connection ends without the last chunk, as the test expects.
+- Validation: the unit test failed before the fix; the end-to-end test went from 20 failures out of 20
+  runs to 0 out of 20 (macOS); the whole Foy build passes.
 
 ## BUG-20261015-01 — @HandlesTypes gets null in a jlink image
 
