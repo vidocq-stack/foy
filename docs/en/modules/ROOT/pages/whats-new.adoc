@@ -37,6 +37,10 @@ New in the `{project-version}` development line — everything listed here lande
 
 * **Every test of the Servlet TCK that runs passes** — 1707 of 1714 tests run, 7 skipped (HTTP/2 server push), 0 errors (CLIENT-CERT exit: 1702). `foy-tck` now runs the JSP pages of the TCK wars with Ibarra (Jakarta Pages 4.0) plugged into Foy's JSP-engine service: it compiles them at deployment and hands Foy the engine and the layer of the compiled pages. The 3 JSP tests of `ServletContext40Tests` and the 2 FORM tests whose error page is a JSP now pass (BUG-20261011-04). Foy itself still does not depend on Ibarra. xref:tck.adoc#jsp-pages[JSP pages].
 
+== Streaming
+
+* **What was flushed before an exception reaches the client** — when a servlet throws after `flushBuffer()`, the head and the bytes it had flushed are delivered before the body is aborted. They could be dropped when the abort came before the connection read them, and the client then saw the connection close before the status line (BUG-20261021-01). xref:usage.adoc#streaming-and-response-buffering[Streaming and response buffering].
+
 == Multipart and request bodies
 
 * **Multipart is streamed** — `getParts()` parses the body while it streams in (RFC 7578): a part stays in memory up to `fileSizeThreshold`, then goes to an owner-only temporary file under the multipart `location`, deleted at the end of the request (async cycle included). `maxFileSize` and `maxRequestSize` are enforced while streaming. {release-version} buffered the whole body in memory and ignored the location and the threshold. xref:usage.adoc#file-upload[File upload].

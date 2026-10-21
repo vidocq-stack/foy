@@ -98,7 +98,7 @@ The response is committed, and its head sent, at the first of:
 
 From then on the body goes to the client while the servlet keeps writing: small writes are coalesced in the buffer and pushed when it fills, on a flush, and at the end of the request. Without a declared `Content-Length`, an HTTP/1.1 body is sent chunked; on HTTP/2 it is sent as DATA frames. A client that reads slowly slows the writing servlet down (the pipe between the servlet and the connection is bounded): memory stays bounded whatever the body size.
 
-An exception that escapes after the commit cannot change the response any more: it is logged and the body is aborted (connection aborted on HTTP/1.x, stream reset with `RST_STREAM` `INTERNAL_ERROR` on HTTP/2), so the client sees a truncated body rather than a complete-looking one.
+An exception that escapes after the commit cannot change the response any more: it is logged and the body is aborted (connection aborted on HTTP/1.x, stream reset with `RST_STREAM` `INTERNAL_ERROR` on HTTP/2), so the client sees a truncated body rather than a complete-looking one. [.tag-new]#NEW# What the servlet flushed before the exception still reaches the client first: the head and the bytes already sent to the connection are delivered, then the body ends.
 
 == Non-blocking I/O (`ReadListener`, `WriteListener`)
 
