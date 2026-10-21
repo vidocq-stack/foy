@@ -1,5 +1,23 @@
 # BUG.md — foy
 
+## BUG-20261021-01 — An exception after flushBuffer() can lose the flushed bytes
+
+- Date: 2026-10-21 (seen in the downstream rebuild of chappe#38's validation, which changes nothing on
+  this path).
+- Symptom: `ServletStreamingEndToEndTest.exceptionAfterCommitAbortsTheConnection` failed once
+  (`connection closed before the status line`), then passed on the next run with the same Foy and the
+  same Chappe code: the client saw the connection close before any byte of the response, although the
+  servlet had written `partial` and called `flushBuffer()` before throwing.
+- Minimal repro: the test itself, intermittent: it failed in run 181 of Vidocq/chappe (pull request #38,
+  job `pr-validate`, `foy-core`) and passed in the next run of the same pull request.
+- Cause (hypothesis, to confirm): after the commit, an exception makes `ChappeServletBridge` call
+  `res.abortBody(...)`, and Chappe drops the connection. The head and the first chunk travel through the
+  body pipe that Chappe's writer drains; when the abort wins the race against that drain, the flushed
+  bytes are discarded and never reach the socket. `flushBuffer()` should mean the bytes were written to
+  the client (Servlet 6.1, `ServletResponse.flushBuffer`), so the abort must not drop what a flush
+  already handed over. If confirmed, a deterministic test can hold the writer before the abort.
+- Status: OPEN (intermittent; not reproduced locally yet).
+
 ## BUG-20261015-01 — @HandlesTypes gets null in a jlink image
 
 - Date: 2026-10-15 (reported by the Vidocq session, PRs Vidocq/vidocq#257 and Vidocq/vauban#165).
