@@ -1,5 +1,20 @@
 # BUG.md — foy
 
+## BUG-20261021-02 — The endless-chunked test bounded the upload below the kernel's socket buffers
+
+- Date: 2026-10-21 (seen in the downstream rebuild of chappe#39's validation, Chappe run 199).
+- Symptom: `ChunkedBodyLimitEndToEndTest.anEndlessChunkedBodyIsCutOffAfterTheAnswer` failed with
+  `wrote 10690920 bytes`: the writer had stopped (the server did cut the upload off), but past the
+  test's bound of 10 MiB.
+- Cause: the bound assumed the client could write little more than chappe's drain (`maxDrainSize`,
+  1 MiB). It also fills the kernel's socket buffers before its writes fail: on Linux, autotuning grows
+  them up to 6 MiB on the receiving side and 4 MiB on the sending side by default (`tcp_rmem`,
+  `tcp_wmem`), so about 11 MiB can be written against a correct server. The test is right in intent,
+  its bound was too tight; nothing in the server is wrong.
+- Status: FIXED on `test/chunked-cutoff-bound`: the bound becomes 64 MiB. The writer stopping within
+  15 s (asserted just before) is what rules out an unbounded drain; the byte bound only catches a
+  drain far beyond the limit.
+
 ## BUG-20261021-01 — An exception after flushBuffer() can lose the flushed bytes
 
 - Date: 2026-10-21 (seen in the downstream rebuild of chappe#38's validation, which changes nothing on

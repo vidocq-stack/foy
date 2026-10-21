@@ -143,8 +143,12 @@ class ChunkedBodyLimitEndToEndTest {
 
             assertTrue(writer.join(Duration.ofSeconds(15)), "the writer must stop once the server closes");
             assertTrue(writerDone.get());
-            // chappe's default maxDrainSize is 1 MiB; this bound only rules out an unbounded drain, it is not exact.
-            assertTrue(written.get() < 10L * 1024 * 1024, "wrote " + written.get() + " bytes");
+            // chappe drains 1 MiB at most (maxDrainSize), but the client also fills the kernel's socket
+            // buffers before its writes fail: on Linux, autotuning grows them up to 6 MiB (receive) and
+            // 4 MiB (send) by default, so about 11 MiB can be written against a correct server
+            // (BUG-20261021-02). The writer stopping within 15 s already rules out an unbounded drain;
+            // this bound only catches a drain far beyond the limit.
+            assertTrue(written.get() < 64L * 1024 * 1024, "wrote " + written.get() + " bytes");
         } finally {
             socket.close();
             if (writer != null) writer.interrupt();
