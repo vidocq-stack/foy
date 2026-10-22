@@ -126,12 +126,6 @@ public final class WebXmlParser {
         return v.matches("\\d+\\.\\d+") ? v : null;
     }
 
-    /** Descriptors older than 2.5 imply metadata-complete (Servlet §8.1): annotations are ignored. */
-    private static boolean isPre25(String version) {
-        if (isPre24(version)) return true;
-        return version != null && version.trim().equals("2.4");
-    }
-
     /** {@code true} for a descriptor version below 2.4 (lenient url-patterns, Tomcat compatibility). */
     private static boolean isPre24(String version) {
         if (version == null || version.isBlank()) return false;
@@ -321,8 +315,9 @@ public final class WebXmlParser {
 
         /** The descriptor of {@code root}, whose elements this collected, declaring {@code version}. */
         WebAppDescriptor descriptor(Element root, String version) {
-            return new WebAppDescriptor(contextParams, servlets, servletMappings, filters,
-                    filterMappings, listenerClasses, errorPages, sessionTimeoutMinutes,
+            var components = new WebAppDescriptor.Components(servlets, servletMappings, filters,
+                    filterMappings, listenerClasses);
+            return new WebAppDescriptor(contextParams, components, errorPages, sessionTimeoutMinutes,
                     localeEncodingMappings).withVersion(version)
                     .withDisplayName(displayName)
                     .withKind(fragment ? WebAppDescriptor.Kind.WEB_FRAGMENT : WebAppDescriptor.Kind.WEB_APP)
@@ -345,64 +340,182 @@ public final class WebXmlParser {
                             root.hasAttribute("metadata-complete") ? root.getAttribute("metadata-complete") : null,
                             "metadata-complete attribute").orElse(false));
         }
-    }
 
-    private static WebAppDescriptor.ServletDef parseServlet(Element e) {
-        String name = firstText(e, SERVLET_NAME);
-        return new WebAppDescriptor.ServletDef(
-                name,
-                firstText(e, "servlet-class"),
-                parseInitParams(e),
-                parseAsync(e),
-                parseLoadOnStartup(e, name),
-                parseMultipart(e),
-                xsdBooleanValue(firstText(e, "enabled"), "<enabled> of servlet " + name).orElse(true),
-                runAs(e),
-                firstText(e, "jsp-file"),
-                parseRoleRefs(e));
-    }
-
-    /** {@code <security-role-ref>}s of a servlet: role-name -> role-link (the role-name itself when no link). */
-    private static Map<String, String> parseRoleRefs(Element servlet) {
-        Map<String, String> refs = new LinkedHashMap<>();
-        for (Element r : childrenByTag(servlet, "security-role-ref")) {
-            String name = firstText(r, ROLE_NAME);
-            if (name == null) continue;
-            String link = firstText(r, "role-link");
-            refs.putIfAbsent(name, link == null ? name : link);
+        /** Descriptors older than 2.5 imply metadata-complete (Servlet §8.1): annotations are ignored. */
+        private static boolean isPre25(String version) {
+            if (isPre24(version)) return true;
+            return version != null && version.trim().equals("2.4");
         }
-        return refs;
-    }
 
-    private static String runAs(Element e) {
-        Element r = firstChild(e, "run-as");
-        return r == null ? null : firstText(r, ROLE_NAME);
-    }
-
-    private static WebAppDescriptor.MultipartConfigDef parseMultipart(Element e) {
-        Element m = firstChild(e, "multipart-config");
-        if (m == null) return null;
-        return new WebAppDescriptor.MultipartConfigDef(
-                firstText(m, "location"),
-                parseLong(firstText(m, "max-file-size"), -1L, "<max-file-size> in <multipart-config>"),
-                parseLong(firstText(m, "max-request-size"), -1L,
-                        "<max-request-size> in <multipart-config>"),
-                (int) parseLong(firstText(m, "file-size-threshold"), 0L,
-                        "<file-size-threshold> in <multipart-config>"));
-    }
-
-    private static long parseLong(String t, long dflt, String where) {
-        if (t == null || t.isBlank()) return dflt;
-        try {
-            return Long.parseLong(t.trim());
-        } catch (NumberFormatException ex) {
-            throw new IllegalArgumentException("invalid " + where + " value '" + t + "'", ex);
+        private static WebAppDescriptor.ServletDef parseServlet(Element e) {
+            String name = firstText(e, SERVLET_NAME);
+            return new WebAppDescriptor.ServletDef(
+                    name,
+                    firstText(e, "servlet-class"),
+                    parseInitParams(e),
+                    parseAsync(e),
+                    parseLoadOnStartup(e, name),
+                    parseMultipart(e),
+                    xsdBooleanValue(firstText(e, "enabled"), "<enabled> of servlet " + name).orElse(true),
+                    runAs(e),
+                    firstText(e, "jsp-file"),
+                    parseRoleRefs(e));
         }
-    }
 
-    /** {@code null} when the element is absent (tri-state, §8.2.3). */
-    private static Boolean parseAsync(Element e) {
-        return xsdBoolean(firstText(e, "async-supported"), "<async-supported>");
+        /** {@code <security-role-ref>}s of a servlet: role-name -> role-link (the role-name itself when no link). */
+        private static Map<String, String> parseRoleRefs(Element servlet) {
+            Map<String, String> refs = new LinkedHashMap<>();
+            for (Element r : childrenByTag(servlet, "security-role-ref")) {
+                String name = firstText(r, ROLE_NAME);
+                if (name == null) continue;
+                String link = firstText(r, "role-link");
+                refs.putIfAbsent(name, link == null ? name : link);
+            }
+            return refs;
+        }
+
+        private static String runAs(Element e) {
+            Element r = firstChild(e, "run-as");
+            return r == null ? null : firstText(r, ROLE_NAME);
+        }
+
+        private static WebAppDescriptor.MultipartConfigDef parseMultipart(Element e) {
+            Element m = firstChild(e, "multipart-config");
+            if (m == null) return null;
+            return new WebAppDescriptor.MultipartConfigDef(
+                    firstText(m, "location"),
+                    parseLong(firstText(m, "max-file-size"), -1L, "<max-file-size> in <multipart-config>"),
+                    parseLong(firstText(m, "max-request-size"), -1L,
+                            "<max-request-size> in <multipart-config>"),
+                    (int) parseLong(firstText(m, "file-size-threshold"), 0L,
+                            "<file-size-threshold> in <multipart-config>"));
+        }
+
+        private static long parseLong(String t, long dflt, String where) {
+            if (t == null || t.isBlank()) return dflt;
+            try {
+                return Long.parseLong(t.trim());
+            } catch (NumberFormatException ex) {
+                throw new IllegalArgumentException("invalid " + where + " value '" + t + "'", ex);
+            }
+        }
+
+        /** {@code null} when the element is absent (tri-state, §8.2.3). */
+        private static Boolean parseAsync(Element e) {
+            return xsdBoolean(firstText(e, "async-supported"), "<async-supported>");
+        }
+
+        /**
+         * Absent or malformed element: {@code Integer.MIN_VALUE} (lazy). Empty element: {@code 0}
+         * (present, so load at startup with order 0).
+         */
+        private static int parseLoadOnStartup(Element e, String servletName) {
+            String t = firstText(e, "load-on-startup");
+            if (t == null) return Integer.MIN_VALUE;
+            if (t.isEmpty()) return 0; // present but empty: load at startup, order 0
+            try {
+                return Integer.parseInt(t.trim());
+            } catch (NumberFormatException _) {
+                LOG.log(System.Logger.Level.WARNING, "servlet '" + servletName
+                        + "': invalid <load-on-startup> value '" + t + "', treated as lazy");
+                return Integer.MIN_VALUE;
+            }
+        }
+
+        private static Ordering parseOrdering(Element e) {
+            var before = new ArrayList<String>();
+            var after = new ArrayList<String>();
+            boolean beforeOthers = false;
+            boolean afterOthers = false;
+            for (Element c : children(e)) {
+                String n = localName(c);
+                if (n.equals("before")) beforeOthers |= orderingList(c, before);
+                else if (n.equals("after")) afterOthers |= orderingList(c, after);
+            }
+            return new Ordering(before, beforeOthers, after, afterOthers);
+        }
+
+        /**
+         * Adds the fragment names of {@code list}, a {@code <before>} or an {@code <after>}, to
+         * {@code names}; whether it holds {@code <others/>}.
+         */
+        private static boolean orderingList(Element list, List<String> names) {
+            boolean others = false;
+            for (Element k : children(list)) {
+                switch (localName(k)) {
+                    case "name" -> names.add(text(k));
+                    case "others" -> others = true;
+                    default -> { /* no other element orders fragments */ }
+                }
+            }
+            return others;
+        }
+
+        private static List<String> parseAbsoluteOrdering(Element e) {
+            var out = new ArrayList<String>();
+            boolean seenOthers = false;
+            for (Element c : children(e)) {
+                switch (localName(c)) {
+                    case "name" -> out.add(text(c));
+                    case "others" -> {
+                        if (seenOthers) LOG.log(System.Logger.Level.WARNING,
+                                "duplicate <others/> in <absolute-ordering> ignored");
+                        else { seenOthers = true; out.add(WebAppDescriptor.OTHERS); }
+                    }
+                    default -> { /* no other element orders fragments */ }
+                }
+            }
+            return out;
+        }
+
+        private static WebAppDescriptor.FilterDef parseFilter(Element e) {
+            return new WebAppDescriptor.FilterDef(
+                    firstText(e, "filter-name"),
+                    firstText(e, "filter-class"),
+                    parseInitParams(e),
+                    parseAsync(e));
+        }
+
+        private static List<WebAppDescriptor.FilterMappingDef> parseFilterMapping(Element e, boolean legacy) {
+            String filterName = firstText(e, "filter-name");
+            Set<DispatcherType> types = EnumSet.noneOf(DispatcherType.class);
+            for (Element d : childrenByTag(e, "dispatcher")) {
+                String v = text(d).trim();
+                try {
+                    types.add(DispatcherType.valueOf(v));
+                } catch (IllegalArgumentException ex) {
+                    throw new IllegalArgumentException("invalid <dispatcher> value '" + v
+                            + "' in <filter-mapping> of filter '" + filterName + "'", ex);
+                }
+            }
+            if (types.isEmpty()) types = EnumSet.of(DispatcherType.REQUEST);
+            var out = new ArrayList<WebAppDescriptor.FilterMappingDef>();
+            for (Element url : childrenByTag(e, "url-pattern")) {
+                out.add(new WebAppDescriptor.FilterMappingDef(filterName, lenientPattern(text(url), legacy), null, types));
+            }
+            for (Element sn : childrenByTag(e, SERVLET_NAME)) {
+                out.add(new WebAppDescriptor.FilterMappingDef(filterName, null, text(sn), types));
+            }
+            return out;
+        }
+
+        private static WebAppDescriptor.ErrorPageDef parseErrorPage(Element e) {
+            String codeText = firstText(e, "error-code");
+            Integer code = codeText == null ? null : parseInt(codeText, "<error-code> in <error-page>");
+            String exceptionType = firstText(e, "exception-type");
+            String location = firstText(e, "location");
+            return new WebAppDescriptor.ErrorPageDef(code, exceptionType, location);
+        }
+
+        private static Map<String, String> parseInitParams(Element e) {
+            Map<String, String> params = new LinkedHashMap<>();
+            for (Element ip : childrenByTag(e, "init-param")) {
+                String name = firstText(ip, "param-name");
+                String value = firstText(ip, "param-value");
+                if (name != null) params.putIfAbsent(name, value == null ? "" : value);
+            }
+            return params;
+        }
     }
 
     /**
@@ -429,124 +542,12 @@ public final class WebXmlParser {
         };
     }
 
-    /**
-     * Absent or malformed element: {@code Integer.MIN_VALUE} (lazy). Empty element: {@code 0}
-     * (present, so load at startup with order 0).
-     */
-    private static int parseLoadOnStartup(Element e, String servletName) {
-        String t = firstText(e, "load-on-startup");
-        if (t == null) return Integer.MIN_VALUE;
-        if (t.isEmpty()) return 0; // present but empty: load at startup, order 0
-        try {
-            return Integer.parseInt(t.trim());
-        } catch (NumberFormatException _) {
-            LOG.log(System.Logger.Level.WARNING, "servlet '" + servletName
-                    + "': invalid <load-on-startup> value '" + t + "', treated as lazy");
-            return Integer.MIN_VALUE;
-        }
-    }
-
     static int parseInt(String text, String where) {
         try {
             return Integer.parseInt(text.trim());
         } catch (NumberFormatException e) {
             throw new IllegalArgumentException("invalid " + where + " value '" + text + "'", e);
         }
-    }
-
-    private static Ordering parseOrdering(Element e) {
-        var before = new ArrayList<String>();
-        var after = new ArrayList<String>();
-        boolean beforeOthers = false;
-        boolean afterOthers = false;
-        for (Element c : children(e)) {
-            String n = localName(c);
-            if (n.equals("before")) beforeOthers |= orderingList(c, before);
-            else if (n.equals("after")) afterOthers |= orderingList(c, after);
-        }
-        return new Ordering(before, beforeOthers, after, afterOthers);
-    }
-
-    /**
-     * Adds the fragment names of {@code list}, a {@code <before>} or an {@code <after>}, to
-     * {@code names}; whether it holds {@code <others/>}.
-     */
-    private static boolean orderingList(Element list, List<String> names) {
-        boolean others = false;
-        for (Element k : children(list)) {
-            switch (localName(k)) {
-                case "name" -> names.add(text(k));
-                case "others" -> others = true;
-                default -> { /* no other element orders fragments */ }
-            }
-        }
-        return others;
-    }
-
-    private static List<String> parseAbsoluteOrdering(Element e) {
-        var out = new ArrayList<String>();
-        boolean seenOthers = false;
-        for (Element c : children(e)) {
-            switch (localName(c)) {
-                case "name" -> out.add(text(c));
-                case "others" -> {
-                    if (seenOthers) LOG.log(System.Logger.Level.WARNING,
-                            "duplicate <others/> in <absolute-ordering> ignored");
-                    else { seenOthers = true; out.add(WebAppDescriptor.OTHERS); }
-                }
-                default -> { /* no other element orders fragments */ }
-            }
-        }
-        return out;
-    }
-
-    private static WebAppDescriptor.FilterDef parseFilter(Element e) {
-        return new WebAppDescriptor.FilterDef(
-                firstText(e, "filter-name"),
-                firstText(e, "filter-class"),
-                parseInitParams(e),
-                parseAsync(e));
-    }
-
-    private static List<WebAppDescriptor.FilterMappingDef> parseFilterMapping(Element e, boolean legacy) {
-        String filterName = firstText(e, "filter-name");
-        Set<DispatcherType> types = EnumSet.noneOf(DispatcherType.class);
-        for (Element d : childrenByTag(e, "dispatcher")) {
-            String v = text(d).trim();
-            try {
-                types.add(DispatcherType.valueOf(v));
-            } catch (IllegalArgumentException ex) {
-                throw new IllegalArgumentException("invalid <dispatcher> value '" + v
-                        + "' in <filter-mapping> of filter '" + filterName + "'", ex);
-            }
-        }
-        if (types.isEmpty()) types = EnumSet.of(DispatcherType.REQUEST);
-        var out = new ArrayList<WebAppDescriptor.FilterMappingDef>();
-        for (Element url : childrenByTag(e, "url-pattern")) {
-            out.add(new WebAppDescriptor.FilterMappingDef(filterName, lenientPattern(text(url), legacy), null, types));
-        }
-        for (Element sn : childrenByTag(e, SERVLET_NAME)) {
-            out.add(new WebAppDescriptor.FilterMappingDef(filterName, null, text(sn), types));
-        }
-        return out;
-    }
-
-    private static WebAppDescriptor.ErrorPageDef parseErrorPage(Element e) {
-        String codeText = firstText(e, "error-code");
-        Integer code = codeText == null ? null : parseInt(codeText, "<error-code> in <error-page>");
-        String exceptionType = firstText(e, "exception-type");
-        String location = firstText(e, "location");
-        return new WebAppDescriptor.ErrorPageDef(code, exceptionType, location);
-    }
-
-    private static Map<String, String> parseInitParams(Element e) {
-        Map<String, String> params = new LinkedHashMap<>();
-        for (Element ip : childrenByTag(e, "init-param")) {
-            String name = firstText(ip, "param-name");
-            String value = firstText(ip, "param-value");
-            if (name != null) params.putIfAbsent(name, value == null ? "" : value);
-        }
-        return params;
     }
 
     // ---- helpers DOM ----

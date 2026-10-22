@@ -252,21 +252,32 @@ public final class WebAppDescriptor {
         return this;
     }
 
+    /**
+     * The components a descriptor declares, in declaration order: servlets and their mappings,
+     * filters and their mappings, listener classes.
+     */
+    public record Components(List<ServletDef> servlets,
+                             List<ServletMappingDef> servletMappings,
+                             List<FilterDef> filters,
+                             List<FilterMappingDef> filterMappings,
+                             List<String> listenerClasses) {
+        /** No component at all. */
+        static Components none() {
+            return new Components(List.of(), List.of(), List.of(), List.of(), List.of());
+        }
+    }
+
     public WebAppDescriptor(Map<String, String> contextParams,
-                            List<ServletDef> servlets,
-                            List<ServletMappingDef> servletMappings,
-                            List<FilterDef> filters,
-                            List<FilterMappingDef> filterMappings,
-                            List<String> listenerClasses,
+                            Components components,
                             List<ErrorPageDef> errorPages,
                             int sessionTimeoutMinutes,
                             Map<String, String> localeEncodingMappings) {
         this.contextParams = Collections.unmodifiableMap(new LinkedHashMap<>(contextParams));
-        this.servlets = List.copyOf(servlets);
-        this.servletMappings = List.copyOf(servletMappings);
-        this.filters = List.copyOf(filters);
-        this.filterMappings = List.copyOf(filterMappings);
-        this.listenerClasses = List.copyOf(listenerClasses);
+        this.servlets = List.copyOf(components.servlets());
+        this.servletMappings = List.copyOf(components.servletMappings());
+        this.filters = List.copyOf(components.filters());
+        this.filterMappings = List.copyOf(components.filterMappings());
+        this.listenerClasses = List.copyOf(components.listenerClasses());
         this.errorPages = List.copyOf(errorPages);
         this.sessionTimeoutMinutes = sessionTimeoutMinutes;
         this.localeEncodingMappings = Collections.unmodifiableMap(
@@ -274,8 +285,7 @@ public final class WebAppDescriptor {
     }
 
     public static WebAppDescriptor empty() {
-        return new WebAppDescriptor(Map.of(), List.of(), List.of(), List.of(), List.of(), List.of(),
-                List.of(), -1, Map.of());
+        return new WebAppDescriptor(Map.of(), Components.none(), List.of(), -1, Map.of());
     }
 
     public Map<String, String> contextParams() { return contextParams; }

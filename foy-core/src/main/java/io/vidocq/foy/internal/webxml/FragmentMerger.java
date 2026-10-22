@@ -130,12 +130,13 @@ public final class FragmentMerger {
 
         Integer sessionTimeout = timeout.value();
         Set<SessionTrackingMode> modes = trackingModes.value();
-        return new WebAppDescriptor(contextParams.values(),
+        var components = new WebAppDescriptor.Components(
                 ComponentMerger.servlets(webXml, ordered),
                 ComponentMerger.servletMappings(webXml, ordered),
                 ComponentMerger.filters(webXml, ordered),
                 ComponentMerger.filterMappings(webXml, ordered),
-                ComponentMerger.listeners(webXml, ordered),
+                ComponentMerger.listeners(webXml, ordered));
+        return new WebAppDescriptor(contextParams.values(), components,
                 List.copyOf(errorPages.values().values()),
                 sessionTimeout == null ? -1 : sessionTimeout,
                 localeEncodings.values())
