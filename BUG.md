@@ -1,5 +1,19 @@
 # BUG.md — foy
 
+## BUG-20261022-02 — The session cookie has no SameSite attribute
+
+- Date: 2026-10-22 (found by the first local run of the nightly OWASP ZAP scan, Vidocq/vidocq#273).
+- Symptom: ZAP raises *Cookie without SameSite Attribute* (rule 10054, risk Low) on every response of
+  `foy-zap-target` that creates a session: `Set-Cookie: JSESSIONID=...; Path=/; HttpOnly`. A browser
+  that does not default to `Lax` sends the session cookie on cross-site requests, which helps
+  cross-site request forgery.
+- Minimal repro: `ServletSessionEndToEndTest.theSessionCookieIsSameSiteLaxByDefault`.
+- Cause: `ChappeServletBridge.sessionCookieHeader` emitted the attributes of `SessionCookieConfig`
+  only, and the configuration has none by default.
+- Status: FIXED on `ci/zap-nightly`: the session cookie is `SameSite=Lax` unless the application sets a
+  `SameSite` attribute (`theSameSiteAttributeOfTheApplicationWins`). The default is the container's:
+  `SessionCookieConfig.getAttribute("SameSite")` stays `null`.
+
 ## BUG-20261022-01 — The container's error page does not escape the sendError message
 
 - Date: 2026-10-22 (found by the first local run of the nightly OWASP ZAP scan, Vidocq/vidocq#273).

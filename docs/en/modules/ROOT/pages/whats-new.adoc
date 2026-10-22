@@ -34,6 +34,7 @@ New in the `{project-version}` development line — everything listed here lande
 * **The Servlet 6.1 section 3.10 TLS attributes** — `X509Certificate`, `cipher_suite`, `key_size`, `ssl_session_id` and the new `secure_protocol` are seeded on a TLS request, without firing attribute listeners. xref:reference.adoc#request-identity-and-connection[Request identity and connection].
 
 * **The `sendError` message is escaped** — the container's error page used to write the message of `sendError(sc, msg)` as is, so an application passing a request value got a reflected cross-site scripting hole; it is now HTML-escaped (BUG-20261022-01, found by the nightly OWASP ZAP scan). xref:usage.adoc#response-semantics[Response semantics].
+* **The session cookie is `SameSite=Lax`** — the session cookie carried no `SameSite` attribute, so browsers that do not default to `Lax` sent it on cross-site requests; Foy now adds `SameSite=Lax` unless the application sets a `SameSite` attribute on `SessionCookieConfig` (BUG-20261022-02, found by the nightly OWASP ZAP scan). xref:usage.adoc#sessions[Sessions].
 
 == TCK
 

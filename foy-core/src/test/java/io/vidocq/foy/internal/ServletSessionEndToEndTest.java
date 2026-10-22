@@ -86,6 +86,37 @@ class ServletSessionEndToEndTest {
     }
 
     @Test
+    void theSessionCookieIsSameSiteLaxByDefault() throws Exception {
+        // BUG-20261022-02: without a SameSite attribute the session cookie is sent on cross-site requests
+        // by browsers that do not default to Lax (ZAP rule 10054 on the nightly scan target).
+        startServer(sessionCreating(), "/session");
+        String setCookie = get("http://127.0.0.1:" + port + "/session", null)
+                .headers().firstValue("set-cookie").orElseThrow();
+        assertTrue(setCookie.contains("; SameSite=Lax"), setCookie);
+        assertNull(ctx.getSessionCookieConfig().getAttribute("SameSite"),
+                "the default is the container's, not an attribute of the configuration");
+    }
+
+    @Test
+    void theSameSiteAttributeOfTheApplicationWins() throws Exception {
+        ctx.getSessionCookieConfig().setAttribute("SameSite", "Strict");
+        startServer(sessionCreating(), "/session");
+        String setCookie = get("http://127.0.0.1:" + port + "/session", null)
+                .headers().firstValue("set-cookie").orElseThrow();
+        assertTrue(setCookie.contains("; SameSite=Strict"), setCookie);
+        assertFalse(setCookie.contains("Lax"), setCookie);
+    }
+
+    private static HttpServlet sessionCreating() {
+        return new HttpServlet() {
+            @Override
+            protected void doGet(HttpServletRequest req, HttpServletResponse resp) {
+                req.getSession();
+            }
+        };
+    }
+
+    @Test
     void theRootContextSessionCookieHasTheRootPath() throws Exception {
         HttpServlet s = new HttpServlet() {
             @Override

@@ -495,7 +495,7 @@ On a forward the mapping is that of the target; `jakarta.servlet.forward.mapping
 | Keeps the attributes, fires `HttpSessionIdListener.sessionIdChanged`, sends the new cookie; the requested id is updated.
 
 | Cookie
-| Built from `SessionCookieConfig` (name, path, domain, `HttpOnly`, `Secure`, `Max-Age`, attributes). On a secure request the cookie is `Secure` unless `setSecure` or `<secure>` was set. For the root context the cookie path is `/`.
+| Built from `SessionCookieConfig` (name, path, domain, `HttpOnly`, `Secure`, `Max-Age`, attributes). On a secure request the cookie is `Secure` unless `setSecure` or `<secure>` was set. [.tag-new]#NEW# `SameSite=Lax` unless the application set a `SameSite` attribute. For the root context the cookie path is `/`.
 
 | URL rewriting
 | `encodeURL`, `encodeRedirectURL` append `;jsessionid=<id>` to application URLs while the client sends no cookie and `URL` is a tracking mode.

@@ -1085,7 +1085,8 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
      * by that id yet (a new session, or a {@code changeSessionId}). Nothing is emitted when the
      * effective tracking modes leave out {@code COOKIE} (section 7.1.1). The cookie is
      * {@code Secure} on a secure request unless the application set the flag explicitly
-     * ({@link SessionCookieConfig#setSecure}, {@code <secure>} in the descriptor).
+     * ({@link SessionCookieConfig#setSecure}, {@code <secure>} in the descriptor), and
+     * {@code SameSite=Lax} unless the application set a {@code SameSite} attribute.
      */
     private void maybeAttachSessionCookie(HttpServletRequestImpl req, HttpServletResponseImpl res) {
         String cookie = sessionCookieHeader(req);
@@ -1108,6 +1109,9 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
         c.setSecure(cfg.isSecureExplicit() ? cfg.isSecure() : req.isSecure());
         c.setHttpOnly(cfg.isHttpOnly());
         cfg.getAttributes().forEach(c::setAttribute);
+        // SameSite=Lax unless the application chose a value (BUG-20261022-02): the cookie then stays
+        // off cross-site subrequests and POSTs in every browser, not only in those that default to Lax.
+        if (c.getAttribute("SameSite") == null) c.setAttribute("SameSite", "Lax");
         return CookieCodec.serializeSetCookie(c);
     }
 
