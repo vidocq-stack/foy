@@ -59,6 +59,8 @@ public final class ServletInputStreamImpl extends ServletInputStream {
     // ---- non-blocking state, guarded by lock ----
     private final ReentrantLock lock = new ReentrantLock();
     private volatile ReadListener listener;
+    /** The class loader of the application that set {@link #listener}, for its callbacks ({@code null}: none). */
+    private volatile ClassLoader listenerLoader;
     private ReadPump pump;
     /** The next arrival of bytes submits onDataAvailable. */
     private boolean armed;
@@ -177,6 +179,9 @@ public final class ServletInputStreamImpl extends ServletInputStream {
         if (host == null || !host.nonBlockingAllowed()) {
             throw new IllegalStateException("the request is neither async-started nor upgraded");
         }
+        // The listener's callbacks run with the loader of the application that sets it, whatever
+        // dispatch or async cycle comes later (BUG-20261022-06).
+        ClassLoader loader = host.listenerLoader();
         ReadPump started;
         lock.lock();
         try {
@@ -185,6 +190,7 @@ public final class ServletInputStreamImpl extends ServletInputStream {
             pump = new ReadPump(delegate, new PumpEvents());
             armed = true;
             listener = readListener;
+            listenerLoader = loader;
             started = pump;
         } finally {
             lock.unlock();
@@ -307,7 +313,7 @@ public final class ServletInputStreamImpl extends ServletInputStream {
                     lock.unlock();
                 }
                 callback.run();
-            }, ServletInputStreamImpl.this::callbackFailed);
+            }, ServletInputStreamImpl.this::callbackFailed, listenerLoader);
         }
 
         @Override public void dataAvailable() {
@@ -345,7 +351,7 @@ public final class ServletInputStreamImpl extends ServletInputStream {
                 lock.unlock();
             }
             host.callbacks().submit(() -> deliverError(e), t -> LOG.log(System.Logger.Level.WARNING,
-                    "delivering a read failure failed", t));
+                    "delivering a read failure failed", t), listenerLoader);
         }
     }
 

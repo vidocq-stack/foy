@@ -31,8 +31,12 @@ import io.vidocq.foy.internal.boot.WebAppModel.ServletDecl;
 import jakarta.servlet.AsyncEvent;
 import jakarta.servlet.AsyncListener;
 import jakarta.servlet.DispatcherType;
+import jakarta.servlet.ReadListener;
+import jakarta.servlet.ServletInputStream;
 import jakarta.servlet.ServletOutputStream;
 import jakarta.servlet.WriteListener;
+import jakarta.servlet.http.HttpUpgradeHandler;
+import jakarta.servlet.http.WebConnection;
 import jakarta.servlet.Filter;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.FilterConfig;
@@ -53,6 +57,7 @@ import org.junit.jupiter.api.Test;
 
 import java.io.IOException;
 import java.io.UncheckedIOException;
+import java.net.Socket;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.net.http.HttpClient;
@@ -194,10 +199,111 @@ class DeploymentContextClassLoaderTest {
         }
     }
 
+    /**
+     * A ReadListener that drains the body, records its loader under {@code name}, then answers
+     * {@code "read"} and completes the async cycle current at the end of the body.
+     */
+    static final class RecordingReadListener implements ReadListener {
+        private final String name;
+        private final HttpServletRequest request;
+        private final ServletInputStream in;
+
+        RecordingReadListener(String name, HttpServletRequest request, ServletInputStream in) {
+            this.name = name;
+            this.request = request;
+            this.in = in;
+        }
+
+        @Override public void onDataAvailable() throws IOException {
+            seen(name + ".onDataAvailable");
+            while (in.isReady() && in.read() != -1) {
+                // drain
+            }
+        }
+
+        @Override public void onAllDataRead() throws IOException {
+            seen(name + ".onAllDataRead");
+            var ac = request.getAsyncContext();
+            ac.getResponse().getWriter().write("read");
+            ac.complete();
+        }
+
+        @Override public void onError(Throwable t) { request.getAsyncContext().complete(); }
+    }
+
+    /** Registers its ReadListener, then dispatches the async cycle to the other context. */
+    public static class ReadThenDispatch extends HttpServlet {
+        @Override protected void doPost(HttpServletRequest req, HttpServletResponse resp) throws IOException {
+            var ac = req.startAsync();
+            ServletInputStream in = req.getInputStream();
+            in.setReadListener(new RecordingReadListener("caller", req, in));
+            ac.dispatch(getServletContext().getContext(TARGET_PATH), "/started");
+        }
+    }
+
+    /** Opens a new async cycle in the target context, and leaves it to the caller's listener. */
+    public static class StartedTarget extends HttpServlet {
+        @Override protected void service(HttpServletRequest req, HttpServletResponse resp) {
+            req.startAsync();
+            targetStarted.countDown();
+        }
+    }
+
+    /** Starts async in the caller, then forwards to the target, which registers the ReadListener. */
+    public static class AsyncThenForward extends HttpServlet {
+        @Override protected void doPost(HttpServletRequest req, HttpServletResponse resp)
+                throws ServletException, IOException {
+            req.startAsync();
+            getServletContext().getContext(TARGET_PATH).getRequestDispatcher("/reads").forward(req, resp);
+        }
+    }
+
+    public static class ReadingTarget extends HttpServlet {
+        @Override protected void service(HttpServletRequest req, HttpServletResponse resp) throws IOException {
+            ServletInputStream in = req.getInputStream();
+            in.setReadListener(new RecordingReadListener("target", req, in));
+        }
+    }
+
+    /** Records its loader in {@code init} and {@code destroy}; closes the connection from {@code init}. */
+    public static final class RecordingUpgradeHandler implements HttpUpgradeHandler {
+        @Override public void init(WebConnection wc) {
+            seen("upgrade.init");
+            try {
+                wc.close();
+            } catch (Exception e) {
+                throw new IllegalStateException(e);
+            }
+        }
+        @Override public void destroy() {
+            seen("upgrade.destroy");
+            upgradeDestroyed.countDown();
+        }
+    }
+
+    public static class ForwardToUpgrade extends HttpServlet {
+        @Override protected void doGet(HttpServletRequest req, HttpServletResponse resp)
+                throws ServletException, IOException {
+            getServletContext().getContext(TARGET_PATH).getRequestDispatcher("/upgrades").forward(req, resp);
+        }
+    }
+
+    public static class UpgradingTarget extends HttpServlet {
+        @Override protected void service(HttpServletRequest req, HttpServletResponse resp)
+                throws ServletException, IOException {
+            resp.setStatus(101);
+            resp.setHeader("Upgrade", "test");
+            resp.setHeader("Connection", "Upgrade");
+            req.upgrade(RecordingUpgradeHandler.class);
+        }
+    }
+
     private static final String CALLER_PATH = "/tccl-caller";
     private static final String TARGET_PATH = "/tccl-target";
 
     static volatile CountDownLatch asyncDone;
+    static volatile CountDownLatch targetStarted;
+    static volatile CountDownLatch upgradeDestroyed;
 
     private final List<Deployment> deployments = new ArrayList<>();
     private io.vidocq.chappe.api.Server server;
@@ -206,6 +312,8 @@ class DeploymentContextClassLoaderTest {
     void reset() {
         SEEN.clear();
         asyncDone = new CountDownLatch(1);
+        targetStarted = new CountDownLatch(1);
+        upgradeDestroyed = new CountDownLatch(1);
     }
 
     @AfterEach
@@ -258,12 +366,24 @@ class DeploymentContextClassLoaderTest {
                         Map.of(), -1, false))
                 .servlet(new ServletDecl("asyncTarget", AsyncTarget.class, AsyncTarget::new, List.of("/a"),
                         Map.of(), -1, true))
+                .servlet(new ServletDecl("started", StartedTarget.class, StartedTarget::new, List.of("/started"),
+                        Map.of(), -1, true))
+                .servlet(new ServletDecl("reads", ReadingTarget.class, ReadingTarget::new, List.of("/reads"),
+                        Map.of(), -1, true))
+                .servlet(new ServletDecl("upgrades", UpgradingTarget.class, UpgradingTarget::new, List.of("/upgrades"),
+                        Map.of(), -1, false))
                 .build();
         var caller = WebAppModel.builder(CALLER_PATH)
                 .servlet(new ServletDecl("caller", CrossContextCaller.class, CrossContextCaller::new, List.of("/c"),
                         Map.of(), -1, false))
                 .servlet(new ServletDecl("asyncCaller", AsyncCaller.class, AsyncCaller::new, List.of("/ac"),
                         Map.of(), -1, true))
+                .servlet(new ServletDecl("readThenDispatch", ReadThenDispatch.class, ReadThenDispatch::new,
+                        List.of("/read-then-dispatch"), Map.of(), -1, true))
+                .servlet(new ServletDecl("asyncThenForward", AsyncThenForward.class, AsyncThenForward::new,
+                        List.of("/async-then-forward"), Map.of(), -1, true))
+                .servlet(new ServletDecl("forwardToUpgrade", ForwardToUpgrade.class, ForwardToUpgrade::new,
+                        List.of("/forward-to-upgrade"), Map.of(), -1, false))
                 .build();
         deployments.add(WebAppDeployer.deploy(target, DeployOptions.defaults(TARGET_APP)));
         Deployment callerDeployment = WebAppDeployer.deploy(caller, DeployOptions.defaults(APP));
@@ -278,6 +398,61 @@ class DeploymentContextClassLoaderTest {
                 HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port + path))
                         .timeout(Duration.ofSeconds(10)).GET().build(),
                 HttpResponse.BodyHandlers.ofString());
+    }
+
+    @Test
+    void aReadListenerKeepsTheLoaderOfItsContextAfterACrossContextAsyncDispatch() throws Exception {
+        int port = deployBoth();
+
+        try (var socket = new Socket("127.0.0.1", port)) {
+            socket.setSoTimeout(10_000);
+            var out = socket.getOutputStream();
+            out.write(("POST " + CALLER_PATH + "/read-then-dispatch HTTP/1.1\r\nHost: localhost\r\n"
+                    + "Content-Length: 4\r\nConnection: close\r\n\r\n").getBytes(StandardCharsets.US_ASCII));
+            out.flush();
+            // The target opened its own cycle before any byte arrives: the caller's listener runs after it.
+            assertTrue(targetStarted.await(5, TimeUnit.SECONDS), "the target started its async cycle");
+            out.write("body".getBytes(StandardCharsets.US_ASCII));
+            out.flush();
+            String answer = new String(socket.getInputStream().readAllBytes(), StandardCharsets.ISO_8859_1);
+            assertTrue(answer.startsWith("HTTP/1.1 200 ") && answer.endsWith("read"), answer);
+        }
+
+        assertSame(APP, SEEN.get("caller.onDataAvailable"), "the caller's ReadListener, onDataAvailable");
+        assertSame(APP, SEEN.get("caller.onAllDataRead"), "the caller's ReadListener, onAllDataRead");
+    }
+
+    @Test
+    void aReadListenerOfAForwardedTargetRunsWithTheTargetLoader() throws Exception {
+        int port = deployBoth();
+
+        HttpResponse<String> r = HttpClient.newBuilder().version(HttpClient.Version.HTTP_1_1).build().send(
+                HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port + CALLER_PATH + "/async-then-forward"))
+                        .timeout(Duration.ofSeconds(10))
+                        .POST(HttpRequest.BodyPublishers.ofString("body")).build(),
+                HttpResponse.BodyHandlers.ofString());
+
+        assertEquals("read", r.body());
+        assertSame(TARGET_APP, SEEN.get("target.onAllDataRead"), "the target's ReadListener");
+    }
+
+    @Test
+    void anUpgradeHandlerOfAForwardedTargetRunsWithTheTargetLoader() throws Exception {
+        int port = deployBoth();
+
+        try (var socket = new Socket("127.0.0.1", port)) {
+            socket.setSoTimeout(10_000);
+            socket.getOutputStream().write(("GET " + CALLER_PATH + "/forward-to-upgrade HTTP/1.1\r\n"
+                    + "Host: localhost\r\nUpgrade: test\r\nConnection: Upgrade\r\n\r\n")
+                    .getBytes(StandardCharsets.US_ASCII));
+            socket.getOutputStream().flush();
+            String answer = new String(socket.getInputStream().readAllBytes(), StandardCharsets.ISO_8859_1);
+            assertTrue(answer.startsWith("HTTP/1.1 101 "), answer);
+        }
+
+        assertTrue(upgradeDestroyed.await(5, TimeUnit.SECONDS), "destroy() after the connection closed");
+        assertSame(TARGET_APP, SEEN.get("upgrade.init"), "HttpUpgradeHandler.init");
+        assertSame(TARGET_APP, SEEN.get("upgrade.destroy"), "HttpUpgradeHandler.destroy");
     }
 
     @Test

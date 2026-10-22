@@ -122,6 +122,9 @@ public final class AsyncContextImpl implements AsyncContext {
         this.originalRequestAndResponse = originalRequestAndResponse;
     }
 
+    /** The context of the application that started this cycle (a cross-context target's own). */
+    public ServletContext applicationContext() { return servletContext; }
+
     @Override public ServletRequest getRequest() { return request; }
     @Override public ServletResponse getResponse() { return response; }
     @Override public boolean hasOriginalRequestAndResponse() { return originalRequestAndResponse; }

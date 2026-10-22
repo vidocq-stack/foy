@@ -22,12 +22,10 @@ package io.vidocq.foy.internal.bridge;
 import io.vidocq.foy.internal.container.ContextLoaderScope;
 
 import java.util.ArrayDeque;
-import java.util.Objects;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.locks.Condition;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.Consumer;
-import java.util.function.Supplier;
 
 /**
  * Runs listener callbacks for one request one at a time, with the application's class loader.
@@ -60,10 +58,11 @@ final class CallbackSerializer {
     private static final System.Logger LOG = System.getLogger(CallbackSerializer.class.getName());
     private static final AtomicLong THREADS = new AtomicLong();
 
-    private record Task(ThrowingRunnable<?> callback, Consumer<Throwable> onError) {}
+    /** A callback, its failure handler, and the class loader it runs with ({@code null}: TCCL untouched). */
+    private record Task(ThrowingRunnable<?> callback, Consumer<Throwable> onError, ClassLoader loader) {}
 
-    /** The application class loader of the next callback, read per callback; {@code null}: TCCL untouched. */
-    private final Supplier<ClassLoader> applicationLoader;
+    /** The owner's application class loader, for the callbacks submitted without one. */
+    private final ClassLoader applicationLoader;
     private final ReentrantLock lock = new ReentrantLock();
     private final Condition idle = lock.newCondition();
     /** Guarded by {@link #lock}. */
@@ -79,23 +78,27 @@ final class CallbackSerializer {
 
     /** Callbacks run with {@code applicationLoader} as context loader ({@code null}: left untouched). */
     CallbackSerializer(ClassLoader applicationLoader) {
-        this(() -> applicationLoader);
+        this.applicationLoader = applicationLoader;
     }
 
-    /**
-     * Callbacks run with the loader {@code applicationLoader} answers when each one starts: the owner
-     * (a request) may hand its callbacks to another application, the one that opened its async cycle.
-     */
-    CallbackSerializer(Supplier<ClassLoader> applicationLoader) {
-        this.applicationLoader = Objects.requireNonNull(applicationLoader, "applicationLoader");
-    }
+    /** The owner's application class loader ({@code null}: none). */
+    ClassLoader applicationLoader() { return applicationLoader; }
 
     /** Queues {@code r}; runs on a virtual thread after any running callback; exceptions go to {@code onError}. */
     void submit(ThrowingRunnable<?> r, Consumer<Throwable> onError) {
+        submit(r, onError, applicationLoader);
+    }
+
+    /**
+     * As {@link #submit(ThrowingRunnable, Consumer)}, with {@code loader} as context loader: the
+     * loader of the listener's own application, which may differ from the owner's when a
+     * cross-context target registered it ({@code null}: TCCL untouched).
+     */
+    void submit(ThrowingRunnable<?> r, Consumer<Throwable> onError, ClassLoader loader) {
         lock.lock();
         try {
             if (closed) return;
-            queue.add(new Task(r, onError));
+            queue.add(new Task(r, onError, loader));
             startDrainerIfNeeded();
         } finally {
             lock.unlock();
@@ -218,7 +221,7 @@ final class CallbackSerializer {
     }
 
     private void runOne(Task task) {
-        ClassLoader loader = applicationLoader.get();
+        ClassLoader loader = task.loader();
         Throwable failure = failureOf(loader, task.callback());
         if (failure == null) return;
         Throwable onErrorFailure = failureOf(loader, () -> task.onError().accept(failure));

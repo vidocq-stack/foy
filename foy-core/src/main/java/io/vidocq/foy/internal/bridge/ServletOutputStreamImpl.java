@@ -127,6 +127,8 @@ public final class ServletOutputStreamImpl extends ServletOutputStream {
 
     // ---- non-blocking state, guarded by lock ----
     private volatile WriteListener listener;
+    /** The class loader of the application that set {@link #listener}, for its callbacks ({@code null}: none). */
+    private volatile ClassLoader listenerLoader;
     /** A listener is set and the async cycle that set it is still open. */
     private volatile boolean nonBlocking;
     /** {@link #isReady()} last answered {@code false} (or a write was refused); cleared by a true answer or {@code onWritePossible}. */
@@ -243,10 +245,14 @@ public final class ServletOutputStreamImpl extends ServletOutputStream {
         if (host == null || !host.nonBlockingAllowed()) {
             throw new IllegalStateException("the request is neither async-started nor upgraded");
         }
+        // The listener's callbacks run with the loader of the application that sets it, whatever
+        // dispatch or async cycle comes later (BUG-20261022-06).
+        ClassLoader loader = host.listenerLoader();
         lock.lock();
         try {
             if (listener != null) throw new IllegalStateException("a WriteListener is already set");
             listener = writeListener;
+            listenerLoader = loader;
             nonBlocking = true;
             // Runs once the dispatch that set the listener returned (the serializer is held until then).
             submitWritePossible();
@@ -576,7 +582,7 @@ public final class ServletOutputStreamImpl extends ServletOutputStream {
     /** Caller holds the lock. */
     private void submitWritePossible() {
         writePossibleQueued = true;
-        host.callbacks().submit(this::runWritePossible, this::callbackFailed);
+        host.callbacks().submit(this::runWritePossible, this::callbackFailed, listenerLoader);
     }
 
     private void runWritePossible() throws IOException {
@@ -603,7 +609,7 @@ public final class ServletOutputStreamImpl extends ServletOutputStream {
         if (errored) return;
         errored = true;
         host.callbacks().submit(() -> deliverError(t),
-                e -> LOG.log(System.Logger.Level.WARNING, "delivering a write failure failed", e));
+                e -> LOG.log(System.Logger.Level.WARNING, "delivering a write failure failed", e), listenerLoader);
     }
 
     /** onWritePossible threw: onError, then the host fails. */

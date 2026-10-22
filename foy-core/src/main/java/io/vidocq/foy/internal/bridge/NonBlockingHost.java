@@ -29,6 +29,12 @@ interface NonBlockingHost {
     boolean nonBlockingAllowed();
     /** The owner's callback serializer. */
     CallbackSerializer callbacks();
+    /**
+     * The class loader the callbacks of a listener set now run with: the application class loader
+     * of the context whose code sets it (a cross-context target's own), {@code null} for none
+     * (BUG-20261022-06). By default the owner's.
+     */
+    default ClassLoader listenerLoader() { return callbacks().applicationLoader(); }
     /** An I/O failure or a throwing callback, after the listener's {@code onError}: fails the owner (the async cycle). */
     void failed(Throwable t);
     /**

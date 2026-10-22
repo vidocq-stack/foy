@@ -33,8 +33,10 @@
   the bridge's dispatch entry: a cross-context forward, include or async dispatch runs with the target
   context's loader, and the caller's loader comes back when it returns. The request records the context
   of the dispatch running now, so the async cycle (`AsyncContext.start` runnables, `AsyncListener` events,
-  fired from any thread), the read and write listener callbacks and the upgrade handler a cross-context
-  target opens keep the target's loader after the dispatch returned (found by review). The captured
+  fired from any thread) and the upgrade handler a cross-context target opens keep the target's loader
+  after the dispatch returned (found by review). Each read or write listener keeps the loader of the
+  context that registered it (the dispatch running at `setReadListener`/`setWriteListener`, else the open
+  async cycle's), even when the request later moves to another context's async cycle. The captured
   loaders are the deployment's (`ContextLoaderScope.applicationLoaderOf`), never a capturing thread's
   context loader: without an application loader, the context loader is left untouched.
   Tests: `RequestContextClassLoaderTest` (`theRequestRunsWithTheApplicationLoaderAndTheThreadGetsItsOwnBack`,
@@ -43,8 +45,10 @@
   `DeploymentContextClassLoaderTest` (`deploymentAndUndeploymentRunTheApplicationWithItsLoader`,
   `aCrossContextDispatchRunsTheTargetWithItsLoaderAndGivesTheCallerItsOwnBack`, both failed before the fix;
   `theAsyncWorkOfAForwardedTargetRunsWithTheTargetLoader` and
-  `theAsyncWorkOfACrossContextAsyncDispatchTargetRunsWithTheTargetLoader` failed before the review fix),
-  `ContextLoaderScopeTest`.
+  `theAsyncWorkOfACrossContextAsyncDispatchTargetRunsWithTheTargetLoader` failed before the review fix;
+  `aReadListenerKeepsTheLoaderOfItsContextAfterACrossContextAsyncDispatch` and
+  `aReadListenerOfAForwardedTargetRunsWithTheTargetLoader` failed before the per-listener loader;
+  `anUpgradeHandlerOfAForwardedTargetRunsWithTheTargetLoader` pins the upgrade), `ContextLoaderScopeTest`.
 
 ## BUG-20261022-05 — A Content-Type set as a header loses its media type
 
