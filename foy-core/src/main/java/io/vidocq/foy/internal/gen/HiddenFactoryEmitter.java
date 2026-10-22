@@ -28,6 +28,7 @@ import java.lang.constant.MethodTypeDesc;
 import java.lang.invoke.MethodHandle;
 import java.lang.invoke.MethodHandles;
 import java.lang.invoke.MethodType;
+import java.util.Optional;
 import java.util.function.Supplier;
 
 /**
@@ -114,19 +115,19 @@ public final class HiddenFactoryEmitter {
      * @return the reason, or {@code null} when instantiable or when the bytes are not readable
      */
     static String notInstantiableReason(Class<?> type) {
-        byte[] bytes = ClassFileDescriptorReader.bytesOf(type);
-        if (bytes == null) {
+        Optional<byte[]> bytes = ClassFileDescriptorReader.bytesOf(type);
+        if (bytes.isEmpty()) {
             return null;
         }
         boolean abstractType;
         boolean hasNoArg;
         try {
-            ClassModel model = ClassFile.of().parse(bytes);
+            ClassModel model = ClassFile.of().parse(bytes.get());
             abstractType = (model.flags().flagsMask() & (ClassFile.ACC_ABSTRACT | ClassFile.ACC_INTERFACE)) != 0;
             hasNoArg = model.methods().stream().anyMatch(m -> m.methodName().equalsString(ConstantDescs.INIT_NAME)
                     && m.methodType().equalsString("()V")
                     && (m.flags().flagsMask() & ClassFile.ACC_PRIVATE) == 0);
-        } catch (RuntimeException e) {
+        } catch (RuntimeException _) {
             return null; // unreadable bytes: let the constructor lookup decide
         }
         if (abstractType) {

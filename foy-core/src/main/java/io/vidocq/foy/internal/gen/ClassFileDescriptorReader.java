@@ -90,6 +90,7 @@ public final class ClassFileDescriptorReader {
     private static final String HANDLES_TYPES = ANN + "HandlesTypes;";
     private static final String DECLARE_ROLES = "Ljakarta/annotation/security/DeclareRoles;";
     private static final String RUN_AS = "Ljakarta/annotation/security/RunAs;";
+    private static final String VALUE = "value";
 
     /** The listener interfaces a {@code @WebListener} class must implement at least one of. */
     private static final List<Class<?>> LISTENERS = List.of(
@@ -110,12 +111,12 @@ public final class ClassFileDescriptorReader {
      *         documentation)
      */
     public static Optional<WebComponentDescriptor> read(Class<?> type) {
-        byte[] bytes = bytesOf(type);
-        if (bytes == null) {
+        Optional<byte[]> bytes = bytesOf(type);
+        if (bytes.isEmpty()) {
             return Optional.empty();
         }
         try {
-            return Optional.ofNullable(decode(parse(bytes, type), type));
+            return Optional.ofNullable(decode(parse(bytes.get(), type), type));
         } catch (MalformedBytesException e) {
             LOG.log(System.Logger.Level.DEBUG, e.getMessage(), e.getCause());
             return Optional.empty();
@@ -150,19 +151,19 @@ public final class ClassFileDescriptorReader {
     /**
      * Loads the class file bytes of a type through its module, then its class loader.
      *
-     * @return the bytes, or {@code null} when not reachable (hidden, array or primitive type,
-     *         or no class file resource)
+     * @return the bytes, empty when not reachable (hidden, array or primitive type, or no class
+     *         file resource)
      */
-    static byte[] bytesOf(Class<?> type) {
+    static Optional<byte[]> bytesOf(Class<?> type) {
         if (type.isHidden() || type.isArray() || type.isPrimitive()) {
-            return null;
+            return Optional.empty();
         }
         String resource = type.getName().replace('.', '/') + ".class";
         try (InputStream in = open(type, resource)) {
-            return in == null ? null : in.readAllBytes();
+            return in == null ? Optional.empty() : Optional.of(in.readAllBytes());
         } catch (IOException e) {
             LOG.log(System.Logger.Level.DEBUG, "cannot read class bytes of " + type.getName(), e);
-            return null;
+            return Optional.empty();
         }
     }
 
@@ -255,91 +256,115 @@ public final class ClassFileDescriptorReader {
     // ---------------------------------------------------------------- phase 2: values to descriptor
 
     private static WebComponentDescriptor decode(Parsed p, Class<?> type) {
+        Kind kind = kind(p, type);
+        if (kind == null) {
+            return null;
+        }
         Map<String, Object> webServlet = p.annotations().get(WEB_SERVLET);
-        Map<String, Object> webFilter = p.annotations().get(WEB_FILTER);
-        Map<String, Object> webListener = p.annotations().get(WEB_LISTENER);
-        boolean servlet = Servlet.class.isAssignableFrom(type);
-        boolean filter = Filter.class.isAssignableFrom(type);
-        boolean listener = LISTENERS.stream().anyMatch(l -> l.isAssignableFrom(type));
-        Kind kind;
-        Map<String, Object> main = webServlet != null ? webServlet : webFilter;
-        if (webServlet != null) {
-            if (!servlet) {
-                throw new IllegalArgumentException("@WebServlet requires " + type.getName()
-                        + " to implement " + Servlet.class.getName());
-            }
-            kind = Kind.SERVLET;
-        } else if (webFilter != null) {
-            if (!filter) {
-                throw new IllegalArgumentException("@WebFilter requires " + type.getName()
-                        + " to implement " + Filter.class.getName());
-            }
-            kind = Kind.FILTER;
-        } else if (webListener != null) {
-            if (!listener) {
-                throw new IllegalArgumentException("@WebListener requires " + type.getName()
-                        + " to implement a Servlet listener interface");
-            }
-            kind = Kind.LISTENER;
-        } else if (!isPlainClass(p)) {
-            return null;
-        } else if (ServletContainerInitializer.class.isAssignableFrom(type)) {
-            kind = Kind.INITIALIZER;
-        } else if (servlet || filter || listener) {
-            kind = Kind.PLAIN;
-        } else {
-            return null;
-        }
-
-        String name = null;
-        List<String> patterns = List.of();
-        var params = new LinkedHashMap<String, String>();
-        int load = Integer.MIN_VALUE;
-        boolean async = false;
-        Set<DispatcherType> dispatchers = Set.of();
-        List<String> servletNames = List.of();
-        if (main != null) {
-            List<String> value = strings(main, "value");
-            List<String> urlPatterns = strings(main, "urlPatterns");
-            if (!value.isEmpty() && !urlPatterns.isEmpty()) {
-                throw new IllegalArgumentException(type.getName()
-                        + ": 'value' and 'urlPatterns' must not be used together on the same annotation");
-            }
-            patterns = value.isEmpty() ? urlPatterns : value;
-            String declared = string(main, kind == Kind.SERVLET ? "name" : "filterName", "");
-            name = declared.isEmpty() ? type.getName() : declared;
-            async = main.get("asyncSupported") instanceof Boolean b && b;
-            for (Object o : list(main, "initParams")) {
-                if (o instanceof Map<?, ?> param) {
-                    params.put(string(param, "name", ""), string(param, "value", ""));
-                }
-            }
-            if (kind == Kind.SERVLET) {
-                int declaredLoad = main.get("loadOnStartup") instanceof Integer i ? i : -1;
-                load = declaredLoad < 0 ? Integer.MIN_VALUE : declaredLoad;
-            } else {
-                servletNames = strings(main, "servletNames");
-                var types = EnumSet.noneOf(DispatcherType.class);
-                for (String t : strings(main, "dispatcherTypes")) {
-                    types.add(constant(DispatcherType.class, t, type));
-                }
-                dispatchers = types.isEmpty() ? Set.of(DispatcherType.REQUEST) : types;
-            }
-        }
-
+        Map<String, Object> main = webServlet != null ? webServlet : p.annotations().get(WEB_FILTER);
+        MainElements e = main == null ? MainElements.NONE : mainElements(main, kind, type);
         Map<String, Object> multipart = p.annotations().get(MULTIPART);
         Map<String, Object> security = p.annotations().get(SECURITY);
         Map<String, Object> roles = p.annotations().get(DECLARE_ROLES);
         Map<String, Object> runAs = p.annotations().get(RUN_AS);
-        Map<String, Object> handles = p.annotations().get(HANDLES_TYPES);
-        return new WebComponentDescriptor(kind, name, patterns, params, load, async, dispatchers, servletNames,
+        return new WebComponentDescriptor(kind, e.name(), e.patterns(), e.params(), e.load(), e.async(),
+                e.dispatchers(), e.servletNames(),
                 multipart == null ? null : multipart(multipart),
                 security == null ? null : security(security, type),
-                roles == null ? List.of() : strings(roles, "value"),
-                runAs == null ? null : string(runAs, "value", null),
-                // Any initializer, whatever its kind: a @WebListener may also be the jar's initializer.
-                handles == null || !ServletContainerInitializer.class.isAssignableFrom(type) ? List.of()
-                        : strings(handles, "value"));
+                roles == null ? List.of() : strings(roles, VALUE),
+                runAs == null ? null : string(runAs, VALUE, null),
+                handlesTypes(p, type));
+    }
+
+    /**
+     * The kind of component {@code type} is: the kind of its Servlet annotation, else
+     * {@code INITIALIZER} or {@code PLAIN} for a plain class; {@code null} when it is not a component.
+     *
+     * @throws IllegalArgumentException when the class does not implement what its annotation requires
+     */
+    private static Kind kind(Parsed p, Class<?> type) {
+        boolean servlet = Servlet.class.isAssignableFrom(type);
+        boolean filter = Filter.class.isAssignableFrom(type);
+        boolean listener = LISTENERS.stream().anyMatch(l -> l.isAssignableFrom(type));
+        if (p.annotations().get(WEB_SERVLET) != null) {
+            return annotated(Kind.SERVLET, servlet, "@WebServlet", type, Servlet.class.getName());
+        }
+        if (p.annotations().get(WEB_FILTER) != null) {
+            return annotated(Kind.FILTER, filter, "@WebFilter", type, Filter.class.getName());
+        }
+        if (p.annotations().get(WEB_LISTENER) != null) {
+            return annotated(Kind.LISTENER, listener, "@WebListener", type, "a Servlet listener interface");
+        }
+        if (!isPlainClass(p)) {
+            return null;
+        }
+        if (ServletContainerInitializer.class.isAssignableFrom(type)) {
+            return Kind.INITIALIZER;
+        }
+        return servlet || filter || listener ? Kind.PLAIN : null;
+    }
+
+    /** {@code kind} when {@code implemented}; else the misuse of {@code annotation} on {@code type}. */
+    private static Kind annotated(Kind kind, boolean implemented, String annotation, Class<?> type, String required) {
+        if (!implemented) {
+            throw new IllegalArgumentException(annotation + " requires " + type.getName() + " to implement " + required);
+        }
+        return kind;
+    }
+
+    /** The elements of a {@code @WebServlet} or {@code @WebFilter}, with the Servlet 6.1 defaults applied. */
+    private record MainElements(String name, List<String> patterns, Map<String, String> params, int load,
+                                boolean async, Set<DispatcherType> dispatchers, List<String> servletNames) {
+        /** No {@code @WebServlet} nor {@code @WebFilter}. */
+        static final MainElements NONE = new MainElements(null, List.of(), Map.of(), Integer.MIN_VALUE, false,
+                Set.of(), List.of());
+    }
+
+    /** Decodes {@code main}, the {@code @WebServlet} ({@code kind == SERVLET}) or {@code @WebFilter} of {@code type}. */
+    private static MainElements mainElements(Map<String, Object> main, Kind kind, Class<?> type) {
+        List<String> value = strings(main, VALUE);
+        List<String> urlPatterns = strings(main, "urlPatterns");
+        if (!value.isEmpty() && !urlPatterns.isEmpty()) {
+            throw new IllegalArgumentException(type.getName()
+                    + ": 'value' and 'urlPatterns' must not be used together on the same annotation");
+        }
+        List<String> patterns = value.isEmpty() ? urlPatterns : value;
+        String declared = string(main, kind == Kind.SERVLET ? "name" : "filterName", "");
+        String name = declared.isEmpty() ? type.getName() : declared;
+        boolean async = main.get("asyncSupported") instanceof Boolean b && b;
+        Map<String, String> params = initParams(main);
+        if (kind == Kind.SERVLET) {
+            int declaredLoad = main.get("loadOnStartup") instanceof Integer i ? i : -1;
+            return new MainElements(name, patterns, params, declaredLoad < 0 ? Integer.MIN_VALUE : declaredLoad,
+                    async, Set.of(), List.of());
+        }
+        List<String> servletNames = strings(main, "servletNames");
+        var types = EnumSet.noneOf(DispatcherType.class);
+        for (String t : strings(main, "dispatcherTypes")) {
+            types.add(constant(DispatcherType.class, t, type));
+        }
+        return new MainElements(name, patterns, params, Integer.MIN_VALUE, async,
+                types.isEmpty() ? Set.of(DispatcherType.REQUEST) : types, servletNames);
+    }
+
+    /** The {@code initParams} of {@code main}, by name in declaration order. */
+    private static Map<String, String> initParams(Map<String, Object> main) {
+        var params = new LinkedHashMap<String, String>();
+        for (Object o : list(main, "initParams")) {
+            if (o instanceof Map<?, ?> param) {
+                params.put(string(param, "name", ""), string(param, VALUE, ""));
+            }
+        }
+        return params;
+    }
+
+    /** The {@code @HandlesTypes} classes of any initializer, whatever its kind: a {@code @WebListener} may also be the jar's initializer. */
+    private static List<String> handlesTypes(Parsed p, Class<?> type) {
+        Map<String, Object> handles = p.annotations().get(HANDLES_TYPES);
+        if (handles == null || !ServletContainerInitializer.class.isAssignableFrom(type)) {
+            return List.of();
+        }
+        return strings(handles, VALUE);
     }
 
     /** Whether an unannotated class may be a component: concrete, neither enum nor record. */
@@ -357,14 +382,14 @@ public final class ClassFileDescriptorReader {
     }
 
     private static ServletSecurityElement security(Map<String, Object> m, Class<?> type) {
-        HttpConstraintElement classConstraint = m.get("value") instanceof Map<?, ?> c
-                ? constraint(c, "value", "@HttpConstraint", type)
+        HttpConstraintElement classConstraint = m.get(VALUE) instanceof Map<?, ?> c
+                ? constraint(c, VALUE, "@HttpConstraint", type)
                 : new HttpConstraintElement(EmptyRoleSemantic.PERMIT, TransportGuarantee.NONE);
         var methods = new ArrayList<HttpMethodConstraintElement>();
         try {
             for (Object o : list(m, "httpMethodConstraints")) {
                 if (o instanceof Map<?, ?> mc) {
-                    methods.add(new HttpMethodConstraintElement(string(mc, "value", ""),
+                    methods.add(new HttpMethodConstraintElement(string(mc, VALUE, ""),
                             constraint(mc, "emptyRoleSemantic", "@HttpMethodConstraint", type)));
                 }
             }

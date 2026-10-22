@@ -171,21 +171,25 @@ public final class IndexedHandlesTypesResolver implements HandlesTypesResolver {
             var urls = loader.getResources(INDEX_RESOURCE);
             while (urls.hasMoreElements()) {
                 URL url = urls.nextElement();
-                if (!excludedRoots.isEmpty() && excludedRoots.contains(rootKey(url))) {
-                    continue;
-                }
-                try (BufferedReader reader = new BufferedReader(
-                        new InputStreamReader(url.openStream(), StandardCharsets.UTF_8))) {
-                    String line;
-                    while ((line = reader.readLine()) != null) {
-                        parse(line, url, byName);
-                    }
-                } catch (IOException e) {
-                    LOG.log(Level.WARNING, "Cannot read class index {0}: {1}", url, e.toString());
+                if (excludedRoots.isEmpty() || !excludedRoots.contains(rootKey(url))) {
+                    readIndex(url, byName);
                 }
             }
         } catch (IOException e) {
             LOG.log(Level.WARNING, "Cannot enumerate class indexes: {0}", e.toString());
+        }
+    }
+
+    /** Adds the entries of the class index {@code url} to {@code byName}; an unreadable index is reported and skipped. */
+    private static void readIndex(URL url, Map<String, IndexEntry> byName) {
+        try (BufferedReader reader = new BufferedReader(
+                new InputStreamReader(url.openStream(), StandardCharsets.UTF_8))) {
+            String line;
+            while ((line = reader.readLine()) != null) {
+                parse(line, url, byName);
+            }
+        } catch (IOException e) {
+            LOG.log(Level.WARNING, "Cannot read class index {0}: {1}", url, e.toString());
         }
     }
 
@@ -195,7 +199,7 @@ public final class IndexedHandlesTypesResolver implements HandlesTypesResolver {
         if (s.endsWith(INDEX_RESOURCE)) s = s.substring(0, s.length() - INDEX_RESOURCE.length());
         try {
             return Fragment.sourceKey(java.net.URI.create(s).toURL());
-        } catch (java.net.MalformedURLException | IllegalArgumentException e) {
+        } catch (java.net.MalformedURLException | IllegalArgumentException _) {
             return Fragment.sourceKey(url);
         }
     }

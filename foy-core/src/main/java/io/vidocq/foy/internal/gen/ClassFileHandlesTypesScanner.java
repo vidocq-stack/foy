@@ -38,6 +38,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Stream;
 import java.util.zip.ZipEntry;
@@ -71,9 +72,14 @@ public final class ClassFileHandlesTypesScanner {
      */
     public record Entry(String name, Set<String> supertypes, Set<String> annotations) {}
 
-    private record Direct(String superclass, List<String> interfaces, Set<String> annotations) {}
+    /**
+     * What a class's bytes say directly; {@code known} is {@code false} for {@link #UNKNOWN}, a class
+     * whose bytes are not readable, which may otherwise look like {@code java.lang.Object}.
+     */
+    private record Direct(boolean known, String superclass, List<String> interfaces, Set<String> annotations) {}
 
-    private static final Direct UNKNOWN = new Direct(null, List.of(), Set.of());
+    private static final Direct UNKNOWN = new Direct(false, null, List.of(), Set.of());
+    private static final String CLASS_SUFFIX = ".class";
 
     private final ClassLoader loader;
     private final Map<String, Direct> scanned = new LinkedHashMap<>();
@@ -107,7 +113,7 @@ public final class ClassFileHandlesTypesScanner {
         var scanner = new ClassFileHandlesTypesScanner(loader);
         for (String name : binaryNames) {
             Direct d = scanner.fromLoader(name);
-            if (d != UNKNOWN) {
+            if (d.known()) {
                 scanner.scanned.putIfAbsent(name, d);
             }
         }
@@ -134,7 +140,7 @@ public final class ClassFileHandlesTypesScanner {
         }
         List<Path> classes;
         try (Stream<Path> files = Files.walk(dir)) {
-            classes = files.filter(p -> p.toString().endsWith(".class")).sorted().toList();
+            classes = files.filter(p -> p.toString().endsWith(CLASS_SUFFIX)).sorted().toList();
         }
         for (Path file : classes) {
             String relative = dir.relativize(file).toString().replace('\\', '/');
@@ -150,7 +156,7 @@ public final class ClassFileHandlesTypesScanner {
             var entries = zip.entries();
             while (entries.hasMoreElements()) {
                 ZipEntry entry = entries.nextElement();
-                if (entry.isDirectory() || !entry.getName().endsWith(".class")) {
+                if (entry.isDirectory() || !entry.getName().endsWith(CLASS_SUFFIX)) {
                     continue;
                 }
                 try (InputStream in = zip.getInputStream(entry)) {
@@ -165,9 +171,9 @@ public final class ClassFileHandlesTypesScanner {
                 || resource.endsWith("module-info.class") || resource.endsWith("package-info.class")) {
             return;
         }
-        String name = resource.substring(0, resource.length() - ".class".length()).replace('/', '.');
+        String name = resource.substring(0, resource.length() - CLASS_SUFFIX.length()).replace('/', '.');
         Direct direct = decode(bytes, name);
-        if (direct != UNKNOWN) {
+        if (direct.known()) {
             scanned.putIfAbsent(name, direct);
         }
     }
@@ -189,7 +195,7 @@ public final class ClassFileHandlesTypesScanner {
                     .ifPresent(a -> addAll(annotations, a.annotations())));
             model.methods().forEach(m -> m.findAttribute(Attributes.runtimeVisibleAnnotations())
                     .ifPresent(a -> addAll(annotations, a.annotations())));
-            return new Direct(superclass, List.copyOf(interfaces), Set.copyOf(annotations));
+            return new Direct(true, superclass, List.copyOf(interfaces), Set.copyOf(annotations));
         } catch (RuntimeException e) {
             LOG.log(Level.DEBUG, "Cannot decode class {0}: {1}", name, e.toString());
             return UNKNOWN;
@@ -253,37 +259,44 @@ public final class ClassFileHandlesTypesScanner {
 
     /** Bytes through the loader, then the system loader and the boot layer's modules. */
     private Direct fromLoader(String name) {
-        String resource = name.replace('.', '/') + ".class";
-        byte[] bytes = null;
+        String resource = name.replace('.', '/') + CLASS_SUFFIX;
+        Optional<byte[]> bytes = Optional.empty();
         try {
             bytes = read(loader.getResourceAsStream(resource));
-            if (bytes == null) {
+            if (bytes.isEmpty()) {
                 bytes = read(ClassLoader.getSystemResourceAsStream(resource));
             }
-            if (bytes == null) {
-                for (Module module : ModuleLayer.boot().modules()) {
-                    bytes = read(module.getResourceAsStream(resource));
-                    if (bytes != null) {
-                        break;
-                    }
-                }
+            if (bytes.isEmpty()) {
+                bytes = fromBootModules(resource);
             }
         } catch (IOException e) {
             LOG.log(Level.DEBUG, "Cannot read class bytes of {0}: {1}", name, e.toString());
         }
-        if (bytes == null) {
+        if (bytes.isEmpty()) {
             LOG.log(Level.DEBUG, "Supertype {0} is not readable: its branch is not climbed", name);
             return UNKNOWN;
         }
-        return decode(bytes, name);
+        return decode(bytes.get(), name);
     }
 
-    private static byte[] read(InputStream in) throws IOException {
+    /** The bytes of {@code resource} in the first module of the boot layer holding it. */
+    private static Optional<byte[]> fromBootModules(String resource) throws IOException {
+        for (Module module : ModuleLayer.boot().modules()) {
+            Optional<byte[]> bytes = read(module.getResourceAsStream(resource));
+            if (bytes.isPresent()) {
+                return bytes;
+            }
+        }
+        return Optional.empty();
+    }
+
+    /** The bytes of {@code in}, closed after reading; empty for a {@code null} stream. */
+    private static Optional<byte[]> read(InputStream in) throws IOException {
         if (in == null) {
-            return null;
+            return Optional.empty();
         }
         try (in) {
-            return in.readAllBytes();
+            return Optional.of(in.readAllBytes());
         }
     }
 }

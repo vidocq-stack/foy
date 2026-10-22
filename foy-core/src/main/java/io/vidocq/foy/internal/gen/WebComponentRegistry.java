@@ -201,7 +201,7 @@ public final class WebComponentRegistry {
                 return null;
             }
             return component;
-        } catch (ClassNotFoundException e) {
+        } catch (ClassNotFoundException _) {
             return null;
         } catch (Exception | LinkageError e) {
             LOG.log(Level.WARNING, "foy: cannot use the generated companion " + name + ": " + e, e);
