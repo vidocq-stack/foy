@@ -55,7 +55,6 @@ import java.io.InputStream;
 import java.net.URL;
 import java.util.ArrayList;
 import java.util.EventListener;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
@@ -417,8 +416,9 @@ public final class FoyChappeBoot {
             if (identityStore != null && users != null) {
                 throw new IllegalStateException("identityStore(...) and user(...)/certificateUser(...) are exclusive");
             }
-            IdentityStore store = identityStore != null ? identityStore
-                    : users != null ? users.build() : IdentityStore.none();
+            IdentityStore store;
+            if (identityStore != null) store = identityStore;
+            else store = users != null ? users.build() : IdentityStore.none();
             return new SecuritySettings(store, confidentialPort, rotateSessionIdOnLogin);
         }
 
@@ -451,90 +451,129 @@ public final class FoyChappeBoot {
                         ? AnnotatedComponents.none() : WebAppDiscovery.discover(beanManager, registry);
             } catch (IllegalArgumentException e) {
                 // A component misusing the Servlet annotations: a deployment failure.
-                throw new ServletException("Foy deployment failed: " + e.getMessage(), e);
+                throw deploymentFailed(e);
             }
             WebAppDescriptor descriptor = loadDescriptor(loader);
             Function<Class<?>, URL> sourceOf = componentSource != null
                     ? guarded(componentSource) : ApplicationSources::codeSource;
-
-            List<Fragment> ordered = List.of();
-            List<Initializer> initializers = List.of();
-            // Static resource roots, by priority: application roots, then the ordered fragments' jars.
-            Set<URL> resourceRoots = new LinkedHashSet<>(applicationRoots);
-            // Jars and directories whose classes @HandlesTypes may match (those with a class index are skipped).
-            Set<URL> scanRoots = new LinkedHashSet<>(applicationRoots);
-            // Jars of the fragments the ordering excludes: no annotation, initializer, resource or handled class.
-            Set<URL> excluded = Set.of();
-            if (discoverPluggability) {
-                List<Fragment> fragments = ApplicationSources.fragments(loader);
-                ordered = FragmentOrderer.order(descriptor.absoluteOrdering(), fragments);
-                excluded = ApplicationSources.excludedJars(fragments, ordered);
-                Set<URL> fragmentJars = new LinkedHashSet<>();
-                for (Fragment f : fragments) fragmentJars.add(f.jar());
-                Set<URL> appRoots = new LinkedHashSet<>(applicationRoots);
-                appRoots.addAll(ApplicationSources.applicationRoots(loader, fragmentJars));
-                try {
-                    // First, so that an excluded jar's components never make it an application root.
-                    // metadata-complete fragments' jars are dropped by DescriptorMerger itself.
-                    annotated = annotated.excludingSources(excluded, sourceOf);
-                    appRoots.addAll(ApplicationSources.codeSources(annotated, sourceOf));
-                } catch (ComponentSourceException e) {
-                    throw new ServletException("Foy deployment failed: " + e.getMessage(), e);
-                }
-                resourceRoots.addAll(appRoots);
-                for (Fragment f : ordered) resourceRoots.add(f.jar());
-                scanRoots.addAll(resourceRoots);
-                try {
-                    initializers = ApplicationSources.initializers(loader, ApplicationSources.ordering(
-                            descriptor.absoluteOrdering(), ordered, fragmentJars, appRoots), sourceOf);
-                } catch (ServiceConfigurationError | ComponentSourceException e) {
-                    throw new ServletException("Foy deployment failed: " + e.getMessage(), e);
-                }
-            }
-            WebAppDescriptor effective = FragmentMerger.merge(descriptor, ordered);
+            Sources sources = discoverPluggability
+                    ? pluggableSources(loader, descriptor, annotated, sourceOf)
+                    : new Sources(annotated, List.of(), List.of(), applicationRoots, applicationRoots, List.of());
+            WebAppDescriptor effective = FragmentMerger.merge(descriptor, sources.ordered());
 
             JspEngine engine;
             try {
                 engine = jspEngineLookup.apply(applicationLayer).orElse(null);
             } catch (RuntimeException | ServiceConfigurationError e) {
-                throw new ServletException("Foy deployment failed: " + e.getMessage(), e);
+                throw deploymentFailed(e);
             }
-            boolean otherwiseEmpty = effective.isEmpty() && initializers.isEmpty() && annotated.servlets().isEmpty()
-                    && annotated.filters().isEmpty() && annotated.listeners().isEmpty();
-            boolean pages = false;
-            if (otherwiseEmpty && engine != null) {
-                try {
-                    pages = engine.hasPages(applicationLayer);
-                } catch (RuntimeException e) {
-                    throw new ServletException("Foy deployment failed: " + e.getMessage(), e);
-                }
-            }
-
-            if (otherwiseEmpty && !pages) {
+            if (nothingToDeploy(effective, sources, engine)) {
                 LOG.log(System.Logger.Level.INFO,
                         "No @WebServlet / @WebFilter / @WebListener beans, web.xml, web fragment, "
                                 + "ServletContainerInitializer or JSP page discovered — Foy inactive");
                 return Optional.empty();
             }
 
-            String path = contextPath != null ? contextPath
-                    : effective.defaultContextPath() != null ? effective.defaultContextPath() : "/";
+            String path = effectiveContextPath(effective);
+            WebAppModel model = buildModel(path, effective, sources, sourceOf, factory);
+            Deployment deployment = deploy(model, new DeployContext(loader, registry, factory), sources, security,
+                    engine);
+            if (beanManager != null) registerCdiListeners(deployment, loader);
+            logDeployment(sources, model);
+            String mountPrefix = "/".equals(path) ? "" : path;
+            return Optional.of(new Mounted(deployment.handler(), mountPrefix, deployment));
+        }
+
+        /**
+         * What the deployment is made of besides the descriptors: the annotated components kept, the
+         * ordered fragments, the retained initializers, the static resource roots by priority
+         * (application roots, then the ordered fragments' jars), the roots whose classes
+         * {@code @HandlesTypes} may match (those with a class index are skipped), and the jars of the
+         * fragments the ordering excludes (no annotation, initializer, resource or handled class).
+         * Roots may repeat: their consumers keep the first occurrence of each.
+         */
+        private record Sources(AnnotatedComponents annotated, List<Fragment> ordered, List<Initializer> initializers,
+                               List<URL> resourceRoots, List<URL> scanRoots, List<URL> excluded) {}
+
+        /** The class loader, registry and component factory a deployment is built with. */
+        private record DeployContext(ClassLoader loader, WebComponentRegistry registry, ComponentFactory factory) {}
+
+        /** The sources of a deployment with the pluggability of section 8.2: fragments and initializers. */
+        private Sources pluggableSources(ClassLoader loader, WebAppDescriptor descriptor, AnnotatedComponents discovered,
+                                         Function<Class<?>, URL> sourceOf) throws ServletException {
+            List<Fragment> fragments = ApplicationSources.fragments(loader);
+            List<Fragment> ordered = FragmentOrderer.order(descriptor.absoluteOrdering(), fragments);
+            List<URL> excluded = List.copyOf(ApplicationSources.excludedJars(fragments, ordered));
+            List<URL> fragmentJars = fragments.stream().map(Fragment::jar).toList();
+            List<URL> appRoots = new ArrayList<>(applicationRoots);
+            appRoots.addAll(ApplicationSources.applicationRoots(loader, Set.copyOf(fragmentJars)));
+            AnnotatedComponents annotated;
+            try {
+                // First, so that an excluded jar's components never make it an application root.
+                // metadata-complete fragments' jars are dropped by DescriptorMerger itself.
+                annotated = discovered.excludingSources(Set.copyOf(excluded), sourceOf);
+                appRoots.addAll(ApplicationSources.codeSources(annotated, sourceOf));
+            } catch (ComponentSourceException e) {
+                throw deploymentFailed(e);
+            }
+            List<URL> resourceRoots = new ArrayList<>(applicationRoots);
+            resourceRoots.addAll(appRoots);
+            for (Fragment f : ordered) resourceRoots.add(f.jar());
+            List<URL> scanRoots = new ArrayList<>(applicationRoots);
+            scanRoots.addAll(resourceRoots);
+            List<Initializer> initializers;
+            try {
+                initializers = ApplicationSources.initializers(loader, ApplicationSources.ordering(
+                        descriptor.absoluteOrdering(), ordered, Set.copyOf(fragmentJars), Set.copyOf(appRoots)),
+                        sourceOf);
+            } catch (ServiceConfigurationError | ComponentSourceException e) {
+                throw deploymentFailed(e);
+            }
+            return new Sources(annotated, ordered, initializers, resourceRoots, scanRoots, excluded);
+        }
+
+        /**
+         * Whether there is nothing to deploy: no descriptor content, initializer or annotated component,
+         * and no JSP page for the engine, when there is one.
+         */
+        private boolean nothingToDeploy(WebAppDescriptor effective, Sources sources, JspEngine engine)
+                throws ServletException {
+            AnnotatedComponents annotated = sources.annotated();
+            boolean otherwiseEmpty = effective.isEmpty() && sources.initializers().isEmpty()
+                    && annotated.servlets().isEmpty() && annotated.filters().isEmpty()
+                    && annotated.listeners().isEmpty();
+            if (!otherwiseEmpty || engine == null) return otherwiseEmpty;
+            try {
+                return !engine.hasPages(applicationLayer);
+            } catch (RuntimeException e) {
+                throw deploymentFailed(e);
+            }
+        }
+
+        /** The builder's context path, else the descriptors' {@code <default-context-path>}, else the root. */
+        private String effectiveContextPath(WebAppDescriptor effective) throws ServletException {
+            String path = contextPath;
+            if (path == null) path = effective.defaultContextPath() != null ? effective.defaultContextPath() : "/";
             try {
                 // The builder's and the descriptors' <default-context-path> alike.
                 WebAppModel.validateContextPath(path);
             } catch (IllegalArgumentException e) {
-                throw new ServletException("Foy deployment failed: " + e.getMessage(), e);
+                throw deploymentFailed(e);
             }
+            return path;
+        }
+
+        private WebAppModel buildModel(String path, WebAppDescriptor effective, Sources sources,
+                                       Function<Class<?>, URL> sourceOf, ComponentFactory factory)
+                throws ServletException {
             WebAppModel.Builder modelBuilder = WebAppModel.builder(path);
             try {
-                DescriptorMerger.mergeMerged(effective, ordered, annotated, sourceOf, factory, modelBuilder);
+                DescriptorMerger.mergeMerged(effective, sources.ordered(), sources.annotated(), sourceOf, factory,
+                        modelBuilder);
             } catch (ComponentSourceException e) {
-                throw new ServletException("Foy deployment failed: " + e.getMessage(), e);
+                throw deploymentFailed(e);
             }
-            for (Initializer i : initializers) {
-                modelBuilder.initializer(i.sci());
-                if (i.jar() != null) scanRoots.add(i.jar());
-            }
+            for (Initializer i : sources.initializers()) modelBuilder.initializer(i.sci());
             // The merger copies the descriptors' timeout (-1 when absent); the builder default applies then.
             // A builder timeout of zero or less means "never expire" (0 minutes), as in web.xml; it
             // must not become -1, the model's "not configured" value.
@@ -542,39 +581,49 @@ public final class FoyChappeBoot {
                 modelBuilder.sessionTimeoutMinutes(sessionTimeoutMinutes(sessionTimeoutSeconds));
             }
             modelBuilder.responseCharacterEncoding(responseCharacterEncoding(effective));
-            WebAppModel model = modelBuilder.build();
+            return modelBuilder.build();
+        }
 
-            Deployment deployment;
+        private Deployment deploy(WebAppModel model, DeployContext context, Sources sources,
+                                  SecuritySettings security, JspEngine engine) throws ServletException {
+            // The jars of the retained initializers are scanned for their @HandlesTypes too.
+            List<URL> scanRoots = new ArrayList<>(sources.scanRoots());
+            for (Initializer i : sources.initializers()) {
+                if (i.jar() != null) scanRoots.add(i.jar());
+            }
             try {
                 VidocqServletContext.ResourceProvider resources = resourceProvider != null ? resourceProvider
-                        : new ClassPathResourceProvider(loader, List.copyOf(resourceRoots), excluded);
-                deployment = WebAppDeployer.deploy(model, DeployOptions
-                        .defaults(loader, registry, ApplicationSources.scanRoots(scanRoots), excluded)
-                        .withComponentFactory(factory).withResourceProvider(resources)
+                        : new ClassPathResourceProvider(context.loader(), List.copyOf(sources.resourceRoots()),
+                                sources.excluded());
+                return WebAppDeployer.deploy(model, DeployOptions
+                        .defaults(context.loader(), context.registry(), ApplicationSources.scanRoots(scanRoots),
+                                Set.copyOf(sources.excluded()))
+                        .withComponentFactory(context.factory()).withResourceProvider(resources)
                         .withVirtualServerName(virtualServerName).withSecurity(security)
                         .withRequestLimits(requestLimits), applicationLayer, engine);
             } catch (RuntimeException e) {
-                throw new ServletException("Foy deployment failed: " + e.getMessage(), e);
+                throw deploymentFailed(e);
             }
+        }
 
-            if (beanManager != null) {
-                // The CDI request context, active for each request under any container (foy#18).
-                deployment.listeners().addFirst(new CdiRequestScopeListener(beanManager));
-                // The contexts CDI Lite leaves to the servlet container, the session context first,
-                // driven by the adapter of the CDI implementation in use (foy#21). An adapter
-                // module in both the boot and the application layer registers once.
-                for (var provider : ApplicationSources.providers(CdiContextListeners.class, loader)) {
-                    for (EventListener listener : provider.get().listeners(beanManager)) {
-                        deployment.listeners().registerFirst(listener);
-                    }
+        private void registerCdiListeners(Deployment deployment, ClassLoader loader) {
+            // The CDI request context, active for each request under any container (foy#18).
+            deployment.listeners().addFirst(new CdiRequestScopeListener(beanManager));
+            // The contexts CDI Lite leaves to the servlet container, the session context first,
+            // driven by the adapter of the CDI implementation in use (foy#21). An adapter
+            // module in both the boot and the application layer registers once.
+            for (var provider : ApplicationSources.providers(CdiContextListeners.class, loader)) {
+                for (EventListener listener : provider.get().listeners(beanManager)) {
+                    deployment.listeners().registerFirst(listener);
                 }
             }
+        }
 
-            String mountPrefix = "/".equals(path) ? "" : path;
-            for (var f : ordered) {
+        private static void logDeployment(Sources sources, WebAppModel model) {
+            for (var f : sources.ordered()) {
                 LOG.log(System.Logger.Level.INFO, "Merged web fragment {0} from {1}", f.id(), f.jar());
             }
-            for (var i : initializers) {
+            for (var i : sources.initializers()) {
                 LOG.log(System.Logger.Level.INFO, "Registered ServletContainerInitializer: {0}",
                         i.sci().getClass().getName());
             }
@@ -589,7 +638,10 @@ public final class FoyChappeBoot {
             for (var l : model.listeners()) {
                 LOG.log(System.Logger.Level.INFO, "Registered listener: {0}", l.type().getName());
             }
-            return Optional.of(new Mounted(deployment.handler(), mountPrefix, deployment));
+        }
+
+        private static ServletException deploymentFailed(Throwable e) {
+            return new ServletException("Foy deployment failed: " + e.getMessage(), e);
         }
 
         private WebAppDescriptor loadDescriptor(ClassLoader loader) throws ServletException {
