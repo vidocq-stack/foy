@@ -233,6 +233,8 @@ The guard test `NoProductReflectionTest` scans the main sources of `foy-core` fo
 
 The guard covers `foy-core` only: `foy-cdi-vauban`'s `CdiWebComponentsCreator` also loads the class names recorded at build time with `Class.forName(name, false, loader)` (no initialisation, no reflective instantiation).
 
+The architecture rule `NO_REFLECTION` of `foy-architecture-tests` checks the bytecode of every shipped module against the same allow-list, `CdiWebComponentsCreator` included: a lookup by name, a member or an annotation read reflectively, or a `java.lang.reflect` type, anywhere else fails the build.
+
 *Logging policy.* One `INFO` line per class resolved through the Class-File tier, one `WARNING` per class on the reflective tier (naming the reason), and nothing per request.
 
 *Class index.* `foy-processor` writes `META-INF/foy/class-index.list` (binary class names). `IndexedHandlesTypesResolver` uses it to answer `@HandlesTypes` of a `ServletContainerInitializer` without scanning; it yields nothing when no indexed class matches. A jar or directory without that index is scanned from its class bytes instead (`ClassFileHandlesTypesScanner`). Its roots are the application roots, the ordered fragments' jars and the initializers' roots. A root is scanned when it is a `file:` jar or directory, or, in an image built by `jlink`, a module's `jrt:/<module>` root. Other locations (remote or nested archives) are not scanned.

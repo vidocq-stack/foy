@@ -35,6 +35,7 @@ module to become an independent project usable outside the Vidocq Runtime ecosys
 | `foy-processor` | Build-time annotation processor generating `X$$FoyComponent` companions and indexes. Zero dependency (`java.compiler` only); never shipped in the application. |
 | `foy-cdi-vauban` | Bridge to the [Vauban](https://forge.vidocq.dev/vidocq/vauban) CDI container (`FoyVaubanBootstrap.beanManager()`). |
 | `foy-chappe` | [Chappe](https://forge.vidocq.dev/vidocq/chappe) HTTP adapter (`FoyChappeBoot.builder().beanManager(bm).build()`). |
+| `foy-architecture-tests` | The architecture rules (ArchUnit, test scope only) applied to the classes of every shipped module. Never released. |
 | `foy-tck` | Arquillian harness for the official Jakarta Servlet 6.1 TCK (in-reactor, gated by the `tck` Maven profile). |
 
 ## Status

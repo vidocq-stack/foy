@@ -50,3 +50,25 @@ Provide `modules/ROOT/images/<project>-logo.png` (PNG), referenced from `index.a
 Use **Java Modules** (or **Java module** for a single module) when referring to
 the Java Platform Module System. Do **not** use the abbreviation **JPMS** — in
 prose, identifiers, or documentation.
+
+## Dependencies and test libraries
+
+What Foy ships depends only on the JDK, the Jakarta APIs it implements or reads
+(`jakarta.servlet`, `jakarta.annotation`, `jakarta.enterprise`), Chappe's API
+(`chappe-api`, never `chappe-core` or `chappe-http`) and, in `foy-cdi-vauban` only,
+Vauban (workspace rule "Zero external dependency for what ships").
+
+Test-scope libraries are never shipped: **JUnit**, and **ArchUnit**
+(`com.tngtech.archunit:archunit`, Apache-2.0), used only by the test-only module
+`foy-architecture-tests` from plain JUnit tests (Vidocq/vidocq#289). Its
+`ArchitectureRules` turns these rules into tests on the classes of every shipped
+module (`foy-api`, `foy-processor`, `foy-core`, `foy-cdi-vauban`, `foy-chappe`):
+the dependencies of each module, the layers between them, no reflection outside
+the documented fallbacks, no platform thread, no `ThreadLocal`.
+`ArchitectureRulesTest` applies them to the shipped classes,
+`ArchitectureRulesSelfTest` shows each one failing on a fixture that breaks it.
+When a rule changes, cite the document it comes from in `because(...)` and keep a
+fixture for it; a new reflective fallback goes into `REFLECTIVE_FALLBACKS` with its
+reason, and into the list of `internals.adoc`.
+
+> Keep this section the same in `AGENTS.md` and `CLAUDE.md`.
