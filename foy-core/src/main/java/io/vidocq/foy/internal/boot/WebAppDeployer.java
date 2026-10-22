@@ -23,6 +23,7 @@ import io.vidocq.foy.internal.boot.WebAppModel.FilterDecl;
 import io.vidocq.foy.internal.boot.WebAppModel.FilterMappingDecl;
 import io.vidocq.foy.internal.boot.WebAppModel.ServletDecl;
 import io.vidocq.foy.internal.bridge.ChappeServletBridge;
+import io.vidocq.foy.internal.container.ContextLoaderScope;
 import io.vidocq.foy.internal.container.CrossContextRegistry;
 import io.vidocq.foy.internal.container.DefaultServlet;
 import io.vidocq.foy.internal.container.DynamicFilterRegistration;
@@ -117,11 +118,23 @@ public final class WebAppDeployer {
         return java.util.Optional.of(engine);
     }
 
-    /** Deploys with {@code engine}, already looked up in {@code applicationLayer} ({@code null} for none); the layer is handed to {@code JspEngine.deploy}. */
+    /**
+     * Deploys with {@code engine}, already looked up in {@code applicationLayer} ({@code null} for none); the layer is
+     * handed to {@code JspEngine.deploy}. The whole deployment (initializers, listeners, component instantiation,
+     * {@code init}, and the tear-down of a failed deployment) runs with the application class loader of
+     * {@code options} as context class loader; the calling thread gets its own back (BUG-20261022-06).
+     */
     public static Deployment deploy(WebAppModel model, DeployOptions options, ModuleLayer applicationLayer,
             io.vidocq.foy.spi.jsp.JspEngine engine) {
         Objects.requireNonNull(model, "model");
         Objects.requireNonNull(options, "options");
+        try (var _ = ContextLoaderScope.enter(options.applicationLoader())) {
+            return deployWithinScope(model, options, applicationLayer, engine);
+        }
+    }
+
+    private static Deployment deployWithinScope(WebAppModel model, DeployOptions options, ModuleLayer applicationLayer,
+            io.vidocq.foy.spi.jsp.JspEngine engine) {
         ComponentFactory factory = options.componentFactory();
         VidocqServletContext ctx = newContext(model, options);
         try (var rollback = new Rollback(ctx)) {

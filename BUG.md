@@ -27,12 +27,16 @@
   filters, servlet, `RequestDispatcher` forward and include, error pages, async dispatches and
   `AsyncListener` events, which all run on the pipeline thread), the `AsyncContext.start` runnables,
   and the existing uses: upgrade handler `init`/`destroy`, read and write listener callbacks, session
-  reaper. Tests: `RequestContextClassLoaderTest` (`theRequestRunsWithTheApplicationLoaderAndTheThreadGetsItsOwnBack`,
+  reaper. It also wraps the whole of `WebAppDeployer.deploy` (initializers, context listeners, component
+  instantiation, `JspEngine.deploy`, servlet and filter `init`, the tear-down of a failed deployment) and
+  of `Deployment.undeploy` (upgrade handlers, `destroy`, session invalidation, `contextDestroyed`), and
+  the bridge's dispatch entry: a cross-context forward, include or async dispatch runs with the target
+  context's loader, and the caller's loader comes back when it returns.
+  Tests: `RequestContextClassLoaderTest` (`theRequestRunsWithTheApplicationLoaderAndTheThreadGetsItsOwnBack`,
   `theErrorPageRunsWithTheApplicationLoader`, `asyncStartListenersAndDispatchRunWithTheApplicationLoader`
-  failed before the fix; `withoutAnApplicationLoaderTheContextLoaderIsLeftUntouched` pins the null case).
-- Not covered: deployment and undeployment (initializers, `contextInitialized`, `init`,
-  `contextDestroyed`, `destroy`) still run with the deploying thread's context loader, and a cross-context
-  dispatch keeps the loader of the calling context.
+  failed before the fix; `withoutAnApplicationLoaderTheContextLoaderIsLeftUntouched` pins the null case) and
+  `DeploymentContextClassLoaderTest` (`deploymentAndUndeploymentRunTheApplicationWithItsLoader`,
+  `aCrossContextDispatchRunsTheTargetWithItsLoaderAndGivesTheCallerItsOwnBack`, both failed before the fix).
 
 ## BUG-20261022-05 — A Content-Type set as a header loses its media type
 

@@ -20,6 +20,7 @@
 package io.vidocq.foy.internal.boot;
 
 import io.vidocq.chappe.api.Handler;
+import io.vidocq.foy.internal.container.ContextLoaderScope;
 import io.vidocq.foy.internal.container.CrossContextRegistry;
 import io.vidocq.foy.internal.container.VidocqServletContext;
 import io.vidocq.foy.internal.listener.ListenerRegistry;
@@ -103,6 +104,17 @@ public final class Deployment implements AutoCloseable {
     static void undeploy(VidocqServletContext servletContext, ListenerRegistry contextListeners,
                          List<Servlet> initializedServlets, List<Filter> initializedFilters, Path tempDir,
                          SessionManager sessions) {
+        // The application's destroy(), session and context listeners run with its class loader as
+        // context loader; the calling thread gets its own back (BUG-20261022-06).
+        try (var _ = ContextLoaderScope.enter(servletContext.applicationClassLoader())) {
+            undeployWithinScope(servletContext, contextListeners, initializedServlets, initializedFilters, tempDir,
+                    sessions);
+        }
+    }
+
+    private static void undeployWithinScope(VidocqServletContext servletContext, ListenerRegistry contextListeners,
+                                            List<Servlet> initializedServlets, List<Filter> initializedFilters,
+                                            Path tempDir, SessionManager sessions) {
         // Upgraded connections first: their handlers' destroy() runs while the application is intact.
         try { servletContext.closeUpgradedConnections(); }
         catch (RuntimeException e) { warn("closing the upgraded connections failed", e); }

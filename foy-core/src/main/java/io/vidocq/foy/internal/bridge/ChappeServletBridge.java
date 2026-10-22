@@ -1196,7 +1196,12 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
                        DispatcherType type) throws IOException, ServletException {
         // Section 6.2.5: a named dispatch matches no URL pattern, only the target's servlet-name mappings.
         String filterPath = target.named() ? null : target.path();
-        invoke(target, req, res, type, filterRegistry.chain(filterPath, type, target.servletName()));
+        // This bridge is the target context's: a cross-context dispatch (getContext(...) forward or
+        // include, AsyncContext.dispatch(ctx, path)) runs the target application with its own class
+        // loader, and the caller's comes back when it returns (BUG-20261022-06).
+        try (var _ = ContextLoaderScope.enter(servletContext.applicationClassLoader())) {
+            invoke(target, req, res, type, filterRegistry.chain(filterPath, type, target.servletName()));
+        }
     }
 
     private void invoke(DispatchTarget target, ServletRequest req, ServletResponse res,
