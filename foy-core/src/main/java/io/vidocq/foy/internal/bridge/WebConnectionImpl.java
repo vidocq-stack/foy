@@ -84,7 +84,7 @@ final class WebConnectionImpl implements WebConnection {
     private final UpgradedOutputStream output;
     private final AtomicBoolean closed = new AtomicBoolean();
     /** Registered with the context: undeploy closes the connection. */
-    private final AutoCloseable undeployHook = this::close;
+    private final AutoCloseable undeployHook = this;
 
     /** Guards the fields below. */
     private final Object state = new Object();

@@ -224,7 +224,8 @@ public final class SessionManager implements AutoCloseable {
         reaper = Executors.newSingleThreadScheduledExecutor(
                 Thread.ofVirtual().name("foy-session-reaper").factory());
         long millis = Math.max(1, period.toMillis());
-        reaper.scheduleWithFixedDelay(this::reapSafely, millis, millis, TimeUnit.MILLISECONDS);
+        // The periodic task never completes on its own and reapSafely catches its failures: its future is not needed.
+        var _ = reaper.scheduleWithFixedDelay(this::reapSafely, millis, millis, TimeUnit.MILLISECONDS);
     }
 
     synchronized boolean isReaperRunning() {

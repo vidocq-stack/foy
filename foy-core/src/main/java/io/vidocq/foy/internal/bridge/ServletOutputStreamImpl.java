@@ -174,7 +174,7 @@ public final class ServletOutputStreamImpl extends ServletOutputStream {
         Thread current = Thread.currentThread();
         if (!retired.isEmpty() && retired.contains(current)) return false;
         Thread c = claimant;
-        return c == null || c == current;
+        return c == null || c.equals(current);
     }
 
     private void checkWritable() throws IOException {
