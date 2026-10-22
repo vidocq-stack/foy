@@ -100,7 +100,7 @@ public final class DescriptorMerger {
          * @throws IllegalArgumentException when {@code descriptorOf} reports a class misusing the
          *         Servlet annotations; callers fail the deployment
          */
-        public static AnnotatedComponents fromDescriptors(Iterable<Class<?>> classes,
+        public static AnnotatedComponents fromDescriptors(Iterable<? extends Class<?>> classes,
                                                           Function<Class<?>, WebComponentDescriptor> descriptorOf,
                                                           BiFunction<Class<?>, Class<?>, ? extends Supplier<?>> instances) {
             List<ServletDecl> servlets = new ArrayList<>();
