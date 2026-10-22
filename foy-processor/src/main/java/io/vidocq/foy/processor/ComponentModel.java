@@ -29,6 +29,7 @@ import javax.lang.model.element.TypeElement;
 import javax.lang.model.util.ElementFilter;
 import javax.tools.Diagnostic;
 import java.util.ArrayList;
+import java.util.EnumSet;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -106,7 +107,7 @@ record ComponentModel(String packageName,
             return Optional.empty();
         }
         String fqcn = env.getElementUtils().getBinaryName(type).toString();
-        MainElements e = kind == Kind.SERVLET || kind == Kind.FILTER
+        MainElements e = EnumSet.of(Kind.SERVLET, Kind.FILTER).contains(kind)
                 ? mainElements(type, main, kind, fqcn, env) : MainElements.none();
         if (e == null) {
             return Optional.empty();
@@ -207,7 +208,7 @@ record ComponentModel(String packageName,
             return null;
         }
         var values = AnnotationReader.values(main, env);
-        boolean servlet = kind == Kind.SERVLET;
+        boolean servlet = Kind.SERVLET.equals(kind);
         String declared = (String) values.get(servlet ? "name" : "filterName").getValue();
         String name = declared.isEmpty() ? fqcn : declared;
         List<String> patterns = new ArrayList<>(

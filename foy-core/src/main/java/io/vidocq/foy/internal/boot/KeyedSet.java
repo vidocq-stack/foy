@@ -69,4 +69,18 @@ final class KeyedSet<E> extends AbstractSet<E> {
     public boolean contains(Object o) {
         return type.isInstance(o) && byKey.containsKey(key.apply(type.cast(o)));
     }
+
+    /** The {@link Set} contract: the same size and every element of the other set here, compared by key. */
+    @Override
+    public boolean equals(Object o) {
+        return o == this || (o instanceof Set<?> other && other.size() == size() && containsAll(other));
+    }
+
+    /** The {@link Set} contract: the sum of the elements' hash codes. */
+    @Override
+    public int hashCode() {
+        int hash = 0;
+        for (E e : byKey.values()) hash += e.hashCode();
+        return hash;
+    }
 }
