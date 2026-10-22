@@ -41,7 +41,9 @@ import java.util.List;
 public final class CdiWebComponentsCreator implements SyntheticBeanCreator<CdiWebComponents> {
 
     /** Public no-arg constructor, required by the container. */
-    public CdiWebComponentsCreator() {}
+    public CdiWebComponentsCreator() {
+        // Stateless: everything comes from the parameters given to create.
+    }
 
     @Override
     public CdiWebComponents create(Instance<Object> lookup, Parameters params) {

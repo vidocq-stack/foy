@@ -109,7 +109,9 @@ public class FoyWebExtension implements BuildCompatibleExtension {
     private final Map<String, Component> components = new TreeMap<>();
 
     /** Public no-arg constructor, required by {@code ServiceLoader}. */
-    public FoyWebExtension() {}
+    public FoyWebExtension() {
+        // Nothing to set up: the components are collected by the build-time callbacks.
+    }
 
     /**
      * Web components without a scope become {@code @Dependent} beans (one instance per declaration,
@@ -123,7 +125,7 @@ public class FoyWebExtension implements BuildCompatibleExtension {
         if (!hasBeanDefiningAnnotation(cls)) {
             clazz.addAnnotation(Dependent.class);
         }
-        if (cls.isPlainClass() && !cls.isAbstract()) record(cls);
+        if (cls.isPlainClass() && !cls.isAbstract()) recordComponent(cls);
     }
 
     /**
@@ -133,11 +135,11 @@ public class FoyWebExtension implements BuildCompatibleExtension {
      */
     @Registration(types = {Servlet.class, Filter.class, EventListener.class})
     public void collect(BeanInfo bean) {
-        if (bean.isClassBean()) record(bean.declaringClass());
+        if (bean.isClassBean()) recordComponent(bean.declaringClass());
     }
 
     /** Records {@code cls} when it carries a Web* annotation; recording a class twice is harmless. */
-    private void record(ClassInfo cls) {
+    private void recordComponent(ClassInfo cls) {
         String servletName = nameOf(cls, WebServlet.class, "name");
         String filterName = nameOf(cls, WebFilter.class, "filterName");
         if (servletName == null && filterName == null && !cls.hasAnnotation(WebListener.class)) return;
@@ -212,7 +214,7 @@ public class FoyWebExtension implements BuildCompatibleExtension {
             ClassInfo declaration;
             try {
                 declaration = annotation.declaration();
-            } catch (IllegalArgumentException e) {
+            } catch (IllegalArgumentException _) {
                 // vauban's model throws for an annotation type it has not indexed.
                 if (isKnownApiAnnotation(name)) continue;
                 return true;
