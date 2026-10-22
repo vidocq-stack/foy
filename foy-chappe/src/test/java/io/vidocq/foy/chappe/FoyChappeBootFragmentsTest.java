@@ -21,8 +21,7 @@ package io.vidocq.foy.chappe;
 
 import io.vidocq.chappe.api.Server;
 import jakarta.servlet.http.HttpServlet;
-import jakarta.servlet.http.HttpServletRequest;
-import jakarta.servlet.http.HttpServletResponse;
+import java.nio.charset.StandardCharsets;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -42,15 +41,7 @@ import java.util.jar.JarOutputStream;
 import static org.junit.jupiter.api.Assertions.*;
 
 /** Native discovery of web fragments and container initializers on the class path. */
-public class FoyChappeBootFragmentsTest {
-
-    /** Servlet of the application itself (test classes), declared by an explicit web.xml. */
-    public static class AppServlet extends HttpServlet {
-        @Override protected void doGet(HttpServletRequest q, HttpServletResponse r) throws IOException {
-            Object listened = q.getAttribute("exl");
-            r.getWriter().write(listened == null ? "app" : "app:" + listened);
-        }
-    }
+class FoyChappeBootFragmentsTest {
 
     /**
      * A jar whose fragment {@code F} declares {@code fragpkg.FragServlet} on {@code /frag} and
@@ -102,10 +93,10 @@ public class FoyChappeBootFragmentsTest {
                   <name>F</name>
                   <servlet><servlet-name>frag</servlet-name><servlet-class>fragpkg.FragServlet</servlet-class></servlet>
                   <servlet-mapping><servlet-name>frag</servlet-name><url-pattern>/frag</url-pattern></servlet-mapping>
-                </web-fragment>""".getBytes());
+                </web-fragment>""".getBytes(StandardCharsets.UTF_8));
             out.closeEntry();
             out.putNextEntry(new JarEntry("META-INF/services/jakarta.servlet.ServletContainerInitializer"));
-            out.write("fragpkg.FragSci\n".getBytes());
+            out.write("fragpkg.FragSci\n".getBytes(StandardCharsets.UTF_8));
             out.closeEntry();
         }
         return jar;
@@ -139,12 +130,12 @@ public class FoyChappeBootFragmentsTest {
             out.write(Files.readAllBytes(classes.resolve(pkg).resolve("Sci.class")));
             out.closeEntry();
             out.putNextEntry(new JarEntry("META-INF/services/jakarta.servlet.ServletContainerInitializer"));
-            out.write((pkg + ".Sci\n").getBytes());
+            out.write((pkg + ".Sci\n").getBytes(StandardCharsets.UTF_8));
             out.closeEntry();
             if (fragmentName != null) {
                 out.putNextEntry(new JarEntry("META-INF/web-fragment.xml"));
                 out.write(("<web-fragment xmlns=\"https://jakarta.ee/xml/ns/jakartaee\" version=\"6.1\"><name>"
-                        + fragmentName + "</name></web-fragment>").getBytes());
+                        + fragmentName + "</name></web-fragment>").getBytes(StandardCharsets.UTF_8));
                 out.closeEntry();
             }
         }
@@ -152,7 +143,7 @@ public class FoyChappeBootFragmentsTest {
     }
 
     private static String testClasses() throws Exception {
-        return Path.of(AppServlet.class.getProtectionDomain().getCodeSource().getLocation().toURI()).toString();
+        return Path.of(FragmentAppServlet.class.getProtectionDomain().getCodeSource().getLocation().toURI()).toString();
     }
 
     private static URLClassLoader loader(Path... jars) throws Exception {
@@ -167,7 +158,7 @@ public class FoyChappeBootFragmentsTest {
               %s
               <servlet><servlet-name>app</servlet-name><servlet-class>%s</servlet-class></servlet>
               <servlet-mapping><servlet-name>app</servlet-name><url-pattern>/app</url-pattern></servlet-mapping>
-            </web-app>""".formatted(extra, AppServlet.class.getName());
+            </web-app>""".formatted(extra, FragmentAppServlet.class.getName());
     }
 
     /** Serves {@code mounted} and returns the status of each path, as {@code status:body}. */
@@ -175,7 +166,7 @@ public class FoyChappeBootFragmentsTest {
         Server server = Server.builder().host("127.0.0.1").port(0).handler(mounted.handler()).build();
         server.start();
         int port = server.port();
-        try {
+        try (mounted; server) {
             var client = HttpClient.newHttpClient();
             String[] out = new String[paths.length];
             for (int i = 0; i < paths.length; i++) {
@@ -185,9 +176,6 @@ public class FoyChappeBootFragmentsTest {
                 out[i] = resp.statusCode() == 200 ? "200:" + resp.body() : String.valueOf(resp.statusCode());
             }
             return out;
-        } finally {
-            server.stop();
-            mounted.close();
         }
     }
 
@@ -207,7 +195,7 @@ public class FoyChappeBootFragmentsTest {
         try (var l = loader(fragmentJar(dir), boom)) {
             String xml = webXml("<absolute-ordering><name>Other</name></absolute-ordering>");
             var mounted = FoyChappeBoot.builder().classLoader(l)
-                    .webXml(new ByteArrayInputStream(xml.getBytes())).build().orElseThrow();
+                    .webXml(new ByteArrayInputStream(xml.getBytes(StandardCharsets.UTF_8))).build().orElseThrow();
             assertArrayEquals(new String[] {"200:app", "404", "404"}, get(mounted, "/app", "/frag", "/sci"));
         }
     }
@@ -217,7 +205,7 @@ public class FoyChappeBootFragmentsTest {
         try (var l = loader(fragmentJar(dir))) {
             String xml = webXml("").replace("version=\"6.1\"", "version=\"6.1\" metadata-complete=\"true\"");
             var mounted = FoyChappeBoot.builder().classLoader(l)
-                    .webXml(new ByteArrayInputStream(xml.getBytes())).build().orElseThrow();
+                    .webXml(new ByteArrayInputStream(xml.getBytes(StandardCharsets.UTF_8))).build().orElseThrow();
             assertArrayEquals(new String[] {"200:app", "404", "200:sci"}, get(mounted, "/app", "/frag", "/sci"));
         }
     }
@@ -232,16 +220,16 @@ public class FoyChappeBootFragmentsTest {
     @Test
     void absoluteOrderingWithoutOthersSkipsLibraryInitializersButRunsTheApplicationOnes(@TempDir Path dir)
             throws Exception {
-        String start = "ctx.addServlet(\"own\", new " + AppServlet.class.getCanonicalName() + "()).addMapping(\"/own\");";
+        String start = "ctx.addServlet(\"own\", new " + FragmentAppServlet.class.getCanonicalName() + "()).addMapping(\"/own\");";
         Path app = sciJar(dir, "app.jar", "apppkg", "", start, null);
         String xml = webXml("<absolute-ordering><name>Other</name></absolute-ordering>");
         try (var l = loader(app)) {
             var library = FoyChappeBoot.builder().classLoader(l)
-                    .webXml(new ByteArrayInputStream(xml.getBytes())).build().orElseThrow();
+                    .webXml(new ByteArrayInputStream(xml.getBytes(StandardCharsets.UTF_8))).build().orElseThrow();
             assertArrayEquals(new String[] {"200:app", "404"}, get(library, "/app", "/own"),
                     "a fragment-less jar is an unnamed fragment, excluded without <others/>");
             var own = FoyChappeBoot.builder().classLoader(l).applicationRoot(app.toUri().toURL())
-                    .webXml(new ByteArrayInputStream(xml.getBytes())).build().orElseThrow();
+                    .webXml(new ByteArrayInputStream(xml.getBytes(StandardCharsets.UTF_8))).build().orElseThrow();
             assertArrayEquals(new String[] {"200:app", "200:app"}, get(own, "/app", "/own"),
                     "the application's own initializer always runs");
         }
@@ -252,15 +240,12 @@ public class FoyChappeBootFragmentsTest {
         try (var l = loader(fragmentJar(dir))) {
             String xml = webXml("<default-context-path>/shop</default-context-path>");
             var mounted = FoyChappeBoot.builder().classLoader(l)
-                    .webXml(new ByteArrayInputStream(xml.getBytes())).build().orElseThrow();
+                    .webXml(new ByteArrayInputStream(xml.getBytes(StandardCharsets.UTF_8))).build().orElseThrow();
             assertEquals("/shop", mounted.mountPrefix());
             assertEquals("/shop", mounted.servletContext().getContextPath());
             assertArrayEquals(new String[] {"200:app", "200:frag"}, get(mounted, "/app", "/frag"));
         }
     }
-
-    /** The type the application initializer of {@link #excludedJarContributesNoResourceNorHandledClass} handles. */
-    public interface Marker {}
 
     /**
      * Compiles {@code sources} (binary name to source) against the Servlet API and the test
@@ -294,7 +279,7 @@ public class FoyChappeBootFragmentsTest {
             }
             for (var e : resources.entrySet()) {
                 out.putNextEntry(new JarEntry(e.getKey()));
-                out.write(e.getValue().getBytes());
+                out.write(e.getValue().getBytes(StandardCharsets.UTF_8));
                 out.closeEntry();
             }
         }
@@ -319,7 +304,7 @@ public class FoyChappeBootFragmentsTest {
                     new Class<?>[]{jakarta.enterprise.inject.spi.Bean.class}, (p, m, a) -> switch (m.getName()) {
                         case "getBeanClass" -> c;
                         case "hashCode" -> System.identityHashCode(p);
-                        case "equals" -> p == a[0];
+                        case "equals" -> System.identityHashCode(p) == System.identityHashCode(a[0]);
                         case "toString" -> "Bean[" + c.getName() + "]";
                         default -> throw new UnsupportedOperationException(m.getName());
                     }));
@@ -337,7 +322,7 @@ public class FoyChappeBootFragmentsTest {
                     case "getReference" -> ((jakarta.enterprise.inject.spi.Bean<?>) a[0]).getBeanClass()
                             .getDeclaredConstructor().newInstance();
                     case "hashCode" -> System.identityHashCode(p);
-                    case "equals" -> p == a[0];
+                    case "equals" -> System.identityHashCode(p) == System.identityHashCode(a[0]);
                     case "toString" -> "FakeBeanManager";
                     default -> throw new UnsupportedOperationException(m.getName());
                 });
@@ -428,7 +413,7 @@ public class FoyChappeBootFragmentsTest {
         return FoyChappeBoot.builder().classLoader(h.loader())
                 .beanManager(beans(h.loader().loadClass("expkg.ExServlet"), h.loader().loadClass("expkg.ExFilter"),
                         h.loader().loadClass("expkg.ExListener")))
-                .webXml(new ByteArrayInputStream(webXml("<absolute-ordering/>").getBytes()));
+                .webXml(new ByteArrayInputStream(webXml("<absolute-ordering/>").getBytes(StandardCharsets.UTF_8)));
     }
 
     /** Serves {@code mounted} and returns the response of each path. */
@@ -437,7 +422,7 @@ public class FoyChappeBootFragmentsTest {
         Server server = Server.builder().host("127.0.0.1").port(0).handler(mounted.handler()).build();
         server.start();
         int port = server.port();
-        try {
+        try (mounted; server) {
             var client = HttpClient.newHttpClient();
             var out = new java.util.ArrayList<HttpResponse<String>>();
             for (String path : paths) {
@@ -446,9 +431,6 @@ public class FoyChappeBootFragmentsTest {
                         HttpResponse.BodyHandlers.ofString()));
             }
             return out;
-        } finally {
-            server.stop();
-            mounted.close();
         }
     }
 
@@ -496,7 +478,7 @@ public class FoyChappeBootFragmentsTest {
                 var boot = FoyChappeBoot.builder().classLoader(loader)
                         .beanManager(beans(loader.loadClass("expkg.ExServlet"), loader.loadClass("expkg.ExFilter"),
                                 loader.loadClass("expkg.ExListener")))
-                        .webXml(new ByteArrayInputStream(xml.getBytes()));
+                        .webXml(new ByteArrayInputStream(xml.getBytes(StandardCharsets.UTF_8)));
                 System.clearProperty("expkg.exsci");
                 var before = fetch(boot.build().orElseThrow(), "/ex");
                 assertEquals(200, before.get(0).statusCode(), "without the hook the shared jar keeps the class");
@@ -504,7 +486,7 @@ public class FoyChappeBootFragmentsTest {
                 var mounted = FoyChappeBoot.builder().classLoader(loader)
                         .beanManager(beans(loader.loadClass("expkg.ExServlet"), loader.loadClass("expkg.ExFilter"),
                                 loader.loadClass("expkg.ExListener")))
-                        .webXml(new ByteArrayInputStream(xml.getBytes()))
+                        .webXml(new ByteArrayInputStream(xml.getBytes(StandardCharsets.UTF_8)))
                         .componentSource(type -> type.getName().startsWith("expkg.") ? fragmentJar : null)
                         .build().orElseThrow();
                 var responses = fetch(mounted, "/ex", "/app");
@@ -547,12 +529,13 @@ public class FoyChappeBootFragmentsTest {
 
     @Test
     void componentSourceRejectsNull() {
-        assertThrows(NullPointerException.class, () -> FoyChappeBoot.builder().componentSource(null));
+        var builder = FoyChappeBoot.builder();
+        assertThrows(NullPointerException.class, () -> builder.componentSource(null));
     }
 
     @Test
     void excludedJarContributesNoResourceNorHandledClass(@TempDir Path dir) throws Exception {
-        String marker = Marker.class.getCanonicalName();
+        String marker = FragmentMarker.class.getCanonicalName();
         String fragment = "<web-fragment xmlns=\"https://jakarta.ee/xml/ns/jakartaee\" version=\"6.1\"><name>%s</name>"
                 + "</web-fragment>";
         // ex.jar (no class index, so only a class-bytes scan could see it) and exidx.jar (a class
@@ -568,7 +551,7 @@ public class FoyChappeBootFragmentsTest {
         Path exIdx = compiledJar(dir, "exidx.jar", java.util.Map.of(
                 "exidxpkg.IdxMarker", "package exidxpkg; public class IdxMarker implements " + marker + " {}"),
                 java.util.Map.of("META-INF/web-fragment.xml", fragment.formatted("ExIdx"),
-                        "META-INF/foy/class-index.list", "exidxpkg.IdxMarker|" + Marker.class.getName() + "|\n",
+                        "META-INF/foy/class-index.list", "exidxpkg.IdxMarker|" + FragmentMarker.class.getName() + "|\n",
                         "META-INF/resources/exidx.txt", "excluded"));
         // app.jar: the application, whose initializer records the classes it is handed.
         Path app = compiledJar(dir, "app.jar", java.util.Map.of(
@@ -589,7 +572,7 @@ public class FoyChappeBootFragmentsTest {
             String xml = webXml("<absolute-ordering><name>Other</name></absolute-ordering>");
             var mounted = FoyChappeBoot.builder().classLoader(l).applicationRoot(app.toUri().toURL())
                     .beanManager(servletBeans(l.loadClass("expkg.ExServlet")))
-                    .webXml(new ByteArrayInputStream(xml.getBytes())).build().orElseThrow();
+                    .webXml(new ByteArrayInputStream(xml.getBytes(StandardCharsets.UTF_8))).build().orElseThrow();
             var ctx = mounted.servletContext();
             assertEquals("[apppkg.AppMarker]", ctx.getAttribute("handled"),
                     "an excluded jar's classes are not handed to @HandlesTypes");
@@ -609,7 +592,7 @@ public class FoyChappeBootFragmentsTest {
         try (var l = loader(fragmentJar(dir))) {
             String xml = webXml("<default-context-path>/shop</default-context-path>");
             var mounted = FoyChappeBoot.builder().classLoader(l).contextPath("/")
-                    .webXml(new ByteArrayInputStream(xml.getBytes())).build().orElseThrow();
+                    .webXml(new ByteArrayInputStream(xml.getBytes(StandardCharsets.UTF_8))).build().orElseThrow();
             assertEquals("", mounted.mountPrefix());
             mounted.close();
         }

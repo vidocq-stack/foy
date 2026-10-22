@@ -47,7 +47,7 @@ import java.util.jar.JarOutputStream;
 import static org.junit.jupiter.api.Assertions.*;
 
 /** {@code META-INF/resources} of the jars reaches the servlet context (§4.6). */
-public class FoyChappeBootResourcesTest {
+class FoyChappeBootResourcesTest {
 
     /** Stand-in for the default servlet (Phase 4): streams {@code getResourceAsStream} with {@code getMimeType}. */
     public static class StaticServlet extends HttpServlet {
@@ -89,12 +89,12 @@ public class FoyChappeBootResourcesTest {
     }
 
     private static InputStream webXml() {
-        return new ByteArrayInputStream(("""
+        return new ByteArrayInputStream("""
             <web-app xmlns="https://jakarta.ee/xml/ns/jakartaee" version="6.1">
               <servlet><servlet-name>static</servlet-name><servlet-class>%s</servlet-class></servlet>
               <servlet-mapping><servlet-name>static</servlet-name><url-pattern>/css/*</url-pattern></servlet-mapping>
               <servlet-mapping><servlet-name>static</servlet-name><url-pattern>/index.html</url-pattern></servlet-mapping>
-            </web-app>""").formatted(StaticServlet.class.getName()).getBytes(StandardCharsets.UTF_8));
+            </web-app>""".formatted(StaticServlet.class.getName()).getBytes(StandardCharsets.UTF_8));
     }
 
     /** Status, content type and body of each path, as {@code status:type:body}. */
@@ -102,7 +102,7 @@ public class FoyChappeBootResourcesTest {
         Server server = Server.builder().host("127.0.0.1").port(0).handler(mounted.handler()).build();
         server.start();
         int port = server.port();
-        try {
+        try (mounted; server) {
             var client = HttpClient.newHttpClient();
             String[] out = new String[paths.length];
             for (int i = 0; i < paths.length; i++) {
@@ -113,9 +113,6 @@ public class FoyChappeBootResourcesTest {
                         + resp.body();
             }
             return out;
-        } finally {
-            server.stop();
-            mounted.close();
         }
     }
 

@@ -83,21 +83,18 @@ class FoyChappeBootTest {
 
         var mounted = FoyChappeBoot.builder().contextPath("/")
                 .classLoader(getClass().getClassLoader())
-                .webXml(new ByteArrayInputStream(xml.getBytes()))
+                .webXml(new ByteArrayInputStream(xml.getBytes(StandardCharsets.UTF_8)))
                 .build().orElseThrow();
         assertEquals(1, INITS.get(), "load-on-startup servlet initialised at deploy time");
 
         Server server = Server.builder().host("127.0.0.1").port(0).handler(mounted.handler()).build();
         server.start();
         int port = server.port();
-        try {
+        try (mounted; server) {
             var resp = HttpClient.newHttpClient().send(
                     HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port + "/hello")).build(),
                     HttpResponse.BodyHandlers.ofString());
             assertEquals("hello foy", resp.body());
-        } finally {
-            server.stop();
-            mounted.close();
         }
         assertEquals(1, DESTROYS.get());
     }
@@ -110,7 +107,7 @@ class FoyChappeBootTest {
             </web-app>""".formatted(defaultContextPath == null ? ""
                 : "<default-context-path>" + defaultContextPath + "</default-context-path>", Plain.class.getName());
         return FoyChappeBoot.builder().classLoader(FoyChappeBootTest.class.getClassLoader())
-                .discoverPluggability(false).webXml(new ByteArrayInputStream(xml.getBytes()));
+                .discoverPluggability(false).webXml(new ByteArrayInputStream(xml.getBytes(StandardCharsets.UTF_8)));
     }
 
     @Test
@@ -205,7 +202,7 @@ class FoyChappeBootTest {
                 return new Application() {
                     @Override public Servlet servlet() { return new PageServlet(); }
                     @Override public Servlet servletFor(String jspFile) { return new PageServlet(); }
-                    @Override public void close() {}
+                    @Override public void close() { /* not needed by this test */ }
                 };
             }
 
@@ -265,7 +262,7 @@ class FoyChappeBootTest {
             lookups.add(layer);
             return Optional.of(engine);
         };
-        try (var mounted = FoyChappeBoot.builder().classLoader(new ClassLoader(null) {})
+        try (var _ = FoyChappeBoot.builder().classLoader(new ClassLoader(null) {})
                 .applicationLayer(ModuleLayer.empty()).jspEngineLookup(lookup).build().orElseThrow()) {
             assertEquals(List.of(ModuleLayer.empty()), lookups);
             assertEquals(List.of(ModuleLayer.empty()), asked);
@@ -282,7 +279,7 @@ class FoyChappeBootTest {
         var lookups = new AtomicInteger();
         var openings = new AtomicInteger();
         var engine = pageEngine(true, new ArrayList<>(), new ArrayList<>(), openings);
-        try (var mounted = FoyChappeBoot.builder().classLoader(new ClassLoader(null) {})
+        try (var _ = FoyChappeBoot.builder().classLoader(new ClassLoader(null) {})
                 .jspEngineLookup(layer -> {
                     lookups.incrementAndGet();
                     return Optional.of(engine);
@@ -299,7 +296,7 @@ class FoyChappeBootTest {
                 return new Application() {
                     @Override public Servlet servlet() { return new PageServlet(); }
                     @Override public Servlet servletFor(String jspFile) { return new PageServlet(); }
-                    @Override public void close() {}
+                    @Override public void close() { /* not needed by this test */ }
                 };
             }
 
@@ -349,7 +346,8 @@ class FoyChappeBootTest {
 
     @Test
     void applicationLayerRejectsNull() {
-        assertThrows(NullPointerException.class, () -> FoyChappeBoot.builder().applicationLayer(null));
+        var builder = FoyChappeBoot.builder();
+        assertThrows(NullPointerException.class, () -> builder.applicationLayer(null));
     }
 
     @Test
@@ -362,7 +360,7 @@ class FoyChappeBootTest {
 
         var builder = FoyChappeBoot.builder().contextPath("/")
                 .classLoader(getClass().getClassLoader())
-                .webXml(new ByteArrayInputStream(xml.getBytes()));
+                .webXml(new ByteArrayInputStream(xml.getBytes(StandardCharsets.UTF_8)));
         var ex = assertThrows(ServletException.class, builder::build);
         assertNotNull(ex.getCause(), "the underlying failure is kept as the cause");
     }
@@ -378,7 +376,7 @@ class FoyChappeBootTest {
                 (p, m, a) -> switch (m.getName()) {
                     case "getBeanClass" -> MisusedFilter.class;
                     case "hashCode" -> System.identityHashCode(p);
-                    case "equals" -> p == a[0];
+                    case "equals" -> System.identityHashCode(p) == System.identityHashCode(a[0]);
                     case "toString" -> "Bean[" + MisusedFilter.class.getName() + "]";
                     default -> throw new UnsupportedOperationException(m.getName());
                 });
@@ -386,7 +384,7 @@ class FoyChappeBootTest {
                 new Class<?>[]{BeanManager.class}, (p, m, a) -> switch (m.getName()) {
                     case "getBeans" -> a[0] == Servlet.class ? Set.of(bean) : Set.of();
                     case "hashCode" -> System.identityHashCode(p);
-                    case "equals" -> p == a[0];
+                    case "equals" -> System.identityHashCode(p) == System.identityHashCode(a[0]);
                     case "toString" -> "FakeBeanManager";
                     default -> throw new UnsupportedOperationException(m.getName());
                 });
@@ -419,12 +417,12 @@ class FoyChappeBootTest {
 
         var mounted = FoyChappeBoot.builder().contextPath("/")
                 .classLoader(getClass().getClassLoader())
-                .webXml(new ByteArrayInputStream(xml.getBytes()))
+                .webXml(new ByteArrayInputStream(xml.getBytes(StandardCharsets.UTF_8)))
                 .build().orElseThrow();
         Server server = Server.builder().host("127.0.0.1").port(0).handler(mounted.handler()).build();
         server.start();
         int port = server.port();
-        try {
+        try (mounted; server) {
             var client = HttpClient.newHttpClient();
             assertEquals("hello still", client.send(
                     HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port + "/hello")).build(),
@@ -433,9 +431,6 @@ class FoyChappeBootTest {
                     HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port + "/bad")).build(),
                     HttpResponse.BodyHandlers.ofString()).statusCode());
             assertNull(mounted.servletContext().getServletRegistration("notAServlet"));
-        } finally {
-            server.stop();
-            mounted.close();
         }
     }
 
@@ -451,7 +446,7 @@ class FoyChappeBootTest {
             </web-app>""".formatted(BothPatterns.class.getName());
         var builder = FoyChappeBoot.builder().contextPath("/")
                 .classLoader(getClass().getClassLoader())
-                .webXml(new ByteArrayInputStream(xml.getBytes()));
+                .webXml(new ByteArrayInputStream(xml.getBytes(StandardCharsets.UTF_8)));
         var ex = assertThrows(ServletException.class, builder::build);
         assertTrue(ex.getMessage().contains(BothPatterns.class.getName()), ex.getMessage());
     }
@@ -469,7 +464,7 @@ class FoyChappeBootTest {
         for (int seconds : new int[] {-120, -1, 0}) {
             var mounted = FoyChappeBoot.builder().contextPath("/").sessionTimeoutSeconds(seconds)
                     .classLoader(getClass().getClassLoader())
-                    .webXml(new ByteArrayInputStream(xml.getBytes()))
+                    .webXml(new ByteArrayInputStream(xml.getBytes(StandardCharsets.UTF_8)))
                     .build().orElseThrow();
             try {
                 assertEquals(0, mounted.servletContext().getSessionTimeout(), "seconds=" + seconds);
@@ -481,7 +476,7 @@ class FoyChappeBootTest {
         }
         var mounted = FoyChappeBoot.builder().contextPath("/").sessionTimeoutSeconds(90)
                 .classLoader(getClass().getClassLoader())
-                .webXml(new ByteArrayInputStream(xml.getBytes()))
+                .webXml(new ByteArrayInputStream(xml.getBytes(StandardCharsets.UTF_8)))
                 .build().orElseThrow();
         try {
             assertEquals(2, mounted.servletContext().getSessionTimeout());
@@ -529,7 +524,7 @@ class FoyChappeBootTest {
             </web-app>""".formatted(Hello.class.getName());
         try (var mounted = FoyChappeBoot.builder().contextPath("/app")
                 .classLoader(getClass().getClassLoader()).discoverPluggability(false)
-                .webXml(new ByteArrayInputStream(xml.getBytes()))
+                .webXml(new ByteArrayInputStream(xml.getBytes(StandardCharsets.UTF_8)))
                 .build().orElseThrow()) {
             assertEquals("/app", mounted.mountPrefix());
             // The handler dispatches on the full request path, context path included:
@@ -549,12 +544,10 @@ class FoyChappeBootTest {
         Server server = Server.builder().host("127.0.0.1").port(0).handler(router).build();
         server.start();
         int port = server.port();
-        try {
+        try (server) {
             return HttpClient.newHttpClient().send(
                     HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port + path)).build(),
                     HttpResponse.BodyHandlers.ofString());
-        } finally {
-            server.stop();
         }
     }
 
@@ -565,7 +558,7 @@ class FoyChappeBootTest {
               <servlet-mapping><servlet-name>p</servlet-name><url-pattern>/p</url-pattern></servlet-mapping>
             </web-app>""".formatted(versionAttribute, Plain.class.getName());
         return FoyChappeBoot.builder().contextPath("/").classLoader(FoyChappeBootTest.class.getClassLoader())
-                .discoverPluggability(false).webXml(new ByteArrayInputStream(xml.getBytes()))
+                .discoverPluggability(false).webXml(new ByteArrayInputStream(xml.getBytes(StandardCharsets.UTF_8)))
                 .build().orElseThrow();
     }
 
@@ -614,11 +607,11 @@ class FoyChappeBootTest {
             </web-app>""".formatted(SessionServlet.class.getName());
         var mounted = FoyChappeBoot.builder().contextPath("/").discoverPluggability(false)
                 .classLoader(getClass().getClassLoader())
-                .webXml(new ByteArrayInputStream(xml.getBytes())).build().orElseThrow();
+                .webXml(new ByteArrayInputStream(xml.getBytes(StandardCharsets.UTF_8))).build().orElseThrow();
         Server server = Server.builder().host("127.0.0.1").port(0).handler(mounted.handler()).build();
         server.start();
         int port = server.port();
-        try {
+        try (mounted; server) {
             assertEquals(0, mounted.activeSessions());
             var client = HttpClient.newBuilder().cookieHandler(new java.net.CookieManager()).build();
             client.send(HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port + "/open")).build(),
@@ -630,9 +623,6 @@ class FoyChappeBootTest {
             client.send(HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port + "/open")).build(),
                     HttpResponse.BodyHandlers.ofString());
             assertEquals(1, mounted.activeSessions());
-        } finally {
-            server.stop();
-            mounted.close();
         }
         assertEquals(0, mounted.activeSessions(), "closing the deployment invalidates every session");
     }
@@ -655,7 +645,7 @@ class FoyChappeBootTest {
             </web-app>""".formatted(DescriptorListener.class.getName(), Plain.class.getName());
         try (var mounted = FoyChappeBoot.builder().contextPath("/").discoverPluggability(false)
                 .classLoader(getClass().getClassLoader())
-                .webXml(new ByteArrayInputStream(xml.getBytes())).build().orElseThrow()) {
+                .webXml(new ByteArrayInputStream(xml.getBytes(StandardCharsets.UTF_8))).build().orElseThrow()) {
             var names = mounted.listenerClassNames();
             assertEquals(java.util.List.of(DescriptorListener.class.getName(),
                     ProgrammaticListener.class.getName()), names);

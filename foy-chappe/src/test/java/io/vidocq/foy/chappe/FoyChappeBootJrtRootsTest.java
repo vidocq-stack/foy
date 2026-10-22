@@ -20,6 +20,7 @@
 package io.vidocq.foy.chappe;
 
 import jakarta.servlet.http.HttpServlet;
+import java.nio.charset.StandardCharsets;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -69,7 +70,7 @@ class FoyChappeBootJrtRootsTest {
             out.write(Files.readAllBytes(classes.resolve("jrtpkg").resolve("Sci.class")));
             out.closeEntry();
             out.putNextEntry(new JarEntry("META-INF/services/jakarta.servlet.ServletContainerInitializer"));
-            out.write("jrtpkg.Sci\n".getBytes());
+            out.write("jrtpkg.Sci\n".getBytes(StandardCharsets.UTF_8));
             out.closeEntry();
         }
         return jar;
