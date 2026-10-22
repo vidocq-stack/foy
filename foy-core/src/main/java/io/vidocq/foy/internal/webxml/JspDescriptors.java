@@ -26,9 +26,19 @@ import org.w3c.dom.*;
 
 /** Immutable Servlet API views of JSP configuration; preserves root/fragment ordering. */
 public final class JspDescriptors {
-    private static final Set<String> PROPERTIES = Set.of("el-ignored", "error-on-el-not-found", "page-encoding",
-            "scripting-invalid", "is-xml", "deferred-syntax-allowed-as-literal", "trim-directive-whitespaces",
-            "default-content-type", "buffer", "error-on-undeclared-namespace");
+    private static final String EL_IGNORED = "el-ignored";
+    private static final String ERROR_ON_EL_NOT_FOUND = "error-on-el-not-found";
+    private static final String PAGE_ENCODING = "page-encoding";
+    private static final String SCRIPTING_INVALID = "scripting-invalid";
+    private static final String IS_XML = "is-xml";
+    private static final String DEFERRED_SYNTAX_ALLOWED_AS_LITERAL = "deferred-syntax-allowed-as-literal";
+    private static final String TRIM_DIRECTIVE_WHITESPACES = "trim-directive-whitespaces";
+    private static final String DEFAULT_CONTENT_TYPE = "default-content-type";
+    private static final String BUFFER = "buffer";
+    private static final String ERROR_ON_UNDECLARED_NAMESPACE = "error-on-undeclared-namespace";
+    private static final Set<String> PROPERTIES = Set.of(EL_IGNORED, ERROR_ON_EL_NOT_FOUND, PAGE_ENCODING,
+            SCRIPTING_INVALID, IS_XML, DEFERRED_SYNTAX_ALLOWED_AS_LITERAL, TRIM_DIRECTIVE_WHITESPACES,
+            DEFAULT_CONTENT_TYPE, BUFFER, ERROR_ON_UNDECLARED_NAMESPACE);
     private JspDescriptors() { }
     private record Taglib(String uri, String location) implements TaglibDescriptor {
         @Override public String getTaglibURI() { return uri; }
@@ -40,16 +50,16 @@ public final class JspDescriptors {
         @Override public Collection<String> getUrlPatterns() { return patterns; }
         @Override public Collection<String> getIncludePreludes() { return preludes; }
         @Override public Collection<String> getIncludeCodas() { return codas; }
-        @Override public String getElIgnored() { return properties.get("el-ignored"); }
-        @Override public String getErrorOnELNotFound() { return properties.get("error-on-el-not-found"); }
-        @Override public String getPageEncoding() { return properties.get("page-encoding"); }
-        @Override public String getScriptingInvalid() { return properties.get("scripting-invalid"); }
-        @Override public String getIsXml() { return properties.get("is-xml"); }
-        @Override public String getDeferredSyntaxAllowedAsLiteral() { return properties.get("deferred-syntax-allowed-as-literal"); }
-        @Override public String getTrimDirectiveWhitespaces() { return properties.get("trim-directive-whitespaces"); }
-        @Override public String getDefaultContentType() { return properties.get("default-content-type"); }
-        @Override public String getBuffer() { return properties.get("buffer"); }
-        @Override public String getErrorOnUndeclaredNamespace() { return properties.get("error-on-undeclared-namespace"); }
+        @Override public String getElIgnored() { return properties.get(EL_IGNORED); }
+        @Override public String getErrorOnELNotFound() { return properties.get(ERROR_ON_EL_NOT_FOUND); }
+        @Override public String getPageEncoding() { return properties.get(PAGE_ENCODING); }
+        @Override public String getScriptingInvalid() { return properties.get(SCRIPTING_INVALID); }
+        @Override public String getIsXml() { return properties.get(IS_XML); }
+        @Override public String getDeferredSyntaxAllowedAsLiteral() { return properties.get(DEFERRED_SYNTAX_ALLOWED_AS_LITERAL); }
+        @Override public String getTrimDirectiveWhitespaces() { return properties.get(TRIM_DIRECTIVE_WHITESPACES); }
+        @Override public String getDefaultContentType() { return properties.get(DEFAULT_CONTENT_TYPE); }
+        @Override public String getBuffer() { return properties.get(BUFFER); }
+        @Override public String getErrorOnUndeclaredNamespace() { return properties.get(ERROR_ON_UNDECLARED_NAMESPACE); }
     }
     private record Config(List<TaglibDescriptor> tags, List<JspPropertyGroupDescriptor> groups) implements JspConfigDescriptor {
         Config { tags = List.copyOf(tags); groups = List.copyOf(groups); }
@@ -98,8 +108,8 @@ public final class JspDescriptors {
             String[] values = {group.getElIgnored(), group.getErrorOnELNotFound(), group.getPageEncoding(), group.getScriptingInvalid(),
                     group.getIsXml(), group.getDeferredSyntaxAllowedAsLiteral(), group.getTrimDirectiveWhitespaces(),
                     group.getDefaultContentType(), group.getBuffer(), group.getErrorOnUndeclaredNamespace()};
-            String[] keys = {"el-ignored", "error-on-el-not-found", "page-encoding", "scripting-invalid", "is-xml",
-                    "deferred-syntax-allowed-as-literal", "trim-directive-whitespaces", "default-content-type", "buffer", "error-on-undeclared-namespace"};
+            String[] keys = {EL_IGNORED, ERROR_ON_EL_NOT_FOUND, PAGE_ENCODING, SCRIPTING_INVALID, IS_XML,
+                    DEFERRED_SYNTAX_ALLOWED_AS_LITERAL, TRIM_DIRECTIVE_WHITESPACES, DEFAULT_CONTENT_TYPE, BUFFER, ERROR_ON_UNDECLARED_NAMESPACE};
             for (int i = 0; i < keys.length; i++) if (values[i] != null) properties.put(keys[i], values[i]);
             groups.add(new Group(List.copyOf(group.getUrlPatterns()), List.copyOf(group.getIncludePreludes()), List.copyOf(group.getIncludeCodas()), properties));
         }

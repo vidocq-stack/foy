@@ -19,7 +19,6 @@
  */
 package io.vidocq.foy.internal.bridge;
 
-import java.net.URLDecoder;
 import java.nio.charset.Charset;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -66,15 +65,8 @@ final class DispatchParameters {
         for (String pair : qs.split("&", -1)) {
             int eq = pair.indexOf('=');
             String k = eq < 0 ? pair : pair.substring(0, eq);
-            String v = eq < 0 ? "" : pair.substring(eq + 1);
-            if (k.isEmpty()) continue;
-            try {
-                k = URLDecoder.decode(k, charset);
-                v = URLDecoder.decode(v, charset);
-            } catch (IllegalArgumentException malformed) {
-                continue; // malformed %-encoding: skip this pair only, like the request parser
-            }
-            out.computeIfAbsent(k, _ -> new ArrayList<>()).add(v);
+            // A malformed %-encoding skips this pair only, like the request parser.
+            if (!k.isEmpty()) HttpServletRequestImpl.addDecoded(out, k, eq < 0 ? "" : pair.substring(eq + 1), charset);
         }
         return out;
     }

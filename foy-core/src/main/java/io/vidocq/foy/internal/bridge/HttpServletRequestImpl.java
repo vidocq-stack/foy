@@ -448,16 +448,22 @@ public final class HttpServletRequestImpl implements HttpServletRequest {
         for (String pair : encoded.split("&", -1)) {
             int eq = pair.indexOf('=');
             String k = eq < 0 ? pair : pair.substring(0, eq);
-            String v = eq < 0 ? "" : pair.substring(eq + 1);
-            if (k.isEmpty()) continue;
-            try {
-                k = java.net.URLDecoder.decode(k, cs);
-                v = java.net.URLDecoder.decode(v, cs);
-            } catch (IllegalArgumentException e) {
-                continue; // malformed %-encoding: skip this pair only
-            }
-            out.computeIfAbsent(k, _ -> new ArrayList<>()).add(v);
+            if (!k.isEmpty()) addDecoded(out, k, eq < 0 ? "" : pair.substring(eq + 1), cs);
         }
+    }
+
+    /** Adds one {@code name=value} pair once decoded; a malformed %-encoding skips this pair only. */
+    static void addDecoded(Map<String, List<String>> out, String encodedName, String encodedValue,
+                                   Charset cs) {
+        String name;
+        String value;
+        try {
+            name = java.net.URLDecoder.decode(encodedName, cs);
+            value = java.net.URLDecoder.decode(encodedValue, cs);
+        } catch (IllegalArgumentException _) {
+            return;
+        }
+        out.computeIfAbsent(name, _ -> new ArrayList<>()).add(value);
     }
 
     @Override public String getParameter(String name) {
@@ -782,7 +788,7 @@ public final class HttpServletRequestImpl implements HttpServletRequest {
         record Tagged(Locale loc, double q, int order) {}
         var items = new ArrayList<Tagged>();
         int i = 0;
-        for (String token : h.split(",", -1)) {
+        for (String token : h.split(",")) {
             token = token.trim();
             if (token.isEmpty()) continue;
             String tag = token;
@@ -790,15 +796,15 @@ public final class HttpServletRequestImpl implements HttpServletRequest {
             int semi = token.indexOf(';');
             if (semi >= 0) {
                 tag = token.substring(0, semi).trim();
-                for (String p : token.substring(semi + 1).split(";", -1)) {
+                for (String p : token.substring(semi + 1).split(";")) {
                     p = p.trim();
                     if (p.startsWith("q=")) {
-                        try { q = Double.parseDouble(p.substring(2)); } catch (NumberFormatException _) { /* a malformed weight is ignored */ }
+                        try { q = Double.parseDouble(p.substring(2)); } catch (NumberFormatException ignored) {}
                     }
                 }
             }
             try { items.add(new Tagged(Locale.forLanguageTag(tag), q, i++)); }
-            catch (RuntimeException _) { /* an unusable tag is skipped */ }
+            catch (RuntimeException ignored) {}
         }
         items.sort((a, b) -> {
             int c = Double.compare(b.q, a.q);

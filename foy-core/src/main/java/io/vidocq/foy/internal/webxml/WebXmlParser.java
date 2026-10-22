@@ -56,6 +56,7 @@ public final class WebXmlParser {
     private WebXmlParser() {}
 
     private static final System.Logger LOG = System.getLogger(WebXmlParser.class.getName());
+    private static final String ROLE_NAME = "role-name";
 
     /** Parses a web.xml; a {@code <web-fragment>} root is rejected. */
     public static WebAppDescriptor parse(InputStream in) throws IOException {
@@ -252,7 +253,7 @@ public final class WebXmlParser {
                         securityConstraints.add(WebXmlSecurityParser.parseSecurityConstraint(e, legacy));
                 case "login-config" -> loginConfig = WebXmlSecurityParser.parseLoginConfig(e);
                 case "security-role" -> {
-                    String r = firstText(e, "role-name");
+                    String r = firstText(e, ROLE_NAME);
                     if (r != null) securityRoles.add(r);
                 }
                 case "locale-encoding-mapping-list" -> {
@@ -309,7 +310,7 @@ public final class WebXmlParser {
     private static Map<String, String> parseRoleRefs(Element servlet) {
         Map<String, String> refs = new LinkedHashMap<>();
         for (Element r : childrenByTag(servlet, "security-role-ref")) {
-            String name = firstText(r, "role-name");
+            String name = firstText(r, ROLE_NAME);
             if (name == null) continue;
             String link = firstText(r, "role-link");
             refs.putIfAbsent(name, link == null ? name : link);
@@ -319,7 +320,7 @@ public final class WebXmlParser {
 
     private static String runAs(Element e) {
         Element r = firstChild(e, "run-as");
-        return r == null ? null : firstText(r, "role-name");
+        return r == null ? null : firstText(r, ROLE_NAME);
     }
 
     private static WebAppDescriptor.MultipartConfigDef parseMultipart(Element e) {

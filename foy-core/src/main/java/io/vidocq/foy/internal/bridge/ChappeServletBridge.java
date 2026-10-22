@@ -367,7 +367,7 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
                 return insideRequestListeners(redirected, () -> {
                     Response refused = gate(redirected, res, requestPath);
                     if (refused != null) return refused;
-                    try { res.sendRedirect(res.encodeRedirectURL(redirect)); } catch (IOException _) { /* buffered: no I/O can fail */ }
+                    try { res.sendRedirect(res.encodeRedirectURL(redirect)); } catch (IOException ignored) {}
                     return completed(redirected, res);
                 });
             }
@@ -405,7 +405,7 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
                         : filterRegistry.chainFor(unmappedPath, DispatcherType.REQUEST);
                 if (early == null && filters.isEmpty()) {
                     // No mapping and no filter: 404, through the error page when one is mapped (section 9.9.1).
-                    try { res.sendError(404); } catch (IOException _) { /* buffered: no I/O can fail */ }
+                    try { res.sendError(404); } catch (IOException ignored) {}
                     try {
                         maybeHandleError(req, res, null, null);
                         early = errorPageHandled(req) ? respond(res, () -> toChappeResponse(res))
@@ -935,7 +935,7 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
             // the committed content stands. Do not lose the exception.
             LOG.log(System.Logger.Level.ERROR,
                     "exception after the response was committed; no error page dispatched", thrown);
-            req.setAttribute("jakarta.servlet.error.handled", true);
+            req.setAttribute("jakarta.servlet.error.handled", Boolean.TRUE);
             // A live body cannot end normally: the client would take a partial body for a whole
             // one. Abort it, so chappe drops the connection.
             if (res.isStreaming()) res.abortBody(thrown);
@@ -979,16 +979,16 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
                 res.clearErrorState();
                 res.resetBuffer();
                 try { res.sendError(errorStatus, thrown.getMessage()); }
-                catch (IOException _) { /* buffered: no I/O can fail */ }
-                req.setAttribute("jakarta.servlet.error.handled", true);
+                catch (IOException ignored) {}
+                req.setAttribute("jakarta.servlet.error.handled", Boolean.TRUE);
             } else if (thrown != null && errorStatus == 413) {
                 // A request body or multipart limit the application did not handle: the client's fault.
                 LOG.log(System.Logger.Level.DEBUG, "request body limit exceeded", thrown);
                 res.clearErrorState();
                 res.resetBuffer();
                 try { res.sendError(413); }
-                catch (IOException _) { /* buffered: no I/O can fail */ }
-                req.setAttribute("jakarta.servlet.error.handled", true);
+                catch (IOException ignored) {}
+                req.setAttribute("jakarta.servlet.error.handled", Boolean.TRUE);
             }
             return;
         }
@@ -1014,7 +1014,7 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
             message = statusMessage;
         }
         req.setAttribute("jakarta.servlet.error.message", message == null ? "" : message);
-        req.setAttribute("jakarta.servlet.error.handled", true);
+        req.setAttribute("jakarta.servlet.error.handled", Boolean.TRUE);
 
         try {
             res.setStatus(errorStatus);

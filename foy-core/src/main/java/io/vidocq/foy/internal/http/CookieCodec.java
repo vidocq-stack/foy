@@ -43,16 +43,15 @@ public final class CookieCodec {
         for (String pair : value.split(";", -1)) {
             String trimmed = pair.trim();
             int eq = trimmed.indexOf('=');
-            if (eq < 0) continue;
-            String name = trimmed.substring(0, eq).trim();
+            String name = eq < 0 ? "" : trimmed.substring(0, eq).trim();
             String val = trimmed.substring(eq + 1).trim();
-            if (name.isEmpty()) continue;
             // RFC 6265 §5.4 : un header Cookie client ne contient que des cookies nus
             // (name=value). Certains clients (ou le TCK) peuvent tout de même y glisser
             // des cookie-attributes (Domain, Path, Expires, Max-Age, ...) copiés depuis
             // un Set-Cookie précédent — on les ignore pour ne pas les exposer comme
             // "vrais" cookies.
-            if (isReservedAttribute(name)) continue;
+            // A pair without '=' or without a name is not a cookie either.
+            if (name.isEmpty() || isReservedAttribute(name)) continue;
             // RFC 6265 : la valeur peut être encadrée de guillemets ; on préserve ceux-ci
             // (comportement attendu par TCK CookieTests.getValueQuotedTest — la valeur
             // ne doit pas être déguillementée lors de la lecture côté serveur).
