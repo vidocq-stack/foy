@@ -71,7 +71,6 @@ public final class HttpServletResponseImpl implements HttpServletResponse {
     private final ServletOutputStreamImpl outputStream = new ServletOutputStreamImpl();
     /** True while the response itself drains the writer into the buffer: that is not a commit. */
     private boolean internalFlush;
-    { outputStream.setOwner(new StreamOwner()); }
     private PrintWriter writer;
     private boolean streamAcquired;
     /** Committed as the application sees it ({@link #isCommitted()}): status and headers are frozen. */
@@ -84,6 +83,10 @@ public final class HttpServletResponseImpl implements HttpServletResponse {
     private long contentLength = -1;
     private boolean errorTriggered;
     private String errorMessage;
+
+    public HttpServletResponseImpl() {
+        outputStream.setOwner(new StreamOwner());
+    }
 
     // ---- Status ----
 
@@ -209,29 +212,44 @@ public final class HttpServletResponseImpl implements HttpServletResponse {
      * Existing percent escapes are kept.
      */
     static String encodeLocation(String location) {
-        StringBuilder out = null;
-        for (int i = 0; i < location.length(); i++) {
+        int i = firstToEncode(location);
+        if (i < 0) return location;
+        var out = new StringBuilder(location.length() + 16).append(location, 0, i);
+        while (i < location.length()) {
             char c = location.charAt(i);
-            boolean plain = c < 0x80 && ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
-                    || (c >= '0' && c <= '9') || LOCATION_PLAIN.indexOf(c) >= 0);
-            if (plain) {
-                if (out != null) out.append(c);
-                continue;
+            if (isLocationPlain(c)) {
+                out.append(c);
+                i++;
+            } else {
+                // A surrogate pair is encoded as the one character it is.
+                int end = Character.isHighSurrogate(c) && i + 1 < location.length()
+                        && Character.isLowSurrogate(location.charAt(i + 1)) ? i + 2 : i + 1;
+                for (byte b : location.substring(i, end).getBytes(StandardCharsets.UTF_8)) {
+                    out.append('%').append(HEX.charAt((b >> 4) & 15)).append(HEX.charAt(b & 15));
+                }
+                i = end;
             }
-            if (out == null) out = new StringBuilder(location.length() + 16).append(location, 0, i);
-            int end = Character.isHighSurrogate(c) && i + 1 < location.length()
-                    && Character.isLowSurrogate(location.charAt(i + 1)) ? i + 2 : i + 1;
-            for (byte b : location.substring(i, end).getBytes(StandardCharsets.UTF_8)) {
-                out.append('%').append(HEX.charAt((b >> 4) & 15)).append(HEX.charAt(b & 15));
-            }
-            i = end - 1;
         }
-        return out == null ? location : out.toString();
+        return out.toString();
+    }
+
+    /** The index of the first character of {@code location} to percent-encode, or {@code -1}. */
+    private static int firstToEncode(String location) {
+        for (int i = 0; i < location.length(); i++) {
+            if (!isLocationPlain(location.charAt(i))) return i;
+        }
+        return -1;
+    }
+
+    private static boolean isLocationPlain(char c) {
+        return c < 0x80 && ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
+                || (c >= '0' && c <= '9') || LOCATION_PLAIN.indexOf(c) >= 0);
     }
 
     private static final String HEX = "0123456789ABCDEF";
     private static final String CONTENT_TYPE = "Content-Type";
     private static final String CHARSET_PARAMETER = "charset=";
+    private static final String CONTENT_LENGTH = "Content-Length";
 
     /**
      * Rejects a header value that chappe would refuse on the wire (CHAPPE-008, see
@@ -268,7 +286,7 @@ public final class HttpServletResponseImpl implements HttpServletResponse {
             // RFC 3986 resolution: a leading '/' is relative to the server root, anything else to
             // the directory of the request URI, with "." and ".." segments removed.
             return base.resolve(ref).toString();
-        } catch (URISyntaxException e) {
+        } catch (URISyntaxException _) {
             // Not a valid URI reference (e.g. unescaped characters): keep the simple concatenation.
             if (location.startsWith("/")) return origin + location;
             int slash = requestUri.lastIndexOf('/');
@@ -368,9 +386,9 @@ public final class HttpServletResponseImpl implements HttpServletResponse {
     @Override public Collection<String> getHeaderNames() { return new HashSet<>(headers.keySet()); }
 
     private void interceptSpecialHeader(String name, String value) {
-        if ("Content-Length".equalsIgnoreCase(name)) {
+        if (CONTENT_LENGTH.equalsIgnoreCase(name)) {
             try { this.contentLength = Long.parseLong(value.trim()); }
-            catch (RuntimeException e) { this.contentLength = -1; }
+            catch (RuntimeException _) { this.contentLength = -1; }
             // Declared after the content was written: the response is complete already.
             if (contentLength >= 0 && outputStream.hasContent() && outputStream.written() >= contentLength) {
                 committed = true;
@@ -480,8 +498,8 @@ public final class HttpServletResponseImpl implements HttpServletResponse {
         headers.put(CONTENT_TYPE, list);
         this.contentType = composed;
     }
-    @Override public void setContentLength(int len) { setIntHeader("Content-Length", len); }
-    @Override public void setContentLengthLong(long len) { setHeader("Content-Length", Long.toString(len)); }
+    @Override public void setContentLength(int len) { setIntHeader(CONTENT_LENGTH, len); }
+    @Override public void setContentLengthLong(long len) { setHeader(CONTENT_LENGTH, Long.toString(len)); }
 
     // ---- Body ----
 
@@ -513,7 +531,7 @@ public final class HttpServletResponseImpl implements HttpServletResponse {
     private Charset charset() {
         String enc = getCharacterEncoding();
         try { return Charset.forName(enc); }
-        catch (RuntimeException e) { return StandardCharsets.ISO_8859_1; }
+        catch (RuntimeException _) { return StandardCharsets.ISO_8859_1; }
     }
 
     // ---- Buffer / commit ----
@@ -632,7 +650,7 @@ public final class HttpServletResponseImpl implements HttpServletResponse {
     /** Drops the declared Content-Length, which no longer describes a cleared body. */
     private void clearContentLength() {
         contentLength = -1;
-        headers.remove("Content-Length");
+        headers.remove(CONTENT_LENGTH);
     }
 
     @Override public void resetBuffer() {
@@ -713,35 +731,54 @@ public final class HttpServletResponseImpl implements HttpServletResponse {
     private boolean targetsThisApplication(String url) {
         if (url.isEmpty() || url.startsWith("#") || url.contains(";jsessionid=")) return false;
         String path;
-        boolean absolute = url.startsWith("//") || SCHEME.matcher(url).lookingAt();
-        if (absolute) {
-            URI uri;
-            try {
-                uri = new URI(url.startsWith("//") ? boundRequest.getScheme() + ":" + url : url);
-            } catch (URISyntaxException e) {
-                return false;
-            }
-            if (uri.isOpaque() || uri.getHost() == null) return false;
-            String scheme = uri.getScheme();
-            if (!scheme.equalsIgnoreCase(boundRequest.getScheme())) return false;
-            if (!uri.getHost().equalsIgnoreCase(boundRequest.getServerName())) return false;
-            int port = uri.getPort() >= 0 ? uri.getPort()
-                    : "https".equalsIgnoreCase(scheme) ? 443 : "http".equalsIgnoreCase(scheme) ? 80 : -1;
-            if (port != boundRequest.getServerPort()) return false;
-            path = uri.getRawPath() == null || uri.getRawPath().isEmpty() ? "/" : uri.getRawPath();
+        if (url.startsWith("//") || SCHEME.matcher(url).lookingAt()) {
+            path = pathOnThisServer(url);
+            if (path == null) return false;
         } else if (url.startsWith("/")) {
             path = url;
         } else {
             return true; // relative to the current request: same application
         }
+        String bare = beforeQueryOrParameters(path);
+        String cp = boundRequest.getContextPath();
+        return cp == null || cp.isEmpty() || bare.equals(cp) || bare.startsWith(cp + "/");
+    }
+
+    /**
+     * The raw path of the absolute (or scheme-relative) {@code url} when it names this server: same
+     * scheme, host and port as the request; {@code null} otherwise.
+     */
+    private String pathOnThisServer(String url) {
+        URI uri;
+        try {
+            uri = new URI(url.startsWith("//") ? boundRequest.getScheme() + ":" + url : url);
+        } catch (URISyntaxException _) {
+            return null;
+        }
+        if (uri.isOpaque() || uri.getHost() == null) return null;
+        if (!uri.getScheme().equalsIgnoreCase(boundRequest.getScheme())) return null;
+        if (!uri.getHost().equalsIgnoreCase(boundRequest.getServerName())) return null;
+        if (effectivePort(uri) != boundRequest.getServerPort()) return null;
+        String rawPath = uri.getRawPath();
+        return rawPath == null || rawPath.isEmpty() ? "/" : rawPath;
+    }
+
+    /** The port of {@code uri}, otherwise the default one of its scheme (443 for https, 80 for http), or -1. */
+    private static int effectivePort(URI uri) {
+        if (uri.getPort() >= 0) return uri.getPort();
+        String scheme = uri.getScheme();
+        if ("https".equalsIgnoreCase(scheme)) return 443;
+        return "http".equalsIgnoreCase(scheme) ? 80 : -1;
+    }
+
+    /** {@code path} up to its first {@code '?'}, {@code '#'} or {@code ';'}. */
+    private static String beforeQueryOrParameters(String path) {
         int end = path.length();
         for (char c : new char[] {'?', '#', ';'}) {
             int i = path.indexOf(c);
             if (i >= 0 && i < end) end = i;
         }
-        path = path.substring(0, end);
-        String cp = boundRequest.getContextPath();
-        return cp == null || cp.isEmpty() || path.equals(cp) || path.startsWith(cp + "/");
+        return path.substring(0, end);
     }
 
     // ---- Internal access for the Chappe bridge ----
@@ -854,7 +891,7 @@ public final class HttpServletResponseImpl implements HttpServletResponse {
                 if (refused()) return;
                 try {
                     outputStream.beginWriterOperation(!internalFlush);
-                } catch (IOException e) {
+                } catch (IOException _) {
                     setError();
                     return;
                 }
@@ -888,15 +925,21 @@ public final class HttpServletResponseImpl implements HttpServletResponse {
         @Override public void println(char[] x) { locked(() -> super.println(x)); }
         @Override public void println(String x) { locked(() -> super.println(x)); }
         @Override public void println(Object x) { locked(() -> super.println(x)); }
+        // PrintWriter's own format methods, overridden only to take the stream lock: the format
+        // annotation Error Prone asks for would add a dependency to what Foy ships.
+        @SuppressWarnings("AnnotateFormatMethod")
         @Override public PrintWriter format(String format, Object... args) {
             locked(() -> super.format(format, args));
             return this;
         }
+        @SuppressWarnings("AnnotateFormatMethod")
         @Override public PrintWriter format(Locale l, String format, Object... args) {
             locked(() -> super.format(l, format, args));
             return this;
         }
+        @SuppressWarnings("AnnotateFormatMethod")
         @Override public PrintWriter printf(String format, Object... args) { return format(format, args); }
+        @SuppressWarnings("AnnotateFormatMethod")
         @Override public PrintWriter printf(Locale l, String format, Object... args) { return format(l, format, args); }
     }
 

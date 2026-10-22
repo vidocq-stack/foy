@@ -80,20 +80,23 @@ final class FoyResponse implements Response {
         if (fields == null || fields.isEmpty()) return Headers.empty();
         var builder = Headers.builder();
         for (Map.Entry<String, String> e : fields.entrySet()) {
-            String name = e.getKey();
-            String value = e.getValue();
-            if (name == null || name.isEmpty() || value == null) continue;
-            if (FORBIDDEN.contains(name.toLowerCase(Locale.ROOT))) continue;
-            try {
-                io.vidocq.foy.internal.http.HeaderSyntax.checkName(name);
-                HttpServletResponseImpl.checkHeaderText(name, value);
-            } catch (IllegalArgumentException invalid) {
-                // Thrown at the application for a header; a trailer is only dropped, the body is out.
-                LOG.log(System.Logger.Level.WARNING, "invalid trailer field dropped: " + invalid.getMessage());
-                continue;
-            }
-            builder.add(name, value);
+            if (isSendable(e.getKey(), e.getValue())) builder.add(e.getKey(), e.getValue());
         }
         return builder.build();
+    }
+
+    /** Whether a trailer field goes out: named, valued, allowed in a trailer section and well-formed. */
+    private static boolean isSendable(String name, String value) {
+        if (name == null || name.isEmpty() || value == null) return false;
+        if (FORBIDDEN.contains(name.toLowerCase(Locale.ROOT))) return false;
+        try {
+            io.vidocq.foy.internal.http.HeaderSyntax.checkName(name);
+            HttpServletResponseImpl.checkHeaderText(name, value);
+            return true;
+        } catch (IllegalArgumentException invalid) {
+            // Thrown at the application for a header; a trailer is only dropped, the body is out.
+            LOG.log(System.Logger.Level.WARNING, "invalid trailer field dropped: " + invalid.getMessage());
+            return false;
+        }
     }
 }

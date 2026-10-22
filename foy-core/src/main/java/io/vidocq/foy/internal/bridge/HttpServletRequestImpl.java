@@ -143,16 +143,24 @@ public final class HttpServletRequestImpl implements HttpServletRequest {
      */
     public static String canonicalDispatchPath(jakarta.servlet.ServletRequest request) {
         jakarta.servlet.ServletRequest r = request;
-        while (r != null) {
-            if (r instanceof HttpServletRequestImpl impl) {
-                return impl.canonicalPath == null ? withoutContextPath(impl) : impl.canonicalPath;
-            }
-            if (r instanceof ForwardedRequest f && !f.isNamed()) return f.target().path();
-            if (r instanceof AsyncDispatchRequest a) return a.target().path();
-            if (r instanceof jakarta.servlet.ServletRequestWrapper w) r = w.getRequest();
-            else return r instanceof HttpServletRequest h ? withoutContextPath(h) : null;
+        while (r instanceof jakarta.servlet.ServletRequestWrapper w && !decidesDispatchPath(r)) r = w.getRequest();
+        return r == null ? null : dispatchPathOf(r);
+    }
+
+    /** Whether {@code r} carries the dispatch path itself: the container request, a forward or an async dispatch. */
+    private static boolean decidesDispatchPath(jakarta.servlet.ServletRequest r) {
+        return r instanceof HttpServletRequestImpl || (r instanceof ForwardedRequest f && !f.isNamed())
+                || r instanceof AsyncDispatchRequest;
+    }
+
+    /** The dispatch path of {@code r}, a request that decides it or the innermost one of the chain. */
+    private static String dispatchPathOf(jakarta.servlet.ServletRequest r) {
+        if (r instanceof HttpServletRequestImpl impl) {
+            return impl.canonicalPath == null ? withoutContextPath(impl) : impl.canonicalPath;
         }
-        return null;
+        if (r instanceof ForwardedRequest f && !f.isNamed()) return f.target().path();
+        if (r instanceof AsyncDispatchRequest a) return a.target().path();
+        return r instanceof HttpServletRequest h ? withoutContextPath(h) : null;
     }
 
     /** {@code getRequestURI()} without the leading {@code getContextPath()} it is built from. */
@@ -206,7 +214,7 @@ public final class HttpServletRequestImpl implements HttpServletRequest {
      */
     private String executingServletName() {
         ServletScope scope = servletScope;
-        if (scope != null && scope.thread() == Thread.currentThread()) return scope.servletName();
+        if (scope != null && Thread.currentThread().equals(scope.thread())) return scope.servletName();
         String async = asyncServletName;
         if (async != null) return async;
         return scope == null ? null : scope.servletName();
@@ -336,20 +344,7 @@ public final class HttpServletRequestImpl implements HttpServletRequest {
         decodeInto(out, chappe.query(), StandardCharsets.UTF_8);
         if (paramsBodyFailed) return publishParams(out);
         try {
-            if (parsedParts != null) {
-                appendPartFields(out);
-            } else if (inputStream == null && reader == null && !bodyConsumedByContainer) {
-                if (isFormPost()) {
-                    decodeInto(out, readFormBody(), formBodyCharset());
-                } else if (partsFailure == null && "POST".equalsIgnoreCase(getMethod()) && isMultipart()) {
-                    if (multipartConfig() != null) {
-                        parts();
-                        appendPartFields(out);
-                    } else if (executingServletName() == null) {
-                        return out; // no servlet yet: decide once one runs (F-05)
-                    }
-                }
-            }
+            if (!addBodyParameters(out)) return out; // no servlet yet: decide once one runs (F-05)
         } catch (IOException e) {
             paramsBodyFailed = true;
             throw new java.io.UncheckedIOException("cannot read the multipart body", e);
@@ -361,6 +356,28 @@ public final class HttpServletRequestImpl implements HttpServletRequest {
             throw e;
         }
         return publishParams(out);
+    }
+
+    /**
+     * Adds the parameters of the body to {@code out}: the fields of the parts already parsed, a form
+     * body, or a multipart POST to a servlet with a multipart configuration. {@code false} when a
+     * multipart POST is read before any servlet runs: its fields wait for the servlet (F-05).
+     */
+    private boolean addBodyParameters(Map<String, List<String>> out) throws IOException, ServletException {
+        if (parsedParts != null) {
+            appendPartFields(out);
+            return true;
+        }
+        if (inputStream != null || reader != null || bodyConsumedByContainer) return true;
+        if (isFormPost()) {
+            decodeInto(out, readFormBody(), formBodyCharset());
+            return true;
+        }
+        if (partsFailure != null || !"POST".equalsIgnoreCase(getMethod()) || !isMultipart()) return true;
+        if (multipartConfig() == null) return executingServletName() != null;
+        parts();
+        appendPartFields(out);
+        return true;
     }
 
     private Map<String, List<String>> publishParams(Map<String, List<String>> complete) {
@@ -426,7 +443,7 @@ public final class HttpServletRequestImpl implements HttpServletRequest {
         if (enc == null) return StandardCharsets.ISO_8859_1;
         try {
             return Charset.forName(enc);
-        } catch (RuntimeException e) {
+        } catch (RuntimeException _) {
             return StandardCharsets.ISO_8859_1;
         }
     }
@@ -626,7 +643,7 @@ public final class HttpServletRequestImpl implements HttpServletRequest {
             Charset cs;
             try {
                 cs = enc == null ? StandardCharsets.UTF_8 : Charset.forName(enc);
-            } catch (RuntimeException e) {
+            } catch (RuntimeException _) {
                 // Servlet 6.1 section 3.11: an invalid encoding gives UnsupportedEncodingException.
                 throw new java.io.UnsupportedEncodingException(enc);
             }
@@ -785,32 +802,51 @@ public final class HttpServletRequestImpl implements HttpServletRequest {
     private List<Locale> acceptedLocales() {
         String h = getHeader("Accept-Language");
         if (h == null || h.isBlank()) return List.of();
-        record Tagged(Locale loc, double q, int order) {}
-        var items = new ArrayList<Tagged>();
-        int i = 0;
-        for (String token : h.split(",")) {
-            token = token.trim();
-            if (token.isEmpty()) continue;
-            String tag = token;
-            double q = 1.0;
-            int semi = token.indexOf(';');
-            if (semi >= 0) {
-                tag = token.substring(0, semi).trim();
-                for (String p : token.substring(semi + 1).split(";")) {
-                    p = p.trim();
-                    if (p.startsWith("q=")) {
-                        try { q = Double.parseDouble(p.substring(2)); } catch (NumberFormatException ignored) {}
-                    }
-                }
-            }
-            try { items.add(new Tagged(Locale.forLanguageTag(tag), q, i++)); }
-            catch (RuntimeException ignored) {}
+        var items = new ArrayList<LanguageRange>();
+        for (String raw : h.split(",", -1)) {
+            String token = raw.trim();
+            LanguageRange range = token.isEmpty() ? null : LanguageRange.parse(token, items.size());
+            if (range != null) items.add(range);
         }
         items.sort((a, b) -> {
-            int c = Double.compare(b.q, a.q);
-            return c != 0 ? c : Integer.compare(a.order, b.order);
+            int c = Double.compare(b.q(), a.q());
+            return c != 0 ? c : Integer.compare(a.order(), b.order());
         });
-        return items.stream().filter(t -> t.q > 0).map(Tagged::loc).toList();
+        return items.stream().filter(t -> t.q() > 0).map(LanguageRange::locale).toList();
+    }
+
+    /** One {@code Accept-Language} entry: its locale, its quality and its position in the header. */
+    private record LanguageRange(Locale locale, double q, int order) {
+
+        /** Parses {@code token} (a tag and its parameters); {@code null} for a tag that is not a valid locale. */
+        static LanguageRange parse(String token, int order) {
+            int semi = token.indexOf(';');
+            String tag = semi >= 0 ? token.substring(0, semi).trim() : token;
+            double q = semi >= 0 ? quality(token.substring(semi + 1)) : 1.0;
+            try {
+                return new LanguageRange(Locale.forLanguageTag(tag), q, order);
+            } catch (RuntimeException _) {
+                return null; // an invalid tag is skipped
+            }
+        }
+
+        /** The last valid {@code q=} parameter of {@code params}, 1 by default. */
+        private static double quality(String params) {
+            double q = 1.0;
+            for (String raw : params.split(";", -1)) {
+                String p = raw.trim();
+                if (p.startsWith("q=")) q = parseOr(p.substring(2), q);
+            }
+            return q;
+        }
+
+        private static double parseOr(String number, double fallback) {
+            try {
+                return Double.parseDouble(number);
+            } catch (NumberFormatException _) {
+                return fallback; // a malformed quality is ignored
+            }
+        }
     }
 
     // ---- Dispatcher / context ----
@@ -1063,30 +1099,7 @@ public final class HttpServletRequestImpl implements HttpServletRequest {
             throw new IllegalStateException("the request body was already read through getInputStream() or getReader()");
         }
         try {
-            String boundary = MultipartParser.extractBoundary(getContentType());
-            if (boundary == null) throw new MalformedMultipartException("missing or invalid multipart boundary");
-            long declared = getContentLengthLong();
-            if (config.getMaxRequestSize() >= 0 && declared > config.getMaxRequestSize()) {
-                throw new MultipartLimitException("the request (" + declared + " bytes) exceeds maxRequestSize ("
-                        + config.getMaxRequestSize() + " bytes)");
-            }
-            var storage = new PartStorage(PartStorage.resolveLocation(config.getLocation(), contextTempDir()));
-            partStorage = storage;
-            // Both volatile: either releaseParts() sees this storage, or this thread sees the flag.
-            if (partsReleased) {
-                storage.close();
-                throw new IllegalStateException("the request is over: its parts were deleted");
-            }
-            ServletInputStreamImpl body = containerBody();
-            List<PartImpl> parts = MultipartParser.parse(body, boundary,
-                    MultipartParser.Limits.of(config, limits()), storage);
-            try {
-                body.transferTo(java.io.OutputStream.nullOutputStream());
-            } catch (IOException | RuntimeException e) {
-                storage.close();
-                throw e;
-            }
-            parsedParts = List.copyOf(parts);
+            parsedParts = List.copyOf(parseParts(config));
         } catch (IOException | RuntimeException e) {
             partsFailure = e;
             bodyConsumedByContainer = true;
@@ -1095,7 +1108,7 @@ public final class HttpServletRequestImpl implements HttpServletRequest {
         if (parsedParams != null) {
             try {
                 mergePartFields();
-            } catch (IOException | RuntimeException e) {
+            } catch (IOException | RuntimeException _) {
                 // The parse succeeded and stays so: getParts()/getPart() keep returning the parts.
                 // The fields stay out of the parameters for good, as when the first getParameter*
                 // call cannot read them.
@@ -1104,6 +1117,34 @@ public final class HttpServletRequestImpl implements HttpServletRequest {
             }
         }
         return parsedParts;
+    }
+
+    /** Parses the multipart body with {@code config}, then reads its epilogue to the end. */
+    private List<PartImpl> parseParts(MultipartConfigElement config) throws IOException {
+        String boundary = MultipartParser.extractBoundary(getContentType());
+        if (boundary == null) throw new MalformedMultipartException("missing or invalid multipart boundary");
+        long declared = getContentLengthLong();
+        if (config.getMaxRequestSize() >= 0 && declared > config.getMaxRequestSize()) {
+            throw new MultipartLimitException("the request (" + declared + " bytes) exceeds maxRequestSize ("
+                    + config.getMaxRequestSize() + " bytes)");
+        }
+        var storage = new PartStorage(PartStorage.resolveLocation(config.getLocation(), contextTempDir()));
+        partStorage = storage;
+        // Both volatile: either releaseParts() sees this storage, or this thread sees the flag.
+        if (partsReleased) {
+            storage.close();
+            throw new IllegalStateException("the request is over: its parts were deleted");
+        }
+        ServletInputStreamImpl body = containerBody();
+        List<PartImpl> parts = MultipartParser.parse(body, boundary,
+                MultipartParser.Limits.of(config, limits()), storage);
+        try {
+            body.transferTo(java.io.OutputStream.nullOutputStream());
+        } catch (IOException | RuntimeException e) {
+            storage.close();
+            throw e;
+        }
+        return parts;
     }
 
     /** The cached parameters already hold the fields of {@link #parsedParts}. */
@@ -1165,19 +1206,27 @@ public final class HttpServletRequestImpl implements HttpServletRequest {
         if (encoding != null) {
             try {
                 return Charset.forName(encoding);
-            } catch (RuntimeException unknown) {
-                // fall through to the next source
+            } catch (RuntimeException _) {
+                // an unknown name: the next source applies
             }
         }
-        for (PartImpl p : parsedParts) {
-            if (!"_charset_".equals(p.getName()) || p.getSubmittedFileName() != null) continue;
+        PartImpl field = charsetField();
+        if (field != null) {
             try {
-                return Charset.forName(p.text(StandardCharsets.US_ASCII).trim());
-            } catch (RuntimeException unknown) {
-                break;
+                return Charset.forName(field.text(StandardCharsets.US_ASCII).trim());
+            } catch (RuntimeException _) {
+                // an unknown name: ISO-8859-1 applies
             }
         }
         return StandardCharsets.ISO_8859_1;
+    }
+
+    /** The first {@code _charset_} field (not a file) among the parsed parts, or {@code null}. */
+    private PartImpl charsetField() {
+        for (PartImpl p : parsedParts) {
+            if ("_charset_".equals(p.getName()) && p.getSubmittedFileName() == null) return p;
+        }
+        return null;
     }
 
     private static RuntimeException rethrowParts(Exception failure) throws IOException {
@@ -1210,16 +1259,10 @@ public final class HttpServletRequestImpl implements HttpServletRequest {
         if (storage != null) storage.close();
     }
 
-    /**
-     * Server push is not supported: chappe emits no PUSH_PROMISE frame, and push is deprecated in
-     * Servlet 6.1 in favour of 103 Early Hints. Returning {@code null} is the contract for
-     * "push unavailable" (HTTP/1.x, push disabled by the peer, or no support in the container).
-     *
-     * @return always {@code null}
-     */
-    @Override public jakarta.servlet.http.PushBuilder newPushBuilder() {
-        return null;
-    }
+    // Server push is not supported: chappe emits no PUSH_PROMISE frame, and push is deprecated in
+    // Servlet 6.1 in favour of 103 Early Hints. The inherited newPushBuilder answers null, the
+    // contract for "push unavailable" (HTTP/1.x, push disabled by the peer, or no support in the
+    // container).
 
     /** The handler of an upgrade requested by the application, or {@code null}. */
     private volatile HttpUpgradeHandler upgradeHandler;
@@ -1324,7 +1367,7 @@ public final class HttpServletRequestImpl implements HttpServletRequest {
         // An upgraded request leaves the HTTP lifecycle when service() returns: it cannot also
         // start an async cycle (mirror of upgrade() refusing an async-started request).
         if (upgradeHandler != null) throw new IllegalStateException("startAsync() after upgrade()");
-        boolean original = (req == this && res == boundResponse);
+        boolean original = this.equals(req) && java.util.Objects.equals(boundResponse, res);
         var started = new io.vidocq.foy.internal.async.AsyncContextImpl(req, res, servletContext, original);
         this.asyncContext = started;
         // Section 13.3: threads outside the dispatch (AsyncContext.start) resolve role refs against

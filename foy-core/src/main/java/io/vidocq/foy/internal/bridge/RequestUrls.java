@@ -28,16 +28,22 @@ final class RequestUrls {
 
     /**
      * {@code scheme://host[:port]} followed by the request's {@code getRequestURI()}; the port is
-     * omitted when it is the default one of the scheme (80 for http, 443 for https).
+     * omitted when it is the default one of the scheme (80 for http, 443 for https). A
+     * {@link StringBuffer}, as {@link HttpServletRequest#getRequestURL()} returns.
      */
+    @SuppressWarnings("JdkObsolete") // the type HttpServletRequest#getRequestURL() returns (Servlet API)
     static StringBuffer of(HttpServletRequest request) {
-        StringBuffer sb = new StringBuffer();
+        return new StringBuffer(url(request));
+    }
+
+    private static String url(HttpServletRequest request) {
+        var sb = new StringBuilder();
         String scheme = request.getScheme();
         int port = request.getServerPort();
         sb.append(scheme).append("://").append(request.getServerName());
         if (("http".equals(scheme) && port != 80) || ("https".equals(scheme) && port != 443)) {
             sb.append(':').append(port);
         }
-        return sb.append(request.getRequestURI());
+        return sb.append(request.getRequestURI()).toString();
     }
 }
