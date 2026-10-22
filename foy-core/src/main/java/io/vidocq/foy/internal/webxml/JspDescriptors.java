@@ -67,41 +67,53 @@ public final class JspDescriptors {
         @Override public Collection<JspPropertyGroupDescriptor> getJspPropertyGroups() { return groups; }
     }
     static JspConfigDescriptor parse(Element root) {
-        var tags = new ArrayList<TaglibDescriptor>(); var groups = new ArrayList<JspPropertyGroupDescriptor>(); boolean found = false;
-        for (var config : children(root)) if (WebXmlParser.localName(config).equals("jsp-config")) {
+        var tags = new ArrayList<TaglibDescriptor>();
+        var groups = new ArrayList<JspPropertyGroupDescriptor>();
+        boolean found = false;
+        for (var config : children(root)) {
+            if (!WebXmlParser.localName(config).equals("jsp-config")) continue;
             if (found) throw new IllegalArgumentException("Duplicate jsp-config");
             found = true;
-            for (var entry : children(config)) {
-                String name = WebXmlParser.localName(entry);
-                if (name.equals("taglib")) {
-                    var fields = fields(entry);
-                    tags.add(new Taglib(required(fields, "taglib-uri"), required(fields, "taglib-location")));
-                } else if (name.equals("jsp-property-group")) {
-                    var patterns = new ArrayList<String>(); var preludes = new ArrayList<String>(); var codas = new ArrayList<String>();
-                    var properties = new LinkedHashMap<String, String>();
-                    for (var field : children(entry)) {
-                        String key = WebXmlParser.localName(field), value = field.getTextContent().trim();
-                        switch (key) {
-                            case "url-pattern" -> patterns.add(value);
-                            case "include-prelude" -> preludes.add(value);
-                            case "include-coda" -> codas.add(value);
-                            case "description", "display-name", "icon" -> { }
-                            default -> {
-                                if (!PROPERTIES.contains(key)) throw new IllegalArgumentException("Unknown JSP property: " + key);
-                                if (properties.putIfAbsent(key, value) != null) throw new IllegalArgumentException("Duplicate JSP property: " + key);
-                            }
-                        }
-                    }
-                    if (patterns.isEmpty()) throw new IllegalArgumentException("JSP property group needs a URL pattern");
-                    groups.add(new Group(patterns, preludes, codas, properties));
-                } else throw new IllegalArgumentException("Unknown jsp-config element: " + name);
-            }
+            for (var entry : children(config)) parseEntry(entry, tags, groups);
         }
         return found ? new Config(tags, groups) : null;
     }
+    /** Parses a {@code <taglib>} into {@code tags} or a {@code <jsp-property-group>} into {@code groups}. */
+    private static void parseEntry(Element entry, List<TaglibDescriptor> tags, List<JspPropertyGroupDescriptor> groups) {
+        String name = WebXmlParser.localName(entry);
+        if (name.equals("taglib")) {
+            var fields = fields(entry);
+            tags.add(new Taglib(required(fields, "taglib-uri"), required(fields, "taglib-location")));
+        } else if (name.equals("jsp-property-group")) {
+            groups.add(propertyGroup(entry));
+        } else throw new IllegalArgumentException("Unknown jsp-config element: " + name);
+    }
+    private static Group propertyGroup(Element entry) {
+        var patterns = new ArrayList<String>();
+        var preludes = new ArrayList<String>();
+        var codas = new ArrayList<String>();
+        var properties = new LinkedHashMap<String, String>();
+        for (var field : children(entry)) {
+            String key = WebXmlParser.localName(field);
+            String value = field.getTextContent().trim();
+            switch (key) {
+                case "url-pattern" -> patterns.add(value);
+                case "include-prelude" -> preludes.add(value);
+                case "include-coda" -> codas.add(value);
+                case "description", "display-name", "icon" -> { /* descriptive elements: nothing to keep */ }
+                default -> {
+                    if (!PROPERTIES.contains(key)) throw new IllegalArgumentException("Unknown JSP property: " + key);
+                    if (properties.putIfAbsent(key, value) != null) throw new IllegalArgumentException("Duplicate JSP property: " + key);
+                }
+            }
+        }
+        if (patterns.isEmpty()) throw new IllegalArgumentException("JSP property group needs a URL pattern");
+        return new Group(patterns, preludes, codas, properties);
+    }
     public static JspConfigDescriptor copy(JspConfigDescriptor config) {
         if (config == null || config instanceof Config) return config;
-        var tags = new ArrayList<TaglibDescriptor>(); var groups = new ArrayList<JspPropertyGroupDescriptor>();
+        var tags = new ArrayList<TaglibDescriptor>();
+        var groups = new ArrayList<JspPropertyGroupDescriptor>();
         for (var tag : config.getTaglibs()) tags.add(new Taglib(tag.getTaglibURI(), tag.getTaglibLocation()));
         for (var group : config.getJspPropertyGroups()) {
             var properties = new HashMap<String, String>();
@@ -116,14 +128,20 @@ public final class JspDescriptors {
         return new Config(tags, groups);
     }
     static JspConfigDescriptor merge(JspConfigDescriptor root, List<JspConfigDescriptor> fragments) throws ServletException {
-        var tags = new LinkedHashMap<String, TaglibDescriptor>(); var rootUris = new HashSet<String>();
-        var groups = new ArrayList<JspPropertyGroupDescriptor>(); boolean present = root != null;
+        var tags = new LinkedHashMap<String, TaglibDescriptor>();
+        var rootUris = new HashSet<String>();
+        var groups = new ArrayList<JspPropertyGroupDescriptor>();
+        boolean present = root != null;
         if (root != null) {
-            for (var tag : root.getTaglibs()) { tags.put(tag.getTaglibURI(), tag); rootUris.add(tag.getTaglibURI()); }
+            for (var tag : root.getTaglibs()) {
+                tags.put(tag.getTaglibURI(), tag);
+                rootUris.add(tag.getTaglibURI());
+            }
             groups.addAll(root.getJspPropertyGroups());
         }
         for (var config : fragments) if (config != null) {
-            present = true; groups.addAll(config.getJspPropertyGroups());
+            present = true;
+            groups.addAll(config.getJspPropertyGroups());
             for (var tag : config.getTaglibs()) {
                 var previous = tags.putIfAbsent(tag.getTaglibURI(), tag);
                 if (previous != null && !rootUris.contains(tag.getTaglibURI()) && !previous.getTaglibLocation().equals(tag.getTaglibLocation()))

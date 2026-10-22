@@ -57,7 +57,7 @@ public record Fragment(String id, URL jar, WebAppDescriptor descriptor) {
             URI uri = new URI(s).normalize();
             s = "file".equalsIgnoreCase(uri.getScheme()) && uri.getAuthority() == null
                     ? Path.of(uri).normalize().toUri().toString() : uri.toString();
-        } catch (URISyntaxException | IllegalArgumentException | java.nio.file.FileSystemNotFoundException e) {
+        } catch (URISyntaxException | IllegalArgumentException | java.nio.file.FileSystemNotFoundException _) {
             // not a hierarchical URI: compare the raw spelling
         }
         while (s.endsWith("/")) s = s.substring(0, s.length() - 1);

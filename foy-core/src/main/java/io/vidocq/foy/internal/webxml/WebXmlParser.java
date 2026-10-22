@@ -35,11 +35,13 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.StringReader;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.EnumSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 
 /**
@@ -57,6 +59,7 @@ public final class WebXmlParser {
 
     private static final System.Logger LOG = System.getLogger(WebXmlParser.class.getName());
     private static final String ROLE_NAME = "role-name";
+    private static final String SERVLET_NAME = "servlet-name";
 
     /** Parses a web.xml; a {@code <web-fragment>} root is rejected. */
     public static WebAppDescriptor parse(InputStream in) throws IOException {
@@ -132,14 +135,22 @@ public final class WebXmlParser {
     /** {@code true} for a descriptor version below 2.4 (lenient url-patterns, Tomcat compatibility). */
     private static boolean isPre24(String version) {
         if (version == null || version.isBlank()) return false;
-        String[] parts = version.trim().split("\\.");
+        String[] parts = dotSeparated(version.trim());
         try {
             int major = Integer.parseInt(parts[0]);
             int minor = parts.length > 1 ? Integer.parseInt(parts[1]) : 0;
             return major < 2 || (major == 2 && minor < 4);
-        } catch (NumberFormatException e) {
+        } catch (NumberFormatException _) {
             return false;
         }
+    }
+
+    /** {@code s} split around its dots, trailing empty strings removed (as {@code String.split(String)} does). */
+    private static String[] dotSeparated(String s) {
+        String[] parts = s.split("\\.", -1);
+        int n = parts.length;
+        while (n > 0 && parts[n - 1].isEmpty()) n--;
+        return Arrays.copyOf(parts, n);
     }
 
     /**
@@ -163,88 +174,65 @@ public final class WebXmlParser {
     private static WebAppDescriptor parse(Element root, boolean fragment, String doctypeVersion) {
         String declared = root.getAttribute("version");
         String version = declared.isBlank() ? doctypeVersion : declared;
-        boolean legacy = isPre24(version);
-        Map<String, String> contextParams = new LinkedHashMap<>();
-        var servlets = new ArrayList<WebAppDescriptor.ServletDef>();
-        var servletMappings = new ArrayList<WebAppDescriptor.ServletMappingDef>();
-        var filters = new ArrayList<WebAppDescriptor.FilterDef>();
-        var filterMappings = new ArrayList<WebAppDescriptor.FilterMappingDef>();
-        var listenerClasses = new ArrayList<String>();
-        var errorPages = new ArrayList<WebAppDescriptor.ErrorPageDef>();
-        int sessionTimeoutMinutes = -1;
-        var welcomeFiles = new ArrayList<String>();
-        var mimeMappings = new LinkedHashMap<String, String>();
-        String requestEncoding = null;
-        String responseEncoding = null;
-        String defaultContextPath = null;
-        boolean denyUncovered = false;
-        WebAppDescriptor.CookieConfigDef cookieConfig = null;
-        Set<SessionTrackingMode> trackingModes = EnumSet.noneOf(SessionTrackingMode.class);
-        var securityConstraints = new ArrayList<SecurityDefs.SecurityConstraintDef>();
-        SecurityDefs.LoginConfigDef loginConfig = null;
-        var securityRoles = new ArrayList<String>();
-        var localeEncodingMappings = new LinkedHashMap<String, String>();
-        String displayName = null;
-        String fragmentName = null;
-        Ordering ordering = Ordering.NONE;
-        List<String> absoluteOrdering = null;
+        var parts = new DescriptorParts(fragment, isPre24(version));
+        for (Element e : children(root)) parts.accept(e);
+        return parts.descriptor(root, version);
+    }
 
-        for (Element e : children(root)) {
+    /** The top-level elements of a {@code web.xml} or {@code web-fragment.xml}, collected in document order. */
+    private static final class DescriptorParts {
+        private final boolean fragment;
+        private final boolean legacy;
+        private final Map<String, String> contextParams = new LinkedHashMap<>();
+        private final List<WebAppDescriptor.ServletDef> servlets = new ArrayList<>();
+        private final List<WebAppDescriptor.ServletMappingDef> servletMappings = new ArrayList<>();
+        private final List<WebAppDescriptor.FilterDef> filters = new ArrayList<>();
+        private final List<WebAppDescriptor.FilterMappingDef> filterMappings = new ArrayList<>();
+        private final List<String> listenerClasses = new ArrayList<>();
+        private final List<WebAppDescriptor.ErrorPageDef> errorPages = new ArrayList<>();
+        private int sessionTimeoutMinutes = -1;
+        private final List<String> welcomeFiles = new ArrayList<>();
+        private final Map<String, String> mimeMappings = new LinkedHashMap<>();
+        private String requestEncoding;
+        private String responseEncoding;
+        private String defaultContextPath;
+        private boolean denyUncovered;
+        private WebAppDescriptor.CookieConfigDef cookieConfig;
+        private final Set<SessionTrackingMode> trackingModes = EnumSet.noneOf(SessionTrackingMode.class);
+        private final List<SecurityDefs.SecurityConstraintDef> securityConstraints = new ArrayList<>();
+        private SecurityDefs.LoginConfigDef loginConfig;
+        private final List<String> securityRoles = new ArrayList<>();
+        private final Map<String, String> localeEncodingMappings = new LinkedHashMap<>();
+        private String displayName;
+        private String fragmentName;
+        private Ordering ordering = Ordering.NONE;
+        private List<String> absoluteOrdering;
+
+        /**
+         * @param fragment whether the root is a {@code <web-fragment>}
+         * @param legacy   whether the descriptor is older than 2.4 (lenient url-patterns)
+         */
+        DescriptorParts(boolean fragment, boolean legacy) {
+            this.fragment = fragment;
+            this.legacy = legacy;
+        }
+
+        void accept(Element e) {
             switch (localName(e)) {
-                case "name" -> { if (fragment) fragmentName = text(e); }
-                case "ordering" -> {
-                    if (fragment) ordering = parseOrdering(e);
-                    else LOG.log(System.Logger.Level.WARNING,
-                            "<ordering> in web.xml is ignored (use <absolute-ordering>), §8.2.2");
-                }
-                case "absolute-ordering" -> {
-                    if (!fragment) absoluteOrdering = parseAbsoluteOrdering(e);
-                    else LOG.log(System.Logger.Level.WARNING,
-                            "<absolute-ordering> in a web-fragment.xml is ignored, §8.2.2");
-                }
+                case "name" -> fragmentName(e);
+                case "ordering" -> ordering(e);
+                case "absolute-ordering" -> absoluteOrdering(e);
                 case "display-name" -> displayName = text(e);
-                case "context-param" -> {
-                    String name = firstText(e, "param-name");
-                    String value = firstText(e, "param-value");
-                    if (name != null) contextParams.put(name, value == null ? "" : value);
-                }
+                case "context-param" -> contextParam(e);
                 case "servlet" -> servlets.add(parseServlet(e));
-                case "servlet-mapping" -> {
-                    String sname = firstText(e, "servlet-name");
-                    for (Element url : childrenByTag(e, "url-pattern")) {
-                        servletMappings.add(new WebAppDescriptor.ServletMappingDef(sname, lenientPattern(text(url), legacy)));
-                    }
-                }
+                case "servlet-mapping" -> servletMapping(e);
                 case "filter" -> filters.add(parseFilter(e));
                 case "filter-mapping" -> filterMappings.addAll(parseFilterMapping(e, legacy));
-                case "listener" -> {
-                    String cls = firstText(e, "listener-class");
-                    if (cls != null) listenerClasses.add(cls);
-                }
+                case "listener" -> listener(e);
                 case "error-page" -> errorPages.add(parseErrorPage(e));
-                case "session-config" -> {
-                    String t = firstText(e, "session-timeout");
-                    // Zero or less: sessions never time out. Normalised to 0, as -1 means "absent".
-                    if (t != null) {
-                        sessionTimeoutMinutes = Math.max(0, parseInt(t, "<session-timeout> in <session-config>"));
-                    }
-                    var cc = WebXmlSecurityParser.parseCookieConfig(e);
-                    if (cc != null) cookieConfig = cc;
-                    trackingModes.addAll(WebXmlSecurityParser.parseTrackingModes(e));
-                }
-                case "welcome-file-list" -> {
-                    for (Element w : childrenByTag(e, "welcome-file")) {
-                        if (!text(w).isEmpty()) welcomeFiles.add(text(w));
-                    }
-                }
-                case "mime-mapping" -> {
-                    String ext = firstText(e, "extension");
-                    String type = firstText(e, "mime-type");
-                    if (ext != null && type != null) {
-                        if (ext.startsWith(".")) ext = ext.substring(1);
-                        mimeMappings.put(ext.toLowerCase(Locale.ROOT), type);
-                    }
-                }
+                case "session-config" -> sessionConfig(e);
+                case "welcome-file-list" -> welcomeFiles(e);
+                case "mime-mapping" -> mimeMapping(e);
                 case "request-character-encoding" -> requestEncoding = text(e);
                 case "response-character-encoding" -> responseEncoding = text(e);
                 case "default-context-path" -> defaultContextPath = text(e);
@@ -252,47 +240,115 @@ public final class WebXmlParser {
                 case "security-constraint" ->
                         securityConstraints.add(WebXmlSecurityParser.parseSecurityConstraint(e, legacy));
                 case "login-config" -> loginConfig = WebXmlSecurityParser.parseLoginConfig(e);
-                case "security-role" -> {
-                    String r = firstText(e, ROLE_NAME);
-                    if (r != null) securityRoles.add(r);
-                }
-                case "locale-encoding-mapping-list" -> {
-                    for (Element m : childrenByTag(e, "locale-encoding-mapping")) {
-                        String loc = firstText(m, "locale");
-                        String enc = firstText(m, "encoding");
-                        if (loc != null && enc != null) localeEncodingMappings.put(loc, enc);
-                    }
-                }
+                case "security-role" -> securityRole(e);
+                case "locale-encoding-mapping-list" -> localeEncodingMappings(e);
                 default -> { /* ignore unrecognized elements */ }
             }
         }
-        return new WebAppDescriptor(contextParams, servlets, servletMappings, filters,
-                filterMappings, listenerClasses, errorPages, sessionTimeoutMinutes,
-                localeEncodingMappings).withVersion(version)
-                .withDisplayName(displayName)
-                .withKind(fragment ? WebAppDescriptor.Kind.WEB_FRAGMENT : WebAppDescriptor.Kind.WEB_APP)
-                .withFragmentName(fragmentName)
-                .withOrdering(ordering)
-                .withWelcomeFiles(welcomeFiles)
-                .withMimeMappings(mimeMappings)
-                .withRequestCharacterEncoding(requestEncoding)
-                .withResponseCharacterEncoding(responseEncoding)
-                .withDefaultContextPath(defaultContextPath)
-                .withDenyUncoveredHttpMethods(denyUncovered)
-                .withCookieConfig(cookieConfig)
-                .withTrackingModes(trackingModes)
-                .withSecurityConstraints(securityConstraints)
-                .withLoginConfig(loginConfig)
-                .withSecurityRoles(securityRoles)
-                .withJspConfigDescriptor(JspDescriptors.parse(root))
-                .withAbsoluteOrdering(absoluteOrdering)
-                .withMetadataComplete(isPre25(version) || Boolean.TRUE.equals(xsdBoolean(
-                        root.hasAttribute("metadata-complete") ? root.getAttribute("metadata-complete") : null,
-                        "metadata-complete attribute")));
+
+        private void fragmentName(Element e) {
+            if (fragment) fragmentName = text(e);
+        }
+
+        private void ordering(Element e) {
+            if (fragment) ordering = parseOrdering(e);
+            else LOG.log(System.Logger.Level.WARNING,
+                    "<ordering> in web.xml is ignored (use <absolute-ordering>), §8.2.2");
+        }
+
+        private void absoluteOrdering(Element e) {
+            if (!fragment) absoluteOrdering = parseAbsoluteOrdering(e);
+            else LOG.log(System.Logger.Level.WARNING,
+                    "<absolute-ordering> in a web-fragment.xml is ignored, §8.2.2");
+        }
+
+        private void contextParam(Element e) {
+            String name = firstText(e, "param-name");
+            String value = firstText(e, "param-value");
+            if (name != null) contextParams.put(name, value == null ? "" : value);
+        }
+
+        private void servletMapping(Element e) {
+            String sname = firstText(e, SERVLET_NAME);
+            for (Element url : childrenByTag(e, "url-pattern")) {
+                servletMappings.add(new WebAppDescriptor.ServletMappingDef(sname, lenientPattern(text(url), legacy)));
+            }
+        }
+
+        private void listener(Element e) {
+            String cls = firstText(e, "listener-class");
+            if (cls != null) listenerClasses.add(cls);
+        }
+
+        private void sessionConfig(Element e) {
+            String t = firstText(e, "session-timeout");
+            // Zero or less: sessions never time out. Normalised to 0, as -1 means "absent".
+            if (t != null) {
+                sessionTimeoutMinutes = Math.max(0, parseInt(t, "<session-timeout> in <session-config>"));
+            }
+            var cc = WebXmlSecurityParser.parseCookieConfig(e);
+            if (cc != null) cookieConfig = cc;
+            trackingModes.addAll(WebXmlSecurityParser.parseTrackingModes(e));
+        }
+
+        private void welcomeFiles(Element e) {
+            for (Element w : childrenByTag(e, "welcome-file")) {
+                if (!text(w).isEmpty()) welcomeFiles.add(text(w));
+            }
+        }
+
+        private void mimeMapping(Element e) {
+            String ext = firstText(e, "extension");
+            String type = firstText(e, "mime-type");
+            if (ext != null && type != null) {
+                if (ext.startsWith(".")) ext = ext.substring(1);
+                mimeMappings.put(ext.toLowerCase(Locale.ROOT), type);
+            }
+        }
+
+        private void securityRole(Element e) {
+            String r = firstText(e, ROLE_NAME);
+            if (r != null) securityRoles.add(r);
+        }
+
+        private void localeEncodingMappings(Element e) {
+            for (Element m : childrenByTag(e, "locale-encoding-mapping")) {
+                String loc = firstText(m, "locale");
+                String enc = firstText(m, "encoding");
+                if (loc != null && enc != null) localeEncodingMappings.put(loc, enc);
+            }
+        }
+
+        /** The descriptor of {@code root}, whose elements this collected, declaring {@code version}. */
+        WebAppDescriptor descriptor(Element root, String version) {
+            return new WebAppDescriptor(contextParams, servlets, servletMappings, filters,
+                    filterMappings, listenerClasses, errorPages, sessionTimeoutMinutes,
+                    localeEncodingMappings).withVersion(version)
+                    .withDisplayName(displayName)
+                    .withKind(fragment ? WebAppDescriptor.Kind.WEB_FRAGMENT : WebAppDescriptor.Kind.WEB_APP)
+                    .withFragmentName(fragmentName)
+                    .withOrdering(ordering)
+                    .withWelcomeFiles(welcomeFiles)
+                    .withMimeMappings(mimeMappings)
+                    .withRequestCharacterEncoding(requestEncoding)
+                    .withResponseCharacterEncoding(responseEncoding)
+                    .withDefaultContextPath(defaultContextPath)
+                    .withDenyUncoveredHttpMethods(denyUncovered)
+                    .withCookieConfig(cookieConfig)
+                    .withTrackingModes(trackingModes)
+                    .withSecurityConstraints(securityConstraints)
+                    .withLoginConfig(loginConfig)
+                    .withSecurityRoles(securityRoles)
+                    .withJspConfigDescriptor(JspDescriptors.parse(root))
+                    .withAbsoluteOrdering(absoluteOrdering)
+                    .withMetadataComplete(isPre25(version) || xsdBooleanValue(
+                            root.hasAttribute("metadata-complete") ? root.getAttribute("metadata-complete") : null,
+                            "metadata-complete attribute").orElse(false));
+        }
     }
 
     private static WebAppDescriptor.ServletDef parseServlet(Element e) {
-        String name = firstText(e, "servlet-name");
+        String name = firstText(e, SERVLET_NAME);
         return new WebAppDescriptor.ServletDef(
                 name,
                 firstText(e, "servlet-class"),
@@ -300,7 +356,7 @@ public final class WebXmlParser {
                 parseAsync(e),
                 parseLoadOnStartup(e, name),
                 parseMultipart(e),
-                !Boolean.FALSE.equals(xsdBoolean(firstText(e, "enabled"), "<enabled> of servlet " + name)),
+                xsdBooleanValue(firstText(e, "enabled"), "<enabled> of servlet " + name).orElse(true),
                 runAs(e),
                 firstText(e, "jsp-file"),
                 parseRoleRefs(e));
@@ -350,16 +406,24 @@ public final class WebXmlParser {
     }
 
     /**
+     * As {@link #xsdBooleanValue}, for the tri-state settings of the descriptor model:
+     * {@code null} when {@code text} is {@code null}, i.e. the setting is absent.
+     */
+    static Boolean xsdBoolean(String text, String where) {
+        return xsdBooleanValue(text, where).orElse(null);
+    }
+
+    /**
      * An {@code xsd:boolean} value ({@code true-falseType}): {@code true}, {@code false}, {@code 1}
-     * or {@code 0}, surrounding whitespace ignored. {@code null} when {@code text} is {@code null}.
+     * or {@code 0}, surrounding whitespace ignored. Empty when {@code text} is {@code null}.
      *
      * @throws IllegalArgumentException for any other value, naming {@code where}
      */
-    static Boolean xsdBoolean(String text, String where) {
-        if (text == null) return null;
+    static Optional<Boolean> xsdBooleanValue(String text, String where) {
+        if (text == null) return Optional.empty();
         return switch (text.strip()) {
-            case "true", "1" -> Boolean.TRUE;
-            case "false", "0" -> Boolean.FALSE;
+            case "true", "1" -> Optional.of(Boolean.TRUE);
+            case "false", "0" -> Optional.of(Boolean.FALSE);
             default -> throw new IllegalArgumentException("invalid " + where + " value '" + text
                     + "': expected true, false, 1 or 0");
         };
@@ -375,7 +439,7 @@ public final class WebXmlParser {
         if (t.isEmpty()) return 0; // present but empty: load at startup, order 0
         try {
             return Integer.parseInt(t.trim());
-        } catch (NumberFormatException nfe) {
+        } catch (NumberFormatException _) {
             LOG.log(System.Logger.Level.WARNING, "servlet '" + servletName
                     + "': invalid <load-on-startup> value '" + t + "', treated as lazy");
             return Integer.MIN_VALUE;
@@ -397,20 +461,26 @@ public final class WebXmlParser {
         boolean afterOthers = false;
         for (Element c : children(e)) {
             String n = localName(c);
-            if (n.equals("before") || n.equals("after")) {
-                boolean isBefore = n.equals("before");
-                boolean others = false;
-                for (Element k : children(c)) {
-                    switch (localName(k)) {
-                        case "name" -> (isBefore ? before : after).add(text(k));
-                        case "others" -> others = true;
-                        default -> { }
-                    }
-                }
-                if (isBefore) beforeOthers |= others; else afterOthers |= others;
-            }
+            if (n.equals("before")) beforeOthers |= orderingList(c, before);
+            else if (n.equals("after")) afterOthers |= orderingList(c, after);
         }
         return new Ordering(before, beforeOthers, after, afterOthers);
+    }
+
+    /**
+     * Adds the fragment names of {@code list}, a {@code <before>} or an {@code <after>}, to
+     * {@code names}; whether it holds {@code <others/>}.
+     */
+    private static boolean orderingList(Element list, List<String> names) {
+        boolean others = false;
+        for (Element k : children(list)) {
+            switch (localName(k)) {
+                case "name" -> names.add(text(k));
+                case "others" -> others = true;
+                default -> { /* no other element orders fragments */ }
+            }
+        }
+        return others;
     }
 
     private static List<String> parseAbsoluteOrdering(Element e) {
@@ -424,7 +494,7 @@ public final class WebXmlParser {
                             "duplicate <others/> in <absolute-ordering> ignored");
                     else { seenOthers = true; out.add(WebAppDescriptor.OTHERS); }
                 }
-                default -> { }
+                default -> { /* no other element orders fragments */ }
             }
         }
         return out;
@@ -455,7 +525,7 @@ public final class WebXmlParser {
         for (Element url : childrenByTag(e, "url-pattern")) {
             out.add(new WebAppDescriptor.FilterMappingDef(filterName, lenientPattern(text(url), legacy), null, types));
         }
-        for (Element sn : childrenByTag(e, "servlet-name")) {
+        for (Element sn : childrenByTag(e, SERVLET_NAME)) {
             out.add(new WebAppDescriptor.FilterMappingDef(filterName, null, text(sn), types));
         }
         return out;

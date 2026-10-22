@@ -65,15 +65,16 @@ final class MergeSlots {
             all.forEach(this::webXml);
         }
 
+        /** Merges a fragment's {@code value}, never {@code null} (the parsers default absent values). */
         void fragment(String fragmentId, String key, V value) throws ServletException {
-            if (!values.containsKey(key)) {
-                values.put(key, value);
+            V declared = values.putIfAbsent(key, value);
+            if (declared == null) {
                 fromFragment.put(key, fragmentId);
                 return;
             }
             String first = fromFragment.get(key);
             if (first == null) return; // web.xml wins
-            if (!Objects.equals(values.get(key), value)) {
+            if (!Objects.equals(declared, value)) {
                 throw conflict(element + " '" + key + "'" + owner, first, fragmentId);
             }
         }

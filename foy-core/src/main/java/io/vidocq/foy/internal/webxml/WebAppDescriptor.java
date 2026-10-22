@@ -259,18 +259,6 @@ public final class WebAppDescriptor {
                             List<FilterMappingDef> filterMappings,
                             List<String> listenerClasses,
                             List<ErrorPageDef> errorPages,
-                            int sessionTimeoutMinutes) {
-        this(contextParams, servlets, servletMappings, filters, filterMappings,
-                listenerClasses, errorPages, sessionTimeoutMinutes, Map.of());
-    }
-
-    public WebAppDescriptor(Map<String, String> contextParams,
-                            List<ServletDef> servlets,
-                            List<ServletMappingDef> servletMappings,
-                            List<FilterDef> filters,
-                            List<FilterMappingDef> filterMappings,
-                            List<String> listenerClasses,
-                            List<ErrorPageDef> errorPages,
                             int sessionTimeoutMinutes,
                             Map<String, String> localeEncodingMappings) {
         this.contextParams = Collections.unmodifiableMap(new LinkedHashMap<>(contextParams));

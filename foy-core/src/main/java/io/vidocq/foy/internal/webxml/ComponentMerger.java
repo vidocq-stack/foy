@@ -43,6 +43,8 @@ import java.util.Set;
  */
 final class ComponentMerger {
 
+    private static final String SERVLET = "servlet";
+
     private ComponentMerger() {}
 
     /** A servlet or filter being merged; servlet-only fields stay unset for filters. */
@@ -93,7 +95,34 @@ final class ComponentMerger {
             if (async == null) async = asyncSupported;
         }
 
-        Map<String, String> params() {
+        /** Takes web.xml's servlet declaration {@code d}. */
+        void servletFromWebXml(ServletDef d) {
+            fromWebXml(d.className(), d.initParams(), d.asyncSupported());
+            loadOnStartup = d.loadOnStartup();
+            multipart = d.multipartConfig();
+            enabled = d.enabled();
+            runAs = d.runAs();
+            jspFile = d.jspFile();
+            roleRefs.webXml(d.securityRoleRefs());
+        }
+
+        /** Merges the servlet declaration {@code d} of the fragment {@code fragmentId}. */
+        void servletFromFragment(String fragmentId, ServletDef d) throws ServletException {
+            fromFragment(fragmentId, d.className(), d.initParams(), d.asyncSupported());
+            if (loadOnStartup == Integer.MIN_VALUE) loadOnStartup = d.loadOnStartup();
+            if (multipart == null) multipart = d.multipartConfig();
+            if (runAs == null) runAs = d.runAs();
+            if (jspFile == null) jspFile = d.jspFile();
+            // web.xml wins per role-name; fragments add the others, and two fragments that disagree on a
+            // role-name fail the deployment (§8.2.3).
+            roleRefs.fragment(fragmentId, d.securityRoleRefs());
+            // web.xml decides <enabled>; between fragments, one "false" disables the servlet.
+            // Approximation: the parser keeps <enabled> as a plain boolean (absent = true), so an
+            // explicit <enabled>true</enabled> in a fragment cannot override another's false.
+            if (!inWebXml) enabled &= d.enabled();
+        }
+
+        Map<String, String> initParams() {
             return Collections.unmodifiableMap(new LinkedHashMap<>(params.values()));
         }
     }
@@ -101,35 +130,16 @@ final class ComponentMerger {
     static List<ServletDef> servlets(WebAppDescriptor webXml, List<Fragment> ordered) throws ServletException {
         Map<String, Component> byName = new LinkedHashMap<>();
         for (ServletDef d : webXml.servlets()) {
-            Component c = byName.computeIfAbsent(d.name(), n -> new Component("servlet", n, true));
-            c.fromWebXml(d.className(), d.initParams(), d.asyncSupported());
-            c.loadOnStartup = d.loadOnStartup();
-            c.multipart = d.multipartConfig();
-            c.enabled = d.enabled();
-            c.runAs = d.runAs();
-            c.jspFile = d.jspFile();
-            c.roleRefs.webXml(d.securityRoleRefs());
+            byName.computeIfAbsent(d.name(), n -> new Component(SERVLET, n, true)).servletFromWebXml(d);
         }
         for (Fragment f : ordered) {
             for (ServletDef d : f.descriptor().servlets()) {
-                Component c = byName.computeIfAbsent(d.name(), n -> new Component("servlet", n, false));
-                c.fromFragment(f.id(), d.className(), d.initParams(), d.asyncSupported());
-                if (c.loadOnStartup == Integer.MIN_VALUE) c.loadOnStartup = d.loadOnStartup();
-                if (c.multipart == null) c.multipart = d.multipartConfig();
-                if (c.runAs == null) c.runAs = d.runAs();
-                if (c.jspFile == null) c.jspFile = d.jspFile();
-                // web.xml wins per role-name; fragments add the others, and two fragments that disagree on a
-                // role-name fail the deployment (§8.2.3).
-                c.roleRefs.fragment(f.id(), d.securityRoleRefs());
-                // web.xml decides <enabled>; between fragments, one "false" disables the servlet.
-                // Approximation: the parser keeps <enabled> as a plain boolean (absent = true), so an
-                // explicit <enabled>true</enabled> in a fragment cannot override another's false.
-                if (!c.inWebXml) c.enabled &= d.enabled();
+                byName.computeIfAbsent(d.name(), n -> new Component(SERVLET, n, false)).servletFromFragment(f.id(), d);
             }
         }
         var out = new ArrayList<ServletDef>();
         for (Component c : byName.values()) {
-            out.add(new ServletDef(c.name, c.className, c.params(), c.async, c.loadOnStartup,
+            out.add(new ServletDef(c.name, c.className, c.initParams(), c.async, c.loadOnStartup,
                     c.multipart, c.enabled, c.runAs, c.jspFile, new LinkedHashMap<>(c.roleRefs.values())));
         }
         return out;
@@ -148,7 +158,7 @@ final class ComponentMerger {
             }
         }
         var out = new ArrayList<FilterDef>();
-        for (Component c : byName.values()) out.add(new FilterDef(c.name, c.className, c.params(), c.async));
+        for (Component c : byName.values()) out.add(new FilterDef(c.name, c.className, c.initParams(), c.async));
         return out;
     }
 
