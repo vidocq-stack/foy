@@ -1,5 +1,33 @@
 # BUG.md — foy
 
+## BUG-20261022-04 — A @WebListener that is also an initializer receives a null @HandlesTypes set
+
+- Date: 2026-10-22. Reported through Vaadin's development mode in a user project
+  (threadlocalrandom/VaadinCreate2026) on `vidocq:run`.
+- Symptom: with `com.vaadin:vaadin-dev-server`, deployment fails with
+  `Foy deployment failed: Cannot invoke "java.util.Collection.toArray()" because "c" is null`, thrown
+  from `DevModeInitializer$DevModeClassFinder`. The application's `@Route` and `AppShellConfigurator`
+  classes were in its class index.
+- Minimal repro: a jar whose `META-INF/services/jakarta.servlet.ServletContainerInitializer` names a
+  class that is `@WebListener`, implements `ServletContextListener` and `ServletContainerInitializer`,
+  and declares `@HandlesTypes(Marker.class)`, next to a class implementing `Marker`. Its `onStartup`
+  receives `null`.
+- Cause: a descriptor has a single kind, and `@WebListener` makes it LISTENER. `foy-processor`
+  (`ComponentModel`) and the runtime `ClassFileDescriptorReader` kept `handlesTypes` only for the
+  INITIALIZER kind. `IndexedHandlesTypesResolver` then saw no handled type and answered `null`.
+  Vaadin's `DevModeStartupListener` is such a class.
+- Status: FIXED (b7f2870). Both keep `handlesTypes` for any class that implements
+  `ServletContainerInitializer`, whatever its kind.
+- Validation:
+  - `ComponentKindsGenerationTest.webListenerThatIsAlsoAnInitializerKeepsItsHandledTypes`,
+    `ClassFileDescriptorReaderTest.webListenerThatIsAlsoAnInitializerKeepsItsHandledTypes` and the
+    boot-level `FoyChappeBootListenerInitializerTest` failed before the fix (`[]`, `[]`, `null`).
+  - On the user project with `vaadin-dev-server`, the regenerated companion of `DevModeStartupListener`
+    lists its 26 handled types. Deployment succeeds, and Vaadin starts its development bundle build.
+- Not Foy: the bundle build then fails in Vite, because `vaadin-dev-tools.js` is not copied from the
+  jars. Vaadin's `ResourceFolderUtil` cannot list the application layer's `vauban:file:...!/` resource
+  URLs, as its `PinnedNpmVersions` warning also shows.
+
 ## BUG-20261022-03 — Static text files are served with charset=ISO-8859-1
 
 - Date: 2026-10-22 (seen in the first local run of the nightly OWASP ZAP scan, Vidocq/vidocq#273).
