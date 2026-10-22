@@ -1,5 +1,23 @@
 # BUG.md — foy
 
+## BUG-20261022-05 — A Content-Type set as a header loses its media type
+
+- Date: 2026-10-22. Found while pinning `interceptSpecialHeader` before clearing its SonarJava
+  `java:S2259` finding (Vidocq/vidocq#285).
+- Symptom: after `setCharacterEncoding("UTF-8")` then `setHeader("Content-Type", "text/html")`,
+  `getContentType()` answers `null;charset=UTF-8`. After `setContentType("text/plain")` then
+  `setHeader("Content-Type", "text/html")`, `getWriter()` rewrites the header to
+  `text/plain;charset=ISO-8859-1`: the header's type is lost on the wire.
+- Minimal repro: the two sequences above on an `HttpServletResponseImpl`.
+- Cause: `setHeader`/`addHeader("Content-Type", ...)` (through `interceptSpecialHeader`) recorded the
+  content type and its charset, but not the media type that `getContentType()` and
+  `refreshContentTypeHeader()` compose with the charset: it stayed `null`, or kept the value of an
+  earlier `setContentType`.
+- Status: FIXED on `fix/infer-races`: a `Content-Type` header records its media type as
+  `setContentType` does. Tests: `HttpServletResponseImplTest.aContentTypeHeaderWithoutCharsetKeepsItsMediaType`
+  and `theWriterKeepsTheTypeOfTheLastContentTypeHeader` (both failed before the fix);
+  `aContentTypeHeaderSetsTheCharsetAndANullOneClearsTheType` pins the unchanged behaviour.
+
 ## BUG-20261022-04 — A @WebListener that is also an initializer receives a null @HandlesTypes set
 
 - Date: 2026-10-22. Reported through Vaadin's development mode in a user project

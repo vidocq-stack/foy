@@ -444,4 +444,34 @@ class HttpServletResponseImplTest {
         assertThrows(IllegalArgumentException.class, () -> res.addCookie(value));
         assertTrue(res.cookies().isEmpty());
     }
+
+    @Test
+    void aContentTypeHeaderSetsTheCharsetAndANullOneClearsTheType() {
+        var res = new HttpServletResponseImpl();
+        res.setHeader("Content-Type", "text/plain; charset=UTF-16");
+        assertEquals("text/plain; charset=UTF-16", res.getContentType());
+        assertEquals("UTF-16", res.getCharacterEncoding());
+        res.setHeader("Content-Type", null);
+        assertNull(res.getContentType());
+        assertEquals("UTF-16", res.getCharacterEncoding(), "a null Content-Type leaves the encoding as it was");
+    }
+
+    @Test
+    void aContentTypeHeaderWithoutCharsetKeepsItsMediaType() {
+        // BUG-20261022-05: the header path did not record the media type, so getContentType() composed "null;charset=...".
+        var res = new HttpServletResponseImpl();
+        res.setCharacterEncoding("UTF-8");
+        res.setHeader("Content-Type", "text/html");
+        assertEquals("text/html;charset=UTF-8", res.getContentType());
+    }
+
+    @Test
+    void theWriterKeepsTheTypeOfTheLastContentTypeHeader() throws IOException {
+        // BUG-20261022-05: a stale media type from setContentType replaced the header's type at getWriter().
+        var res = new HttpServletResponseImpl();
+        res.setContentType("text/plain");
+        res.setHeader("Content-Type", "text/html");
+        res.getWriter();
+        assertEquals("text/html;charset=ISO-8859-1", res.getHeader("Content-Type"));
+    }
 }

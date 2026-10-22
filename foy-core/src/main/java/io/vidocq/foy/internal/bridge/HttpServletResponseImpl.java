@@ -374,12 +374,22 @@ public final class HttpServletResponseImpl implements HttpServletResponse {
                 committed = true;
             }
         }
-        if ("Content-Type".equalsIgnoreCase(name)) {
-            this.contentType = value;
-            int idx = value == null ? -1 : value.toLowerCase(Locale.ROOT).indexOf("charset=");
-            if (idx >= 0) {
-                this.characterEncoding = value.substring(idx + 8).trim();
-            }
+        if ("Content-Type".equalsIgnoreCase(name)) contentTypeHeaderSet(value);
+    }
+
+    /**
+     * A {@code Content-Type} set as a header: it stands as written, and its media type replaces the
+     * one {@code setContentType} recorded, so a later charset change or {@code getWriter()} keeps it
+     * (BUG-20261022-05). A charset it names becomes the response's encoding.
+     */
+    private void contentTypeHeaderSet(String value) {
+        this.contentType = value;
+        this.mediaType = value;
+        if (value == null) return;
+        int idx = value.toLowerCase(Locale.ROOT).indexOf("charset=");
+        if (idx >= 0) {
+            this.mediaType = value.substring(0, idx).replaceAll(";\\s*$", "").trim();
+            this.characterEncoding = value.substring(idx + 8).trim();
         }
     }
 
