@@ -230,6 +230,8 @@ public final class HttpServletResponseImpl implements HttpServletResponse {
     }
 
     private static final String HEX = "0123456789ABCDEF";
+    private static final String CONTENT_TYPE = "Content-Type";
+    private static final String CHARSET_PARAMETER = "charset=";
 
     /**
      * Rejects a header value that chappe would refuse on the wire (CHAPPE-008, see
@@ -374,7 +376,7 @@ public final class HttpServletResponseImpl implements HttpServletResponse {
                 committed = true;
             }
         }
-        if ("Content-Type".equalsIgnoreCase(name)) contentTypeHeaderSet(value);
+        if (CONTENT_TYPE.equalsIgnoreCase(name)) contentTypeHeaderSet(value);
     }
 
     /**
@@ -386,7 +388,7 @@ public final class HttpServletResponseImpl implements HttpServletResponse {
         this.contentType = value;
         this.mediaType = value;
         if (value == null) return;
-        int idx = value.toLowerCase(Locale.ROOT).indexOf("charset=");
+        int idx = value.toLowerCase(Locale.ROOT).indexOf(CHARSET_PARAMETER);
         if (idx >= 0) {
             this.mediaType = value.substring(0, idx).replaceAll(";\\s*$", "").trim();
             this.characterEncoding = value.substring(idx + 8).trim();
@@ -413,7 +415,7 @@ public final class HttpServletResponseImpl implements HttpServletResponse {
     @Override public String getContentType() {
         if (contentType == null) return null;
         String enc = configuredEncoding();
-        if (contentType.toLowerCase(Locale.ROOT).contains("charset=") || enc == null) {
+        if (contentType.toLowerCase(Locale.ROOT).contains(CHARSET_PARAMETER) || enc == null) {
             return contentType;
         }
         return mediaType + ";charset=" + enc;
@@ -421,10 +423,10 @@ public final class HttpServletResponseImpl implements HttpServletResponse {
     @Override public void setContentType(String type) {
         // Servlet 6.1 §5.4: setContentType is silently ignored once the response is committed.
         if (isCommitted()) return;
-        checkHeaderText("Content-Type", type);
+        checkHeaderText(CONTENT_TYPE, type);
         this.contentType = type;
         if (type == null) return;
-        int idx = type.toLowerCase(Locale.ROOT).indexOf("charset=");
+        int idx = type.toLowerCase(Locale.ROOT).indexOf(CHARSET_PARAMETER);
         if (idx >= 0) {
             this.mediaType = type.substring(0, idx).replaceAll(";\\s*$", "").trim();
             // The charset of the content type is only accepted while not yet locked by getWriter().
@@ -452,7 +454,7 @@ public final class HttpServletResponseImpl implements HttpServletResponse {
     }
     @Override public void setCharacterEncoding(String charset) {
         if (isCommitted() || charsetLocked) return;
-        checkHeaderText("Content-Type", charset);
+        checkHeaderText(CONTENT_TYPE, charset);
         this.characterEncoding = charset;
         this.charsetExplicit = (charset != null);
         refreshContentTypeHeader();
@@ -475,7 +477,7 @@ public final class HttpServletResponseImpl implements HttpServletResponse {
         String composed = enc != null ? mediaType + ";charset=" + enc : mediaType;
         List<String> list = new ArrayList<>();
         list.add(composed);
-        headers.put("Content-Type", list);
+        headers.put(CONTENT_TYPE, list);
         this.contentType = composed;
     }
     @Override public void setContentLength(int len) { setIntHeader("Content-Length", len); }
