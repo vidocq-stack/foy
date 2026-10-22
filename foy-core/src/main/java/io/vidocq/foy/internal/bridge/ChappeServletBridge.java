@@ -54,6 +54,7 @@ import io.vidocq.foy.internal.container.VidocqServletContext;
 import jakarta.servlet.AsyncContext;
 import jakarta.servlet.DispatcherType;
 import jakarta.servlet.Filter;
+import jakarta.servlet.ServletContext;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.ServletRequest;
 import jakarta.servlet.ServletRequestWrapper;
@@ -737,7 +738,11 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
         for (Map.Entry<String, List<String>> e : res.allHeaders().entrySet()) {
             for (String v : e.getValue()) headers.add(e.getKey(), v);
         }
+        // The handler belongs to the application that called upgrade() (a cross-context target's own):
+        // its loader, and its context's undeploy closes the connection.
         ClassLoader loader = req.applicationClassLoader();
+        VidocqServletContext upgradeContext =
+                req.upgradeContext() instanceof VidocqServletContext v ? v : servletContext;
         int status = res.getStatus();
         if (status != 101) {
             LOG.log(System.Logger.Level.WARNING,
@@ -746,7 +751,7 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
         }
         try {
             return new ConnectionUpgrade(StatusCode.of(status), headers.build(),
-                    connection -> new WebConnectionImpl(connection, handler, servletContext, loader).start());
+                    connection -> new WebConnectionImpl(connection, handler, upgradeContext, loader).start());
         } catch (IllegalArgumentException e) {
             // The handler was never initialised: no destroy() is due.
             LOG.log(System.Logger.Level.WARNING,
@@ -1198,9 +1203,15 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
         String filterPath = target.named() ? null : target.path();
         // This bridge is the target context's: a cross-context dispatch (getContext(...) forward or
         // include, AsyncContext.dispatch(ctx, path)) runs the target application with its own class
-        // loader, and the caller's comes back when it returns (BUG-20261022-06).
+        // loader, and the caller's comes back when it returns (BUG-20261022-06). The request also
+        // learns the context of the dispatch: the async cycles, I/O listeners and upgrade the target
+        // opens belong to the target application and keep its loader after the dispatch returned.
+        HttpServletRequestImpl impl = unwrapImpl(req);
+        ServletContext previousContext = impl == null ? null : impl.enterContext(servletContext);
         try (var _ = ContextLoaderScope.enter(servletContext.applicationClassLoader())) {
             invoke(target, req, res, type, filterRegistry.chain(filterPath, type, target.servletName()));
+        } finally {
+            if (impl != null) impl.leaveContext(previousContext);
         }
     }
 

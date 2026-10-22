@@ -71,23 +71,6 @@ public record DeployOptions(SecuritySettings security,
         Objects.requireNonNull(handlesTypes, "handlesTypes");
     }
 
-    /** Without application class loader (the context class loader is left untouched). */
-    public DeployOptions(SecuritySettings security,
-                         VidocqServletContext.ResourceProvider resourceProvider,
-                         String servletContextName,
-                         Set<String> reservedServletNames,
-                         Set<String> reservedFilterNames,
-                         Set<String> reservedUrlPatterns,
-                         ComponentFactory componentFactory,
-                         HandlesTypesResolver handlesTypes,
-                         String virtualServerName,
-                         Path tempDirRoot,
-                         RequestLimits requestLimits) {
-        this(security, resourceProvider, servletContextName, reservedServletNames, reservedFilterNames,
-                reservedUrlPatterns, componentFactory, handlesTypes, virtualServerName, tempDirRoot, requestLimits,
-                null);
-    }
-
     /** Without virtual server name, temp-dir root, request limits (their defaults apply) and application class loader. */
     public DeployOptions(SecuritySettings security,
                          VidocqServletContext.ResourceProvider resourceProvider,

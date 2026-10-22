@@ -22,10 +22,12 @@ package io.vidocq.foy.internal.bridge;
 import io.vidocq.foy.internal.container.ContextLoaderScope;
 
 import java.util.ArrayDeque;
+import java.util.Objects;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.locks.Condition;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.Consumer;
+import java.util.function.Supplier;
 
 /**
  * Runs listener callbacks for one request one at a time, with the application's class loader.
@@ -60,7 +62,8 @@ final class CallbackSerializer {
 
     private record Task(ThrowingRunnable<?> callback, Consumer<Throwable> onError) {}
 
-    private final ClassLoader applicationLoader;
+    /** The application class loader of the next callback, read per callback; {@code null}: TCCL untouched. */
+    private final Supplier<ClassLoader> applicationLoader;
     private final ReentrantLock lock = new ReentrantLock();
     private final Condition idle = lock.newCondition();
     /** Guarded by {@link #lock}. */
@@ -74,8 +77,17 @@ final class CallbackSerializer {
     /** The thread running callbacks, while {@link #running}. Guarded by {@link #lock}. */
     private Thread drainer;
 
+    /** Callbacks run with {@code applicationLoader} as context loader ({@code null}: left untouched). */
     CallbackSerializer(ClassLoader applicationLoader) {
-        this.applicationLoader = applicationLoader;
+        this(() -> applicationLoader);
+    }
+
+    /**
+     * Callbacks run with the loader {@code applicationLoader} answers when each one starts: the owner
+     * (a request) may hand its callbacks to another application, the one that opened its async cycle.
+     */
+    CallbackSerializer(Supplier<ClassLoader> applicationLoader) {
+        this.applicationLoader = Objects.requireNonNull(applicationLoader, "applicationLoader");
     }
 
     /** Queues {@code r}; runs on a virtual thread after any running callback; exceptions go to {@code onError}. */
@@ -206,22 +218,23 @@ final class CallbackSerializer {
     }
 
     private void runOne(Task task) {
-        Throwable failure = failureOf(task.callback());
+        ClassLoader loader = applicationLoader.get();
+        Throwable failure = failureOf(loader, task.callback());
         if (failure == null) return;
-        Throwable onErrorFailure = failureOf(() -> task.onError().accept(failure));
+        Throwable onErrorFailure = failureOf(loader, () -> task.onError().accept(failure));
         if (onErrorFailure != null) LOG.log(System.Logger.Level.WARNING, "a listener's onError threw", onErrorFailure);
     }
 
     /**
-     * Runs {@code code} with the application's class loader as the thread context class loader,
-     * installed for each call and restored after it (a callback may change it, the next one still
-     * gets the application's; BUG-20261022-06), and returns what it threw, or {@code null}. This is
-     * the boundary of the application code on the callback thread: whatever a callback throws, an
-     * Error included, goes to its {@code onError} (whose Servlet API signature takes a
+     * Runs {@code code} with {@code loader}, the application's class loader, as the thread context
+     * class loader, installed for each call and restored after it (a callback may change it, the next
+     * one still gets the application's; BUG-20261022-06), and returns what it threw, or {@code null}.
+     * This is the boundary of the application code on the callback thread: whatever a callback
+     * throws, an Error included, goes to its {@code onError} (whose Servlet API signature takes a
      * {@code Throwable}), and the drain thread survives it.
      */
-    private Throwable failureOf(ThrowingRunnable<?> code) {
-        try (var _ = ContextLoaderScope.enter(applicationLoader)) {
+    private static Throwable failureOf(ClassLoader loader, ThrowingRunnable<?> code) {
+        try (var _ = ContextLoaderScope.enter(loader)) {
             code.run();
             return null;
         } catch (Throwable t) {

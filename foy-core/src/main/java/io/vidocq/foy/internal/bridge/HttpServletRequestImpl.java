@@ -20,6 +20,7 @@
 package io.vidocq.foy.internal.bridge;
 
 import io.vidocq.chappe.api.Request;
+import io.vidocq.foy.internal.container.ContextLoaderScope;
 import io.vidocq.foy.internal.container.VidocqServletContext;
 import io.vidocq.foy.internal.http.BoundedInputStream;
 import io.vidocq.foy.internal.http.CookieCodec;
@@ -100,6 +101,7 @@ public final class HttpServletRequestImpl implements HttpServletRequest {
                                   SessionManager sessionManager) {
         this.chappe = chappe;
         this.servletContext = ctx;
+        this.callbackLoader = ContextLoaderScope.applicationLoaderOf(ctx);
         this.contextPath = contextPath;
         this.servletPath = servletPath;
         this.pathInfo = pathInfo;
@@ -532,11 +534,22 @@ public final class HttpServletRequestImpl implements HttpServletRequest {
     /** The non-blocking I/O host shared by the request body and the response output. */
     NonBlockingHost nonBlockingHost() { return nonBlockingHost; }
 
+    /**
+     * The application class loader the read and write listener callbacks run with: the one of the
+     * application that opened the async cycle or the upgrade (non-blocking I/O needs one of them),
+     * {@code null} when the deployment named none.
+     */
+    private volatile ClassLoader callbackLoader;
+
+    private void useCallbackLoader(ServletContext context) {
+        callbackLoader = ContextLoaderScope.applicationLoaderOf(context);
+    }
+
     /** The request's listener callback serializer, run with the application's class loader. */
     CallbackSerializer callbackSerializer() {
         synchronized (callbacksMonitor) {
             if (callbacks == null) {
-                callbacks = new CallbackSerializer(servletContext.getClassLoader());
+                callbacks = new CallbackSerializer(() -> callbackLoader);
                 if (callbacksHeld) callbacks.hold();
             }
             return callbacks;
@@ -1296,7 +1309,9 @@ public final class HttpServletRequestImpl implements HttpServletRequest {
         if (response != null && response.isCommitted()) {
             throw new IllegalStateException("the response is already committed");
         }
-        var factory = servletContext instanceof io.vidocq.foy.internal.container.VidocqServletContext v
+        // The handler belongs to the application of the current dispatch (a cross-context target's own).
+        ServletContext context = currentContext();
+        var factory = context instanceof io.vidocq.foy.internal.container.VidocqServletContext v
                 ? v.componentFactory()
                 : io.vidocq.foy.internal.gen.RegistryComponentFactory.forClassLoader(handlerClass.getClassLoader());
         T handler;
@@ -1309,6 +1324,8 @@ public final class HttpServletRequestImpl implements HttpServletRequest {
         }
         // From now on the body is discarded and the response never commits (the upgrade head is sent instead).
         if (response != null) response.discardForUpgrade();
+        upgradeContext = context;
+        useCallbackLoader(context);
         upgradeHandler = handler;
         return handler;
     }
@@ -1316,8 +1333,43 @@ public final class HttpServletRequestImpl implements HttpServletRequest {
     /** The handler of the upgrade the application requested, or {@code null}. */
     HttpUpgradeHandler upgradeHandler() { return upgradeHandler; }
 
-    /** The context's class loader, for the upgraded connection's callbacks. */
-    ClassLoader applicationClassLoader() { return servletContext.getClassLoader(); }
+    /** The context of the dispatch that called {@code upgrade()}: the upgrade handler's application. */
+    private volatile ServletContext upgradeContext;
+
+    /** The context the upgrade handler belongs to (the request's own until {@code upgrade()} is called). */
+    ServletContext upgradeContext() {
+        ServletContext c = upgradeContext;
+        return c != null ? c : servletContext;
+    }
+
+    /**
+     * The application class loader of the upgrade handler, for {@code init}, {@code destroy} and the
+     * upgraded connection's callbacks; {@code null} when the deployment named none.
+     */
+    ClassLoader applicationClassLoader() { return ContextLoaderScope.applicationLoaderOf(upgradeContext()); }
+
+    /**
+     * The servlet context of the dispatch running now ({@link ChappeServletBridge#invoke}): a
+     * cross-context target's own context while it runs, the request's otherwise. The async cycles,
+     * the listener callbacks and the upgrade the target opens belong to that application.
+     */
+    private volatile ServletContext dispatchContext;
+
+    /** A dispatch into {@code context} starts; answers the context to give back to {@link #leaveContext}. */
+    public ServletContext enterContext(ServletContext context) {
+        ServletContext previous = dispatchContext;
+        dispatchContext = context;
+        return previous;
+    }
+
+    /** The dispatch started by {@link #enterContext} returned. */
+    public void leaveContext(ServletContext previous) { dispatchContext = previous; }
+
+    /** The servlet context of the dispatch running now, the request's own outside any dispatch. */
+    ServletContext currentContext() {
+        ServletContext c = dispatchContext;
+        return c != null ? c : servletContext;
+    }
     private io.vidocq.foy.internal.async.AsyncContextImpl asyncContext;
     private jakarta.servlet.http.HttpServletResponse boundResponse;
 
@@ -1368,7 +1420,11 @@ public final class HttpServletRequestImpl implements HttpServletRequest {
         // start an async cycle (mirror of upgrade() refusing an async-started request).
         if (upgradeHandler != null) throw new IllegalStateException("startAsync() after upgrade()");
         boolean original = this.equals(req) && java.util.Objects.equals(boundResponse, res);
-        var started = new io.vidocq.foy.internal.async.AsyncContextImpl(req, res, servletContext, original);
+        // The cycle belongs to the application of the current dispatch (a cross-context target's own):
+        // its start() runnables, its listeners and the I/O callbacks it opens use that loader.
+        ServletContext context = currentContext();
+        useCallbackLoader(context);
+        var started = new io.vidocq.foy.internal.async.AsyncContextImpl(req, res, context, original);
         this.asyncContext = started;
         // Section 13.3: threads outside the dispatch (AsyncContext.start) resolve role refs against
         // the servlet executing now, whatever the dispatch thread does afterwards.

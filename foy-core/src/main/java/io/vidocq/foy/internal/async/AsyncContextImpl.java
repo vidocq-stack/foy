@@ -19,6 +19,8 @@
  */
 package io.vidocq.foy.internal.async;
 
+import io.vidocq.foy.internal.container.ContextLoaderScope;
+import io.vidocq.foy.internal.container.VidocqServletContext;
 import jakarta.servlet.AsyncContext;
 import jakarta.servlet.AsyncEvent;
 import jakarta.servlet.AsyncListener;
@@ -201,16 +203,20 @@ public final class AsyncContextImpl implements AsyncContext {
         // The container's context listeners (CDI request and session scopes) are bound on the new
         // thread around the runnable (BUG-20261010-07); a wrapper keeps that thread's request apart
         // from the one the serving thread announced, since a listener may key its state by it.
-        Runnable bound = servletContext instanceof io.vidocq.foy.internal.container.VidocqServletContext v
-                ? v.listenerRegistry().bindingContainerContexts(servletContext, this::threadRequest, run)
-                : run;
-        // The runnable gets the application's class loader as context loader, whatever the thread
-        // that called start() had (BUG-20261022-06).
-        ClassLoader applicationLoader = servletContext instanceof io.vidocq.foy.internal.container.VidocqServletContext v
-                ? v.applicationClassLoader() : null;
+        // The runnable also gets the cycle's application class loader as context loader, whatever the
+        // thread that called start() had (BUG-20261022-06).
+        Runnable task;
+        ClassLoader loader;
+        if (servletContext instanceof VidocqServletContext v) {
+            task = v.listenerRegistry().bindingContainerContexts(servletContext, this::threadRequest, run);
+            loader = v.applicationClassLoader();
+        } else {
+            task = run;
+            loader = null;
+        }
         Runnable scoped = () -> {
-            try (var _ = io.vidocq.foy.internal.container.ContextLoaderScope.enter(applicationLoader)) {
-                bound.run();
+            try (var _ = ContextLoaderScope.enter(loader)) {
+                task.run();
             }
         };
         // Whatever the runnable throws, error included, fails the cycle from the dying thread.
@@ -244,7 +250,7 @@ public final class AsyncContextImpl implements AsyncContext {
             throws jakarta.servlet.ServletException {
         // §2.3.3.4: createListener must throw ServletException when instantiation fails
         // (TCK asyncListenerTest1/6 relies on it with ACListenerBad).
-        var factory = servletContext instanceof io.vidocq.foy.internal.container.VidocqServletContext v
+        var factory = servletContext instanceof VidocqServletContext v
                 ? v.componentFactory()
                 : io.vidocq.foy.internal.gen.RegistryComponentFactory.forClassLoader(clazz.getClassLoader());
         return factory.newInstance(clazz);
@@ -311,10 +317,20 @@ public final class AsyncContextImpl implements AsyncContext {
             if (ended) return;
             ended = true;
         }
-        for (var reg : listeners) {
-            try { reg.listener().onComplete(newEvent(reg, null)); }
-            catch (IOException | RuntimeException e) { logListenerFailure("onComplete", e); }
+        try (var _ = enterApplicationLoader()) {
+            for (var reg : listeners) {
+                try { reg.listener().onComplete(newEvent(reg, null)); }
+                catch (IOException | RuntimeException e) { logListenerFailure("onComplete", e); }
+            }
         }
+    }
+
+    /**
+     * The listeners belong to the application that started this cycle (a cross-context target's
+     * own), whatever thread fires them: its class loader is the context loader (BUG-20261022-06).
+     */
+    private ContextLoaderScope enterApplicationLoader() {
+        return ContextLoaderScope.enter(ContextLoaderScope.applicationLoaderOf(servletContext));
     }
 
     /**
@@ -330,9 +346,11 @@ public final class AsyncContextImpl implements AsyncContext {
             previous = List.copyOf(listeners);
             listeners.clear();
         }
-        for (var reg : previous) {
-            try { reg.listener().onStartAsync(new AsyncEvent(next, reg.suppliedReq(), reg.suppliedRes())); }
-            catch (IOException | RuntimeException e) { logListenerFailure("onStartAsync", e); }
+        try (var _ = enterApplicationLoader()) {
+            for (var reg : previous) {
+                try { reg.listener().onStartAsync(new AsyncEvent(next, reg.suppliedReq(), reg.suppliedRes())); }
+                catch (IOException | RuntimeException e) { logListenerFailure("onStartAsync", e); }
+            }
         }
     }
 
@@ -349,16 +367,20 @@ public final class AsyncContextImpl implements AsyncContext {
     public boolean isCompleted() { return completed; }
 
     private void fireOnTimeout() {
-        for (var reg : listeners) {
-            try { reg.listener().onTimeout(newEvent(reg, null)); }
-            catch (IOException | RuntimeException e) { logListenerFailure("onTimeout", e); }
+        try (var _ = enterApplicationLoader()) {
+            for (var reg : listeners) {
+                try { reg.listener().onTimeout(newEvent(reg, null)); }
+                catch (IOException | RuntimeException e) { logListenerFailure("onTimeout", e); }
+            }
         }
     }
 
     private void fireOnError(Throwable t) {
-        for (var reg : listeners) {
-            try { reg.listener().onError(newEvent(reg, t)); }
-            catch (IOException | RuntimeException e) { logListenerFailure("onError", e); }
+        try (var _ = enterApplicationLoader()) {
+            for (var reg : listeners) {
+                try { reg.listener().onError(newEvent(reg, t)); }
+                catch (IOException | RuntimeException e) { logListenerFailure("onError", e); }
+            }
         }
     }
 

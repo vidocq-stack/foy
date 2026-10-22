@@ -84,7 +84,8 @@ public final class SessionManager implements AutoCloseable {
         this.defaultMaxInactiveSeconds = defaultMaxInactiveSeconds;
         // Built during deployment: the application's class loader, set as the context class loader
         // of the reaper while it fires listeners.
-        this.applicationLoader = servletContext == null ? null : servletContext.getClassLoader();
+        // The deployment's loader, or none (the reaper then leaves the context loader untouched).
+        this.applicationLoader = ContextLoaderScope.applicationLoaderOf(servletContext);
     }
 
     public void setListenerRegistry(ListenerRegistry registry) {

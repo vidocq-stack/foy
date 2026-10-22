@@ -56,6 +56,15 @@ public final class ContextLoaderScope implements AutoCloseable {
         return new ContextLoaderScope(current, previous);
     }
 
+    /**
+     * The application class loader the deployment of {@code context} named, {@code null} when it
+     * named none or {@code context} is not one of Foy's. Unlike {@code ServletContext.getClassLoader()},
+     * never the caller's context loader: a scope entered with the answer is a no-op without one.
+     */
+    public static ClassLoader applicationLoaderOf(jakarta.servlet.ServletContext context) {
+        return context instanceof VidocqServletContext v ? v.applicationClassLoader() : null;
+    }
+
     /** Gives the thread back the context loader it had when the scope was entered. */
     @Override
     public void close() {

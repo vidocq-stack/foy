@@ -341,9 +341,10 @@ class SessionCoreTest {
                 destroyed.countDown();
             }
         });
-        // Deployment: the application's class loader is the context class loader.
-        SessionManager m = under(appLoader,
-                () -> new SessionManager(new InMemorySessionStore(), new VidocqServletContext("/"), 1));
+        // Deployment: the context knows the application's class loader (DeployOptions, BUG-20261022-06).
+        var context = new VidocqServletContext("/");
+        context.setApplicationClassLoader(appLoader);
+        SessionManager m = new SessionManager(new InMemorySessionStore(), context, 1);
         manager = m;
         m.setListenerRegistry(registry);
         m.createNew();
