@@ -31,30 +31,30 @@ public final class JspDescriptors {
             "default-content-type", "buffer", "error-on-undeclared-namespace");
     private JspDescriptors() { }
     private record Taglib(String uri, String location) implements TaglibDescriptor {
-        public String getTaglibURI() { return uri; }
-        public String getTaglibLocation() { return location; }
+        @Override public String getTaglibURI() { return uri; }
+        @Override public String getTaglibLocation() { return location; }
     }
     private record Group(List<String> patterns, List<String> preludes, List<String> codas,
                          Map<String, String> properties) implements JspPropertyGroupDescriptor {
         Group { patterns = List.copyOf(patterns); preludes = List.copyOf(preludes); codas = List.copyOf(codas); properties = Map.copyOf(properties); }
-        public Collection<String> getUrlPatterns() { return patterns; }
-        public Collection<String> getIncludePreludes() { return preludes; }
-        public Collection<String> getIncludeCodas() { return codas; }
-        public String getElIgnored() { return properties.get("el-ignored"); }
-        public String getErrorOnELNotFound() { return properties.get("error-on-el-not-found"); }
-        public String getPageEncoding() { return properties.get("page-encoding"); }
-        public String getScriptingInvalid() { return properties.get("scripting-invalid"); }
-        public String getIsXml() { return properties.get("is-xml"); }
-        public String getDeferredSyntaxAllowedAsLiteral() { return properties.get("deferred-syntax-allowed-as-literal"); }
-        public String getTrimDirectiveWhitespaces() { return properties.get("trim-directive-whitespaces"); }
-        public String getDefaultContentType() { return properties.get("default-content-type"); }
-        public String getBuffer() { return properties.get("buffer"); }
-        public String getErrorOnUndeclaredNamespace() { return properties.get("error-on-undeclared-namespace"); }
+        @Override public Collection<String> getUrlPatterns() { return patterns; }
+        @Override public Collection<String> getIncludePreludes() { return preludes; }
+        @Override public Collection<String> getIncludeCodas() { return codas; }
+        @Override public String getElIgnored() { return properties.get("el-ignored"); }
+        @Override public String getErrorOnELNotFound() { return properties.get("error-on-el-not-found"); }
+        @Override public String getPageEncoding() { return properties.get("page-encoding"); }
+        @Override public String getScriptingInvalid() { return properties.get("scripting-invalid"); }
+        @Override public String getIsXml() { return properties.get("is-xml"); }
+        @Override public String getDeferredSyntaxAllowedAsLiteral() { return properties.get("deferred-syntax-allowed-as-literal"); }
+        @Override public String getTrimDirectiveWhitespaces() { return properties.get("trim-directive-whitespaces"); }
+        @Override public String getDefaultContentType() { return properties.get("default-content-type"); }
+        @Override public String getBuffer() { return properties.get("buffer"); }
+        @Override public String getErrorOnUndeclaredNamespace() { return properties.get("error-on-undeclared-namespace"); }
     }
     private record Config(List<TaglibDescriptor> tags, List<JspPropertyGroupDescriptor> groups) implements JspConfigDescriptor {
         Config { tags = List.copyOf(tags); groups = List.copyOf(groups); }
-        public Collection<TaglibDescriptor> getTaglibs() { return tags; }
-        public Collection<JspPropertyGroupDescriptor> getJspPropertyGroups() { return groups; }
+        @Override public Collection<TaglibDescriptor> getTaglibs() { return tags; }
+        @Override public Collection<JspPropertyGroupDescriptor> getJspPropertyGroups() { return groups; }
     }
     static JspConfigDescriptor parse(Element root) {
         var tags = new ArrayList<TaglibDescriptor>(); var groups = new ArrayList<JspPropertyGroupDescriptor>(); boolean found = false;

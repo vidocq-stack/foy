@@ -61,6 +61,8 @@ public final class WebAppDiscovery {
     private static final AnnotationLiteral<Any> ANY = new AnnotationLiteral<Any>() {};
 
     /**
+     * Collects the servlets, filters and listeners among the beans of {@code bm}.
+     *
      * @param bm the CDI bean manager
      * @param registry the registry giving each class its descriptor
      * @return the annotated components, in discovery order

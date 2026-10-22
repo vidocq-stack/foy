@@ -176,7 +176,7 @@ final class ComponentMerger {
                     fragmentOf.put(m.urlPattern(), f.id());
                     out.add(m);
                 } else if (owner.equals(m.servletName())) {
-                    continue; // same mapping declared twice
+                    // The same mapping declared twice: already kept once.
                 } else if (!fragmentOf.containsKey(m.urlPattern())) {
                     // §12.2: one pattern on two servlets of the effective descriptor fails the deployment.
                     throw new ServletException("conflicting <servlet-mapping> for url-pattern '" + m.urlPattern()

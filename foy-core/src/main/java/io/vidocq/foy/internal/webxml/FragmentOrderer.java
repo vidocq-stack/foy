@@ -38,6 +38,8 @@ public final class FragmentOrderer {
     private FragmentOrderer() {}
 
     /**
+     * Orders the web fragments by the absolute ordering of web.xml, or else by their relative orderings.
+     *
      * @param absoluteOrdering web.xml's list (may contain {@link WebAppDescriptor#OTHERS}), or null
      * @param fragments        in discovery order (deterministic: the caller sorts by jar URL)
      * @return the fragments to merge, in merge order; excluded fragments are absent

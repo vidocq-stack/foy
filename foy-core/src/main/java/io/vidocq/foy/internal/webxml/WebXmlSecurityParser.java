@@ -30,6 +30,7 @@ import java.util.Map;
 import java.util.Set;
 
 import static io.vidocq.foy.internal.webxml.WebXmlParser.childrenByTag;
+import static io.vidocq.foy.internal.webxml.WebXmlParser.firstChild;
 import static io.vidocq.foy.internal.webxml.WebXmlParser.firstText;
 import static io.vidocq.foy.internal.webxml.WebXmlParser.parseInt;
 import static io.vidocq.foy.internal.webxml.WebXmlParser.text;
@@ -43,21 +44,20 @@ final class WebXmlSecurityParser {
 
     /** Cookie configuration of a {@code <session-config>}, or {@code null} when absent. */
     static WebAppDescriptor.CookieConfigDef parseCookieConfig(Element sessionConfig) {
-        for (Element cc : childrenByTag(sessionConfig, "cookie-config")) {
-            String maxAge = firstText(cc, "max-age");
-            Map<String, String> attributes = new LinkedHashMap<>();
-            for (Element a : childrenByTag(cc, "attribute")) {
-                String n = firstText(a, "attribute-name");
-                String v = firstText(a, "attribute-value");
-                if (n != null) attributes.putIfAbsent(n, v == null ? "" : v);
-            }
-            return new WebAppDescriptor.CookieConfigDef(
-                    firstText(cc, "name"), firstText(cc, "domain"), firstText(cc, "path"),
-                    firstText(cc, "comment"), bool(cc, "http-only"), bool(cc, "secure"),
-                    maxAge == null ? null : parseInt(maxAge, "<max-age> in <cookie-config>"),
-                    attributes);
+        Element cc = firstChild(sessionConfig, "cookie-config");
+        if (cc == null) return null;
+        String maxAge = firstText(cc, "max-age");
+        Map<String, String> attributes = new LinkedHashMap<>();
+        for (Element a : childrenByTag(cc, "attribute")) {
+            String n = firstText(a, "attribute-name");
+            String v = firstText(a, "attribute-value");
+            if (n != null) attributes.putIfAbsent(n, v == null ? "" : v);
         }
-        return null;
+        return new WebAppDescriptor.CookieConfigDef(
+                firstText(cc, "name"), firstText(cc, "domain"), firstText(cc, "path"),
+                firstText(cc, "comment"), bool(cc, "http-only"), bool(cc, "secure"),
+                maxAge == null ? null : parseInt(maxAge, "<max-age> in <cookie-config>"),
+                attributes);
     }
 
     static Set<SessionTrackingMode> parseTrackingModes(Element sessionConfig) {

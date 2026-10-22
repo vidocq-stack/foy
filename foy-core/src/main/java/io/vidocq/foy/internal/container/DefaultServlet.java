@@ -65,7 +65,7 @@ import java.nio.file.Path;
  * processing is skipped on include and error dispatches.</p>
  *
  * <p><b>Ranges.</b> One {@code bytes=a-b}, {@code a-} or {@code -n} range answers 206 with
- * {@code Content-Range}; an unsatisfiable range answers 416 with {@code Content-Range: bytes *&#47;len}.
+ * {@code Content-Range}; an unsatisfiable range answers 416 with <code>Content-Range: bytes *&#47;len</code>.
  * Several ranges answer 200 with the whole body (a documented simplification: no
  * {@code multipart/byteranges}). {@code If-Range} is honoured by date (second precision); an
  * entity-tag {@code If-Range} needs a strong comparison (RFC 9110 section 13.1.5), which the weak
@@ -175,7 +175,7 @@ public final class DefaultServlet extends GenericServlet {
     private static boolean notModified(HttpServletRequest req, String etag, long lastModified) {
         String inm = req.getHeader("If-None-Match");
         if (inm != null) {
-            for (String tag : inm.split(",")) {
+            for (String tag : inm.split(",", -1)) {
                 String t = tag.trim();
                 if (t.equals("*")) return true;
                 if (etag != null && opaque(t).equals(opaque(etag))) return true;

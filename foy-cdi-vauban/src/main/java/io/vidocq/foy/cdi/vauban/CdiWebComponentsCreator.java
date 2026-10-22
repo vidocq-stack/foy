@@ -47,7 +47,7 @@ public final class CdiWebComponentsCreator implements SyntheticBeanCreator<CdiWe
     public CdiWebComponents create(Instance<Object> lookup, Parameters params) {
         String names = params.get(FoyWebExtension.CLASSES_PARAM, String.class, "");
         List<Class<?>> classes = new ArrayList<>();
-        for (String name : names.split(",")) {
+        for (String name : names.split(",", -1)) {
             String className = name.strip();
             if (!className.isEmpty()) classes.add(load(className));
         }

@@ -40,7 +40,7 @@ public final class CookieCodec {
     public static List<Cookie> parseCookieHeader(String value) {
         List<Cookie> out = new ArrayList<>();
         if (value == null || value.isEmpty()) return out;
-        for (String pair : value.split(";")) {
+        for (String pair : value.split(";", -1)) {
             String trimmed = pair.trim();
             int eq = trimmed.indexOf('=');
             if (eq < 0) continue;

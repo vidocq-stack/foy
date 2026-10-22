@@ -936,12 +936,6 @@ public final class VidocqServletContext implements ServletContext {
         setResponseCharacterEncoding(encoding == null ? null : encoding.name());
     }
 
-    private RuntimeException dynamicUnavailable() {
-        // Servlet 6.1 §4.4 : après initialisation, IllegalStateException est requis.
-        if (initialized) return alreadyInitialized();
-        return new UnsupportedOperationException("dynamic registration not implemented in M2a");
-    }
-
     private static IllegalStateException alreadyInitialized() {
         return new IllegalStateException("ServletContext already initialized");
     }

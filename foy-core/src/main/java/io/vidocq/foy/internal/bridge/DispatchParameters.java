@@ -40,6 +40,8 @@ final class DispatchParameters {
     private DispatchParameters() {}
 
     /**
+     * Merges the dispatch query string into the caller's parameters, the query's values first.
+     *
      * @param original    the caller's parameters (query string and form body)
      * @param queryString the dispatch query string, may be {@code null}
      * @return an unmodifiable merged view; {@code original} itself when the query adds nothing
@@ -61,7 +63,7 @@ final class DispatchParameters {
     private static Map<String, List<String>> parse(String qs, Charset charset) {
         var out = new LinkedHashMap<String, List<String>>();
         if (qs == null || qs.isEmpty()) return out;
-        for (String pair : qs.split("&")) {
+        for (String pair : qs.split("&", -1)) {
             int eq = pair.indexOf('=');
             String k = eq < 0 ? pair : pair.substring(0, eq);
             String v = eq < 0 ? "" : pair.substring(eq + 1);

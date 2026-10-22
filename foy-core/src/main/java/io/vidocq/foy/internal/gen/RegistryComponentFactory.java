@@ -66,7 +66,7 @@ public final class RegistryComponentFactory implements ComponentFactory {
         return new RegistryComponentFactory(WebComponentRegistry.forClassLoader(loader), loader);
     }
 
-    /** @return the backing registry */
+    /** Returns the backing registry. */
     public WebComponentRegistry registry() {
         return registry;
     }

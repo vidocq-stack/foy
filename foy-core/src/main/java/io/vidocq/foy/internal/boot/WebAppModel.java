@@ -287,7 +287,8 @@ public record WebAppModel(String contextPath,
     /** The path with control characters escaped as Java Unicode escapes, for an error message. */
     private static String printable(String s) {
         var out = new StringBuilder(s.length());
-        for (char c : s.toCharArray()) {
+        for (int i = 0; i < s.length(); i++) {
+            char c = s.charAt(i);
             if (c < 0x20 || c == 0x7f) out.append(String.format("\\u%04x", (int) c));
             else out.append(c);
         }

@@ -29,6 +29,7 @@ import java.lang.invoke.MethodHandles;
 import java.lang.invoke.MethodType;
 import java.lang.System.Logger.Level;
 import java.text.MessageFormat;
+import java.util.EnumMap;
 import java.util.IdentityHashMap;
 import java.util.Map;
 import java.util.Optional;
@@ -82,7 +83,7 @@ public final class WebComponentRegistry {
      * @return a new registry
      */
     public static WebComponentRegistry forClassLoader(ClassLoader loader) {
-        Map<Class<?>, WebComponent> index = new IdentityHashMap<>();
+        IdentityHashMap<Class<?>, WebComponent> index = new IdentityHashMap<>();
         Iterator<WebComponent> it = ServiceLoader.load(WebComponent.class, loader).iterator();
         while (true) {
             try {
@@ -132,14 +133,14 @@ public final class WebComponentRegistry {
         return Class.forName(className, true, loader);
     }
 
-    /** @return the number of cached components per tier */
+    /** Returns the number of cached components per tier. */
     public Stats stats() {
-        int[] n = new int[Tier.values().length];
+        Map<Tier, Integer> n = new EnumMap<>(Tier.class);
         for (Entry e : cache.values()) {
-            n[e.tier().ordinal()]++;
+            n.merge(e.tier(), 1, Integer::sum);
         }
-        return new Stats(n[Tier.SERVICE_LOADER.ordinal()], n[Tier.GENERATED_CLASS.ordinal()],
-                n[Tier.CLASS_FILE.ordinal()], n[Tier.REFLECTION.ordinal()]);
+        return new Stats(n.getOrDefault(Tier.SERVICE_LOADER, 0), n.getOrDefault(Tier.GENERATED_CLASS, 0),
+                n.getOrDefault(Tier.CLASS_FILE, 0), n.getOrDefault(Tier.REFLECTION, 0));
     }
 
     private Entry entry(Class<?> type) {

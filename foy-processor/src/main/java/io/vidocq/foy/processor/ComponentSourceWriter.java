@@ -126,7 +126,8 @@ final class ComponentSourceWriter {
     /** Returns a quoted Java string literal for the value. */
     static String literal(String s) {
         var sb = new StringBuilder("\"");
-        for (char c : s.toCharArray()) {
+        for (int i = 0; i < s.length(); i++) {
+            char c = s.charAt(i);
             switch (c) {
                 case '\\' -> sb.append("\\\\");
                 case '"' -> sb.append("\\\"");

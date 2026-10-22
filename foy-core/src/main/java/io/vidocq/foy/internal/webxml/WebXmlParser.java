@@ -86,9 +86,9 @@ public final class WebXmlParser {
             factory.setExpandEntityReferences(false);
             DocumentBuilder builder = factory.newDocumentBuilder();
             builder.setErrorHandler(new org.xml.sax.ErrorHandler() {
-                public void warning(org.xml.sax.SAXParseException x) { /* ignored */ }
-                public void error(org.xml.sax.SAXParseException x) throws org.xml.sax.SAXException { throw x; }
-                public void fatalError(org.xml.sax.SAXParseException x) throws org.xml.sax.SAXException { throw x; }
+                @Override public void warning(org.xml.sax.SAXParseException x) { /* ignored */ }
+                @Override public void error(org.xml.sax.SAXParseException x) throws org.xml.sax.SAXException { throw x; }
+                @Override public void fatalError(org.xml.sax.SAXParseException x) throws org.xml.sax.SAXException { throw x; }
             });
             builder.setEntityResolver((publicId, systemId) -> new InputSource(new StringReader("")));
             doc = builder.parse(in);
@@ -318,21 +318,20 @@ public final class WebXmlParser {
     }
 
     private static String runAs(Element e) {
-        for (Element r : childrenByTag(e, "run-as")) return firstText(r, "role-name");
-        return null;
+        Element r = firstChild(e, "run-as");
+        return r == null ? null : firstText(r, "role-name");
     }
 
     private static WebAppDescriptor.MultipartConfigDef parseMultipart(Element e) {
-        for (Element m : childrenByTag(e, "multipart-config")) {
-            return new WebAppDescriptor.MultipartConfigDef(
-                    firstText(m, "location"),
-                    parseLong(firstText(m, "max-file-size"), -1L, "<max-file-size> in <multipart-config>"),
-                    parseLong(firstText(m, "max-request-size"), -1L,
-                            "<max-request-size> in <multipart-config>"),
-                    (int) parseLong(firstText(m, "file-size-threshold"), 0L,
-                            "<file-size-threshold> in <multipart-config>"));
-        }
-        return null;
+        Element m = firstChild(e, "multipart-config");
+        if (m == null) return null;
+        return new WebAppDescriptor.MultipartConfigDef(
+                firstText(m, "location"),
+                parseLong(firstText(m, "max-file-size"), -1L, "<max-file-size> in <multipart-config>"),
+                parseLong(firstText(m, "max-request-size"), -1L,
+                        "<max-request-size> in <multipart-config>"),
+                (int) parseLong(firstText(m, "file-size-threshold"), 0L,
+                        "<file-size-threshold> in <multipart-config>"));
     }
 
     private static long parseLong(String t, long dflt, String where) {
@@ -499,9 +498,15 @@ public final class WebXmlParser {
         return out;
     }
 
+    /** The first child element of {@code parent} named {@code tag}, or {@code null} when there is none. */
+    static Element firstChild(Element parent, String tag) {
+        var matches = childrenByTag(parent, tag);
+        return matches.isEmpty() ? null : matches.getFirst();
+    }
+
     static String firstText(Element parent, String tag) {
-        for (Element e : childrenByTag(parent, tag)) return text(e);
-        return null;
+        Element e = firstChild(parent, tag);
+        return e == null ? null : text(e);
     }
 
     static String text(Element e) {
@@ -511,7 +516,7 @@ public final class WebXmlParser {
                         + e.getTagName() + ">)");
             }
         }
-        String t = e.getTextContent();
-        return t == null ? null : t.trim();
+        // Never null for an element (DOM Level 3: only documents, doctypes and notations answer null).
+        return e.getTextContent().trim();
     }
 }

@@ -31,6 +31,7 @@ import javax.tools.StandardLocation;
 import java.io.IOException;
 import java.io.Writer;
 import java.util.ArrayDeque;
+import java.util.Set;
 import java.util.TreeMap;
 import java.util.TreeSet;
 
@@ -93,7 +94,7 @@ final class ClassIndexWriter {
     }
 
     /** Adds the binary names of the {@code RUNTIME}-retained annotations on {@code element}. */
-    private void collectRuntimeAnnotations(Element element, TreeSet<String> into) {
+    private void collectRuntimeAnnotations(Element element, Set<String> into) {
         for (AnnotationMirror m : element.getAnnotationMirrors()) {
             if (m.getAnnotationType().asElement() instanceof TypeElement te && isRuntimeRetained(te)) {
                 into.add(env.getElementUtils().getBinaryName(te).toString());

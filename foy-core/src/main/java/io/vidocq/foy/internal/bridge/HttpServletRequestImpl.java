@@ -445,7 +445,7 @@ public final class HttpServletRequestImpl implements HttpServletRequest {
 
     private static void decodeInto(Map<String, List<String>> out, String encoded, Charset cs) {
         if (encoded == null || encoded.isEmpty()) return;
-        for (String pair : encoded.split("&")) {
+        for (String pair : encoded.split("&", -1)) {
             int eq = pair.indexOf('=');
             String k = eq < 0 ? pair : pair.substring(0, eq);
             String v = eq < 0 ? "" : pair.substring(eq + 1);
@@ -782,7 +782,7 @@ public final class HttpServletRequestImpl implements HttpServletRequest {
         record Tagged(Locale loc, double q, int order) {}
         var items = new ArrayList<Tagged>();
         int i = 0;
-        for (String token : h.split(",")) {
+        for (String token : h.split(",", -1)) {
             token = token.trim();
             if (token.isEmpty()) continue;
             String tag = token;
@@ -790,15 +790,15 @@ public final class HttpServletRequestImpl implements HttpServletRequest {
             int semi = token.indexOf(';');
             if (semi >= 0) {
                 tag = token.substring(0, semi).trim();
-                for (String p : token.substring(semi + 1).split(";")) {
+                for (String p : token.substring(semi + 1).split(";", -1)) {
                     p = p.trim();
                     if (p.startsWith("q=")) {
-                        try { q = Double.parseDouble(p.substring(2)); } catch (NumberFormatException ignored) {}
+                        try { q = Double.parseDouble(p.substring(2)); } catch (NumberFormatException _) { /* a malformed weight is ignored */ }
                     }
                 }
             }
             try { items.add(new Tagged(Locale.forLanguageTag(tag), q, i++)); }
-            catch (RuntimeException ignored) {}
+            catch (RuntimeException _) { /* an unusable tag is skipped */ }
         }
         items.sort((a, b) -> {
             int c = Double.compare(b.q, a.q);

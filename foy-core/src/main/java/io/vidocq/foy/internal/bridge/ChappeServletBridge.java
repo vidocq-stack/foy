@@ -251,7 +251,7 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
         if (request.version() != HttpVersion.HTTP_2) response = handBack(response, requests);
         if (!head.complete(response) && pipe != null) {
             // chappe stopped waiting (server stop): fail the servlet's next write.
-            try { pipe.reader().close(); } catch (IOException ignored) {}
+            try { pipe.reader().close(); } catch (IOException _) { /* best effort: chappe stopped waiting */ }
         }
     }
 
@@ -367,7 +367,7 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
                 return insideRequestListeners(redirected, () -> {
                     Response refused = gate(redirected, res, requestPath);
                     if (refused != null) return refused;
-                    try { res.sendRedirect(res.encodeRedirectURL(redirect)); } catch (IOException ignored) {}
+                    try { res.sendRedirect(res.encodeRedirectURL(redirect)); } catch (IOException _) { /* buffered: no I/O can fail */ }
                     return completed(redirected, res);
                 });
             }
@@ -405,7 +405,7 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
                         : filterRegistry.chainFor(unmappedPath, DispatcherType.REQUEST);
                 if (early == null && filters.isEmpty()) {
                     // No mapping and no filter: 404, through the error page when one is mapped (section 9.9.1).
-                    try { res.sendError(404); } catch (IOException ignored) {}
+                    try { res.sendError(404); } catch (IOException _) { /* buffered: no I/O can fail */ }
                     try {
                         maybeHandleError(req, res, null, null);
                         early = errorPageHandled(req) ? respond(res, () -> toChappeResponse(res))
@@ -730,7 +730,7 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
         req.bindResponse(res);
         // The error page runs inside the request listeners (BUG-20261010-08).
         return insideRequestListeners(req, () -> {
-            try { res.sendError(status); } catch (IOException ignored) {}
+            try { res.sendError(status); } catch (IOException _) { /* buffered: no I/O can fail */ }
             try { maybeHandleError(req, res, null, null); }
             catch (ServletException e) { return failed(res, null, e); }
             if (errorPageHandled(req)) return respond(res, () -> toChappeResponse(res));
@@ -935,7 +935,7 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
             // the committed content stands. Do not lose the exception.
             LOG.log(System.Logger.Level.ERROR,
                     "exception after the response was committed; no error page dispatched", thrown);
-            req.setAttribute("jakarta.servlet.error.handled", Boolean.TRUE);
+            req.setAttribute("jakarta.servlet.error.handled", true);
             // A live body cannot end normally: the client would take a partial body for a whole
             // one. Abort it, so chappe drops the connection.
             if (res.isStreaming()) res.abortBody(thrown);
@@ -979,16 +979,16 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
                 res.clearErrorState();
                 res.resetBuffer();
                 try { res.sendError(errorStatus, thrown.getMessage()); }
-                catch (IOException ignored) {}
-                req.setAttribute("jakarta.servlet.error.handled", Boolean.TRUE);
+                catch (IOException _) { /* buffered: no I/O can fail */ }
+                req.setAttribute("jakarta.servlet.error.handled", true);
             } else if (thrown != null && errorStatus == 413) {
                 // A request body or multipart limit the application did not handle: the client's fault.
                 LOG.log(System.Logger.Level.DEBUG, "request body limit exceeded", thrown);
                 res.clearErrorState();
                 res.resetBuffer();
                 try { res.sendError(413); }
-                catch (IOException ignored) {}
-                req.setAttribute("jakarta.servlet.error.handled", Boolean.TRUE);
+                catch (IOException _) { /* buffered: no I/O can fail */ }
+                req.setAttribute("jakarta.servlet.error.handled", true);
             }
             return;
         }
@@ -1014,7 +1014,7 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
             message = statusMessage;
         }
         req.setAttribute("jakarta.servlet.error.message", message == null ? "" : message);
-        req.setAttribute("jakarta.servlet.error.handled", Boolean.TRUE);
+        req.setAttribute("jakarta.servlet.error.handled", true);
 
         try {
             res.setStatus(errorStatus);
@@ -1160,7 +1160,7 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
         return Response.builder()
                 .status(StatusCode.NOT_FOUND)
                 .header("Content-Type", "text/plain")
-                .body(Body.of("Not Found".getBytes()))
+                .body(Body.of("Not Found".getBytes(StandardCharsets.US_ASCII)))
                 .build();
     }
 
