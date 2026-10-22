@@ -78,7 +78,7 @@ public final class MultipartParser {
         var params = new HashMap<String, String>();
         try {
             if (!"multipart/form-data".equals(parseParameters(contentType, params))) return null;
-        } catch (MalformedMultipartException e) {
+        } catch (MalformedMultipartException _) {
             return null;
         }
         String boundary = params.get("boundary");
@@ -153,21 +153,32 @@ public final class MultipartParser {
         int total = 0;
         while (true) {
             line.reset();
-            int c;
-            while ((c = in.read()) != '\r') {
-                if (c < 0) throw new MalformedMultipartException("truncated multipart part headers");
-                if (c == '\n') throw new MalformedMultipartException("bare LF in a part header");
-                if (++total > maxBytes) {
-                    throw new MultipartLimitException("the headers of a part exceed " + maxBytes + " bytes");
-                }
-                line.write(c);
-            }
-            if (in.read() != '\n') throw new MalformedMultipartException("bare CR in a part header");
-            total += 2;
-            if (total > maxBytes) throw new MultipartLimitException("the headers of a part exceed " + maxBytes + " bytes");
+            total = readHeaderLine(in, line, total, maxBytes);
             if (line.size() == 0) return headers;
             headers.add(parseHeader(line.toByteArray()));
         }
+    }
+
+    /**
+     * Reads one header line into {@code line}, its CRLF left out, and returns the bytes of the header
+     * section read so far, {@code total} before this line, CRLFs included.
+     */
+    private static int readHeaderLine(CountingReader in, ByteArrayOutputStream line, int total, int maxBytes)
+            throws IOException {
+        int count = total;
+        int c;
+        while ((c = in.read()) != '\r') {
+            if (c < 0) throw new MalformedMultipartException("truncated multipart part headers");
+            if (c == '\n') throw new MalformedMultipartException("bare LF in a part header");
+            if (++count > maxBytes) {
+                throw new MultipartLimitException("the headers of a part exceed " + maxBytes + " bytes");
+            }
+            line.write(c);
+        }
+        if (in.read() != '\n') throw new MalformedMultipartException("bare CR in a part header");
+        count += 2;
+        if (count > maxBytes) throw new MultipartLimitException("the headers of a part exceed " + maxBytes + " bytes");
+        return count;
     }
 
     private static PartImpl.Header parseHeader(byte[] raw) throws MalformedMultipartException {
@@ -189,7 +200,7 @@ public final class MultipartParser {
         try {
             return StandardCharsets.UTF_8.newDecoder().onMalformedInput(CodingErrorAction.REPORT)
                     .onUnmappableCharacter(CodingErrorAction.REPORT).decode(ByteBuffer.wrap(raw)).toString();
-        } catch (CharacterCodingException e) {
+        } catch (CharacterCodingException _) {
             return new String(raw, StandardCharsets.ISO_8859_1);
         }
     }
@@ -226,44 +237,57 @@ public final class MultipartParser {
         int i = semi < 0 ? length : semi + 1;
         while (i < length) {
             i = skipOws(value, i);
-            if (i == length) break;
-            if (value.charAt(i) == ';') {
-                i++;
-                continue;
-            }
-            int eq = value.indexOf('=', i);
-            if (eq < 0) throw new MalformedMultipartException("parameter without a value");
-            String name = value.substring(i, eq).trim().toLowerCase(Locale.ROOT);
-            if (name.isEmpty()) throw new MalformedMultipartException("parameter without a name");
-            i = skipOws(value, eq + 1);
-            String parameter;
-            if (i < length && value.charAt(i) == '"') {
-                var quoted = new StringBuilder();
-                i++;
-                while (true) {
-                    if (i == length) throw new MalformedMultipartException("unterminated quoted string");
-                    char c = value.charAt(i++);
-                    if (c == '"') break;
-                    if (c == '\\' && i < length && (value.charAt(i) == '"' || value.charAt(i) == '\\')) c = value.charAt(i++);
-                    quoted.append(c);
-                }
-                parameter = quoted.toString();
-                i = skipOws(value, i);
-                if (i < length && value.charAt(i) != ';') {
-                    throw new MalformedMultipartException("unexpected text after a quoted parameter");
-                }
-            } else {
-                int end = value.indexOf(';', i);
-                if (end < 0) end = length;
-                parameter = value.substring(i, end).trim();
-                i = end;
-            }
-            if (params.putIfAbsent(name, parameter) != null) {
-                throw new MalformedMultipartException("duplicate parameter " + name);
-            }
-            if (i < length) i++;
+            if (i < length) i = value.charAt(i) == ';' ? i + 1 : parseParameter(value, i, params);
         }
         return type;
+    }
+
+    /**
+     * Parses the {@code name=value} parameter at {@code start} into {@code params}; returns the index
+     * after it and its {@code ;}.
+     */
+    private static int parseParameter(String value, int start, Map<String, String> params)
+            throws MalformedMultipartException {
+        int length = value.length();
+        int eq = value.indexOf('=', start);
+        if (eq < 0) throw new MalformedMultipartException("parameter without a value");
+        String name = value.substring(start, eq).trim().toLowerCase(Locale.ROOT);
+        if (name.isEmpty()) throw new MalformedMultipartException("parameter without a name");
+        int i = skipOws(value, eq + 1);
+        String parameter;
+        if (i < length && value.charAt(i) == '"') {
+            var quoted = new StringBuilder();
+            i = skipOws(value, readQuoted(value, i + 1, quoted));
+            parameter = quoted.toString();
+            if (i < length && value.charAt(i) != ';') {
+                throw new MalformedMultipartException("unexpected text after a quoted parameter");
+            }
+        } else {
+            int end = value.indexOf(';', i);
+            if (end < 0) end = length;
+            parameter = value.substring(i, end).trim();
+            i = end;
+        }
+        if (params.putIfAbsent(name, parameter) != null) {
+            throw new MalformedMultipartException("duplicate parameter " + name);
+        }
+        return i < length ? i + 1 : i;
+    }
+
+    /**
+     * Reads the quoted string that starts after its opening quote, at {@code start}, into {@code out};
+     * returns the index after its closing quote.
+     */
+    private static int readQuoted(String value, int start, StringBuilder out) throws MalformedMultipartException {
+        int length = value.length();
+        int i = start;
+        while (i < length) {
+            char c = value.charAt(i++);
+            if (c == '"') return i;
+            if (c == '\\' && i < length && (value.charAt(i) == '"' || value.charAt(i) == '\\')) c = value.charAt(i++);
+            out.append(c);
+        }
+        throw new MalformedMultipartException("unterminated quoted string");
     }
 
     /** RFC 8187 {@code charset'language'pct-encoded} in UTF-8 or ISO-8859-1; {@code null} when it does not decode. */
@@ -278,29 +302,36 @@ public final class MultipartParser {
         };
         if (charset == null) return null;
         var bytes = new ByteArrayOutputStream();
-        String encoded = value.substring(second + 1);
-        for (int i = 0; i < encoded.length(); i++) {
-            char c = encoded.charAt(i);
-            if (c == '%') {
-                if (i + 2 >= encoded.length()) return null;
-                int hi = Character.digit(encoded.charAt(i + 1), 16);
-                int lo = Character.digit(encoded.charAt(i + 2), 16);
-                if (hi < 0 || lo < 0) return null;
-                bytes.write(hi << 4 | lo);
-                i += 2;
-            } else if (c < 0x21 || c > 0x7E) {
-                return null;
-            } else {
-                bytes.write(c);
-            }
-        }
+        if (!percentDecode(value.substring(second + 1), bytes)) return null;
         try {
             return charset.newDecoder().onMalformedInput(CodingErrorAction.REPORT)
                     .onUnmappableCharacter(CodingErrorAction.REPORT)
                     .decode(ByteBuffer.wrap(bytes.toByteArray())).toString();
-        } catch (CharacterCodingException e) {
+        } catch (CharacterCodingException _) {
             return null;
         }
+    }
+
+    /** Writes the bytes of an RFC 8187 {@code pct-encoded} value to {@code out}; {@code false} when malformed. */
+    private static boolean percentDecode(String encoded, ByteArrayOutputStream out) {
+        int i = 0;
+        while (i < encoded.length()) {
+            char c = encoded.charAt(i);
+            if (c == '%') {
+                if (i + 2 >= encoded.length()) return false;
+                int hi = Character.digit(encoded.charAt(i + 1), 16);
+                int lo = Character.digit(encoded.charAt(i + 2), 16);
+                if (hi < 0 || lo < 0) return false;
+                out.write(hi << 4 | lo);
+                i += 3;
+            } else if (c < 0x21 || c > 0x7E) {
+                return false;
+            } else {
+                out.write(c);
+                i++;
+            }
+        }
+        return true;
     }
 
     private static boolean isBoundaryChar(char c) {
@@ -368,11 +399,14 @@ public final class MultipartParser {
         /** {@code border[i]}: length of the longest proper border of {@code delimiter[0..i]}. */
         private final int[] border;
         private final byte[] pending = new byte[BUFFER];
+        /** The bytes of {@link #pending} not handed to the sink yet, during a {@link #scan}. */
+        private int pendingLength;
 
         DelimiterScanner(byte[] delimiter) {
             this.delimiter = delimiter;
             this.border = new int[delimiter.length];
-            for (int i = 1, k = 0; i < delimiter.length; i++) {
+            int k = 0;
+            for (int i = 1; i < delimiter.length; i++) {
                 while (k > 0 && delimiter[i] != delimiter[k]) k = border[k - 1];
                 if (delimiter[i] == delimiter[k]) k++;
                 border[i] = k;
@@ -388,35 +422,41 @@ public final class MultipartParser {
          */
         boolean scan(CountingReader in, PartSink sink, boolean primed) throws IOException {
             int matched = primed ? 2 : 0;
-            int pendingLength = 0;
+            pendingLength = 0;
             int b;
             while ((b = in.read()) >= 0) {
-                while (matched > 0 && delimiter[matched] != (byte) b) {
-                    int keep = border[matched - 1];
-                    // delimiter[0 .. matched - keep) can no longer begin a delimiter: it was content.
-                    for (int i = 0; i < matched - keep; i++) {
-                        if (pendingLength == pending.length) pendingLength = flush(sink, pendingLength);
-                        pending[pendingLength++] = delimiter[i];
-                    }
-                    matched = keep;
-                }
-                if (delimiter[matched] == (byte) b) {
-                    if (++matched == delimiter.length) {
-                        flush(sink, pendingLength);
-                        return true;
-                    }
-                } else {
-                    if (pendingLength == pending.length) pendingLength = flush(sink, pendingLength);
-                    pending[pendingLength++] = (byte) b;
+                matched = fallBack(matched, (byte) b, sink);
+                if (delimiter[matched] != (byte) b) {
+                    append((byte) b, sink);
+                } else if (++matched == delimiter.length) {
+                    flush(sink);
+                    return true;
                 }
             }
-            flush(sink, pendingLength);
+            flush(sink);
             return false;
         }
 
-        private int flush(PartSink sink, int pendingLength) throws IOException {
+        /** Shortens a partial match of {@code matched} bytes until {@code b} may extend it, or none is left. */
+        private int fallBack(int matched, byte b, PartSink sink) throws IOException {
+            int m = matched;
+            while (m > 0 && delimiter[m] != b) {
+                int keep = border[m - 1];
+                // delimiter[0 .. m - keep) can no longer begin a delimiter: it was content.
+                for (int i = 0; i < m - keep; i++) append(delimiter[i], sink);
+                m = keep;
+            }
+            return m;
+        }
+
+        private void append(byte b, PartSink sink) throws IOException {
+            if (pendingLength == pending.length) flush(sink);
+            pending[pendingLength++] = b;
+        }
+
+        private void flush(PartSink sink) throws IOException {
             if (sink != null && pendingLength > 0) sink.write(pending, 0, pendingLength);
-            return 0;
+            pendingLength = 0;
         }
     }
 }

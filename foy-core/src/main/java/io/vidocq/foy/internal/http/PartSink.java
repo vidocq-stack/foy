@@ -88,11 +88,11 @@ final class PartSink implements AutoCloseable {
     @Override
     public void close() {
         if (out != null) {
-            try { out.close(); } catch (IOException ignored) { /* the file is deleted below */ }
+            try { out.close(); } catch (IOException _) { /* the file is deleted below */ }
             out = null;
         }
         if (!finished && file != null) {
-            try { storage.discard(file); } catch (IOException ignored) { /* PartStorage.close() retries */ }
+            try { storage.discard(file); } catch (IOException _) { /* PartStorage.close() retries */ }
         }
     }
 }

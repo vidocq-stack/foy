@@ -33,6 +33,7 @@ import java.nio.file.OpenOption;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.nio.file.StandardOpenOption;
+import java.nio.file.attribute.FileAttribute;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.LinkedHashMap;
@@ -80,8 +81,9 @@ public final class PartImpl implements Part {
     /** Guarded by {@link #lock}. */
     private boolean deleted;
 
+    /** A part without content yet: its factory sets it, before the part is published. */
     private PartImpl(String name, String submittedFileName, String contentType, List<Header> received,
-                     byte[] memory, Path file, long size, PartStorage storage) {
+                     long size, PartStorage storage) {
         this.name = Objects.requireNonNull(name, "name");
         this.submittedFileName = submittedFileName;
         this.contentType = contentType;
@@ -95,21 +97,23 @@ public final class PartImpl implements Part {
         values.replaceAll((k, v) -> List.copyOf(v));
         this.headers = Map.copyOf(values);
         this.headerNames = List.copyOf(names);
-        this.memory = memory;
-        this.file = file;
-        this.temporary = file != null;
         this.size = size;
         this.storage = Objects.requireNonNull(storage, "storage");
     }
 
     static PartImpl inMemory(String name, String submittedFileName, String contentType, List<Header> headers,
                              byte[] content, PartStorage storage) {
-        return new PartImpl(name, submittedFileName, contentType, headers, content, null, content.length, storage);
+        PartImpl part = new PartImpl(name, submittedFileName, contentType, headers, content.length, storage);
+        part.memory = content;
+        return part;
     }
 
     static PartImpl onDisk(String name, String submittedFileName, String contentType, List<Header> headers,
                            Path file, long size, PartStorage storage) {
-        return new PartImpl(name, submittedFileName, contentType, headers, null, file, size, storage);
+        PartImpl part = new PartImpl(name, submittedFileName, contentType, headers, size, storage);
+        part.file = file;
+        part.temporary = file != null;
+        return part;
     }
 
     @Override
@@ -117,7 +121,7 @@ public final class PartImpl implements Part {
         lock.lock();
         try {
             if (deleted) throw new IOException("the part " + name + " was deleted");
-            return memory != null ? new ByteArrayInputStream(memory) : Files.newInputStream(file);
+            return openContent();
         } finally {
             lock.unlock();
         }
@@ -167,6 +171,11 @@ public final class PartImpl implements Part {
         }
     }
 
+    /** Guarded by {@link #lock}: a new stream on the content, in memory or in its file. */
+    private InputStream openContent() throws IOException {
+        return memory != null ? new ByteArrayInputStream(memory) : Files.newInputStream(file);
+    }
+
     /** Guarded by {@link #lock}. A confined target that is a symbolic link fails instead of being followed. */
     private void writeMemory(Path target, boolean confined) throws IOException {
         Set<OpenOption> options = confined
@@ -174,7 +183,8 @@ public final class PartImpl implements Part {
                         LinkOption.NOFOLLOW_LINKS)
                 : Set.of(StandardOpenOption.WRITE, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
         Path dir = target.toAbsolutePath().getParent();
-        try (SeekableByteChannel channel = Files.newByteChannel(target, options, PartStorage.ownerOnly(dir))) {
+        try (SeekableByteChannel channel = Files.newByteChannel(target, options,
+                PartStorage.ownerOnly(dir).toArray(new FileAttribute<?>[0]))) {
             ByteBuffer buffer = ByteBuffer.wrap(memory);
             while (buffer.hasRemaining()) channel.write(buffer);
         }
@@ -202,7 +212,7 @@ public final class PartImpl implements Part {
 
     /** {@link #delete()}, ignoring a failure: a failed parse; {@link PartStorage#close()} retries. */
     void discard() {
-        try { delete(); } catch (IOException ignored) { /* retried at the end of the request */ }
+        try { delete(); } catch (IOException _) { /* retried at the end of the request */ }
     }
 
     @Override
@@ -232,14 +242,14 @@ public final class PartImpl implements Part {
         var params = new java.util.HashMap<String, String>();
         try {
             MultipartParser.parseParameters(contentType, params);
-        } catch (MalformedMultipartException malformed) {
+        } catch (MalformedMultipartException _) {
             return fallback;
         }
         String value = params.get("charset");
         if (value == null) return fallback;
         try {
             return Charset.forName(value);
-        } catch (RuntimeException unsupported) {
+        } catch (RuntimeException _) {
             return fallback;
         }
     }

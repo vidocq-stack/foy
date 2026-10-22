@@ -34,8 +34,9 @@ public final class BoundedInputStream extends FilterInputStream {
     private long count;
 
     public BoundedInputStream(InputStream in, long limit) {
-        super(Objects.requireNonNull(in, "in"));
+        Objects.requireNonNull(in, "in");
         if (limit < 0) throw new IllegalArgumentException("limit must not be negative: " + limit);
+        super(in);
         this.limit = limit;
     }
 

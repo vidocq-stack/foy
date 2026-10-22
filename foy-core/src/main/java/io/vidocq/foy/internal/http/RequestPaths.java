@@ -103,20 +103,20 @@ public final class RequestPaths {
         while (start <= path.length()) {
             int end = path.indexOf('/', start);
             if (end < 0) end = path.length();
-            if (end > start) {
-                String segment = path.substring(start, end);
-                if (!segment.equals(".") && !segment.equals("..")) {
-                    boolean onlyDotsAndSpaces = true;
-                    for (int i = 0; i < segment.length() && onlyDotsAndSpaces; i++) {
-                        char c = segment.charAt(i);
-                        onlyDotsAndSpaces = c == '.' || c == ' ';
-                    }
-                    if (onlyDotsAndSpaces) return true;
-                }
-            }
+            if (end > start && isDotOrSpaceAlias(path.substring(start, end))) return true;
             start = end + 1;
         }
         return false;
+    }
+
+    /** A non-empty segment other than {@code .} and {@code ..} made only of dots and spaces. */
+    private static boolean isDotOrSpaceAlias(String segment) {
+        if (segment.equals(".") || segment.equals("..")) return false;
+        for (int i = 0; i < segment.length(); i++) {
+            char c = segment.charAt(i);
+            if (c != '.' && c != ' ') return false;
+        }
+        return true;
     }
 
     /**
@@ -135,24 +135,32 @@ public final class RequestPaths {
             while (i < n && path.charAt(i) == '/') i++;
             int end = path.indexOf('/', i);
             if (end < 0) end = n;
-            String segment = path.substring(i, end);
-            boolean last = end >= n;
-            if (segment.equals(".")) {
-                if (last) out.append('/');
-            } else if (segment.equals("..")) {
-                int cut = out.lastIndexOf("/");
-                if (cut < 0) return null; // above the root
-                out.setLength(cut);
-                if (last) out.append('/');
-            } else if (segment.isEmpty()) {
-                // trailing slash run
-                out.append('/');
-            } else {
-                out.append('/').append(segment);
-            }
+            if (!appendSegment(out, path.substring(i, end), end >= n)) return null;
             i = end;
         }
         return out.isEmpty() ? "/" : out.toString();
+    }
+
+    /**
+     * Appends one segment of {@link #normalize} to {@code out}: a {@code .} is dropped, a {@code ..}
+     * removes its parent, an empty segment is a trailing slash run. {@code false} when a {@code ..}
+     * climbs above the root.
+     */
+    private static boolean appendSegment(StringBuilder out, String segment, boolean last) {
+        if (segment.equals(".")) {
+            if (last) out.append('/');
+        } else if (segment.equals("..")) {
+            int cut = out.lastIndexOf("/");
+            if (cut < 0) return false; // above the root
+            out.setLength(cut);
+            if (last) out.append('/');
+        } else if (segment.isEmpty()) {
+            // trailing slash run
+            out.append('/');
+        } else {
+            out.append('/').append(segment);
+        }
+        return true;
     }
 
     /**
@@ -170,28 +178,45 @@ public final class RequestPaths {
         if (path == null) return null;
         StringBuilder out = null;
         int n = path.length();
-        for (int i = 0; i < n; i++) {
-            char c = path.charAt(i);
-            boolean plain = c == '%' ? i + 2 < n && isHex(path.charAt(i + 1)) && isHex(path.charAt(i + 2))
-                    : c < 0x80 && (isAsciiAlphaNumeric(c) || "-._~!$&'()*+,;=:@/".indexOf(c) >= 0);
-            if (plain) {
-                if (out != null) out.append(c);
-                continue;
-            }
-            if (out == null) out = new StringBuilder(n + 16).append(path, 0, i);
-            String chars;
-            if (i + 1 < n && Character.isSurrogatePair(c, path.charAt(i + 1))) {
-                chars = path.substring(i, i + 2);
+        int i = 0;
+        while (i < n) {
+            if (isPlain(path, i)) {
+                if (out != null) out.append(path.charAt(i));
                 i++;
             } else {
-                chars = Character.isSurrogate(c) ? "\uFFFD" : String.valueOf(c); // lone surrogate
-            }
-            for (byte b : chars.getBytes(StandardCharsets.UTF_8)) {
-                int v = b & 0xff;
-                out.append('%').append(HEX.charAt(v >> 4)).append(HEX.charAt(v & 15));
+                if (out == null) out = new StringBuilder(n + 16).append(path, 0, i);
+                i = appendEncoded(out, path, i);
             }
         }
         return out == null ? path : out.toString();
+    }
+
+    /**
+     * Percent-encodes the character at {@code i} as UTF-8 bytes, a surrogate pair as its code point
+     * and a lone surrogate as U+FFFD; returns the index after it.
+     */
+    private static int appendEncoded(StringBuilder out, String path, int i) {
+        char c = path.charAt(i);
+        if (i + 1 < path.length() && Character.isSurrogatePair(c, path.charAt(i + 1))) {
+            appendPercentEncoded(out, path.substring(i, i + 2));
+            return i + 2;
+        }
+        appendPercentEncoded(out, Character.isSurrogate(c) ? "\uFFFD" : String.valueOf(c)); // lone surrogate
+        return i + 1;
+    }
+
+    /** Whether the character at {@code i} is kept as is: a {@code pchar}, a {@code /} or a {@code %XX} triplet. */
+    private static boolean isPlain(String path, int i) {
+        char c = path.charAt(i);
+        if (c == '%') return i + 2 < path.length() && isHex(path.charAt(i + 1)) && isHex(path.charAt(i + 2));
+        return c < 0x80 && (isAsciiAlphaNumeric(c) || "-._~!$&'()*+,;=:@/".indexOf(c) >= 0);
+    }
+
+    private static void appendPercentEncoded(StringBuilder out, String chars) {
+        for (byte b : chars.getBytes(StandardCharsets.UTF_8)) {
+            int v = b & 0xff;
+            out.append('%').append(HEX.charAt(v >> 4)).append(HEX.charAt(v & 15));
+        }
     }
 
     private static final String HEX = "0123456789ABCDEF";
@@ -211,36 +236,48 @@ public final class RequestPaths {
         while (i < raw.length()) {
             char c = raw.charAt(i);
             if (c == ';') {
+                // The parameters run up to the next segment, or to the end of the path.
                 int slash = raw.indexOf('/', i);
-                if (slash < 0) break;
-                i = slash;
-                continue;
+                i = slash < 0 ? raw.length() : slash;
+            } else {
+                sb.append(c);
+                i++;
             }
-            sb.append(c);
-            i++;
         }
         return sb.toString();
+    }
+
+    /**
+     * The byte of the {@code %XX} escape at {@code i}; {@code -1} when malformed, or for an encoded
+     * separator, NUL or control character.
+     */
+    private static int escapedByte(String path, int i) {
+        if (i + 2 >= path.length()) return -1;
+        int hi = Character.digit(path.charAt(i + 1), 16);
+        int lo = Character.digit(path.charAt(i + 2), 16);
+        if (hi < 0 || lo < 0) return -1;
+        int b = (hi << 4) | lo;
+        if (b == '/' || b == '\\' || b == 0) return -1; // encoded separator or NUL
+        if (b < 0x20 || b == 0x7f) return -1;           // encoded control character
+        return b;
     }
 
     private static String decode(String path) {
         if (path.indexOf('%') < 0) return path;
         byte[] bytes = new byte[path.length()];
         int len = 0;
-        for (int i = 0; i < path.length(); i++) {
+        int i = 0;
+        while (i < path.length()) {
             char c = path.charAt(i);
-            if (c != '%') {
+            if (c == '%') {
+                int b = escapedByte(path, i);
+                if (b < 0) return null;
+                bytes[len++] = (byte) b;
+                i += 3;
+            } else {
                 bytes[len++] = (byte) c; // ASCII only (checked by the caller)
-                continue;
+                i++;
             }
-            if (i + 2 >= path.length()) return null;
-            int hi = Character.digit(path.charAt(i + 1), 16);
-            int lo = Character.digit(path.charAt(i + 2), 16);
-            if (hi < 0 || lo < 0) return null;
-            int b = (hi << 4) | lo;
-            if (b == '/' || b == '\\' || b == 0) return null; // encoded separator or NUL
-            if (b < 0x20 || b == 0x7f) return null;           // encoded control character
-            bytes[len++] = (byte) b;
-            i += 2;
         }
         try {
             return StandardCharsets.UTF_8.newDecoder()
@@ -248,7 +285,7 @@ public final class RequestPaths {
                     .onUnmappableCharacter(CodingErrorAction.REPORT)
                     .decode(ByteBuffer.wrap(bytes, 0, len))
                     .toString();
-        } catch (CharacterCodingException e) {
+        } catch (CharacterCodingException _) {
             return null;
         }
     }

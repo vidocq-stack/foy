@@ -83,10 +83,10 @@ public final class PartStorage implements AutoCloseable {
      * The owner-only creation attribute for a new file under {@code dir}, when its file system
      * supports POSIX permissions; none otherwise.
      */
-    static FileAttribute<?>[] ownerOnly(Path dir) {
+    static List<FileAttribute<Set<PosixFilePermission>>> ownerOnly(Path dir) {
         return dir.getFileSystem().supportedFileAttributeViews().contains("posix")
-                ? new FileAttribute<?>[] {PosixFilePermissions.asFileAttribute(OWNER_ONLY)}
-                : new FileAttribute<?>[0];
+                ? List.of(PosixFilePermissions.asFileAttribute(OWNER_ONLY))
+                : List.of();
     }
 
     /**
@@ -101,25 +101,35 @@ public final class PartStorage implements AutoCloseable {
             throw new IOException("no multipart location: the context has no temporary directory "
                     + "(jakarta.servlet.context.tempdir) and the multipart-config location is empty or relative");
         }
-        lock.lock();
-        try {
-            if (closed) throw new IOException("the request is over: no new multipart temporary file");
-        } finally {
-            lock.unlock();
-        }
+        if (isClosed()) throw new IOException("the request is over: no new multipart temporary file");
         Files.createDirectories(location);
-        Path file = Files.createTempFile(location, PREFIX, SUFFIX, ownerOnly(location));
-        lock.lock();
-        try {
-            if (!closed) {
-                owned.add(file);
-                return file;
-            }
-        } finally {
-            lock.unlock();
-        }
+        Path file = Files.createTempFile(location, PREFIX, SUFFIX,
+                ownerOnly(location).toArray(new FileAttribute<?>[0]));
+        // The request may have ended meanwhile: the file is then not kept.
+        if (own(file)) return file;
         Files.deleteIfExists(file);
         throw new IOException("the request is over: no new multipart temporary file");
+    }
+
+    private boolean isClosed() {
+        lock.lock();
+        try {
+            return closed;
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    /** Owns {@code file} unless the request is over; whether it is now owned. */
+    private boolean own(Path file) {
+        lock.lock();
+        try {
+            if (closed) return false;
+            owned.add(file);
+            return true;
+        } finally {
+            lock.unlock();
+        }
     }
 
     /** {@code file} is no longer the container's: a part moved it to the application. */

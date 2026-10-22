@@ -23,6 +23,7 @@ import jakarta.servlet.http.Cookie;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
 
 /**
  * Encoding/decoding of HTTP cookies (RFC 6265).
@@ -57,7 +58,7 @@ public final class CookieCodec {
             // ne doit pas être déguillementée lors de la lecture côté serveur).
             try {
                 out.add(new Cookie(name, val));
-            } catch (IllegalArgumentException ignored) {
+            } catch (IllegalArgumentException _) {
                 // Nom/valeur non conformes aux règles Cookie — on skip silencieusement.
             }
         }
@@ -115,7 +116,26 @@ public final class CookieCodec {
         sb.append(c.getName()).append('=').append(c.getValue() == null ? "" : c.getValue());
         if (c.getPath() != null) sb.append("; Path=").append(c.getPath());
         if (c.getDomain() != null) sb.append("; Domain=").append(c.getDomain());
-        int age = c.getMaxAge();
+        appendExpiry(sb, c.getMaxAge(), clock);
+        if (c.getSecure()) sb.append("; Secure");
+        if (c.isHttpOnly()) sb.append("; HttpOnly");
+        String sameSite = c.getAttribute("SameSite");
+        if (sameSite != null) sb.append("; SameSite=").append(sameSite);
+        // Servlet 6.1 section 7.1: the "Partitioned" attribute (Chrome partitioning) is emitted as a flag.
+        String partitioned = c.getAttribute("Partitioned");
+        // The flag is on when the attribute is set (non-null value), even empty.
+        if (partitioned != null && (partitioned.isEmpty() || "true".equalsIgnoreCase(partitioned))) {
+            sb.append("; Partitioned");
+        }
+        appendCustomAttributes(sb, c);
+        return sb.toString();
+    }
+
+    /** The attributes {@link #appendCustomAttributes} leaves out: emitted by name, or never. */
+    private static final Set<String> STANDARD_ATTRIBUTES = Set.of(
+            "samesite", "partitioned", "path", "domain", "max-age", "secure", "httponly", "comment");
+
+    private static void appendExpiry(StringBuilder sb, int age, java.time.Clock clock) {
         if (age == 0) {
             // RFC 6265: Max-Age=0 expires the cookie immediately; Expires in the past
             // keeps clients that ignore Max-Age working. The TCK requires
@@ -125,28 +145,16 @@ public final class CookieCodec {
             sb.append("; Expires=").append(formatImfFixdate(clock.instant().plusSeconds(age)));
             sb.append("; Max-Age=").append(age);
         }
-        if (c.getSecure()) sb.append("; Secure");
-        if (c.isHttpOnly()) sb.append("; HttpOnly");
-        String sameSite = c.getAttribute("SameSite");
-        if (sameSite != null) sb.append("; SameSite=").append(sameSite);
-        // Servlet 6.1 §7.1 : l'attribut "Partitioned" (Chrome partitioning) est émis comme flag.
-        String partitioned = c.getAttribute("Partitioned");
-        // Le flag Partitioned est actif si l'attribut est défini (valeur non-null), même vide.
-        if (partitioned != null && (partitioned.isEmpty() || "true".equalsIgnoreCase(partitioned))) {
-            sb.append("; Partitioned");
-        }
-        // Autres attributs custom passés par setAttribute() sortent tels quels (clé=valeur).
+    }
+
+    /** The other attributes given to {@code setAttribute}, as they are ({@code name=value}, or a bare name). */
+    private static void appendCustomAttributes(StringBuilder sb, Cookie c) {
         for (var e : c.getAttributes().entrySet()) {
             String k = e.getKey();
-            if (k == null) continue;
-            String kl = k.toLowerCase(java.util.Locale.ROOT);
-            if (kl.equals("samesite") || kl.equals("partitioned")
-                    || kl.equals("path") || kl.equals("domain")
-                    || kl.equals("max-age") || kl.equals("secure")
-                    || kl.equals("httponly") || kl.equals("comment")) continue;
-            sb.append("; ").append(k);
-            if (e.getValue() != null && !e.getValue().isEmpty()) sb.append('=').append(e.getValue());
+            if (k != null && !STANDARD_ATTRIBUTES.contains(k.toLowerCase(java.util.Locale.ROOT))) {
+                sb.append("; ").append(k);
+                if (e.getValue() != null && !e.getValue().isEmpty()) sb.append('=').append(e.getValue());
+            }
         }
-        return sb.toString();
     }
 }
