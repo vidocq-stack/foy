@@ -58,7 +58,7 @@ class WebAppModelElementsEndToEndTest {
             try {
                 cc.setName("LATE");
                 cookieState = "mutable";
-            } catch (IllegalStateException e) {
+            } catch (IllegalStateException _) {
                 cookieState = "readonly";
             }
             resp.getWriter().write(String.join("|",
@@ -115,7 +115,7 @@ class WebAppModelElementsEndToEndTest {
     }
 
     private WebAppModel model() throws Exception {
-        var d = WebXmlParser.parse(new ByteArrayInputStream(WEB_XML.getBytes()));
+        var d = WebXmlParser.parse(new ByteArrayInputStream(WEB_XML.getBytes(StandardCharsets.UTF_8)));
         var b = WebAppModel.builder("/");
         DescriptorMerger.merge(d, DescriptorMerger.AnnotatedComponents.none(),
                 ComponentFactory.reflective(getClass().getClassLoader()), b);
@@ -187,7 +187,7 @@ class WebAppModelElementsEndToEndTest {
             try {
                 ctx.setRequestCharacterEncoding("UTF-8");
                 late = "mutable";
-            } catch (IllegalStateException e) {
+            } catch (IllegalStateException _) {
                 late = "readonly";
             }
             resp.getWriter().write(ctx.getRequestCharacterEncoding() + "|" + ctx.getResponseCharacterEncoding()
@@ -210,7 +210,7 @@ class WebAppModelElementsEndToEndTest {
     private static final String HEAD = "<web-app xmlns=\"https://jakarta.ee/xml/ns/jakartaee\" version=\"6.1\">";
 
     private WebAppModel modelOf(String xml) throws Exception {
-        var d = WebXmlParser.parse(new ByteArrayInputStream(xml.getBytes()));
+        var d = WebXmlParser.parse(new ByteArrayInputStream(xml.getBytes(StandardCharsets.UTF_8)));
         var b = WebAppModel.builder("/");
         DescriptorMerger.merge(d, DescriptorMerger.AnnotatedComponents.none(),
                 ComponentFactory.reflective(getClass().getClassLoader()), b);
@@ -233,7 +233,7 @@ class WebAppModelElementsEndToEndTest {
         assertTrue(setCookie.startsWith("MYSESSION="), setCookie);
         assertTrue(setCookie.contains("Path=/custom"), setCookie);
         assertFalse(setCookie.contains("HttpOnly"), setCookie);
-        String id = first.body().split("\\|")[0];
+        String id = first.body().split("\\|", -1)[0];
         var second = HttpClient.newHttpClient().send(
                 HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port + "/s"))
                         .header("Cookie", "MYSESSION=" + id).GET().build(),

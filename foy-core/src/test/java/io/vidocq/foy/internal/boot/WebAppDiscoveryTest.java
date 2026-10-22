@@ -19,6 +19,7 @@
  */
 package io.vidocq.foy.internal.boot;
 
+import io.vidocq.foy.internal.Identity;
 import io.vidocq.foy.internal.boot.DescriptorMerger.AnnotatedComponents;
 import io.vidocq.foy.internal.boot.WebAppModel.FilterMappingDecl;
 import io.vidocq.foy.internal.boot.WebAppModel.ServletDecl;
@@ -69,12 +70,12 @@ class WebAppDiscoveryTest {
 
     @WebFilter(urlPatterns = "/f", servletNames = "named", dispatcherTypes = DispatcherType.FORWARD)
     public static class DiscoveredFilter implements Filter {
-        @Override public void doFilter(ServletRequest req, ServletResponse res, FilterChain chain) {}
+        @Override public void doFilter(ServletRequest req, ServletResponse res, FilterChain chain) { /* the filter is only declared in this scenario */ }
     }
 
     @WebListener
     public static class DiscoveredListener implements ServletContextListener {
-        @Override public void contextInitialized(ServletContextEvent e) {}
+        @Override public void contextInitialized(ServletContextEvent e) { /* the event is not observed in this scenario */ }
     }
 
     /** Annotated subclass of an annotated servlet: a lookup by type DiscoveredServlet matches both beans. */
@@ -272,8 +273,8 @@ class WebAppDiscoveryTest {
         private final Logger logger;
         private final Handler handler = new Handler() {
             @Override public void publish(LogRecord r) { records.add(r); }
-            @Override public void flush() {}
-            @Override public void close() {}
+            @Override public void flush() { /* nothing is buffered */ }
+            @Override public void close() { /* nothing to release */ }
         };
 
         LogCapture(String name) {
@@ -282,11 +283,11 @@ class WebAppDiscoveryTest {
         }
 
         long infoLines() {
-            return records.stream().filter(r -> r.getLevel() == Level.INFO).count();
+            return records.stream().filter(r -> Level.INFO.equals(r.getLevel())).count();
         }
 
         List<String> messages(Level level) {
-            return records.stream().filter(r -> r.getLevel() == level).map(LogRecord::getMessage).toList();
+            return records.stream().filter(r -> level.equals(r.getLevel())).map(LogRecord::getMessage).toList();
         }
 
         void close() {
@@ -305,7 +306,7 @@ class WebAppDiscoveryTest {
                     (p, m, a) -> switch (m.getName()) {
                         case "getBeanClass" -> beanClass;
                         case "hashCode" -> System.identityHashCode(p);
-                        case "equals" -> p == a[0];
+                        case "equals" -> Identity.isSame(p, a[0]);
                         case "toString" -> "Bean[" + beanClass.getName() + "]";
                         default -> throw new UnsupportedOperationException(m.getName());
                     });
@@ -331,7 +332,7 @@ class WebAppDiscoveryTest {
                         case "getReference" -> instances.get(a[0]);
                         case "createCreationalContext" -> null;
                         case "hashCode" -> System.identityHashCode(p);
-                        case "equals" -> p == a[0];
+                        case "equals" -> Identity.isSame(p, a[0]);
                         case "toString" -> "FakeBeanManager";
                         default -> throw new UnsupportedOperationException(m.getName());
                     });

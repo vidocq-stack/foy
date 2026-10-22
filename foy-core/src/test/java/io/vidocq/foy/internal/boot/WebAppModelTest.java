@@ -40,7 +40,7 @@ class WebAppModelTest {
     static final class S extends HttpServlet {}
     static final class F implements Filter {
         @Override public void doFilter(jakarta.servlet.ServletRequest q, jakarta.servlet.ServletResponse r,
-                                       jakarta.servlet.FilterChain c) {}
+                                       jakarta.servlet.FilterChain c) { /* the filter is only declared in this scenario */ }
     }
 
     static ServletDecl servlet(String name, String... patterns) {
@@ -82,7 +82,9 @@ class WebAppModelTest {
         params.put("k2", "v2");
         assertEquals(List.of("/a"), m.servlets().getFirst().urlPatterns());
         assertEquals(Map.of("k", "v"), m.servlets().getFirst().initParams());
-        assertThrows(UnsupportedOperationException.class, () -> m.servlets().add(servlet("t")));
+        var exposed = m.servlets();
+        var extra = servlet("t");
+        assertThrows(UnsupportedOperationException.class, () -> exposed.add(extra));
     }
 
     @Test
@@ -110,7 +112,8 @@ class WebAppModelTest {
     @ValueSource(strings = {"ctx", "/ctx/", "//", "/a\\b", "/a\u0000b", "/a\tb",
             "/a\u007fb", "/a%2Fb", "/a;b", "/a?b", "/a#b", "/.", "/..", "/a/../b", "/a/./b", "/a//b"})
     void invalidContextPathsAreRejectedAtBuild(String path) {
-        var ex = assertThrows(IllegalArgumentException.class, () -> WebAppModel.builder(path).build());
+        var builder = WebAppModel.builder(path);
+        var ex = assertThrows(IllegalArgumentException.class, builder::build);
         assertTrue(ex.getMessage().contains("context path"), ex.getMessage());
     }
 }

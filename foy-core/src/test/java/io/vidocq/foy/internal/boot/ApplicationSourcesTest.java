@@ -31,12 +31,14 @@ import org.junit.jupiter.api.io.TempDir;
 import java.net.URI;
 import java.net.URL;
 import java.net.URLClassLoader;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.jar.JarEntry;
 import java.util.jar.JarOutputStream;
@@ -76,7 +78,7 @@ class ApplicationSourcesTest {
         assertEquals(0, rc, "test initializer must compile");
         var out = new LinkedHashMap<String, byte[]>();
         out.put(pkg + "/Sci.class", Files.readAllBytes(classes.resolve(pkg).resolve("Sci.class")));
-        out.put(SCI_SERVICE, (pkg + ".Sci\n").getBytes());
+        out.put(SCI_SERVICE, (pkg + ".Sci\n").getBytes(StandardCharsets.UTF_8));
         return out;
     }
 
@@ -94,7 +96,7 @@ class ApplicationSourcesTest {
 
     private static Map<String, byte[]> entries(String... nameAndContent) {
         var m = new LinkedHashMap<String, byte[]>();
-        for (int i = 0; i < nameAndContent.length; i += 2) m.put(nameAndContent[i], nameAndContent[i + 1].getBytes());
+        for (int i = 0; i < nameAndContent.length; i += 2) m.put(nameAndContent[i], nameAndContent[i + 1].getBytes(StandardCharsets.UTF_8));
         return m;
     }
 
@@ -117,7 +119,7 @@ class ApplicationSourcesTest {
     @Test
     void duplicateJarMergedOnce(@TempDir Path dir) throws Exception {
         var e = compileSci(dir, "apkg");
-        e.put("META-INF/web-fragment.xml", fragment("A").getBytes());
+        e.put("META-INF/web-fragment.xml", fragment("A").getBytes(StandardCharsets.UTF_8));
         Path a = jar(dir, "a.jar", e);
         // The same jar on a parent and a child loader: getResources reports it twice.
         try (var parent = loader(a); var l = loader(parent, a)) {
@@ -189,8 +191,8 @@ class ApplicationSourcesTest {
         try (var l = loader(boom, ok)) {
             String boomKey = key(boom);
             var found = ApplicationSources.initializers(l, root -> root == null || !key(root).equals(boomKey));
-            assertTrue(found.stream().anyMatch(i -> i.sci().getClass().getName().equals("okpkg.Sci")));
-            assertTrue(found.stream().noneMatch(i -> i.sci().getClass().getName().equals("boompkg.Sci")));
+            assertTrue(found.stream().anyMatch(i -> isInitializerOf(i, "okpkg.Sci")));
+            assertTrue(found.stream().noneMatch(i -> isInitializerOf(i, "boompkg.Sci")));
             assertThrows(java.util.ServiceConfigurationError.class, () -> ApplicationSources.initializers(l),
                     "precondition: instantiating the rejected one fails");
         }
@@ -199,7 +201,7 @@ class ApplicationSourcesTest {
     public static class OwnServlet extends HttpServlet {}
 
     @Test
-    void codeSourcesAreTheRootsOfTheAnnotatedComponentClasses() throws Exception {
+    void codeSourcesAreTheRootsOfTheAnnotatedComponentClasses() {
         var ann = new DescriptorMerger.AnnotatedComponents(
                 List.of(new WebAppModel.ServletDecl("own", OwnServlet.class, OwnServlet::new, List.of("/own"),
                         Map.of(), Integer.MIN_VALUE, false)), List.of(), List.of(), List.of());
@@ -209,6 +211,10 @@ class ApplicationSourcesTest {
     }
 
     private static String key(URL u) { return Fragment.sourceKey(u); }
+
+    private static boolean isInitializerOf(Initializer initializer, String className) {
+        return Objects.equals(initializer.sci().getClass().getName(), className);
+    }
 
     private static String keyQuiet(Path p) {
         try { return key(p); } catch (Exception e) { throw new AssertionError(e); }

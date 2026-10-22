@@ -33,8 +33,11 @@ class TldListenerLifecycleTest {
     void factoryTypesMustIdentifyTheExactConstructedClassForDeduplication() {
         var events = new ArrayList<String>();
         var descriptor = new JspEngine.Listener(ServletContextListener.class, () -> new TestListener(events, true));
-        assertThrows(IllegalArgumentException.class, () -> WebAppDeployer.deploy(WebAppModel.builder("/tld").build(),
-                DeployOptions.defaults(getClass().getClassLoader()), ModuleLayer.boot(), engine(List.of(descriptor), events)));
+        var model = WebAppModel.builder("/tld").build();
+        var options = DeployOptions.defaults(getClass().getClassLoader());
+        var bootLayer = ModuleLayer.boot();
+        var engine = engine(List.of(descriptor), events);
+        assertThrows(IllegalArgumentException.class, () -> WebAppDeployer.deploy(model, options, bootLayer, engine));
         assertEquals(List.of("close"), events);
     }
 
@@ -42,8 +45,11 @@ class TldListenerLifecycleTest {
     void invalidFactoriesFailDeploymentAndStillCloseTheEngine() {
         var events = new ArrayList<String>();
         var descriptor = new JspEngine.Listener(TestListener.class, () -> null);
-        assertThrows(NullPointerException.class, () -> WebAppDeployer.deploy(WebAppModel.builder("/tld").build(),
-                DeployOptions.defaults(getClass().getClassLoader()), ModuleLayer.boot(), engine(List.of(descriptor), events)));
+        var model = WebAppModel.builder("/tld").build();
+        var options = DeployOptions.defaults(getClass().getClassLoader());
+        var bootLayer = ModuleLayer.boot();
+        var engine = engine(List.of(descriptor), events);
+        assertThrows(NullPointerException.class, () -> WebAppDeployer.deploy(model, options, bootLayer, engine));
         assertEquals(List.of("close"), events);
     }
 
@@ -70,7 +76,7 @@ class TldListenerLifecycleTest {
         var model = WebAppModel.builder("/tld").listener(new WebAppModel.ListenerDecl(
                 TestListener.class, () -> new TestListener(events, false))).build();
         var descriptor = new JspEngine.Listener(TestListener.class, () -> { throw new AssertionError("Duplicate listener constructed"); });
-        try (var ignored = WebAppDeployer.deploy(model, DeployOptions.defaults(getClass().getClassLoader()),
+        try (var _ = WebAppDeployer.deploy(model, DeployOptions.defaults(getClass().getClassLoader()),
                 ModuleLayer.boot(), engine(List.of(descriptor), events))) {
             assertEquals(List.of("init"), events);
         }
@@ -79,10 +85,10 @@ class TldListenerLifecycleTest {
 
     private static JspEngine engine(List<JspEngine.Listener> descriptors, List<String> events) {
         return (context, layer) -> new JspEngine.Application() {
-            public Servlet servlet() { return new HttpServlet() { }; }
-            public Servlet servletFor(String path) { return new HttpServlet() { }; }
-            public List<JspEngine.Listener> listeners() { return descriptors; }
-            public void close() { events.add("close"); }
+            @Override public Servlet servlet() { return new HttpServlet() { }; }
+            @Override public Servlet servletFor(String path) { return new HttpServlet() { }; }
+            @Override public List<JspEngine.Listener> listeners() { return descriptors; }
+            @Override public void close() { events.add("close"); }
         };
     }
 
@@ -90,14 +96,15 @@ class TldListenerLifecycleTest {
         private final List<String> events;
         private final boolean restricted;
         TestListener(List<String> events, boolean restricted) { this.events = events; this.restricted = restricted; }
-        public void contextInitialized(ServletContextEvent event) {
+        @Override public void contextInitialized(ServletContextEvent event) {
             events.add("init");
             var context = event.getServletContext();
             context.setAttribute("tld", "ready");
+            var servlet = new HttpServlet() { };
             if (restricted) assertThrows(UnsupportedOperationException.class,
-                    () -> context.addServlet("forbidden", new HttpServlet() { }));
-            else assertNotNull(context.addServlet("allowed", new HttpServlet() { }));
+                    () -> context.addServlet("forbidden", servlet));
+            else assertNotNull(context.addServlet("allowed", servlet));
         }
-        public void contextDestroyed(ServletContextEvent event) { events.add("destroy"); }
+        @Override public void contextDestroyed(ServletContextEvent event) { events.add("destroy"); }
     }
 }

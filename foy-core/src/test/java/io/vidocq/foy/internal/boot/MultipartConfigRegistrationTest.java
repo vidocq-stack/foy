@@ -71,7 +71,8 @@ class MultipartConfigRegistrationTest {
     void setMultipartConfigRefusesNullAndAnInitializedContext() {
         var ctx = deploy(WebAppModel.builder("/").servlet(decl("up", null)).build());
         var registration = (ServletRegistration.Dynamic) ctx.getServletRegistration("up");
-        assertThrows(IllegalStateException.class, () -> registration.setMultipartConfig(new MultipartConfigElement("")));
+        var element = new MultipartConfigElement("");
+        assertThrows(IllegalStateException.class, () -> registration.setMultipartConfig(element));
         var fresh = new VidocqServletContext("/").addServlet("x", new Plain());
         assertThrows(IllegalArgumentException.class, () -> fresh.setMultipartConfig(null));
     }

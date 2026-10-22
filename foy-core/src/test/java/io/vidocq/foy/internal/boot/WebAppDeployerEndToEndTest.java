@@ -49,6 +49,10 @@ class WebAppDeployerEndToEndTest {
 
     static final List<String> EVENTS = new CopyOnWriteArrayList<>();
 
+    private static List<String> events() {
+        return List.copyOf(EVENTS);
+    }
+
     private Server server;
     private int port;
     private Deployment deployment;
@@ -106,7 +110,7 @@ class WebAppDeployerEndToEndTest {
         deploy(WebAppModel.builder("/").servlet(decl("a", Integer.MIN_VALUE, "/x", "/y")).build());
         assertEquals("a:v-a", get("/x").body());
         assertEquals("a:v-a", get("/y").body());
-        assertEquals(List.of("init:a"), EVENTS);
+        assertEquals(List.of("init:a"), events());
     }
 
     @Test
@@ -122,7 +126,7 @@ class WebAppDeployerEndToEndTest {
         JspEngine engine = (context, layer) -> new JspEngine.Application() {
             @Override public Servlet servlet() { return new Recording("jsp"); }
             @Override public Servlet servletFor(String jspFile) { return new Recording("jsp-file"); }
-            @Override public void close() { }
+            @Override public void close() { /* nothing to release */ }
         };
 
         deploy(WebAppModel.builder("/")
@@ -174,7 +178,7 @@ class WebAppDeployerEndToEndTest {
                 .build());
         EVENTS.clear();
         assertEquals("a:v-a", get("/x").body());
-        assertEquals(List.of("filter"), EVENTS);
+        assertEquals(List.of("filter"), events());
     }
 
     /** Section 6.2.4: a servlet-name mapping applies only when that servlet serves the request. */
@@ -188,9 +192,9 @@ class WebAppDeployerEndToEndTest {
                 .build());
         EVENTS.clear();
         assertEquals("b:v-b", get("/x/y").body());
-        assertEquals(List.of(), EVENTS);
+        assertEquals(List.of(), events());
         assertEquals("a:v-a", get("/x/z").body());
-        assertEquals(List.of("filter"), EVENTS);
+        assertEquals(List.of("filter"), events());
     }
 
     @Test
@@ -204,7 +208,7 @@ class WebAppDeployerEndToEndTest {
         EVENTS.clear();
         get("/a");
         get("/b");
-        assertEquals(List.of("filter", "filter"), EVENTS);
+        assertEquals(List.of("filter", "filter"), events());
     }
 
     /** Dispatches to the servlet named by the {@code target} query parameter, by named include or forward. */
@@ -249,7 +253,7 @@ class WebAppDeployerEndToEndTest {
                 .build());
         EVENTS.clear();
         assertEquals("hidden:v-hidden", get("/call?target=hidden").body());
-        assertEquals(List.of("filter"), EVENTS);
+        assertEquals(List.of("filter"), events());
     }
 
     @Test
@@ -260,7 +264,7 @@ class WebAppDeployerEndToEndTest {
                 .servlet(decl("zero", 0, "/0"))
                 .servlet(decl("alsoTwo", 2, "/22"))
                 .build());
-        assertEquals(List.of("init:zero", "init:two", "init:alsoTwo", "init:lazy"), EVENTS);
+        assertEquals(List.of("init:zero", "init:two", "init:alsoTwo", "init:lazy"), events());
     }
 
     public static class FailingInit extends HttpServlet {
@@ -298,14 +302,15 @@ class WebAppDeployerEndToEndTest {
         };
         deploy(WebAppModel.builder("/").initializer(sci).build());
         assertEquals("dyn:null", get("/dyn").body());
-        assertEquals(List.of("sci:null", "ctxInit", "init:dyn"), EVENTS);
+        assertEquals(List.of("sci:null", "ctxInit", "init:dyn"), events());
     }
 
     @Test
     void addServletAfterDeployThrows() {
         deploy(WebAppModel.builder("/").build());
-        assertThrows(IllegalStateException.class,
-                () -> deployment.servletContext().addServlet("late", new Recording("late")));
+        var context = deployment.servletContext();
+        var late = new Recording("late");
+        assertThrows(IllegalStateException.class, () -> context.addServlet("late", late));
     }
 
     public static class ThrowingDestroy extends Recording {
@@ -327,7 +332,7 @@ class WebAppDeployerEndToEndTest {
         EVENTS.clear();
         deployment.close();
         deployment.close();
-        assertEquals(List.of("destroy:throwing", "destroy:first", "ctxDestroyed"), EVENTS);
+        assertEquals(List.of("destroy:throwing", "destroy:first", "ctxDestroyed"), events());
     }
 
     @Test
@@ -420,11 +425,11 @@ class WebAppDeployerEndToEndTest {
         };
         var model = WebAppModel.builder("/failing-listener")
                 .servlet(decl("s", 1, "/s")).initializer(sci).build();
-        var ex = assertThrows(IllegalStateException.class,
-                () -> WebAppDeployer.deploy(model, DeployOptions.defaults(getClass().getClassLoader())));
+        var options = DeployOptions.defaults(getClass().getClassLoader());
+        var ex = assertThrows(IllegalStateException.class, () -> WebAppDeployer.deploy(model, options));
         assertEquals("listener boom", ex.getMessage());
         // contextDestroyed fired because contextInitialized was; no servlet was ever initialised.
-        assertEquals(List.of("ctxInit:first", "ctxDestroyed:first"), EVENTS);
+        assertEquals(List.of("ctxInit:first", "ctxDestroyed:first"), events());
         assertNull(io.vidocq.foy.internal.container.CrossContextRegistry.lookup("/failing-listener"));
         assertNotNull(tempDir.get());
         assertFalse(tempDir.get().exists(), "temp dir must be removed");
@@ -439,9 +444,9 @@ class WebAppDeployerEndToEndTest {
                     throw new IllegalStateException("cannot instantiate");
                 }))
                 .build();
-        assertThrows(IllegalStateException.class, () -> WebAppDeployer.deploy(model,
-                DeployOptions.defaults(getClass().getClassLoader()).withTempDirRoot(tempRoot)));
-        assertEquals(List.of(), EVENTS, "nothing initialised, nothing destroyed");
+        var options = DeployOptions.defaults(getClass().getClassLoader()).withTempDirRoot(tempRoot);
+        assertThrows(IllegalStateException.class, () -> WebAppDeployer.deploy(model, options));
+        assertEquals(List.of(), events(), "nothing initialised, nothing destroyed");
         assertNull(io.vidocq.foy.internal.container.CrossContextRegistry.lookup("/failing-supplier"));
         try (var entries = Files.list(tempRoot)) {
             assertEquals(List.of(), entries.toList(), "no temp dir leaked");
@@ -586,7 +591,7 @@ class WebAppDeployerEndToEndTest {
             try {
                 q.startAsync().complete();
                 start = "started";
-            } catch (IllegalStateException e) {
+            } catch (IllegalStateException _) {
                 start = "ISE";
             }
             r.getWriter().write(q.isAsyncSupported() + ":" + start);

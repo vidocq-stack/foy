@@ -47,6 +47,7 @@ import java.net.URLClassLoader;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.EventListener;
@@ -54,7 +55,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CopyOnWriteArrayList;
-import java.util.function.Supplier;
 import java.util.jar.JarEntry;
 import java.util.jar.JarOutputStream;
 
@@ -66,19 +66,19 @@ class DescriptorMergerTest {
     public static class FromXml extends HttpServlet {}
     public static class F1 implements Filter {
         @Override public void doFilter(jakarta.servlet.ServletRequest req, jakarta.servlet.ServletResponse res,
-                                       jakarta.servlet.FilterChain chain) {}
+                                       jakarta.servlet.FilterChain chain) { /* the filter is only declared in this scenario */ }
     }
     public static class L1 implements ServletContextListener {
-        @Override public void contextInitialized(ServletContextEvent e) {}
+        @Override public void contextInitialized(ServletContextEvent e) { /* the event is not observed in this scenario */ }
     }
     public static class L2 implements ServletContextListener {
-        @Override public void contextInitialized(ServletContextEvent e) {}
+        @Override public void contextInitialized(ServletContextEvent e) { /* the event is not observed in this scenario */ }
     }
 
     private static final ComponentFactory F = ComponentFactory.reflective(DescriptorMergerTest.class.getClassLoader());
 
     private static WebAppModel merge(String webXml, AnnotatedComponents ann) throws Exception {
-        var d = WebXmlParser.parse(new ByteArrayInputStream(webXml.getBytes()));
+        var d = WebXmlParser.parse(new ByteArrayInputStream(webXml.getBytes(StandardCharsets.UTF_8)));
         var b = WebAppModel.builder("/");
         DescriptorMerger.merge(d, ann, F, b);
         return b.build();
@@ -287,7 +287,7 @@ class DescriptorMergerTest {
     private static AnnotatedComponents discovered(Class<? extends HttpServlet> type) {
         var d = WebComponentRegistry.forClassLoader(DescriptorMergerTest.class.getClassLoader())
                 .lookup(type).descriptor();
-        return new AnnotatedComponents(List.of(new ServletDecl(d.name(), type, () -> new Unnamed(),
+        return new AnnotatedComponents(List.of(new ServletDecl(d.name(), type, Unnamed::new,
                 d.urlPatterns(), d.initParams(), d.loadOnStartup(), d.asyncSupported(), d.servletSecurity())),
                 List.of(), List.of(), List.of());
     }
@@ -385,7 +385,7 @@ class DescriptorMergerTest {
         var d = WebXmlParser.parse(new ByteArrayInputStream((HEAD + """
                 >
                   <servlet><servlet-name>x</servlet-name><servlet-class>%s</servlet-class></servlet>
-                </web-app>""".formatted(PrivateCtor.class.getName())).getBytes()));
+                </web-app>""".formatted(PrivateCtor.class.getName())).getBytes(StandardCharsets.UTF_8)));
         var b = WebAppModel.builder("/");
         DescriptorMerger.merge(d, AnnotatedComponents.none(),
                 io.vidocq.foy.internal.gen.RegistryComponentFactory.forClassLoader(getClass().getClassLoader()), b);
@@ -431,8 +431,20 @@ class DescriptorMergerTest {
         return jar;
     }
 
-    private static <T> Supplier<T> never() {
-        return () -> { throw new AssertionError("not instantiated by the merge"); };
+    private static AssertionError notInstantiated() {
+        return new AssertionError("not instantiated by the merge");
+    }
+
+    private static Servlet neverServlet() {
+        throw notInstantiated();
+    }
+
+    private static Filter neverFilter() {
+        throw notInstantiated();
+    }
+
+    private static EventListener neverListener() {
+        throw notInstantiated();
     }
 
     @Test
@@ -444,24 +456,24 @@ class DescriptorMergerTest {
             Class<? extends EventListener> jarListener =
                     loader.loadClass("jarpkg.JarListener").asSubclass(EventListener.class);
             var ann = new AnnotatedComponents(
-                    List.of(new ServletDecl("jar", jarServlet, never(), List.of("/jar"), Map.of(),
+                    List.of(new ServletDecl("jar", jarServlet, DescriptorMergerTest::neverServlet, List.of("/jar"), Map.of(),
                                     Integer.MIN_VALUE, false),
                             new ServletDecl("ann", Annotated.class, Annotated::new, List.of("/ann"), Map.of(),
                                     Integer.MIN_VALUE, false)),
-                    List.of(new FilterDecl("jarFilter", jarFilter, never(), Map.of(), false),
+                    List.of(new FilterDecl("jarFilter", jarFilter, DescriptorMergerTest::neverFilter, Map.of(), false),
                             new FilterDecl("f1", F1.class, F1::new, Map.of(), false)),
                     List.of(new FilterMappingDecl("jarFilter", "/*", null, null),
                             new FilterMappingDecl("f1", "/*", null, null)),
-                    List.of(new ListenerDecl(jarListener, never()), new ListenerDecl(L1.class, L1::new)));
-            var fragment = WebXmlParser.parseFragment(new ByteArrayInputStream(("""
+                    List.of(new ListenerDecl(jarListener, DescriptorMergerTest::neverListener), new ListenerDecl(L1.class, L1::new)));
+            var fragment = WebXmlParser.parseFragment(new ByteArrayInputStream("""
                     <web-fragment xmlns="https://jakarta.ee/xml/ns/jakartaee" version="6.1" metadata-complete="true">
                       <servlet><servlet-name>fx</servlet-name><servlet-class>%s</servlet-class></servlet>
                       <servlet-mapping><servlet-name>fx</servlet-name><url-pattern>/fx</url-pattern></servlet-mapping>
-                    </web-fragment>""".formatted(FromXml.class.getName())).getBytes()));
+                    </web-fragment>""".formatted(FromXml.class.getName()).getBytes(StandardCharsets.UTF_8)));
             // The fragment jar is spelled as the discovery sees it, the classes' code source as file:.
             var fragments = List.of(new Fragment("F1", URI.create("jar:" + jar.toUri() + "!/").toURL(), fragment));
             var b = WebAppModel.builder("/");
-            DescriptorMerger.merge(WebXmlParser.parse(new ByteArrayInputStream((HEAD + "></web-app>").getBytes())),
+            DescriptorMerger.merge(WebXmlParser.parse(new ByteArrayInputStream((HEAD + "></web-app>").getBytes(StandardCharsets.UTF_8))),
                     fragments, ann, F, b);
             var m = b.build();
             assertEquals(List.of("fx", "ann"), m.servlets().stream().map(ServletDecl::name).toList());
@@ -508,9 +520,9 @@ class DescriptorMergerTest {
     @Test
     void metadataCompleteFragmentDropsTheAnnotationsOfTheClassesMappedToItsJar() throws Exception {
         URL libJar = new URI("file", null, "/app.war/WEB-INF/lib/a.jar", null).toURL();
-        var fragment = WebXmlParser.parseFragment(new ByteArrayInputStream(("""
+        var fragment = WebXmlParser.parseFragment(new ByteArrayInputStream("""
                 <web-fragment xmlns="https://jakarta.ee/xml/ns/jakartaee" version="6.1"
-                              metadata-complete="true"/>""").getBytes()));
+                              metadata-complete="true"/>""".getBytes(StandardCharsets.UTF_8)));
         var b = WebAppModel.builder("/");
         DescriptorMerger.mergeMerged(WebAppDescriptor.empty(), List.of(new Fragment("a.jar", libJar, fragment)),
                 annotatedServlet("a", "/a", Map.of()), type -> libJar, F, b);
@@ -524,7 +536,7 @@ class DescriptorMergerTest {
                   <servlet><servlet-name>jsp</servlet-name><jsp-file>/dummy.jsp</jsp-file></servlet>
                   <servlet-mapping><servlet-name>jsp</servlet-name><url-pattern>/dummy</url-pattern></servlet-mapping>
                   <servlet><servlet-name>x</servlet-name><servlet-class>%s</servlet-class></servlet>
-                </web-app>""".formatted(FromXml.class.getName())).getBytes()));
+                </web-app>""".formatted(FromXml.class.getName())).getBytes(StandardCharsets.UTF_8)));
         var b = WebAppModel.builder("/");
         try (var log = io.vidocq.foy.internal.LogCapture.of(DescriptorMerger.class.getName())) {
             DescriptorMerger.merge(d, AnnotatedComponents.none(), F, b);
@@ -575,8 +587,9 @@ class DescriptorMergerTest {
     @Test
     void fromDescriptorsPropagatesAnAnnotationMisuse() {
         var factory = ComponentFactory.reflective(getClass().getClassLoader());
+        var misused = List.of(NotAServlet.class);
         assertThrows(IllegalArgumentException.class, () -> AnnotatedComponents.fromDescriptors(
-                List.of(NotAServlet.class), factory::descriptor, (cls, base) -> () -> null));
+                misused, factory::descriptor, (cls, base) -> () -> null));
     }
 
     @Test
@@ -584,7 +597,7 @@ class DescriptorMergerTest {
         var d = WebXmlParser.parse(new ByteArrayInputStream((HEAD + """
                 >
                   <servlet><servlet-name>x</servlet-name><servlet-class>%s</servlet-class></servlet>
-                </web-app>""".formatted(FromXml.class.getName())).getBytes()));
+                </web-app>""".formatted(FromXml.class.getName())).getBytes(StandardCharsets.UTF_8)));
         var b = WebAppModel.builder("/");
         DescriptorMerger.merge(d, List.of(), annotatedServlet("a", "/a", Map.of()), F, b);
         assertEquals(List.of("x", "a"), b.build().servlets().stream().map(ServletDecl::name).toList());
@@ -592,16 +605,16 @@ class DescriptorMergerTest {
 
     @Test
     void fragmentDescriptorsAreMergedWithWebXml() throws Exception {
-        var fragment = WebXmlParser.parseFragment(new ByteArrayInputStream(("""
+        var fragment = WebXmlParser.parseFragment(new ByteArrayInputStream("""
                 <web-fragment xmlns="https://jakarta.ee/xml/ns/jakartaee" version="6.1">
                   <context-param><param-name>k</param-name><param-value>frag</param-value></context-param>
                   <context-param><param-name>only</param-name><param-value>frag</param-value></context-param>
                   <listener><listener-class>%s</listener-class></listener>
-                </web-fragment>""".formatted(L2.class.getName())).getBytes()));
+                </web-fragment>""".formatted(L2.class.getName()).getBytes(StandardCharsets.UTF_8)));
         var d = WebXmlParser.parse(new ByteArrayInputStream((HEAD + """
                 >
                   <context-param><param-name>k</param-name><param-value>xml</param-value></context-param>
-                </web-app>""").getBytes()));
+                </web-app>""").getBytes(StandardCharsets.UTF_8)));
         var b = WebAppModel.builder("/");
         DescriptorMerger.merge(d, List.of(new Fragment("F", URI.create("file:/f.jar").toURL(), fragment)),
                 AnnotatedComponents.none(), F, b);
@@ -649,7 +662,8 @@ class DescriptorMergerTest {
         var decl = new FilterMappingDecl("f", "/x", null, types);
         types.add(DispatcherType.ERROR);
         assertEquals(Set.of(DispatcherType.FORWARD), decl.dispatcherTypes(), "defensive copy");
-        assertThrows(UnsupportedOperationException.class, () -> decl.dispatcherTypes().add(DispatcherType.ERROR));
+        var exposed = decl.dispatcherTypes();
+        assertThrows(UnsupportedOperationException.class, () -> exposed.add(DispatcherType.ERROR));
     }
 
     static final List<String> FILTER_EVENTS = new CopyOnWriteArrayList<>();
@@ -682,18 +696,16 @@ class DescriptorMergerTest {
                 List.of(new FilterDecl("ann", Recording.class, () -> new Recording("ann"), Map.of(), false)),
                 List.of(), List.of());
         var b = WebAppModel.builder("/");
-        DescriptorMerger.merge(WebXmlParser.parse(new ByteArrayInputStream((HEAD + "></web-app>").getBytes())),
+        DescriptorMerger.merge(WebXmlParser.parse(new ByteArrayInputStream((HEAD + "></web-app>").getBytes(StandardCharsets.UTF_8))),
                 ann, F, b);
         b.initializer((classes, ctx) -> ctx.addFilter("dyn", new Recording("dyn")));
         try (var deployment = WebAppDeployer.deploy(b.build(), DeployOptions.defaults(getClass().getClassLoader()))) {
             var started = io.vidocq.foy.internal.TestServerLauncherAccess.start(deployment.handler());
-            try {
+            try (var _ = started.server()) {
                 var res = HttpClient.newHttpClient().send(HttpRequest.newBuilder(
                         URI.create("http://127.0.0.1:" + started.port() + "/x")).GET().build(),
                         HttpResponse.BodyHandlers.ofString());
                 assertEquals("ok", res.body());
-            } finally {
-                started.server().stop();
             }
             var ctx = deployment.servletContext();
             assertNotNull(ctx.getFilterRegistration("ann"), "static unmapped filter is registered");

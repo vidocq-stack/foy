@@ -40,13 +40,8 @@ class ApplicationLayerTest {
     @TempDir Path tmp;
 
     @BeforeEach
-    void resetProperties() {
-        System.clearProperty("test.jsp.created");
-        System.getProperties().remove("test.jsp.layer");
-    }
-
     @org.junit.jupiter.api.AfterEach
-    void clearProperties() {
+    void resetProperties() {
         System.clearProperty("test.jsp.created");
         System.getProperties().remove("test.jsp.layer");
     }

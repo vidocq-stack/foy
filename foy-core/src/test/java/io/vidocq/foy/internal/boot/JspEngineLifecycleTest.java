@@ -44,9 +44,9 @@ class JspEngineLifecycleTest {
         JspEngine engine = (context, layer) -> {
             events.add("open");
             return new JspEngine.Application() {
-                public Servlet servlet() { return new CountingServlet("default", events); }
-                public Servlet servletFor(String path) { events.add("factory:" + path); return new CountingServlet("alias", events); }
-                public void close() { events.add("close"); }
+                @Override public Servlet servlet() { return new CountingServlet("default", events); }
+                @Override public Servlet servletFor(String path) { events.add("factory:" + path); return new CountingServlet("alias", events); }
+                @Override public void close() { events.add("close"); }
             };
         };
         var model = WebAppModel.builder("/pages").initializer((types, context) -> {
@@ -57,7 +57,8 @@ class JspEngineLifecycleTest {
         var deployed = WebAppDeployer.deploy(model, DeployOptions.defaults(getClass().getClassLoader()), ModuleLayer.boot(), engine);
         assertEquals(java.util.Set.of("*.jsp", "*.jspx"), java.util.Set.copyOf(deployed.servletContext().getServletRegistration("jsp").getMappings()));
         assertEquals(2, deployed.initializedServlets().size());
-        assertThrows(IllegalStateException.class, () -> deployed.servletContext().addJspFile("late", "/hello.jsp"));
+        var deployedContext = deployed.servletContext();
+        assertThrows(IllegalStateException.class, () -> deployedContext.addJspFile("late", "/hello.jsp"));
         deployed.close(); deployed.close();
         assertEquals("close", events.getLast());
         assertEquals(1, events.stream().filter("close"::equals).count());
@@ -68,13 +69,14 @@ class JspEngineLifecycleTest {
     void failureDuringInitializationStillClosesTheEngine() {
         int[] closed = {0};
         JspEngine engine = (context, layer) -> new JspEngine.Application() {
-            public Servlet servlet() { return new HttpServlet() { }; }
-            public Servlet servletFor(String path) { return new HttpServlet() { }; }
-            public void close() { closed[0]++; }
+            @Override public Servlet servlet() { return new HttpServlet() { }; }
+            @Override public Servlet servletFor(String path) { return new HttpServlet() { }; }
+            @Override public void close() { closed[0]++; }
         };
         var model = WebAppModel.builder("/pages").initializer((types, context) -> { throw new IllegalStateException("broken initializer"); }).build();
-        assertThrows(IllegalStateException.class, () -> WebAppDeployer.deploy(model,
-                DeployOptions.defaults(getClass().getClassLoader()), ModuleLayer.boot(), engine));
+        var options = DeployOptions.defaults(getClass().getClassLoader());
+        var bootLayer = ModuleLayer.boot();
+        assertThrows(IllegalStateException.class, () -> WebAppDeployer.deploy(model, options, bootLayer, engine));
         assertEquals(1, closed[0]);
     }
 
@@ -84,9 +86,9 @@ class JspEngineLifecycleTest {
         var model = WebAppModel.builder("/pages").servlet(new WebAppModel.ServletDecl("named", null, null,
                 List.of("/named"), java.util.Map.of("key", "value"), 1, false, null, null, true, "/hello.jsp")).build();
         JspEngine engine = (context, layer) -> new JspEngine.Application() {
-            public Servlet servlet() { return new CountingServlet("default", events); }
-            public Servlet servletFor(String path) { events.add("factory:" + path); return new CountingServlet("named", events); }
-            public void close() { events.add("close"); }
+            @Override public Servlet servlet() { return new CountingServlet("default", events); }
+            @Override public Servlet servletFor(String path) { events.add("factory:" + path); return new CountingServlet("named", events); }
+            @Override public void close() { events.add("close"); }
         };
         try (var deployed = WebAppDeployer.deploy(model, DeployOptions.defaults(getClass().getClassLoader()), ModuleLayer.boot(), engine)) {
             assertTrue(events.contains("factory:/hello.jsp"));
