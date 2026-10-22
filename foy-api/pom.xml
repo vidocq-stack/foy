@@ -14,6 +14,10 @@
     <name>Foy :: API + SPI HTTP</name>
     <description>Public interfaces and SPI: SessionStore, IdentityStore (no dependency beyond jakarta.servlet-api)</description>
 
+    <properties>
+        <japicmp.skip>false</japicmp.skip>
+    </properties>
+
     <dependencies>
         <dependency>
             <groupId>jakarta.servlet</groupId>
@@ -35,4 +39,27 @@
             <scope>test</scope>
         </dependency>
     </dependencies>
+
+    <build>
+        <pluginManagement>
+            <plugins>
+                <!-- The API compatibility report (quality profile): the packages module-info.java exports. -->
+                <plugin>
+                    <groupId>com.github.siom79.japicmp</groupId>
+                    <artifactId>japicmp-maven-plugin</artifactId>
+                    <configuration>
+                        <parameter>
+                            <includes>
+                                <include>io.vidocq.foy.spi.session</include>
+                                <include>io.vidocq.foy.spi.security</include>
+                                <include>io.vidocq.foy.spi.gen</include>
+                                <include>io.vidocq.foy.spi.cdi</include>
+                                <include>io.vidocq.foy.spi.jsp</include>
+                            </includes>
+                        </parameter>
+                    </configuration>
+                </plugin>
+            </plugins>
+        </pluginManagement>
+    </build>
 </project>

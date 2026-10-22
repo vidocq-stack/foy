@@ -14,6 +14,10 @@
     <name>Foy :: CDI Vauban Adapter</name>
     <description>Adapter Vauban CDI pour Foy : implémente la SPI BeanProvider et expose les beans @WebServlet/@WebFilter/@WebListener du container Vauban.</description>
 
+    <properties>
+        <japicmp.skip>false</japicmp.skip>
+    </properties>
+
     <dependencies>
         <dependency>
             <groupId>io.vidocq.foy</groupId>
@@ -66,6 +70,22 @@
     </dependencies>
 
     <build>
+        <pluginManagement>
+            <plugins>
+                <!-- The API compatibility report (quality profile): the packages module-info.java exports. -->
+                <plugin>
+                    <groupId>com.github.siom79.japicmp</groupId>
+                    <artifactId>japicmp-maven-plugin</artifactId>
+                    <configuration>
+                        <parameter>
+                            <includes>
+                                <include>io.vidocq.foy.cdi.vauban</include>
+                            </includes>
+                        </parameter>
+                    </configuration>
+                </plugin>
+            </plugins>
+        </pluginManagement>
         <plugins>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>

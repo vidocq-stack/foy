@@ -35,3 +35,9 @@ jobs:
           sonar-token: ${{ secrets.SONAR_TOKEN }}
           host-url: ${{ vars.SONAR_HOST_URL }}
           bot-token: ${{ secrets.VIDOCQ_BOT_TOKEN }}
+          # Error Prone in the analysis (Vidocq/vidocq#269), as in Chappe: the action's default, plus the
+          # errorprone profile, whose warnings the action imports as external issues.
+          maven-args: -B -ntp -Pquality,errorprone -Dmaven.test.failure.ignore=true install
+          # Infer's RacerD over the main sources (Vidocq/vidocq#269): data races in the container's concurrent
+          # code. Needs the trixie job image (glibc 2.38 or later).
+          infer: 'true'

@@ -67,6 +67,14 @@
         <chappe.version>0.4.0-SNAPSHOT</chappe.version>
         <vauban.version>0.4.0-SNAPSHOT</vauban.version>
 
+        <!-- Quality (Vidocq/vidocq#269), as in Chappe -->
+        <errorprone.version>2.50.0</errorprone.version>
+        <japicmp.version>0.26.3</japicmp.version>
+        <!-- The API compatibility report (quality profile) covers the modules that turn it on: foy-api,
+             foy-chappe and foy-cdi-vauban, each with the packages its module-info.java exports. foy-core
+             exports internal packages only, and foy-processor runs at build time. -->
+        <japicmp.skip>true</japicmp.skip>
+
         <!--
             SonarQube (Vidocq/vidocq#284): every module reads the aggregated JaCoCo report of
             foy-coverage (quality profile), so the tests of foy-it-weld, foy-it-weld-servlet and
@@ -187,6 +195,67 @@
             <modules>
                 <module>foy-coverage</module>
             </modules>
+            <build>
+                <plugins>
+                    <!-- API compatibility with the last release (Vidocq/vidocq#288), report mode: japicmp
+                         compares each jar with the latest x.y.z release on Maven Central and writes
+                         target/japicmp/; nothing breaks the build until 1.0.0-RC1 makes it a gate. -->
+                    <plugin>
+                        <groupId>com.github.siom79.japicmp</groupId>
+                        <artifactId>japicmp-maven-plugin</artifactId>
+                        <version>${japicmp.version}</version>
+                        <configuration>
+                            <parameter>
+                                <oldVersionPattern>\d+\.\d+\.\d+</oldVersionPattern>
+                                <onlyModified>true</onlyModified>
+                                <ignoreMissingOldVersion>true</ignoreMissingOldVersion>
+                                <breakBuildOnBinaryIncompatibleModifications>false</breakBuildOnBinaryIncompatibleModifications>
+                                <breakBuildOnSourceIncompatibleModifications>false</breakBuildOnSourceIncompatibleModifications>
+                            </parameter>
+                            <skipDiffReport>true</skipDiffReport>
+                        </configuration>
+                        <executions>
+                            <execution>
+                                <id>api-compatibility</id>
+                                <goals>
+                                    <goal>cmp</goal>
+                                </goals>
+                            </execution>
+                        </executions>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+        <!-- Error Prone (Vidocq/vidocq#269): run locally with -Perrorprone, and by the SonarQube job, which
+             imports its warnings as external issues. Report mode, like the rest of the analysis: every
+             finding is a warning (-XepAllErrorsAsWarnings), none stops the build. Error Prone needs the
+             javac internals .mvn/jvm.config opens. -->
+        <profile>
+            <id>errorprone</id>
+            <build>
+                <pluginManagement>
+                    <plugins>
+                        <plugin>
+                            <groupId>org.apache.maven.plugins</groupId>
+                            <artifactId>maven-compiler-plugin</artifactId>
+                            <configuration>
+                                <compilerArgs combine.children="append">
+                                    <arg>-XDcompilePolicy=simple</arg>
+                                    <arg>--should-stop=ifError=FLOW</arg>
+                                    <arg>-Xplugin:ErrorProne -XepAllErrorsAsWarnings -XepExcludedPaths:.*(generated|generated-sources)/.* -XepDisableWarningsInGeneratedCode</arg>
+                                </compilerArgs>
+                                <annotationProcessorPaths combine.children="append">
+                                    <path>
+                                        <groupId>com.google.errorprone</groupId>
+                                        <artifactId>error_prone_core</artifactId>
+                                        <version>${errorprone.version}</version>
+                                    </path>
+                                </annotationProcessorPaths>
+                            </configuration>
+                        </plugin>
+                    </plugins>
+                </pluginManagement>
+            </build>
         </profile>
     </profiles>
 </project>
