@@ -168,10 +168,10 @@ public final class RequestDispatcherImpl implements io.vidocq.foy.spi.jsp.JspEng
         if (impl != null && impl.isErrorTriggered()) return;
         try {
             response.getWriter().close();
-        } catch (IllegalStateException streamInUse) {
+        } catch (IllegalStateException _) {
             try {
                 response.getOutputStream().close();
-            } catch (IllegalStateException ignored) {
+            } catch (IllegalStateException _) {
                 // neither can be obtained: nothing buffered by a wrapper to flush
             }
         }

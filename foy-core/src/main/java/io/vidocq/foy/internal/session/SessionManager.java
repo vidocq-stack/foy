@@ -210,7 +210,7 @@ public final class SessionManager implements AutoCloseable {
     /** The reaper period for a default timeout: {@code min(60 s, max(1 s, timeout / 2))}. */
     static Duration reaperPeriodFor(int timeoutSeconds) {
         if (timeoutSeconds <= 0) return Duration.ofSeconds(60);
-        return Duration.ofSeconds(Math.min(60, Math.max(1, timeoutSeconds / 2)));
+        return Duration.ofSeconds(Math.clamp(timeoutSeconds / 2, 1, 60));
     }
 
     /** Starts the expiry reaper with the period derived from the default timeout. */
@@ -278,7 +278,7 @@ public final class SessionManager implements AutoCloseable {
             r.shutdown();
             try {
                 if (!r.awaitTermination(5, TimeUnit.SECONDS)) r.shutdownNow();
-            } catch (InterruptedException e) {
+            } catch (InterruptedException _) {
                 r.shutdownNow();
                 Thread.currentThread().interrupt();
             }

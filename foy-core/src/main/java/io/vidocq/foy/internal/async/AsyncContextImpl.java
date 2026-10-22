@@ -204,10 +204,10 @@ public final class AsyncContextImpl implements AsyncContext {
         Runnable bound = servletContext instanceof io.vidocq.foy.internal.container.VidocqServletContext v
                 ? v.listenerRegistry().bindingContainerContexts(servletContext, this::threadRequest, run)
                 : run;
-        Thread thread = Thread.ofVirtual().name("foy-async-" + ASYNC_THREADS.incrementAndGet()).unstarted(() -> {
-            try { bound.run(); }
-            catch (Throwable t) { fail(t); }
-        });
+        // Whatever the runnable throws, error included, fails the cycle from the dying thread.
+        Thread thread = Thread.ofVirtual().name("foy-async-" + ASYNC_THREADS.incrementAndGet())
+                .uncaughtExceptionHandler((_, t) -> fail(t))
+                .unstarted(bound);
         startedThreads.add(thread);
         thread.start();
     }
@@ -278,7 +278,7 @@ public final class AsyncContextImpl implements AsyncContext {
             if (timeout <= 0) signal.get();
             else signal.get(timeout, TimeUnit.MILLISECONDS);
             return true;
-        } catch (TimeoutException e) {
+        } catch (TimeoutException _) {
             return false;
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();

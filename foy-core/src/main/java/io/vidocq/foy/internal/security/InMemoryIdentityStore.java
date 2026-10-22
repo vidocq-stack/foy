@@ -53,7 +53,24 @@ import javax.security.auth.x500.X500Principal;
  */
 public final class InMemoryIdentityStore implements IdentityStore {
 
-    private record User(Identity identity, byte[] salt, byte[] digest) {}
+    /** A declared user: its identity, and the salt and digest of its password, never exposed. */
+    private static final class User {
+        private final Identity identity;
+        private final byte[] salt;
+        private final byte[] digest;
+
+        User(Identity identity, byte[] salt, byte[] digest) {
+            this.identity = identity;
+            this.salt = salt;
+            this.digest = digest;
+        }
+
+        Identity identity() { return identity; }
+
+        byte[] salt() { return salt; }
+
+        byte[] digest() { return digest; }
+    }
 
     private static final SecureRandom RANDOM = new SecureRandom();
 
@@ -82,7 +99,7 @@ public final class InMemoryIdentityStore implements IdentityStore {
         boolean encodable = true;
         try {
             candidate = digest(user == null ? decoySalt : user.salt(), password);
-        } catch (IllegalArgumentException e) {
+        } catch (IllegalArgumentException _) {
             // Not valid UTF-16: pay the same cost, then refuse whatever the user is.
             candidate = digest(decoySalt, DECOY_PASSWORD);
             encodable = false;

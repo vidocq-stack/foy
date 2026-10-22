@@ -34,16 +34,11 @@ import java.util.List;
  * filters (Servlet 6.1 spec §6.2.4 — for annotations, the order is not
  * specified; we take the discovery order CDI, stable).</p>
  */
-public final class FilterRegistry {
+public record FilterRegistry(List<FilterMapping> mappings) {
 
-    private final List<FilterMapping> mappings;
-
-    public FilterRegistry(List<FilterMapping> mappings) {
-        this.mappings = List.copyOf(mappings);
-    }
-
-    public List<FilterMapping> mappings() {
-        return mappings;
+    /** Copies {@code mappings}, which keep their declaration order. */
+    public FilterRegistry {
+        mappings = List.copyOf(mappings);
     }
 
     /** Filters applicable for a request matched by no servlet (path + dispatcherType). */

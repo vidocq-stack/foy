@@ -114,7 +114,11 @@ public final class ConstraintTable {
             if (m.matches(canonicalPath)) { pattern = m.pattern(); break; }
         }
         if (pattern == null) return Decision.UNCHECKED;
-        boolean covered = false, excluded = false, unchecked = false, any = false, confidential = true;
+        boolean covered = false;
+        boolean excluded = false;
+        boolean unchecked = false;
+        boolean any = false;
+        boolean confidential = true;
         Set<String> roles = new LinkedHashSet<>();
         for (Entry e : byPattern.get(pattern)) {
             if (!e.covers(method)) continue;
@@ -174,8 +178,7 @@ public final class ConstraintTable {
 
         /** A descriptor {@code <security-constraint>}: every url-pattern of each collection. Add these first. */
         public Builder descriptor(SecurityConstraintDef def) {
-            Decision.Access access = def.rolesAllowed() == null ? Decision.Access.UNCHECKED
-                    : def.rolesAllowed().isEmpty() ? Decision.Access.EXCLUDED : Decision.Access.ROLES;
+            Decision.Access access = accessOf(def.rolesAllowed());
             Set<String> roles = def.rolesAllowed() == null ? Set.of() : Set.copyOf(def.rolesAllowed());
             boolean confidential = isConfidential(def.transportGuarantee());
             for (WebResourceCollectionDef c : def.collections()) {
@@ -187,6 +190,12 @@ public final class ConstraintTable {
                 }
             }
             return this;
+        }
+
+        /** A descriptor constraint's access: none ({@code null}) is unchecked, an empty role list excludes. */
+        private static Decision.Access accessOf(Collection<String> rolesAllowed) {
+            if (rolesAllowed == null) return Decision.Access.UNCHECKED;
+            return rolesAllowed.isEmpty() ? Decision.Access.EXCLUDED : Decision.Access.ROLES;
         }
 
         /**
@@ -216,23 +225,29 @@ public final class ConstraintTable {
             Map<String, List<Entry>> resolved = new LinkedHashMap<>();
             for (var e : byPattern.entrySet()) {
                 List<Entry> entries = new ArrayList<>();
-                for (Entry entry : e.getValue()) {
-                    if (entry.access() != Decision.Access.ROLES) { entries.add(entry); continue; }
-                    Set<String> roles = new LinkedHashSet<>();
-                    boolean any = false;
-                    for (String r : entry.roles()) {
-                        if ("*".equals(r)) roles.addAll(declaredRoles);
-                        else if ("**".equals(r) && !starStarIsARole) any = true;
-                        else roles.add(r);
-                    }
-                    entries.add(new Entry(entry.methods(), entry.omissions(), entry.access(), Set.copyOf(roles), any,
-                            entry.confidential()));
-                }
+                for (Entry entry : e.getValue()) entries.add(resolveRoles(entry, starStarIsARole));
                 resolved.put(e.getKey(), List.copyOf(entries));
             }
             List<UrlPatternMatcher> matchers = resolved.keySet().stream().map(UrlPatternMatcher::of)
                     .sorted(Comparator.comparingInt(UrlPatternMatcher::precedence)).toList();
             return new ConstraintTable(matchers, Collections.unmodifiableMap(resolved), denyUncovered);
+        }
+
+        /**
+         * {@code entry} with its role names resolved: {@code "*"} stands for the declared roles and
+         * {@code "**"}, unless declared as a role, for any authenticated user. Other entries are kept.
+         */
+        private Entry resolveRoles(Entry entry, boolean starStarIsARole) {
+            if (entry.access() != Decision.Access.ROLES) return entry;
+            Set<String> roles = new LinkedHashSet<>();
+            boolean any = false;
+            for (String r : entry.roles()) {
+                if ("*".equals(r)) roles.addAll(declaredRoles);
+                else if ("**".equals(r) && !starStarIsARole) any = true;
+                else roles.add(r);
+            }
+            return new Entry(entry.methods(), entry.omissions(), entry.access(), Set.copyOf(roles), any,
+                    entry.confidential());
         }
 
         private void add(String pattern, Entry entry) {
@@ -241,11 +256,16 @@ public final class ConstraintTable {
 
         private static Entry entry(Set<String> methods, Set<String> omissions, HttpConstraintElement e) {
             String[] roles = e.getRolesAllowed();
-            Decision.Access access = roles.length > 0 ? Decision.Access.ROLES
-                    : e.getEmptyRoleSemantic() == ServletSecurity.EmptyRoleSemantic.DENY
-                    ? Decision.Access.EXCLUDED : Decision.Access.UNCHECKED;
+            Decision.Access access = accessOf(roles, e.getEmptyRoleSemantic());
             return new Entry(methods, omissions, access, Set.copyOf(Arrays.asList(roles)), false,
                     e.getTransportGuarantee() == ServletSecurity.TransportGuarantee.CONFIDENTIAL);
+        }
+
+        /** An annotation constraint's access: its roles, else its empty-role semantic. */
+        private static Decision.Access accessOf(String[] roles, ServletSecurity.EmptyRoleSemantic emptyRoleSemantic) {
+            if (roles.length > 0) return Decision.Access.ROLES;
+            return emptyRoleSemantic == ServletSecurity.EmptyRoleSemantic.DENY
+                    ? Decision.Access.EXCLUDED : Decision.Access.UNCHECKED;
         }
 
         private static boolean isAllDefault(HttpConstraintElement e) {

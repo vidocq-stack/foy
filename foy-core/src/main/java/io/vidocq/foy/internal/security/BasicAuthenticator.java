@@ -85,10 +85,40 @@ public final class BasicAuthenticator implements Authenticator {
         res.sendError(jakarta.servlet.http.HttpServletResponse.SC_UNAUTHORIZED);
     }
 
-    record UserPassword(String user, char[] password) {}
+    /** The user and password of a Basic header; the receiver clears the password once used. */
+    static final class UserPassword {
+        private final String user;
+        private final char[] password;
+
+        UserPassword(String user, char[] password) {
+            this.user = user;
+            this.password = password;
+        }
+
+        String user() { return user; }
+
+        char[] password() { return password; }
+    }
 
     /** The user and password of a Basic header, or {@code null} when anything is off. */
     static UserPassword parse(String header) {
+        String token = token(header);
+        if (token == null) return null;
+        byte[] decoded;
+        try {
+            decoded = Base64.getDecoder().decode(token);
+        } catch (IllegalArgumentException _) {
+            return null;
+        }
+        try {
+            return split(decoded);
+        } finally {
+            Arrays.fill(decoded, (byte) 0);
+        }
+    }
+
+    /** The Base64 token of a Basic {@code header}, or {@code null} when it is not one. */
+    private static String token(String header) {
         if (header == null || header.length() > MAX_CREDENTIALS_LENGTH) return null;
         if (header.length() < 6 || !header.regionMatches(true, 0, "Basic", 0, 5) || header.charAt(5) != ' ') {
             return null;
@@ -96,38 +126,47 @@ public final class BasicAuthenticator implements Authenticator {
         int start = 5;
         while (start < header.length() && header.charAt(start) == ' ') start++;
         String token = header.substring(start);
-        if (token.isEmpty()) return null;
-        byte[] decoded;
+        return token.isEmpty() ? null : token;
+    }
+
+    /** {@code user:password} decoded, or {@code null} when malformed; the intermediate chars are cleared. */
+    private static UserPassword split(byte[] decoded) {
+        char[] all = decodeUtf8(decoded);
+        if (all == null) return null;
         try {
-            decoded = Base64.getDecoder().decode(token);
-        } catch (IllegalArgumentException e) {
-            return null;
-        }
-        char[] all = null;
-        try {
-            CharBuffer chars;
-            try {
-                chars = StandardCharsets.UTF_8.newDecoder()
-                        .onMalformedInput(CodingErrorAction.REPORT)
-                        .onUnmappableCharacter(CodingErrorAction.REPORT)
-                        .decode(ByteBuffer.wrap(decoded));
-            } catch (CharacterCodingException e) {
-                return null;
-            }
-            all = new char[chars.remaining()];
-            chars.get(all);
-            if (chars.hasArray()) Arrays.fill(chars.array(), '\0');
-            int colon = -1;
-            for (int i = 0; i < all.length; i++) {
-                char c = all[i];
-                if (c < 0x20 || c == 0x7f) return null;
-                if (colon < 0 && c == ':') colon = i;
-            }
+            int colon = colonIndex(all);
             if (colon <= 0) return null;
             return new UserPassword(new String(all, 0, colon), Arrays.copyOfRange(all, colon + 1, all.length));
         } finally {
-            Arrays.fill(decoded, (byte) 0);
-            if (all != null) Arrays.fill(all, '\0');
+            Arrays.fill(all, '\0');
         }
+    }
+
+    /** The strict UTF-8 decoding of {@code bytes}, or {@code null} when malformed; the decoder's buffer is cleared. */
+    private static char[] decodeUtf8(byte[] bytes) {
+        CharBuffer chars;
+        try {
+            chars = StandardCharsets.UTF_8.newDecoder()
+                    .onMalformedInput(CodingErrorAction.REPORT)
+                    .onUnmappableCharacter(CodingErrorAction.REPORT)
+                    .decode(ByteBuffer.wrap(bytes));
+        } catch (CharacterCodingException _) {
+            return null;
+        }
+        char[] all = new char[chars.remaining()];
+        chars.get(all);
+        if (chars.hasArray()) Arrays.fill(chars.array(), '\0');
+        return all;
+    }
+
+    /** The index of the first colon of {@code chars}; {@code -1} without one or with a control character. */
+    private static int colonIndex(char[] chars) {
+        int colon = -1;
+        for (int i = 0; i < chars.length; i++) {
+            char c = chars[i];
+            if (c < 0x20 || c == 0x7f) return -1;
+            if (colon < 0 && c == ':') colon = i;
+        }
+        return colon;
     }
 }

@@ -143,7 +143,9 @@ public final class WebSecurity {
         switch (decision.access()) {
             case UNCHECKED -> { return true; }
             case EXCLUDED -> { res.sendError(HttpServletResponse.SC_FORBIDDEN); return false; }
-            case ROLES -> { }
+            case ROLES -> {
+                // Authenticated access: the identity and its roles are checked below.
+            }
         }
         if (req.identity() == null) {
             authenticator.authenticate(req).ifPresent(id -> req.bindIdentity(id, authenticator.authType()));
@@ -213,8 +215,8 @@ public final class WebSecurity {
     void restoreIdentity(HttpServletRequestImpl req) {
         if (!authenticator.sessionBased() || req.identity() != null) return;
         if (req.getSession(false) instanceof HttpSessionImpl s
-                && s.note(FormAuthenticator.IDENTITY_NOTE) instanceof CachedIdentity c) {
-            req.bindIdentity(c.identity(), c.authType());
+                && s.note(FormAuthenticator.IDENTITY_NOTE) instanceof CachedIdentity(var identity, var authType)) {
+            req.bindIdentity(identity, authType);
         }
     }
 

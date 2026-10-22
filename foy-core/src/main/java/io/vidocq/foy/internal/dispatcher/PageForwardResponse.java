@@ -50,7 +50,7 @@ final class PageForwardResponse extends ServletResponseWrapper {
 
     @Override public PrintWriter getWriter() throws IOException {
         if (writer == null) {
-            var downstream = policy.io(() -> super.getWriter());
+            var downstream = policy.io(super::getWriter);
             writer = new PrintWriter(new Writer() {
                 @Override public void write(char[] chars, int offset, int length) throws IOException {
                     policy.io(() -> { downstream.write(chars, offset, length); return null; });
@@ -66,7 +66,7 @@ final class PageForwardResponse extends ServletResponseWrapper {
 
     @Override public ServletOutputStream getOutputStream() throws IOException {
         if (stream == null) {
-            var downstream = policy.io(() -> super.getOutputStream());
+            var downstream = policy.io(super::getOutputStream);
             stream = new ServletOutputStream() {
                 @Override public void write(int value) throws IOException { policy.io(() -> { downstream.write(value); return null; }); }
                 @Override public void write(byte[] bytes, int offset, int length) throws IOException {
@@ -87,8 +87,8 @@ final class PageForwardResponse extends ServletResponseWrapper {
     @Override public void setContentLengthLong(long length) { policy.run(() -> super.setContentLengthLong(length)); }
     @Override public void setContentType(String type) { policy.run(() -> super.setContentType(type)); }
     @Override public void setBufferSize(int size) { policy.run(() -> super.setBufferSize(size)); }
-    @Override public void resetBuffer() { policy.run(() -> super.resetBuffer()); }
-    @Override public void reset() { policy.run(() -> super.reset()); }
+    @Override public void resetBuffer() { policy.run(super::resetBuffer); }
+    @Override public void reset() { policy.run(super::reset); }
     @Override public void setLocale(Locale locale) { policy.run(() -> super.setLocale(locale)); }
     @Override public void flushBuffer() throws IOException { policy.io(() -> { super.flushBuffer(); return null; }); }
 
@@ -145,11 +145,15 @@ final class PageForwardResponse extends ServletResponseWrapper {
         }
         private void enter() {
             int entered = 0;
+            boolean allEntered = false;
             try {
                 for (var frame : frames) { frame.beginJspForwardOperation(); entered++; }
-            } catch (RuntimeException | Error failure) {
-                for (int index = entered - 1; index >= 0; index--) frames.get(index).endJspForwardOperation();
-                throw failure;
+                allEntered = true;
+            } finally {
+                // A frame failed to enter: the ones already entered are left, innermost first.
+                if (!allEntered) {
+                    for (int index = entered - 1; index >= 0; index--) frames.get(index).endJspForwardOperation();
+                }
             }
         }
         private void leave() { for (int index = frames.size() - 1; index >= 0; index--) frames.get(index).endJspForwardOperation(); }
