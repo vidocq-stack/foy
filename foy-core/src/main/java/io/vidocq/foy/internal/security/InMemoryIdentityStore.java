@@ -53,24 +53,7 @@ import javax.security.auth.x500.X500Principal;
  */
 public final class InMemoryIdentityStore implements IdentityStore {
 
-    /** A declared user: its identity, and the salt and digest of its password, never exposed. */
-    private static final class User {
-        private final Identity identity;
-        private final byte[] salt;
-        private final byte[] digest;
-
-        User(Identity identity, byte[] salt, byte[] digest) {
-            this.identity = identity;
-            this.salt = salt;
-            this.digest = digest;
-        }
-
-        Identity identity() { return identity; }
-
-        byte[] salt() { return salt; }
-
-        byte[] digest() { return digest; }
-    }
+    private record User(Identity identity, byte[] salt, byte[] digest) {}
 
     private static final SecureRandom RANDOM = new SecureRandom();
 

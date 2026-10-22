@@ -85,20 +85,7 @@ public final class BasicAuthenticator implements Authenticator {
         res.sendError(jakarta.servlet.http.HttpServletResponse.SC_UNAUTHORIZED);
     }
 
-    /** The user and password of a Basic header; the receiver clears the password once used. */
-    static final class UserPassword {
-        private final String user;
-        private final char[] password;
-
-        UserPassword(String user, char[] password) {
-            this.user = user;
-            this.password = password;
-        }
-
-        String user() { return user; }
-
-        char[] password() { return password; }
-    }
+    record UserPassword(String user, char[] password) {}
 
     /** The user and password of a Basic header, or {@code null} when anything is off. */
     static UserPassword parse(String header) {
