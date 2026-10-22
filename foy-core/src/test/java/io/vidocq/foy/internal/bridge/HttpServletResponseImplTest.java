@@ -111,6 +111,20 @@ class HttpServletResponseImplTest {
     }
 
     @Test
+    void sendErrorEscapesTheMessageInTheDefaultErrorPage() throws IOException {
+        // BUG-20261022-01: an application passing a request value to sendError must not get a reflected
+        // XSS through the container's page (ZAP rule 40012 on the nightly scan target).
+        var res = new HttpServletResponseImpl();
+        res.sendError(404, "No such item: </h1><script>alert('x')</script>&\"");
+        String body = body(res);
+        assertFalse(body.contains("<script>"), body);
+        assertTrue(body.contains("No such item: &lt;/h1&gt;&lt;script&gt;alert(&#39;x&#39;)&lt;/script&gt;&amp;&quot;"),
+                body);
+        assertEquals("No such item: </h1><script>alert('x')</script>&\"", res.errorMessage(),
+                "the error attribute keeps the raw message");
+    }
+
+    @Test
     void sendRedirectDropsTheDeclaredContentLength() throws IOException {
         var res = new HttpServletResponseImpl();
         res.setContentLength(5);

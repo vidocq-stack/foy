@@ -1,5 +1,17 @@
 # BUG.md — foy
 
+## BUG-20261022-01 — The container's error page does not escape the sendError message
+
+- Date: 2026-10-22 (found by the first local run of the nightly OWASP ZAP scan, Vidocq/vidocq#273).
+- Symptom: ZAP raises *Cross Site Scripting (Reflected)* (rule 40012, risk High) on
+  `/missing?item=</h1><scrIpt>alert(1);</scRipt><h1>` of `foy-zap-target`, whose servlet calls
+  `sendError(404, "No such item: " + item)`: the script comes back as markup in the 404 page.
+- Minimal repro: `HttpServletResponseImplTest.sendErrorEscapesTheMessageInTheDefaultErrorPage`.
+- Cause: `HttpServletResponseImpl.sendError(int, String)` wrote the message into its HTML page as is. An
+  application often puts a request value in that message, and Tomcat and Jetty escape it.
+- Status: FIXED on `ci/zap-nightly`: the message is HTML-escaped in the page (`&`, `<`, `>`, `"`, `'`);
+  `errorMessage()`, behind the `jakarta.servlet.error.message` attribute, stays raw.
+
 ## BUG-20261021-02 — The endless-chunked test bounded the upload below the kernel's socket buffers
 
 - Date: 2026-10-21 (seen in the downstream rebuild of chappe#39's validation, Chappe run 199).

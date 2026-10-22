@@ -104,10 +104,12 @@ public final class HttpServletResponseImpl implements HttpServletResponse {
         outputStream.resetBuffer();
         writer = null;
         streamAcquired = false;
-        // Par convention des conteneurs servlet, sendError renvoie une page d'erreur HTML
-        // minimaliste qui inclut le status + le message — cf. Tomcat/Jetty ErrorPages.
+        // By servlet container convention, sendError answers a minimal HTML error page with the
+        // status and the message, as Tomcat and Jetty do. The message often carries a request value:
+        // it is HTML-escaped there (BUG-20261022-01); errorMessage() keeps it raw for the error
+        // attribute.
         setContentType("text/html");
-        String safeMsg = msg == null ? "" : msg;
+        String safeMsg = msg == null ? "" : escapeHtml(msg);
         String body = "<html><head><title>HTTP Error " + sc + "</title></head><body>"
                 + "<h1>HTTP Status " + sc + " - " + safeMsg + "</h1></body></html>";
         // Kept in the buffer whatever its size: an error page may still replace it.
@@ -116,6 +118,23 @@ public final class HttpServletResponseImpl implements HttpServletResponse {
         outputStream.setDiscarding(true);
     }
     @Override public void sendError(int sc) throws IOException { sendError(sc, null); }
+
+    /** {@code text} escaped for HTML element content and quoted attribute values. */
+    static String escapeHtml(String text) {
+        var out = new StringBuilder(text.length() + 16);
+        for (int i = 0; i < text.length(); i++) {
+            char c = text.charAt(i);
+            switch (c) {
+                case '&' -> out.append("&amp;");
+                case '<' -> out.append("&lt;");
+                case '>' -> out.append("&gt;");
+                case '"' -> out.append("&quot;");
+                case '\'' -> out.append("&#39;");
+                default -> out.append(c);
+            }
+        }
+        return out.toString();
+    }
 
     /**
      * Servlet 6.1 section 9.4: once a forward returns, the response is committed and closed; the
