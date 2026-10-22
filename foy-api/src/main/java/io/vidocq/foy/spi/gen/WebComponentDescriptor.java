@@ -50,7 +50,8 @@ import java.util.Set;
  * @param servletSecurity the servlet security constraints, or {@code null}
  * @param declaredRoles   the declared security roles
  * @param runAs           the run-as role, or {@code null}
- * @param handlesTypes    the fully qualified class names handled by an INITIALIZER
+ * @param handlesTypes    the fully qualified class names handled by a {@code ServletContainerInitializer},
+ *                        whatever its kind: a LISTENER may also be an initializer
  */
 public record WebComponentDescriptor(Kind kind,
                                      String name,

@@ -337,7 +337,9 @@ public final class ClassFileDescriptorReader {
                 security == null ? null : security(security, type),
                 roles == null ? List.of() : strings(roles, "value"),
                 runAs == null ? null : string(runAs, "value", null),
-                handles == null || kind != Kind.INITIALIZER ? List.of() : strings(handles, "value"));
+                // Any initializer, whatever its kind: a @WebListener may also be the jar's initializer.
+                handles == null || !ServletContainerInitializer.class.isAssignableFrom(type) ? List.of()
+                        : strings(handles, "value"));
     }
 
     /** Whether an unannotated class may be a component: concrete, neither enum nor record. */

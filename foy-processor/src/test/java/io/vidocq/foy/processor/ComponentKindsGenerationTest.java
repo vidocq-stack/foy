@@ -126,6 +126,25 @@ class ComponentKindsGenerationTest {
     }
 
     @Test
+    void webListenerThatIsAlsoAnInitializerKeepsItsHandledTypes() throws Exception {
+        // Vaadin's DevModeStartupListener: @WebListener, ServletContextListener and ServletContainerInitializer.
+        var r = CompileHarness.compile(out, Map.of(
+                "a.Both", """
+                    package a;
+                    @jakarta.servlet.annotation.WebListener
+                    @jakarta.servlet.annotation.HandlesTypes(java.lang.Runnable.class)
+                    public class Both implements jakarta.servlet.ServletContextListener,
+                            jakarta.servlet.ServletContainerInitializer {
+                        public void onStartup(java.util.Set<Class<?>> c, jakarta.servlet.ServletContext ctx) {}
+                    }
+                    """));
+        assertTrue(r.success(), r.messages());
+        var d = component(r, "a.Both").descriptor();
+        assertEquals(Kind.LISTENER, d.kind());
+        assertEquals(List.of("java.lang.Runnable"), d.handlesTypes());
+    }
+
+    @Test
     void unannotatedListenerFilterAndBareInitializer() throws Exception {
         var r = CompileHarness.compile(out, Map.of(
                 "a.PL", "package a; public class PL implements jakarta.servlet.http.HttpSessionListener {}",

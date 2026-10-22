@@ -105,6 +105,12 @@ class ClassFileDescriptorReaderTest {
     @WebListener
     public static class Listener implements ServletContextListener {}
 
+    @WebListener
+    @HandlesTypes(Runnable.class)
+    public static class ListenerAndInitializer implements ServletContextListener, ServletContainerInitializer {
+        @Override public void onStartup(Set<Class<?>> c, ServletContext ctx) {}
+    }
+
     @WebServlet("/s")
     @ServletSecurity(value = @HttpConstraint(EmptyRoleSemantic.DENY),
             httpMethodConstraints = @HttpMethodConstraint(value = "POST", rolesAllowed = {"admin", "ops"},
@@ -151,6 +157,14 @@ class ClassFileDescriptorReaderTest {
         var d = ClassFileDescriptorReader.read(Listener.class).orElseThrow();
         assertEquals(Kind.LISTENER, d.kind());
         assertNull(d.name());
+    }
+
+    @Test
+    void webListenerThatIsAlsoAnInitializerKeepsItsHandledTypes() {
+        // Vaadin's DevModeStartupListener: @WebListener, ServletContextListener and ServletContainerInitializer.
+        var d = ClassFileDescriptorReader.read(ListenerAndInitializer.class).orElseThrow();
+        assertEquals(Kind.LISTENER, d.kind());
+        assertEquals(List.of("java.lang.Runnable"), d.handlesTypes());
     }
 
     @Test

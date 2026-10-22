@@ -186,7 +186,8 @@ record ComponentModel(String packageName,
                 security == null ? null : AnnotationReader.securityExpression(security, env),
                 roles == null ? List.of() : AnnotationReader.strings(AnnotationReader.values(roles, env).get("value")),
                 runAs == null ? null : (String) AnnotationReader.values(runAs, env).get("value").getValue(),
-                handles == null || kind != Kind.INITIALIZER ? List.of()
+                // Any initializer, whatever its kind: a @WebListener may also be the jar's initializer.
+                handles == null || !initializer ? List.of()
                         : AnnotationReader.binaryNames(AnnotationReader.values(handles, env).get("value"), env)));
     }
 
