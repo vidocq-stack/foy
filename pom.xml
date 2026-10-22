@@ -98,6 +98,7 @@
         <module>foy-cdi-vauban</module>
         <module>foy-chappe</module>
         <module>foy-it-other-containers</module>
+        <module>foy-architecture-tests</module>
     </modules>
 
     <dependencyManagement>
