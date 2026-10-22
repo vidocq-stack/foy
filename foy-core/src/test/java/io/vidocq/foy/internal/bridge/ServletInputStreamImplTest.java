@@ -50,10 +50,18 @@ class ServletInputStreamImplTest {
     }
 
     private static final ReadListener NOOP = new ReadListener() {
-        @Override public void onDataAvailable() {}
-        @Override public void onAllDataRead() {}
-        @Override public void onError(Throwable t) {}
+        @Override public void onDataAvailable() { /* not needed by this test */ }
+        @Override public void onAllDataRead() { /* not needed by this test */ }
+        @Override public void onError(Throwable t) { /* not needed by this test */ }
     };
+
+    /** A source whose every read throws {@code failure}, one byte at a time or in bulk. */
+    private static InputStream failingWith(IOException failure) {
+        return new InputStream() {
+            @Override public int read() throws IOException { throw failure; }
+            @Override public int read(byte[] b, int off, int len) throws IOException { throw failure; }
+        };
+    }
 
     private static InputStream bytes(String s) {
         return new ByteArrayInputStream(s.getBytes(StandardCharsets.US_ASCII));
@@ -74,9 +82,9 @@ class ServletInputStreamImplTest {
     }
 
     @Test
-    void setReadListenerTwiceThrowsIse() {
+    void setReadListenerTwiceThrowsIse() throws IOException {
         var in = new ServletInputStreamImpl(bytes("x"), new Host(true));
-        try {
+        try (in) {
             in.setReadListener(NOOP);
             assertThrows(IllegalStateException.class, () -> in.setReadListener(NOOP));
         } finally {
@@ -111,7 +119,8 @@ class ServletInputStreamImplTest {
             assertFalse(in.isReady());
             assertThrows(IllegalStateException.class, in::read);
             assertThrows(IllegalStateException.class, () -> in.read(new byte[4]));
-            assertThrows(IllegalStateException.class, () -> in.read(ByteBuffer.allocate(4)));
+            var buffer = ByteBuffer.allocate(4);
+            assertThrows(IllegalStateException.class, () -> in.read(buffer));
         } finally {
             pipe.close(); // EOF: the pump's blocked read returns
             end(in);
@@ -160,9 +169,7 @@ class ServletInputStreamImplTest {
     void aReadErrorGoesToOnErrorAndFailsTheHost() throws Exception {
         var broken = new IOException("connection reset");
         var host = new Host(true);
-        var in = new ServletInputStreamImpl(new InputStream() {
-            @Override public int read() throws IOException { throw broken; }
-        }, host);
+        var in = new ServletInputStreamImpl(failingWith(broken), host);
         var received = new CopyOnWriteArrayList<Throwable>();
         var done = new CountDownLatch(1);
         try {
@@ -187,14 +194,12 @@ class ServletInputStreamImplTest {
         var cap = new io.vidocq.foy.internal.http.RequestBodyTooLargeException(8);
         var host = new Host(true);
         host.callbacks.hold(); // onError waits: the application's read meets the failure first
-        var in = new ServletInputStreamImpl(new InputStream() {
-            @Override public int read() throws IOException { throw cap; }
-        }, host);
+        var in = new ServletInputStreamImpl(failingWith(cap), host);
         var received = new CopyOnWriteArrayList<Throwable>();
         try {
             in.setReadListener(new ReadListener() {
-                @Override public void onDataAvailable() {}
-                @Override public void onAllDataRead() {}
+                @Override public void onDataAvailable() { /* not needed by this test */ }
+                @Override public void onAllDataRead() { /* not needed by this test */ }
                 @Override public void onError(Throwable t) { received.add(t); }
             });
             IOException thrown = null;
@@ -203,7 +208,7 @@ class ServletInputStreamImplTest {
                 try {
                     in.read();
                     fail("no data");
-                } catch (IllegalStateException notYet) {
+                } catch (IllegalStateException _) {
                     Thread.onSpinWait(); // the pump has not failed yet
                 } catch (IOException e) {
                     thrown = e;
@@ -229,7 +234,7 @@ class ServletInputStreamImplTest {
         try {
             in.setReadListener(new ReadListener() {
                 @Override public void onDataAvailable() { throw boom; }
-                @Override public void onAllDataRead() {}
+                @Override public void onAllDataRead() { /* not needed by this test */ }
                 @Override public void onError(Throwable t) { received.add(t); done.countDown(); }
             });
             assertTrue(done.await(5, TimeUnit.SECONDS));

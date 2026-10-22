@@ -171,8 +171,8 @@ class ClassPathResourceProviderTest {
     // Roots outside the ordered list are found through the class loader: their jars need directory entries to be listed.
     void rootsOutsideTheOrderedListComeAfterIt(@TempDir Path dir) throws Exception {
         Path c = jar(dir, "c.jar", "META-INF/resources/", "", "META-INF/resources/index.html", "C", "META-INF/resources/only-c.txt", "c");
-        Path a = jar(dir, "a.jar", "META-INF/resources/index.html", "A");
-        var p = new ClassPathResourceProvider(loader(c, a), List.of(a.toUri().toURL()));
+        Path ordered = jar(dir, "a.jar", "META-INF/resources/index.html", "A");
+        var p = new ClassPathResourceProvider(loader(c, ordered), List.of(ordered.toUri().toURL()));
         assertEquals("A", read(p.openStream("/index.html")), "ordered jars first, whatever the class path order");
         assertEquals("c", read(p.openStream("/only-c.txt")));
         assertEquals(Set.of("/index.html", "/only-c.txt"), p.listPaths("/"));

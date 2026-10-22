@@ -25,6 +25,7 @@ import io.vidocq.chappe.api.HttpMethod;
 import io.vidocq.chappe.api.HttpVersion;
 import io.vidocq.chappe.api.Request;
 import io.vidocq.foy.internal.container.VidocqServletContext;
+import java.net.InetAddress;
 import org.junit.jupiter.api.Test;
 
 import java.net.InetSocketAddress;
@@ -50,8 +51,8 @@ class PushBuilderContractTest {
 
     @Test
     void newPushBuilderIsNull() {
-        var local = new InetSocketAddress("127.0.0.1", 8080);
-        var chappe = new FakeRequest(HttpVersion.HTTP_2, true, new InetSocketAddress("127.0.0.1", 50000), local);
+        var local = new InetSocketAddress(InetAddress.ofLiteral("127.0.0.1"), 8080);
+        var chappe = new FakeRequest(HttpVersion.HTTP_2, true, new InetSocketAddress(InetAddress.ofLiteral("127.0.0.1"), 50000), local);
         var request = new HttpServletRequestImpl(chappe, new VidocqServletContext("/ctx"), "/ctx", "/x", null);
         assertNull(request.newPushBuilder());
     }

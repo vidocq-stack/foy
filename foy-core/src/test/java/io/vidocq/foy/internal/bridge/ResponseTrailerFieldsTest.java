@@ -22,6 +22,7 @@ package io.vidocq.foy.internal.bridge;
 import io.vidocq.chappe.api.Headers;
 import io.vidocq.chappe.api.HttpVersion;
 import io.vidocq.foy.internal.container.VidocqServletContext;
+import java.net.InetAddress;
 import org.junit.jupiter.api.Test;
 
 import java.net.InetSocketAddress;
@@ -108,7 +109,7 @@ class ResponseTrailerFieldsTest {
 
     private static HttpServletRequestImpl boundTo(HttpVersion version) {
         var chappe = new RequestIdentityTest.FakeRequest(version, true,
-                new InetSocketAddress("127.0.0.1", 40100), new InetSocketAddress("127.0.0.1", 8443),
+                new InetSocketAddress(InetAddress.ofLiteral("127.0.0.1"), 40100), new InetSocketAddress(InetAddress.ofLiteral("127.0.0.1"), 8443),
                 OptionalLong.empty(), OptionalInt.empty());
         return new HttpServletRequestImpl(chappe, new VidocqServletContext("/ctx"), "/ctx", "/x", null);
     }

@@ -32,6 +32,7 @@ import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServlet;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
+import java.net.InetAddress;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -162,18 +163,18 @@ class RequestPathCanonicalisationTest {
         @Override public InputStream openStream(String path) {
             Path p = root.resolve(path.substring(1));
             try { return Files.isRegularFile(p) ? Files.newInputStream(p) : null; }
-            catch (IOException e) { return null; }
+            catch (IOException _) { return null; }
         }
         @Override public URL toUrl(String path) {
             Path p = root.resolve(path.substring(1));
             try { return Files.exists(p) ? p.toUri().toURL() : null; }
-            catch (IOException e) { return null; }
+            catch (IOException _) { return null; }
         }
     }
 
     record Reply(int status, String body, String head) {
         String header(String name) {
-            for (String line : head.split("\r\n")) {
+            for (String line : head.split("\r\n", -1)) {
                 int c = line.indexOf(':');
                 if (c > 0 && line.substring(0, c).equalsIgnoreCase(name)) return line.substring(c + 1).trim();
             }
@@ -228,7 +229,7 @@ class RequestPathCanonicalisationTest {
     }
 
     private Reply send(String method, String target) throws IOException {
-        try (Socket s = new Socket("127.0.0.1", port)) {
+        try (Socket s = new Socket(InetAddress.ofLiteral("127.0.0.1"), port)) {
             s.setSoTimeout(10_000);
             OutputStream out = s.getOutputStream();
             out.write((method + " " + target + " HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")

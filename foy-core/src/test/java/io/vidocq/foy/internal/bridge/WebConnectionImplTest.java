@@ -69,7 +69,7 @@ class WebConnectionImplTest {
             inInit.countDown();
             try {
                 release.await();
-            } catch (InterruptedException e) {
+            } catch (InterruptedException _) {
                 Thread.currentThread().interrupt();
             }
             events.add("init returned");

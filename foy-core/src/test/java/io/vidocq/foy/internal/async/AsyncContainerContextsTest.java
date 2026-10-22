@@ -89,15 +89,15 @@ class AsyncContainerContextsTest {
             var ac = req.startAsync();
             ac.addListener(new AsyncListener() {
                 @Override public void onComplete(AsyncEvent event) {
-                    ON_COMPLETE.set(ContainerScope.ACTIVE.get() == Boolean.TRUE);
+                    ON_COMPLETE.set(Boolean.TRUE.equals(ContainerScope.ACTIVE.get()));
                     completed.countDown();
                 }
-                @Override public void onTimeout(AsyncEvent event) {}
-                @Override public void onError(AsyncEvent event) {}
-                @Override public void onStartAsync(AsyncEvent event) {}
+                @Override public void onTimeout(AsyncEvent event) { /* not needed by this test */ }
+                @Override public void onError(AsyncEvent event) { /* not needed by this test */ }
+                @Override public void onStartAsync(AsyncEvent event) { /* not needed by this test */ }
             });
             ac.start(() -> {
-                ON_START_THREAD.set(ContainerScope.ACTIVE.get() == Boolean.TRUE);
+                ON_START_THREAD.set(Boolean.TRUE.equals(ContainerScope.ACTIVE.get()));
                 try {
                     ac.getResponse().getWriter().write("done");
                 } catch (java.io.IOException e) {
@@ -141,8 +141,8 @@ class AsyncContainerContextsTest {
                 HttpResponse.BodyHandlers.ofString());
         assertEquals("done", r.body());
         assertTrue(completed.await(5, TimeUnit.SECONDS));
-        assertEquals(Boolean.TRUE, ON_START_THREAD.get(), "contexts on the AsyncContext.start thread");
-        assertEquals(Boolean.TRUE, ON_COMPLETE.get(), "contexts in onComplete");
+        assertTrue(ON_START_THREAD.get(), "contexts on the AsyncContext.start thread");
+        assertTrue(ON_COMPLETE.get(), "contexts in onComplete");
         // The application's listeners see one request; the container's are also bound on the start thread.
         assertEquals(1, AppListener.INITIALIZED.get());
         assertEquals(1, AppListener.DESTROYED.get());

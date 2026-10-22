@@ -73,19 +73,19 @@ class WelcomeFilesTest {
                 var out = new TreeSet<String>();
                 s.forEach(c -> out.add(path + c.getFileName() + (Files.isDirectory(c) ? "/" : "")));
                 return out;
-            } catch (IOException e) {
+            } catch (IOException _) {
                 return null;
             }
         }
         @Override public InputStream openStream(String path) {
             Path p = root.resolve(path.substring(1));
             try { return Files.isRegularFile(p) ? Files.newInputStream(p) : null; }
-            catch (IOException e) { return null; }
+            catch (IOException _) { return null; }
         }
         @Override public URL toUrl(String path) {
             Path p = root.resolve(path.substring(1));
             try { return Files.exists(p) ? p.toUri().toURL() : null; }
-            catch (IOException e) { return null; }
+            catch (IOException _) { return null; }
         }
     }
 

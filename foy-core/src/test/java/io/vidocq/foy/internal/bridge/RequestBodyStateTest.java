@@ -118,6 +118,11 @@ class RequestBodyStateTest {
                 if (served < 3) { served++; return 'a'; }
                 throw new IOException("connection reset");
             }
+            @Override public int read(byte[] b, int off, int len) throws IOException {
+                int n = 0;
+                while (n < len && served < 3) b[off + n++] = (byte) read();
+                return n == 0 && len > 0 ? read() : n;
+            }
         };
         var headers = Headers.builder().add("Host", "localhost")
                 .add("Content-Type", "application/x-www-form-urlencoded").add("Content-Length", "100").build();

@@ -108,7 +108,8 @@ class ResponseOutputFenceTest {
         assertEquals(1, failures.size(), "the cycle hears the failure (onError)");
 
         res.claimOutput(); // the cycle ended: later failures are not reported to it
-        assertThrows(IOException.class, () -> { out.write('c'); out.flush(); });
+        out.write('c');
+        assertThrows(IOException.class, out::flush);
         assertEquals(1, failures.size());
     }
 

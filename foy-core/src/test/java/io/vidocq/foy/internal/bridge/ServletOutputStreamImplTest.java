@@ -85,9 +85,11 @@ class ServletOutputStreamImplTest {
     void setWriteListenerWithoutAsyncThrowsIse() {
         var notAsync = new ServletOutputStreamImpl();
         notAsync.setHost(new Host(false));
-        assertThrows(IllegalStateException.class, () -> notAsync.setWriteListener(new Listener()));
+        var first = new Listener();
+        assertThrows(IllegalStateException.class, () -> notAsync.setWriteListener(first));
         var noHost = new ServletOutputStreamImpl();
-        assertThrows(IllegalStateException.class, () -> noHost.setWriteListener(new Listener()));
+        var second = new Listener();
+        assertThrows(IllegalStateException.class, () -> noHost.setWriteListener(second));
     }
 
     @Test
@@ -96,7 +98,8 @@ class ServletOutputStreamImplTest {
         out.setHost(new Host(true));
         var listener = new Listener();
         out.setWriteListener(listener);
-        assertThrows(IllegalStateException.class, () -> out.setWriteListener(new Listener()));
+        var second = new Listener();
+        assertThrows(IllegalStateException.class, () -> out.setWriteListener(second));
         listener.awaitWritePossible();
     }
 
@@ -145,7 +148,8 @@ class ServletOutputStreamImplTest {
         assertFalse(out.isReady());
 
         assertThrows(IllegalStateException.class, () -> out.write('c'));
-        assertThrows(IllegalStateException.class, () -> out.write(bytes(4, 'c')));
+        var chunk = bytes(4, 'c');
+        assertThrows(IllegalStateException.class, () -> out.write(chunk));
         assertThrows(IllegalStateException.class, out::flush);
         var buffer = ByteBuffer.wrap(bytes(4, 'c'));
         assertThrows(IllegalStateException.class, () -> out.write(buffer));
@@ -177,7 +181,7 @@ class ServletOutputStreamImplTest {
                 }
                 written.countDown();
             }
-            @Override public void onError(Throwable t) {}
+            @Override public void onError(Throwable t) { /* not needed by this test */ }
         });
         assertTrue(written.await(5, TimeUnit.SECONDS));
         assertNull(failure.get());
@@ -223,7 +227,7 @@ class ServletOutputStreamImplTest {
                     next.addAndGet(n);
                 }
             }
-            @Override public void onError(Throwable t) {}
+            @Override public void onError(Throwable t) { /* not needed by this test */ }
         });
         byte[] all = pipe.reader().readAllBytes();
         assertTrue(done.await(5, TimeUnit.SECONDS));
@@ -259,7 +263,7 @@ class ServletOutputStreamImplTest {
         var boom = new IOException("boom");
         out.setWriteListener(new WriteListener() {
             @Override public void onWritePossible() throws IOException { throw boom; }
-            @Override public void onError(Throwable t) { if (t == boom) errored.countDown(); }
+            @Override public void onError(Throwable t) { if (boom.equals(t)) errored.countDown(); }
         });
         assertTrue(errored.await(5, TimeUnit.SECONDS));
         host.callbacks.close();

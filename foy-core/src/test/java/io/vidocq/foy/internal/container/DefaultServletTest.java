@@ -38,6 +38,7 @@ import jakarta.servlet.ServletResponse;
 import jakarta.servlet.http.HttpServlet;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
+import java.nio.charset.StandardCharsets;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -48,6 +49,8 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.net.URI;
 import java.net.URL;
+import java.net.URLConnection;
+import java.net.URLStreamHandler;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
@@ -82,7 +85,7 @@ class DefaultServletTest {
             resp.getWriter().write("before|");
             try {
                 req.getRequestDispatcher(req.getParameter("to")).include(req, resp);
-            } catch (FileNotFoundException e) {
+            } catch (FileNotFoundException _) {
                 resp.getWriter().write("FNF");
             }
             resp.getWriter().write("|after");
@@ -133,12 +136,12 @@ class DefaultServletTest {
         @Override public InputStream openStream(String path) {
             Path p = root.resolve(path.substring(1));
             try { return Files.isRegularFile(p) ? Files.newInputStream(p) : null; }
-            catch (IOException e) { return null; }
+            catch (IOException _) { return null; }
         }
         @Override public URL toUrl(String path) {
             Path p = root.resolve(path.substring(1));
             try { return Files.exists(p) ? p.toUri().toURL() : null; }
-            catch (IOException e) { return null; }
+            catch (IOException _) { return null; }
         }
     }
 
@@ -153,9 +156,17 @@ class DefaultServletTest {
         @Override public Set<String> listPaths(String path) { return null; }
         @Override public InputStream openStream(String path) { return new DirProvider(root).openStream(path); }
         @Override public URL toUrl(String path) {
-            try { return new URL("file:/tmp/a b/x.txt"); }
+            try { return URL.of(URI.create("file:/tmp/a/x.txt"), new UnparsableHandler()); }
             catch (java.net.MalformedURLException e) { throw new IllegalStateException(e); }
         }
+    }
+
+    /** Spells every URL it handles with an unencoded space, so that {@code URL.toURI()} fails. */
+    private static final class UnparsableHandler extends URLStreamHandler {
+        @Override protected URLConnection openConnection(URL url) {
+            throw new UnsupportedOperationException("never opened: the default servlet reads the stream");
+        }
+        @Override protected String toExternalForm(URL url) { return "file:/tmp/a b/x.txt"; }
     }
 
     /**
@@ -370,7 +381,7 @@ class DefaultServletTest {
                 var entry = new java.util.jar.JarEntry(e[0]);
                 entry.setTime(entryTime);
                 out.putNextEntry(entry);
-                out.write(e[1].getBytes());
+                out.write(e[1].getBytes(StandardCharsets.UTF_8));
                 out.closeEntry();
             }
         }

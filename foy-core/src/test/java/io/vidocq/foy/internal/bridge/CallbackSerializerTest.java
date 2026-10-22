@@ -29,6 +29,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.locks.LockSupport;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -45,7 +46,7 @@ class CallbackSerializerTest {
             int n = i;
             serializer.submit(() -> {
                 if (!inside.compareAndSet(false, true)) overlap.set(true);
-                Thread.yield();
+                LockSupport.parkNanos(1_000L);
                 order.add(n);
                 inside.set(false);
                 done.countDown();
@@ -121,7 +122,7 @@ class CallbackSerializerTest {
     }
 
     @Test
-    void closeDropsQueuedCallbacksAndIgnoresLaterOnes() throws Exception {
+    void closeDropsQueuedCallbacksAndIgnoresLaterOnes() {
         var serializer = new CallbackSerializer(getClass().getClassLoader());
         serializer.hold();
         var ran = new AtomicBoolean();

@@ -31,6 +31,7 @@ import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -41,23 +42,26 @@ class AsyncContextImplTest {
     private static class Recorder implements AsyncListener {
         final List<String> events = new CopyOnWriteArrayList<>();
         final AtomicReference<AsyncContext> lastContext = new AtomicReference<>();
-        @Override public void onComplete(AsyncEvent e) throws IOException { record("onComplete", e); }
-        @Override public void onTimeout(AsyncEvent e) throws IOException { record("onTimeout", e); }
-        @Override public void onError(AsyncEvent e) throws IOException { record("onError", e); }
-        @Override public void onStartAsync(AsyncEvent e) throws IOException { record("onStartAsync", e); }
-        void record(String name, AsyncEvent e) {
+        @Override public void onComplete(AsyncEvent e) throws IOException { recordEvent("onComplete", e); }
+        @Override public void onTimeout(AsyncEvent e) throws IOException { recordEvent("onTimeout", e); }
+        @Override public void onError(AsyncEvent e) throws IOException { recordEvent("onError", e); }
+        @Override public void onStartAsync(AsyncEvent e) throws IOException { recordEvent("onStartAsync", e); }
+        void recordEvent(String name, AsyncEvent e) {
             events.add(name);
             lastContext.set(e.getAsyncContext());
         }
     }
 
-    private static final Runnable NO_FENCE = () -> {};
+    /** The fence the tests do not care about: nothing to run before the cycle ends. */
+    private static void noFence() {
+        // intentionally empty
+    }
 
     @Test
     void completeEndsTheCycle() throws Exception {
         var ctx = newAsync();
-        CompletableFuture<CycleEnd> future = CompletableFuture.supplyAsync(() -> ctx.awaitCycleEnd(NO_FENCE));
-        Thread.sleep(20);
+        CompletableFuture<CycleEnd> future = CompletableFuture.supplyAsync(() -> ctx.awaitCycleEnd(AsyncContextImplTest::noFence));
+        assertThrows(TimeoutException.class, () -> future.get(20, TimeUnit.MILLISECONDS));
         assertFalse(future.isDone());
         ctx.complete();
         assertEquals(CycleEnd.COMPLETE, future.get(1, TimeUnit.SECONDS));
@@ -67,7 +71,7 @@ class AsyncContextImplTest {
     @Test
     void dispatchRecordsPathAndEndsTheCycle() throws Exception {
         var ctx = newAsync();
-        CompletableFuture<CycleEnd> future = CompletableFuture.supplyAsync(() -> ctx.awaitCycleEnd(NO_FENCE));
+        CompletableFuture<CycleEnd> future = CompletableFuture.supplyAsync(() -> ctx.awaitCycleEnd(AsyncContextImplTest::noFence));
         ctx.dispatch("/target");
         assertEquals(CycleEnd.DISPATCH, future.get(1, TimeUnit.SECONDS));
         assertTrue(ctx.hasDispatch());
@@ -81,7 +85,7 @@ class AsyncContextImplTest {
         var recorder = new Recorder();
         ctx.addListener(recorder);
         long start = System.nanoTime();
-        assertEquals(CycleEnd.TIMEOUT, ctx.awaitCycleEnd(NO_FENCE));
+        assertEquals(CycleEnd.TIMEOUT, ctx.awaitCycleEnd(AsyncContextImplTest::noFence));
         long elapsedMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - start);
         assertTrue(elapsedMs >= 45, "elapsed=" + elapsedMs);
         assertTrue(ctx.timedOut());
@@ -129,7 +133,7 @@ class AsyncContextImplTest {
     void aContainerCompletedCycleRefusesDispatchAndIgnoresComplete() {
         var ctx = newAsync();
         ctx.fail(new IllegalStateException("servlet threw"));
-        assertEquals(CycleEnd.ERROR, ctx.awaitCycleEnd(NO_FENCE));
+        assertEquals(CycleEnd.ERROR, ctx.awaitCycleEnd(AsyncContextImplTest::noFence));
         assertTrue(ctx.containerCompleted());
         assertThrows(IllegalStateException.class, () -> ctx.dispatch("/late"));
         assertDoesNotThrow(ctx::complete);
@@ -150,7 +154,7 @@ class AsyncContextImplTest {
         ctx.addListener(new Recorder() {
             @Override public void onTimeout(AsyncEvent e) { e.getAsyncContext().complete(); }
         });
-        assertEquals(CycleEnd.COMPLETE, ctx.awaitCycleEnd(NO_FENCE));
+        assertEquals(CycleEnd.COMPLETE, ctx.awaitCycleEnd(AsyncContextImplTest::noFence));
     }
 
     @Test
@@ -160,7 +164,7 @@ class AsyncContextImplTest {
         ctx.addListener(new Recorder() {
             @Override public void onTimeout(AsyncEvent e) { e.getAsyncContext().dispatch("/after"); }
         });
-        assertEquals(CycleEnd.DISPATCH, ctx.awaitCycleEnd(NO_FENCE));
+        assertEquals(CycleEnd.DISPATCH, ctx.awaitCycleEnd(AsyncContextImplTest::noFence));
         assertEquals("/after", ctx.dispatchPath());
     }
 
@@ -171,7 +175,7 @@ class AsyncContextImplTest {
         ctx.addListener(recorder);
         ctx.complete();
         assertEquals(List.of(), recorder.events, "onComplete must not fire inside complete()");
-        assertEquals(CycleEnd.COMPLETE, ctx.awaitCycleEnd(NO_FENCE));
+        assertEquals(CycleEnd.COMPLETE, ctx.awaitCycleEnd(AsyncContextImplTest::noFence));
         ctx.endCycle();
         ctx.endCycle();
         assertEquals(List.of("onComplete"), recorder.events);
@@ -183,7 +187,7 @@ class AsyncContextImplTest {
         var recorder = new Recorder();
         ctx.addListener(recorder);
         ctx.dispatch("/target");
-        assertEquals(CycleEnd.DISPATCH, ctx.awaitCycleEnd(NO_FENCE));
+        assertEquals(CycleEnd.DISPATCH, ctx.awaitCycleEnd(AsyncContextImplTest::noFence));
         assertEquals(List.of(), recorder.events);
     }
 
@@ -194,7 +198,7 @@ class AsyncContextImplTest {
         ctx.addListener(recorder);
         var boom = new IllegalStateException("boom");
         ctx.start(() -> { throw boom; });
-        assertEquals(CycleEnd.ERROR, ctx.awaitCycleEnd(NO_FENCE));
+        assertEquals(CycleEnd.ERROR, ctx.awaitCycleEnd(AsyncContextImplTest::noFence));
         assertSame(boom, ctx.error());
         assertEquals(List.of("onError"), recorder.events);
     }
@@ -204,7 +208,7 @@ class AsyncContextImplTest {
         var ctx = newAsync();
         ctx.complete();
         ctx.fail(new IOException("client gone"));
-        assertEquals(CycleEnd.COMPLETE, ctx.awaitCycleEnd(NO_FENCE));
+        assertEquals(CycleEnd.COMPLETE, ctx.awaitCycleEnd(AsyncContextImplTest::noFence));
         assertNull(ctx.error());
     }
 
@@ -231,7 +235,7 @@ class AsyncContextImplTest {
         var recorder = new Recorder();
         ctx.addListener(recorder);
         ctx.complete();
-        ctx.awaitCycleEnd(NO_FENCE);
+        ctx.awaitCycleEnd(AsyncContextImplTest::noFence);
         ctx.endCycle();
         assertEquals(List.of("onComplete"), recorder.events);
     }
@@ -249,8 +253,8 @@ class AsyncContextImplTest {
     void setTimeoutZeroOrNegativeBlocksUntilComplete() throws Exception {
         var ctx = newAsync();
         ctx.setTimeout(0);
-        CompletableFuture<CycleEnd> future = CompletableFuture.supplyAsync(() -> ctx.awaitCycleEnd(NO_FENCE));
-        Thread.sleep(30);
+        CompletableFuture<CycleEnd> future = CompletableFuture.supplyAsync(() -> ctx.awaitCycleEnd(AsyncContextImplTest::noFence));
+        assertThrows(TimeoutException.class, () -> future.get(30, TimeUnit.MILLISECONDS));
         assertFalse(future.isDone());
         ctx.complete();
         assertEquals(CycleEnd.COMPLETE, future.get(1, TimeUnit.SECONDS));

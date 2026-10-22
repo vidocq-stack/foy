@@ -311,7 +311,8 @@ class HttpServletResponseImplTest {
         for (var e : res.allHeaders().entrySet()) {
             assertFalse(e.getKey().equalsIgnoreCase("Set-Cookie"), "injected header " + e);
             for (String v : e.getValue()) {
-                for (char c : v.toCharArray()) {
+                for (int i = 0; i < v.length(); i++) {
+                    char c = v.charAt(i);
                     assertTrue(c != '\r' && c != '\n' && c != 0 && c <= 0xff, "unsafe char in " + e.getKey() + ": " + v);
                 }
             }

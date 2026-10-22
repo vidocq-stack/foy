@@ -26,6 +26,7 @@ import io.vidocq.chappe.api.HttpVersion;
 import io.vidocq.chappe.api.Request;
 import io.vidocq.foy.internal.container.VidocqServletContext;
 import jakarta.servlet.ServletConnection;
+import java.net.InetAddress;
 import org.junit.jupiter.api.Test;
 
 import java.net.InetSocketAddress;
@@ -54,7 +55,7 @@ class RequestIdentityTest {
         @Override public Map<String, String> queryParams() { return Map.of(); }
     }
 
-    private static final InetSocketAddress LOCAL = new InetSocketAddress("127.0.0.1", 8080);
+    private static final InetSocketAddress LOCAL = new InetSocketAddress(InetAddress.ofLiteral("127.0.0.1"), 8080);
 
     private static HttpServletRequestImpl request(HttpVersion version, boolean secure, int remotePort) {
         return request(version, secure, remotePort, OptionalLong.empty(), OptionalInt.empty());
@@ -62,7 +63,7 @@ class RequestIdentityTest {
 
     private static HttpServletRequestImpl request(HttpVersion version, boolean secure, int remotePort,
                                                   OptionalLong connectionId, OptionalInt streamId) {
-        var chappe = new FakeRequest(version, secure, new InetSocketAddress("127.0.0.1", remotePort), LOCAL,
+        var chappe = new FakeRequest(version, secure, new InetSocketAddress(InetAddress.ofLiteral("127.0.0.1"), remotePort), LOCAL,
                 connectionId, streamId);
         return new HttpServletRequestImpl(chappe, new VidocqServletContext("/ctx"), "/ctx", "/x", null);
     }

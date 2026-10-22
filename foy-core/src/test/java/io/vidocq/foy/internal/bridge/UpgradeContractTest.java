@@ -23,6 +23,7 @@ import io.vidocq.chappe.api.HttpVersion;
 import io.vidocq.foy.internal.container.VidocqServletContext;
 import jakarta.servlet.http.HttpUpgradeHandler;
 import jakarta.servlet.http.WebConnection;
+import java.net.InetAddress;
 import org.junit.jupiter.api.Test;
 
 import java.io.IOException;
@@ -35,15 +36,15 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 class UpgradeContractTest {
 
     public static final class Handler implements HttpUpgradeHandler {
-        @Override public void init(WebConnection wc) {}
-        @Override public void destroy() {}
+        @Override public void init(WebConnection wc) { /* not needed by this test */ }
+        @Override public void destroy() { /* not needed by this test */ }
     }
 
     @Test
     void upgradeOverHttp2IsAnIoException() {
-        var local = new InetSocketAddress("127.0.0.1", 8080);
+        var local = new InetSocketAddress(InetAddress.ofLiteral("127.0.0.1"), 8080);
         var chappe = new PushBuilderContractTest.FakeRequest(HttpVersion.HTTP_2, true,
-                new InetSocketAddress("127.0.0.1", 50000), local);
+                new InetSocketAddress(InetAddress.ofLiteral("127.0.0.1"), 50000), local);
         var request = new HttpServletRequestImpl(chappe, new VidocqServletContext("/ctx"), "/ctx", "/x", null);
         var e = assertThrows(IOException.class, () -> request.upgrade(Handler.class));
         assertEquals("HTTP upgrade is not supported over HTTP/2.0", e.getMessage());
