@@ -19,7 +19,6 @@
  */
 package io.vidocq.foy.internal.dispatcher;
 
-import io.vidocq.foy.internal.TestPause;
 import io.vidocq.foy.internal.TestSecurity;
 import io.vidocq.chappe.api.Server;
 import io.vidocq.foy.internal.TestServerLauncherAccess;
@@ -269,7 +268,7 @@ class DispatcherSemanticsTest {
                     var ac = req.startAsync();
                     ac.start(() -> {
                         try {
-                            TestPause.millis(50);
+                            Thread.sleep(50);
                             ac.getResponse().getWriter().write("late;");
                         } catch (Exception e) {
                             throw new IllegalStateException(e);
@@ -727,7 +726,7 @@ class DispatcherSemanticsTest {
 
     private void awaitEvents(int count) throws InterruptedException {
         long deadline = System.nanoTime() + Duration.ofSeconds(5).toNanos();
-        while (events.size() < count && System.nanoTime() < deadline) TestPause.millis(5);
+        while (events.size() < count && System.nanoTime() < deadline) Thread.sleep(5);
     }
 
     private void start(ServletDispatcher.Mapping... mappings) {

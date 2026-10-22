@@ -25,7 +25,6 @@ import io.vidocq.chappe.api.HttpMethod;
 import io.vidocq.chappe.api.HttpVersion;
 import io.vidocq.chappe.api.Request;
 import io.vidocq.chappe.api.Server;
-import io.vidocq.foy.internal.TestPause;
 import io.vidocq.foy.internal.TestServerLauncherAccess;
 import io.vidocq.foy.internal.boot.DeployOptions;
 import io.vidocq.foy.internal.boot.Deployment;
@@ -244,13 +243,13 @@ class SessionCoreTest {
         String cookie = first.headers("Set-Cookie").getFirst().split(";", -1)[0];
         assertEquals(first.value("CT"), first.value("LA"), "a new session was last accessed at creation");
         long afterFirst = System.currentTimeMillis();
-        TestPause.millis(30);
+        Thread.sleep(30);
         long beforeSecond = System.currentTimeMillis();
         var second = get("/ctx/s/last", cookie);
         long la = Long.parseLong(second.value("LA"));
         assertTrue(la <= afterFirst, "last accessed " + la + " must be the previous request, before " + afterFirst);
         assertTrue(la < beforeSecond);
-        TestPause.millis(30);
+        Thread.sleep(30);
         var third = get("/ctx/s/last", cookie);
         assertTrue(Long.parseLong(third.value("LA")) >= beforeSecond, "the second request is now the last access");
     }
@@ -265,11 +264,11 @@ class SessionCoreTest {
         deploy(WebAppModel.builder("/ctx").servlet(ops()));
         var first = get("/ctx/s/last", null);
         String cookie = first.headers("Set-Cookie").getFirst().split(";", -1)[0];
-        TestPause.millis(30);
+        Thread.sleep(30);
         long before = System.currentTimeMillis();
         assertEquals("UNTOUCHED", get("/ctx/s/untouched", cookie).body());
         long after = System.currentTimeMillis();
-        TestPause.millis(30);
+        Thread.sleep(30);
         long la = Long.parseLong(get("/ctx/s/last", cookie).value("LA"));
         assertTrue(la >= before && la <= after,
                 "last accessed " + la + " must be the request that did not call getSession, in [" + before
@@ -380,7 +379,7 @@ class SessionCoreTest {
         var m = shortLived(probe, store);
         var s = m.createNew();
         s.setAttribute("probe", probe);
-        TestPause.millis(1_200);
+        Thread.sleep(1_200);
         assertNull(m.find(s.getId()));
         assertEquals(0, probe.destroyed.getCount());
         assertEquals(0, probe.unbound.getCount());
@@ -393,11 +392,11 @@ class SessionCoreTest {
         var m = shortLived(probe, new InMemorySessionStore());
         var s = m.createNew();
         s.beginAccess();
-        TestPause.millis(1_200);
+        Thread.sleep(1_200);
         m.reap();
         assertFalse(s.isInvalidated(), "an in-flight request keeps its session alive");
         s.endAccess();
-        TestPause.millis(1_200);
+        Thread.sleep(1_200);
         m.reap();
         assertTrue(s.isInvalidated());
         assertEquals(0, probe.destroyed.getCount());
@@ -667,7 +666,7 @@ class SessionCoreTest {
         Thread changer = Thread.ofVirtual().start(() -> m.changeSessionId(s));
         assertTrue(inChange.await(5, TimeUnit.SECONDS));
         Thread destroyer = Thread.ofVirtual().start(s::invalidate);
-        TestPause.millis(150);
+        Thread.sleep(150);
         assertEquals(List.of("changed"), events, "the invalidation waits for sessionIdChanged");
         release.countDown();
         changer.join(5_000);
@@ -711,7 +710,7 @@ class SessionCoreTest {
         Thread creator = Thread.ofVirtual().start(manager::createNew);
         assertTrue(inCreated.await(5, TimeUnit.SECONDS));
         Thread closer = Thread.ofVirtual().start(manager::close);
-        TestPause.millis(150);
+        Thread.sleep(150);
         assertEquals(List.of("created"), events, "close waits for the creation in flight");
         release.countDown();
         creator.join(5_000);

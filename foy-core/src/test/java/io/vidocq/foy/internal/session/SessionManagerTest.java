@@ -19,7 +19,6 @@
  */
 package io.vidocq.foy.internal.session;
 
-import io.vidocq.foy.internal.TestPause;
 import io.vidocq.foy.internal.container.VidocqServletContext;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -49,7 +48,7 @@ class SessionManagerTest {
     void findReturnsStoredSessionAndUpdatesLastAccess() throws InterruptedException {
         var s = manager.createNew();
         long initial = s.getLastAccessedTime();
-        TestPause.millis(5);
+        Thread.sleep(5);
         var found = manager.find(s.getId());
         assertNotNull(found);
         assertEquals(s.getId(), found.getId());
@@ -65,7 +64,7 @@ class SessionManagerTest {
     void findReturnsNullForExpiredSession() throws InterruptedException {
         var shortLived = new SessionManager(store, new VidocqServletContext("/"), 1);
         var s = shortLived.createNew();
-        TestPause.millis(1500);
+        Thread.sleep(1500);
         assertNull(shortLived.find(s.getId()));
         assertEquals(0, store.size());
     }
