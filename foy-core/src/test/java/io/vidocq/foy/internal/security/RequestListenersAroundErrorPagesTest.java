@@ -78,7 +78,7 @@ class RequestListenersAroundErrorPagesTest {
     /** The error page: reports whether the request listeners' binding is in place. */
     public static class Page extends HttpServlet {
         @Override protected void service(HttpServletRequest req, HttpServletResponse resp) throws IOException {
-            resp.getWriter().write("scope=" + (Scope.ACTIVE.get() == Boolean.TRUE));
+            resp.getWriter().write("scope=" + Boolean.TRUE.equals(Scope.ACTIVE.get()));
         }
     }
 

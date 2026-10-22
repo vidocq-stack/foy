@@ -97,8 +97,8 @@ class WebXmlParserSchemaTest {
         assertEquals("example.com", c.domain());
         assertEquals("/p", c.path());
         assertEquals("c", c.comment());
-        assertEquals(Boolean.TRUE, c.httpOnly());
-        assertEquals(Boolean.FALSE, c.secure());
+        assertTrue(c.httpOnly());
+        assertFalse(c.secure());
         assertEquals(600, c.maxAge());
         assertEquals(Map.of("SameSite", "Lax"), c.attributes());
         assertEquals(Set.of(SessionTrackingMode.COOKIE, SessionTrackingMode.SSL), d.trackingModes());
@@ -253,11 +253,11 @@ class WebXmlParserSchemaTest {
                     + "<session-config><cookie-config><http-only>" + t + "</http-only><secure>" + t
                     + "</secure></cookie-config></session-config></web-app>").getBytes(StandardCharsets.UTF_8)));
             assertTrue(d.metadataComplete(), t);
-            assertEquals(Boolean.TRUE, d.servlets().getFirst().asyncSupported(), t);
+            assertTrue(d.servlets().getFirst().asyncSupported(), t);
             assertTrue(d.servlets().getFirst().enabled(), t);
-            assertEquals(Boolean.TRUE, d.filters().getFirst().asyncSupported(), t);
-            assertEquals(Boolean.TRUE, d.cookieConfig().httpOnly(), t);
-            assertEquals(Boolean.TRUE, d.cookieConfig().secure(), t);
+            assertTrue(d.filters().getFirst().asyncSupported(), t);
+            assertTrue(d.cookieConfig().httpOnly(), t);
+            assertTrue(d.cookieConfig().secure(), t);
         }
         for (String f : List.of("false", "0", " 0 ")) {
             var d = WebXmlParser.parse(new ByteArrayInputStream(("<web-app version=\"6.1\" metadata-complete=\""
@@ -266,10 +266,10 @@ class WebXmlParserSchemaTest {
                     + "<session-config><cookie-config><http-only>" + f + "</http-only><secure>" + f
                     + "</secure></cookie-config></session-config></web-app>").getBytes(StandardCharsets.UTF_8)));
             assertFalse(d.metadataComplete(), f);
-            assertEquals(Boolean.FALSE, d.servlets().getFirst().asyncSupported(), f);
+            assertFalse(d.servlets().getFirst().asyncSupported(), f);
             assertFalse(d.servlets().getFirst().enabled(), f);
-            assertEquals(Boolean.FALSE, d.cookieConfig().httpOnly(), f);
-            assertEquals(Boolean.FALSE, d.cookieConfig().secure(), f);
+            assertFalse(d.cookieConfig().httpOnly(), f);
+            assertFalse(d.cookieConfig().secure(), f);
         }
         assertFalse(parse("").metadataComplete(), "absent metadata-complete is false");
         var e = assertThrows(IOException.class, () -> parse(

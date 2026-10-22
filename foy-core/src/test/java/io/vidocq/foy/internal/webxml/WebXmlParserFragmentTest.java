@@ -95,8 +95,8 @@ class WebXmlParserFragmentTest {
                     <async-supported>true</async-supported></filter>
                 </web-app>"""));
         assertNull(d.servlets().get(0).asyncSupported());
-        assertEquals(Boolean.FALSE, d.servlets().get(1).asyncSupported());
-        assertEquals(Boolean.TRUE, d.filters().getFirst().asyncSupported());
+        assertFalse(d.servlets().get(1).asyncSupported());
+        assertTrue(d.filters().getFirst().asyncSupported());
     }
 
     @Test

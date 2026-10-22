@@ -50,6 +50,7 @@ class PushBuilderContractTest {
     }
 
     @Test
+    @SuppressWarnings("deprecation") // newPushBuilder is deprecated: the test pins its contract on purpose
     void newPushBuilderIsNull() {
         var local = new InetSocketAddress(InetAddress.ofLiteral("127.0.0.1"), 8080);
         var chappe = new FakeRequest(HttpVersion.HTTP_2, true, new InetSocketAddress(InetAddress.ofLiteral("127.0.0.1"), 50000), local);

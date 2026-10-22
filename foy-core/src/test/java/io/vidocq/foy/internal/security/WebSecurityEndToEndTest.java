@@ -40,6 +40,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Base64;
@@ -203,7 +204,7 @@ class WebSecurityEndToEndTest {
         try (var app = new SecureApp(adminApp().build())) {
             // "A" * 4000 decodes to NUL bytes (control characters). It stays under chappe's default 8 KiB
             // header limit, which would answer before Foy; the oversize case is covered by BasicAuthenticatorTest.
-            for (String h : List.of("Basic %%%%", "Basic", "Basic " + Base64.getEncoder().encodeToString("nocolon".getBytes()),
+            for (String h : List.of("Basic %%%%", "Basic", "Basic " + Base64.getEncoder().encodeToString("nocolon".getBytes(StandardCharsets.UTF_8)),
                     "Basic " + "A".repeat(4000), "Digest x")) {
                 var r = app.send(app.request("/admin/x").header("Authorization", h).GET());
                 assertEquals(401, r.statusCode(), h);
@@ -213,7 +214,7 @@ class WebSecurityEndToEndTest {
 
     @Test
     void credentialsNeverLogged() throws Exception {
-        String token = Base64.getEncoder().encodeToString("alice:a-secret".getBytes());
+        String token = Base64.getEncoder().encodeToString("alice:a-secret".getBytes(StandardCharsets.UTF_8));
         // "io.vidocq.foy" receives the records of every Foy logger (the bridge logs the failure at
         // ERROR with the exception attached; LogCapture.warnings() alone would see nothing).
         try (var log = LogCapture.of("io.vidocq.foy"); var app = new SecureApp(adminApp().build())) {

@@ -29,6 +29,7 @@ import io.vidocq.foy.internal.bridge.HttpServletResponseImpl;
 import io.vidocq.foy.internal.container.VidocqServletContext;
 import org.junit.jupiter.api.Test;
 
+import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.URI;
 import java.util.List;
@@ -42,8 +43,8 @@ class TransportGuaranteeTest {
     record FakeRequest(boolean isSecure, String host, String path, String query) implements Request {
         FakeRequest(boolean isSecure, String host) { this(isSecure, host, "/conf/x", "y=1"); }
         @Override public HttpVersion version() { return HttpVersion.HTTP_1_1; }
-        @Override public InetSocketAddress remoteAddress() { return new InetSocketAddress("127.0.0.1", 40000); }
-        @Override public InetSocketAddress localAddress() { return new InetSocketAddress("127.0.0.1", 8080); }
+        @Override public InetSocketAddress remoteAddress() { return new InetSocketAddress(InetAddress.ofLiteral("127.0.0.1"), 40000); }
+        @Override public InetSocketAddress localAddress() { return new InetSocketAddress(InetAddress.ofLiteral("127.0.0.1"), 8080); }
         @Override public HttpMethod method() { return HttpMethod.GET; }
         @Override public URI uri() { return URI.create("http://localhost/conf/x"); }
         @Override public Headers headers() { return Headers.of("Host", host); }

@@ -121,7 +121,7 @@ class JspForwardDispatcherTest {
             assertSame(response, child.get().getResponse());
             response.setHeader("X-Include-After", "ignored");
         }), map("/target", (request, response) -> {
-            assertTrue(response == child.get() || response instanceof ServletResponseWrapper wrapper && wrapper.isWrapperFor(child.get()));
+            assertTrue(response == child.get() || (response instanceof ServletResponseWrapper wrapper && wrapper.isWrapperFor(child.get())));
             first.get().setHeader("X-Include-During", "ignored");
             second.get().setStatus(418);
             response.setStatus(207); response.setHeader("X-Forward", "kept");
@@ -134,7 +134,7 @@ class JspForwardDispatcherTest {
                 () -> assertTrue(result.headers().firstValue("X-Include-During").isEmpty()),
                 () -> assertTrue(result.headers().firstValue("X-Include-After").isEmpty()),
                 () -> assertEquals(1, outer.get().resets), () -> assertEquals(1, child.get().resets),
-                () -> assertEquals(Boolean.TRUE, completed.get()));
+                () -> assertTrue(completed.get()));
     }
 
     @Test

@@ -105,7 +105,7 @@ class WebXmlParserTest {
 
     @Test
     void emptyWebAppYieldsEmptyDescriptor() throws IOException {
-        WebAppDescriptor d = WebXmlParser.parse(new ByteArrayInputStream("<web-app/>".getBytes()));
+        WebAppDescriptor d = WebXmlParser.parse(new ByteArrayInputStream("<web-app/>".getBytes(StandardCharsets.UTF_8)));
         assertTrue(d.isEmpty());
         assertEquals(-1, d.sessionTimeoutMinutes());
     }
@@ -114,7 +114,7 @@ class WebXmlParserTest {
     void acceptsDoctypeWithoutResolvingIt() throws IOException {
         // Legacy 2.2 / 2.3 descriptors carry a DOCTYPE; see WebXmlParserLegacyTest for the XXE guards.
         String xml = "<!DOCTYPE web-app SYSTEM \"foo.dtd\"><web-app/>";
-        assertTrue(WebXmlParser.parse(new ByteArrayInputStream(xml.getBytes())).isEmpty());
+        assertTrue(WebXmlParser.parse(new ByteArrayInputStream(xml.getBytes(StandardCharsets.UTF_8))).isEmpty());
     }
 
     @Test
@@ -127,7 +127,7 @@ class WebXmlParserTest {
                   </filter-mapping>
                 </web-app>
                 """;
-        var d = WebXmlParser.parse(new ByteArrayInputStream(xml.getBytes()));
+        var d = WebXmlParser.parse(new ByteArrayInputStream(xml.getBytes(StandardCharsets.UTF_8)));
         assertEquals(1, d.filterMappings().size());
         assertEquals(java.util.EnumSet.of(DispatcherType.REQUEST),
                 d.filterMappings().get(0).dispatcherTypes());
@@ -140,7 +140,7 @@ class WebXmlParserTest {
               <servlet><servlet-name>s</servlet-name><servlet-class>a.S</servlet-class>
                 <load-on-startup>3</load-on-startup></servlet>
             </web-app>""";
-        var d = WebXmlParser.parse(new ByteArrayInputStream(xml.getBytes()));
+        var d = WebXmlParser.parse(new ByteArrayInputStream(xml.getBytes(StandardCharsets.UTF_8)));
         assertTrue(d.metadataComplete());
         assertEquals(3, d.servlets().getFirst().loadOnStartup());
     }
@@ -151,7 +151,7 @@ class WebXmlParserTest {
             <web-app xmlns="https://jakarta.ee/xml/ns/jakartaee" version="6.1">
               <servlet><servlet-name>s</servlet-name><servlet-class>a.S</servlet-class></servlet>
             </web-app>""";
-        var d = WebXmlParser.parse(new ByteArrayInputStream(xml.getBytes()));
+        var d = WebXmlParser.parse(new ByteArrayInputStream(xml.getBytes(StandardCharsets.UTF_8)));
         assertFalse(d.metadataComplete());
         assertEquals(Integer.MIN_VALUE, d.servlets().getFirst().loadOnStartup());
     }
@@ -163,7 +163,7 @@ class WebXmlParserTest {
               <servlet><servlet-name>s</servlet-name><servlet-class>a.S</servlet-class>
                 <load-on-startup/></servlet>
             </web-app>""";
-        var d = WebXmlParser.parse(new ByteArrayInputStream(xml.getBytes()));
+        var d = WebXmlParser.parse(new ByteArrayInputStream(xml.getBytes(StandardCharsets.UTF_8)));
         assertEquals(0, d.servlets().getFirst().loadOnStartup());
     }
 
@@ -179,7 +179,7 @@ class WebXmlParserTest {
                   </servlet-mapping>
                 </web-app>
                 """;
-        var d = WebXmlParser.parse(new ByteArrayInputStream(xml.getBytes()));
+        var d = WebXmlParser.parse(new ByteArrayInputStream(xml.getBytes(StandardCharsets.UTF_8)));
         assertEquals(java.util.List.of("/a"), d.patternsFor("a"));
         assertEquals(java.util.List.of("/b"), d.patternsFor("b"));
     }

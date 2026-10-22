@@ -205,13 +205,13 @@ class WebXmlParserLegacyTest {
     void malformedInputDoesNotPrintToStderr() {
         var old = System.err;
         var buf = new java.io.ByteArrayOutputStream();
-        System.setErr(new java.io.PrintStream(buf));
+        System.setErr(new java.io.PrintStream(buf, true, StandardCharsets.UTF_8));
         try {
             assertThrows(IOException.class, () -> WebXmlParser.parse(in("<web-app>")));
         } finally {
             System.setErr(old);
         }
-        assertEquals("", buf.toString());
+        assertEquals("", buf.toString(StandardCharsets.UTF_8));
     }
 
     @Test

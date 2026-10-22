@@ -51,6 +51,8 @@ class HiddenFactoryEmitterTest {
     static class PrivateCtor extends HttpServlet { private PrivateCtor() {} }
     static class ArgsOnly extends HttpServlet { ArgsOnly(String s) {} }
     abstract static class Abstract extends HttpServlet {}
+    // An inner class on purpose: its only constructor takes the enclosing instance, so no no-arg one.
+    @SuppressWarnings("ClassCanBeStatic")
     class Inner extends HttpServlet {}
 
     @Test
