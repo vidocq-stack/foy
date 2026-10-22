@@ -151,9 +151,15 @@ class RequestContextClassLoaderTest {
                     seen("onComplete");
                     asyncDone.countDown();
                 }
-                @Override public void onTimeout(AsyncEvent event) {}
-                @Override public void onError(AsyncEvent event) {}
-                @Override public void onStartAsync(AsyncEvent event) {}
+                @Override public void onTimeout(AsyncEvent event) {
+                    // Not needed by this test: the cycle completes long before its timeout.
+                }
+                @Override public void onError(AsyncEvent event) {
+                    // Not needed by this test: the cycle never fails.
+                }
+                @Override public void onStartAsync(AsyncEvent event) {
+                    // Not needed by this test: no second cycle starts on this request.
+                }
             });
             Thread caller = Thread.ofVirtual().unstarted(() -> ac.start(() -> {
                 seen("asyncStart");

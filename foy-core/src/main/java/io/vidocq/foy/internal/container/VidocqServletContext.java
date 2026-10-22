@@ -892,16 +892,17 @@ public final class VidocqServletContext implements ServletContext {
     }
     @Override public JspConfigDescriptor getJspConfigDescriptor() { return jspConfigDescriptor; }
     /** The loader of the application's classes, set once at deployment; {@code null} when unknown. */
-    private volatile ClassLoader applicationClassLoader;
-    public void setApplicationClassLoader(ClassLoader loader) { this.applicationClassLoader = loader; }
+    private final java.util.concurrent.atomic.AtomicReference<ClassLoader> applicationClassLoader =
+            new java.util.concurrent.atomic.AtomicReference<>();
+    public void setApplicationClassLoader(ClassLoader loader) { this.applicationClassLoader.set(loader); }
     /**
      * The application's class loader, installed as the context class loader while Foy runs
      * application code ({@link ContextLoaderScope}); {@code null} when the deployment named none.
      */
-    public ClassLoader applicationClassLoader() { return applicationClassLoader; }
+    public ClassLoader applicationClassLoader() { return applicationClassLoader.get(); }
     /** The application's class loader, else (none was named) the caller's context class loader. */
     @Override public ClassLoader getClassLoader() {
-        ClassLoader loader = applicationClassLoader;
+        ClassLoader loader = applicationClassLoader.get();
         return loader != null ? loader : Thread.currentThread().getContextClassLoader();
     }
     /** The url-patterns a descriptor {@code security-constraint} targets exactly (section 13.4.2). */

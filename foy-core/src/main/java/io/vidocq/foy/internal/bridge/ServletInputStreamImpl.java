@@ -26,6 +26,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.nio.ByteBuffer;
 import java.util.Objects;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.locks.ReentrantLock;
 
 /**
@@ -60,7 +61,7 @@ public final class ServletInputStreamImpl extends ServletInputStream {
     private final ReentrantLock lock = new ReentrantLock();
     private volatile ReadListener listener;
     /** The class loader of the application that set {@link #listener}, for its callbacks ({@code null}: none). */
-    private volatile ClassLoader listenerLoader;
+    private final AtomicReference<ClassLoader> listenerLoader = new AtomicReference<>();
     private ReadPump pump;
     /** The next arrival of bytes submits onDataAvailable. */
     private boolean armed;
@@ -190,7 +191,7 @@ public final class ServletInputStreamImpl extends ServletInputStream {
             pump = new ReadPump(delegate, new PumpEvents());
             armed = true;
             listener = readListener;
-            listenerLoader = loader;
+            listenerLoader.set(loader);
             started = pump;
         } finally {
             lock.unlock();
@@ -313,7 +314,7 @@ public final class ServletInputStreamImpl extends ServletInputStream {
                     lock.unlock();
                 }
                 callback.run();
-            }, ServletInputStreamImpl.this::callbackFailed, listenerLoader);
+            }, ServletInputStreamImpl.this::callbackFailed, listenerLoader.get());
         }
 
         @Override public void dataAvailable() {
@@ -351,7 +352,7 @@ public final class ServletInputStreamImpl extends ServletInputStream {
                 lock.unlock();
             }
             host.callbacks().submit(() -> deliverError(e), t -> LOG.log(System.Logger.Level.WARNING,
-                    "delivering a read failure failed", t), listenerLoader);
+                    "delivering a read failure failed", t), listenerLoader.get());
         }
     }
 

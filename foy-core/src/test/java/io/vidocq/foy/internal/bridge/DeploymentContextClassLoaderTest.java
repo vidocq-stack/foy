@@ -57,6 +57,7 @@ import org.junit.jupiter.api.Test;
 
 import java.io.IOException;
 import java.io.UncheckedIOException;
+import java.net.InetAddress;
 import java.net.Socket;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
@@ -162,9 +163,15 @@ class DeploymentContextClassLoaderTest {
                     seen("target.onComplete");
                     asyncDone.countDown();
                 }
-                @Override public void onTimeout(AsyncEvent event) {}
-                @Override public void onError(AsyncEvent event) {}
-                @Override public void onStartAsync(AsyncEvent event) {}
+                @Override public void onTimeout(AsyncEvent event) {
+                    // Not needed by this test: the cycle completes long before its timeout.
+                }
+                @Override public void onError(AsyncEvent event) {
+                    // Not needed by this test: the cycle never fails.
+                }
+                @Override public void onStartAsync(AsyncEvent event) {
+                    // Not needed by this test: no second cycle starts on this request.
+                }
             });
             ac.start(() -> {
                 seen("target.asyncStart");
@@ -404,7 +411,7 @@ class DeploymentContextClassLoaderTest {
     void aReadListenerKeepsTheLoaderOfItsContextAfterACrossContextAsyncDispatch() throws Exception {
         int port = deployBoth();
 
-        try (var socket = new Socket("127.0.0.1", port)) {
+        try (var socket = new Socket(InetAddress.getLoopbackAddress(), port)) {
             socket.setSoTimeout(10_000);
             var out = socket.getOutputStream();
             out.write(("POST " + CALLER_PATH + "/read-then-dispatch HTTP/1.1\r\nHost: localhost\r\n"
@@ -440,7 +447,7 @@ class DeploymentContextClassLoaderTest {
     void anUpgradeHandlerOfAForwardedTargetRunsWithTheTargetLoader() throws Exception {
         int port = deployBoth();
 
-        try (var socket = new Socket("127.0.0.1", port)) {
+        try (var socket = new Socket(InetAddress.getLoopbackAddress(), port)) {
             socket.setSoTimeout(10_000);
             socket.getOutputStream().write(("GET " + CALLER_PATH + "/forward-to-upgrade HTTP/1.1\r\n"
                     + "Host: localhost\r\nUpgrade: test\r\nConnection: Upgrade\r\n\r\n")

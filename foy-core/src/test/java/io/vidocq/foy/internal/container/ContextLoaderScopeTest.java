@@ -72,12 +72,15 @@ class ContextLoaderScopeTest {
 
     @Test
     void theLoaderIsRestoredWhenTheBodyThrows() {
-        assertThrows(IllegalStateException.class, () -> {
-            try (var _ = ContextLoaderScope.enter(OUTER)) {
-                throw new IllegalStateException("boom");
-            }
-        });
+        assertThrows(IllegalStateException.class, () -> throwWithin(OUTER));
         assertSame(THREAD, current());
+    }
+
+    /** Enters a scope for {@code loader}, then throws from its body. */
+    private static void throwWithin(ClassLoader loader) {
+        try (var _ = ContextLoaderScope.enter(loader)) {
+            throw new IllegalStateException("thrown inside the scope of " + current().getName());
+        }
     }
 
     @Test

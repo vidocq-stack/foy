@@ -67,6 +67,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * Adapts a {@link Request} Chappe into {@link HttpServletRequest} Servlet 6.1.
@@ -529,22 +530,20 @@ public final class HttpServletRequestImpl implements HttpServletRequest {
             var cycle = asyncContext;
             if (cycle != null) cycle.fail(t);
         }
+
+        // The application a read or write listener set now belongs to: the context of the dispatch
+        // running now (a cross-context target's own), else, from an AsyncContext.start thread or any
+        // thread outside a dispatch, the context of the open async cycle.
+        private ServletContext listenerContext() {
+            ServletContext c = dispatchContext.get();
+            if (c != null) return c;
+            var cycle = asyncContext;
+            return cycle != null ? cycle.applicationContext() : servletContext;
+        }
     };
 
     /** The non-blocking I/O host shared by the request body and the response output. */
     NonBlockingHost nonBlockingHost() { return nonBlockingHost; }
-
-    /**
-     * The application a read or write listener set now belongs to: the context of the dispatch
-     * running now (a cross-context target's own), else, from an {@code AsyncContext.start} thread
-     * or any thread outside a dispatch, the context of the open async cycle.
-     */
-    private ServletContext listenerContext() {
-        ServletContext c = dispatchContext;
-        if (c != null) return c;
-        var cycle = asyncContext;
-        return cycle != null ? cycle.applicationContext() : servletContext;
-    }
 
     /**
      * The request's listener callback serializer. Each read or write listener's callbacks run with
@@ -1329,7 +1328,7 @@ public final class HttpServletRequestImpl implements HttpServletRequest {
         }
         // From now on the body is discarded and the response never commits (the upgrade head is sent instead).
         if (response != null) response.discardForUpgrade();
-        upgradeContext = context;
+        upgradeContext.set(context);
         upgradeHandler = handler;
         return handler;
     }
@@ -1338,11 +1337,11 @@ public final class HttpServletRequestImpl implements HttpServletRequest {
     HttpUpgradeHandler upgradeHandler() { return upgradeHandler; }
 
     /** The context of the dispatch that called {@code upgrade()}: the upgrade handler's application. */
-    private volatile ServletContext upgradeContext;
+    private final AtomicReference<ServletContext> upgradeContext = new AtomicReference<>();
 
     /** The context the upgrade handler belongs to (the request's own until {@code upgrade()} is called). */
     ServletContext upgradeContext() {
-        ServletContext c = upgradeContext;
+        ServletContext c = upgradeContext.get();
         return c != null ? c : servletContext;
     }
 
@@ -1357,21 +1356,19 @@ public final class HttpServletRequestImpl implements HttpServletRequest {
      * cross-context target's own context while it runs, the request's otherwise. The async cycles,
      * the listener callbacks and the upgrade the target opens belong to that application.
      */
-    private volatile ServletContext dispatchContext;
+    private final AtomicReference<ServletContext> dispatchContext = new AtomicReference<>();
 
     /** A dispatch into {@code context} starts; answers the context to give back to {@link #leaveContext}. */
     ServletContext enterContext(ServletContext context) {
-        ServletContext previous = dispatchContext;
-        dispatchContext = context;
-        return previous;
+        return dispatchContext.getAndSet(context);
     }
 
     /** The dispatch started by {@link #enterContext} returned. */
-    void leaveContext(ServletContext previous) { dispatchContext = previous; }
+    void leaveContext(ServletContext previous) { dispatchContext.set(previous); }
 
     /** The servlet context of the dispatch running now, the request's own outside any dispatch. */
     ServletContext currentContext() {
-        ServletContext c = dispatchContext;
+        ServletContext c = dispatchContext.get();
         return c != null ? c : servletContext;
     }
     private io.vidocq.foy.internal.async.AsyncContextImpl asyncContext;
