@@ -19,6 +19,8 @@
  */
 package io.vidocq.foy.internal.bridge;
 
+import io.vidocq.foy.internal.container.ContextLoaderScope;
+
 import java.util.ArrayDeque;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.locks.Condition;
@@ -211,15 +213,15 @@ final class CallbackSerializer {
     }
 
     /**
-     * Runs {@code code} with the application's class loader as the thread context class loader, set
-     * for each call (a callback may change it, the next one still gets the application's), and
-     * returns what it threw, or {@code null}. This is the boundary of the application code on the
-     * callback thread: whatever a callback throws, an Error included, goes to its {@code onError}
-     * (whose Servlet API signature takes a {@code Throwable}), and the drain thread survives it.
+     * Runs {@code code} with the application's class loader as the thread context class loader,
+     * installed for each call and restored after it (a callback may change it, the next one still
+     * gets the application's; BUG-20261022-06), and returns what it threw, or {@code null}. This is
+     * the boundary of the application code on the callback thread: whatever a callback throws, an
+     * Error included, goes to its {@code onError} (whose Servlet API signature takes a
+     * {@code Throwable}), and the drain thread survives it.
      */
     private Throwable failureOf(ThrowingRunnable<?> code) {
-        Thread.currentThread().setContextClassLoader(applicationLoader);
-        try {
+        try (var _ = ContextLoaderScope.enter(applicationLoader)) {
             code.run();
             return null;
         } catch (Throwable t) {

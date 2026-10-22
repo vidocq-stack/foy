@@ -30,6 +30,7 @@ import io.vidocq.chappe.api.RequestContext;
 import io.vidocq.chappe.api.Response;
 import io.vidocq.chappe.api.StatusCode;
 import io.vidocq.chappe.api.WebSocketUpgrade;
+import io.vidocq.foy.internal.container.ContextLoaderScope;
 import io.vidocq.foy.internal.container.DefaultServlet;
 import io.vidocq.foy.internal.container.ResourcePaths;
 import io.vidocq.foy.internal.dispatcher.DispatchResolver;
@@ -157,7 +158,14 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
         var res = new HttpServletResponseImpl();
         res.setDefaultCharacterEncoding(servletContext.configuredResponseCharacterEncoding());
         res.bindCommitTarget(r -> commitHead(request, requests, r, head));
-        Runnable pipeline = () -> runPipeline(request, requests, res, head);
+        // The whole pipeline (listeners, filters, servlet, error pages, dispatches, async listeners)
+        // runs with the application's class loader as context loader (BUG-20261022-06).
+        ClassLoader applicationLoader = servletContext.applicationClassLoader();
+        Runnable pipeline = () -> {
+            try (var _ = ContextLoaderScope.enter(applicationLoader)) {
+                runPipeline(request, requests, res, head);
+            }
+        };
         RequestContext context = RequestContext.CURRENT.isBound() ? RequestContext.CURRENT.get() : null;
         Thread.ofVirtual().name("foy-request-" + PIPELINE_THREADS.incrementAndGet()).start(context == null
                 ? pipeline

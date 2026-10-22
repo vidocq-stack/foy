@@ -20,6 +20,7 @@
 package io.vidocq.foy.internal.bridge;
 
 import io.vidocq.chappe.api.UpgradedConnection;
+import io.vidocq.foy.internal.container.ContextLoaderScope;
 import io.vidocq.foy.internal.container.VidocqServletContext;
 import jakarta.servlet.ServletInputStream;
 import jakarta.servlet.ServletOutputStream;
@@ -129,10 +130,7 @@ final class WebConnectionImpl implements WebConnection {
             initRunning = true;
         }
         callbacks.hold();
-        Thread thread = Thread.currentThread();
-        ClassLoader previous = thread.getContextClassLoader();
-        thread.setContextClassLoader(applicationLoader);
-        try {
+        try (var _ = ContextLoaderScope.enter(applicationLoader)) {
             handler.init(this);
         } catch (Throwable t) {
             // The boundary of the application's init on chappe's connection thread: whatever it
@@ -140,7 +138,6 @@ final class WebConnectionImpl implements WebConnection {
             LOG.log(System.Logger.Level.WARNING, "HttpUpgradeHandler.init failed; connection closed", t);
             close();
         } finally {
-            thread.setContextClassLoader(previous);
             callbacks.release();
             boolean destroyNow;
             synchronized (state) {
@@ -186,17 +183,13 @@ final class WebConnectionImpl implements WebConnection {
 
     /** {@code destroy()} with the application's class loader, then the connection closes. */
     private void destroy() {
-        Thread thread = Thread.currentThread();
-        ClassLoader previous = thread.getContextClassLoader();
-        thread.setContextClassLoader(applicationLoader);
-        try {
+        try (var _ = ContextLoaderScope.enter(applicationLoader)) {
             handler.destroy();
         } catch (Throwable t) {
             // The boundary of the application's destroy, which may run on the undeploy hook: whatever
             // it throws, an Error included, must not stop the close of the other connections.
             LOG.log(System.Logger.Level.WARNING, "HttpUpgradeHandler.destroy failed", t);
         } finally {
-            thread.setContextClassLoader(previous);
             closeConnectionAfterWrite();
             if (context != null) context.unregisterUpgradedConnection(undeployHook);
         }

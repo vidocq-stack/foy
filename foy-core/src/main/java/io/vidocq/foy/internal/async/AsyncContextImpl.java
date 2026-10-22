@@ -204,10 +204,19 @@ public final class AsyncContextImpl implements AsyncContext {
         Runnable bound = servletContext instanceof io.vidocq.foy.internal.container.VidocqServletContext v
                 ? v.listenerRegistry().bindingContainerContexts(servletContext, this::threadRequest, run)
                 : run;
+        // The runnable gets the application's class loader as context loader, whatever the thread
+        // that called start() had (BUG-20261022-06).
+        ClassLoader applicationLoader = servletContext instanceof io.vidocq.foy.internal.container.VidocqServletContext v
+                ? v.applicationClassLoader() : null;
+        Runnable scoped = () -> {
+            try (var _ = io.vidocq.foy.internal.container.ContextLoaderScope.enter(applicationLoader)) {
+                bound.run();
+            }
+        };
         // Whatever the runnable throws, error included, fails the cycle from the dying thread.
         Thread thread = Thread.ofVirtual().name("foy-async-" + ASYNC_THREADS.incrementAndGet())
                 .uncaughtExceptionHandler((_, t) -> fail(t))
-                .unstarted(bound);
+                .unstarted(scoped);
         startedThreads.add(thread);
         thread.start();
     }

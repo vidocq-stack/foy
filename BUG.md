@@ -1,5 +1,39 @@
 # BUG.md — foy
 
+## BUG-20261022-06 — A request runs with the server thread's context class loader, not the application's
+
+- Date: 2026-10-22. Found by Bodoni (JSTL 3.0) while testing `fmt:message` on its Ibarra IT host
+  (Vidocq/bodoni BOD-002).
+- Symptom: while a filter, a servlet or a JSP handles a request, `Thread.currentThread().getContextClassLoader()`
+  is whatever the server thread inherited (the system `AppClassLoader` in a launcher that never set it),
+  not the application's loader. Libraries that look things up by name through the context loader
+  (`ResourceBundle.getBundle(name, locale, tccl)` in JSTL `fmt:message`, `ServiceLoader.load(...)`, JAXB)
+  cannot see the application module's layer: the page renders `???key???`. The Vidocq runtime hid the
+  bug because it sets the context loader process-wide; a plain Foy deployment did not.
+- Minimal repro: `DeployOptions.defaults(appLoader)` with a loader distinct from the server threads',
+  then a servlet that reads its context loader (`RequestContextClassLoaderTest`).
+- Cause: Foy knew the application loader only through `DeployOptions.defaults(loader)`, which handed it to
+  the component factory and the `@HandlesTypes` resolver and kept it nowhere else.
+  `VidocqServletContext.getClassLoader()` answered the caller's context loader, and
+  `ChappeServletBridge.handle` started the pipeline thread `foy-request-<n>` with the loader it inherited
+  from Chappe's thread. The upgrade handler, the non-blocking I/O callbacks and the session reaper did
+  install a loader, but it was that same inherited one. `AsyncContext.start` runnables inherited the
+  loader of whichever thread called `start`.
+- Status: FIXED on `fix/request-context-class-loader`. `DeployOptions` carries the application loader
+  (`applicationLoader`, set by every `defaults(loader, ...)`, `withApplicationLoader`), the servlet
+  context keeps it and answers it from `getClassLoader()`. One helper, `ContextLoaderScope`, installs it
+  and gives the thread its previous loader back on the way out (exceptions included), and leaves the
+  context loader untouched when no loader is known. It covers the request pipeline (request listeners,
+  filters, servlet, `RequestDispatcher` forward and include, error pages, async dispatches and
+  `AsyncListener` events, which all run on the pipeline thread), the `AsyncContext.start` runnables,
+  and the existing uses: upgrade handler `init`/`destroy`, read and write listener callbacks, session
+  reaper. Tests: `RequestContextClassLoaderTest` (`theRequestRunsWithTheApplicationLoaderAndTheThreadGetsItsOwnBack`,
+  `theErrorPageRunsWithTheApplicationLoader`, `asyncStartListenersAndDispatchRunWithTheApplicationLoader`
+  failed before the fix; `withoutAnApplicationLoaderTheContextLoaderIsLeftUntouched` pins the null case).
+- Not covered: deployment and undeployment (initializers, `contextInitialized`, `init`,
+  `contextDestroyed`, `destroy`) still run with the deploying thread's context loader, and a cross-context
+  dispatch keeps the loader of the calling context.
+
 ## BUG-20261022-05 — A Content-Type set as a header loses its media type
 
 - Date: 2026-10-22. Found while pinning `interceptSpecialHeader` before clearing its SonarJava

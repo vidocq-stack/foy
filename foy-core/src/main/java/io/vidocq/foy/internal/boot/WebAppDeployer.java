@@ -342,6 +342,7 @@ public final class WebAppDeployer {
         ctx.setRoleMapping(new io.vidocq.foy.internal.security.RoleMapping(
                 Set.copyOf(model.securityRoles()), model.securityRoleRefs()));
         ctx.setComponentFactory(options.componentFactory());
+        ctx.setApplicationClassLoader(options.applicationLoader());
         return ctx;
     }
 

@@ -21,6 +21,7 @@ package io.vidocq.foy.internal.session;
 
 import io.vidocq.foy.spi.session.SessionStore;
 
+import io.vidocq.foy.internal.container.ContextLoaderScope;
 import io.vidocq.foy.internal.listener.ListenerRegistry;
 import jakarta.servlet.ServletContext;
 import jakarta.servlet.http.HttpSession;
@@ -241,17 +242,12 @@ public final class SessionManager implements AutoCloseable {
     }
 
     private void reapSafely() {
-        Thread current = Thread.currentThread();
-        ClassLoader previous = current.getContextClassLoader();
         // Listeners fired by the reaper run with the application's class loader, as on a request.
-        if (applicationLoader != null) current.setContextClassLoader(applicationLoader);
-        try {
+        try (var _ = ContextLoaderScope.enter(applicationLoader)) {
             reap();
         } catch (RuntimeException e) {
             // A failing scan must not cancel the periodic task.
             LOG.log(System.Logger.Level.WARNING, "session expiry scan failed", e);
-        } finally {
-            current.setContextClassLoader(previous);
         }
     }
 
