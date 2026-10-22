@@ -98,7 +98,7 @@ class FoyWebExtensionScopeTest {
     private static <T> T proxy(Class<T> type, Handler handler) {
         return type.cast(Proxy.newProxyInstance(type.getClassLoader(), new Class<?>[] {type}, (p, m, a) -> switch (m.getName()) {
             case "hashCode" -> System.identityHashCode(p);
-            case "equals" -> p == a[0];
+            case "equals" -> System.identityHashCode(p) == System.identityHashCode(a[0]);
             case "toString" -> type.getSimpleName() + "@fake";
             default -> handler.handle(m.getName(), a);
         }));

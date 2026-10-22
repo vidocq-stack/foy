@@ -143,7 +143,7 @@ final class CompileHarness {
 
     private static List<File> testClasspath() throws Exception {
         Set<File> cp = new LinkedHashSet<>();
-        for (String e : System.getProperty("java.class.path", "").split(File.pathSeparator)) {
+        for (String e : System.getProperty("java.class.path", "").split(File.pathSeparator, -1)) {
             if (!e.isBlank()) cp.add(new File(e));
         }
         for (ClassLoader cl = CompileHarness.class.getClassLoader(); cl != null; cl = cl.getParent()) {

@@ -51,8 +51,8 @@ class WebComponentDescriptorTest {
 
     @Test
     void oddInitParamsAreRejected() {
-        assertThrows(IllegalArgumentException.class,
-                () -> WebComponentDescriptor.plain().withInitParams("k"));
+        var plain = WebComponentDescriptor.plain();
+        assertThrows(IllegalArgumentException.class, () -> plain.withInitParams("k"));
     }
 
     @Test

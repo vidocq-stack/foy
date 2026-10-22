@@ -242,7 +242,8 @@ class FoyWebExtensionTest {
             for (var cls : components.componentClasses()) {
                 assertEquals(loader, cls.getClassLoader(), "loaded from the application loader: " + cls);
             }
-            assertThrows(UnsupportedOperationException.class, () -> components.componentClasses().add(Object.class));
+            var classes = components.componentClasses();
+            assertThrows(UnsupportedOperationException.class, () -> classes.add(Object.class));
         }
     }
 
@@ -289,15 +290,12 @@ class FoyWebExtensionTest {
             }
             Server server = Server.builder().host("127.0.0.1").port(port).handler(mounted.handler()).build();
             server.start();
-            try {
+            try (mounted; server) {
                 var response = HttpClient.newHttpClient().send(
                         HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port + "/hello")).build(),
                         HttpResponse.BodyHandlers.ofString());
                 assertEquals(200, response.statusCode(), response::body);
                 assertEquals("hello from an injected greeter", response.body());
-            } finally {
-                server.stop();
-                mounted.close();
             }
         }
     }
@@ -345,7 +343,7 @@ class FoyWebExtensionTest {
             }
             Server server = Server.builder().host("127.0.0.1").port(port).handler(mounted.handler()).build();
             server.start();
-            try {
+            try (mounted; server) {
                 var client = HttpClient.newHttpClient();
                 for (var path : List.of("app", "lib")) {
                     var response = client.send(
@@ -354,9 +352,6 @@ class FoyWebExtensionTest {
                     assertEquals(200, response.statusCode(), path + ": " + response.body());
                     assertEquals(path, response.body());
                 }
-            } finally {
-                server.stop();
-                mounted.close();
             }
         }
     }
@@ -416,7 +411,7 @@ class FoyWebExtensionTest {
             }
             Server server = Server.builder().host("127.0.0.1").port(port).handler(mounted.handler()).build();
             server.start();
-            try {
+            try (mounted; server) {
                 var client = HttpClient.newHttpClient();
                 var request = HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port + "/token")).build();
                 var futures = new ArrayList<java.util.concurrent.CompletableFuture<HttpResponse<String>>>();
@@ -427,14 +422,11 @@ class FoyWebExtensionTest {
                 for (var future : futures) {
                     var response = future.get();
                     assertEquals(200, response.statusCode(), response::body);
-                    var parts = response.body().split("\\|");
+                    var parts = response.body().split("\\|", -1);
                     assertEquals(parts[0], parts[1], "one instance within a request: " + response.body());
                     ids.add(parts[0]);
                 }
                 assertEquals(8, ids.size(), "one instance per request, concurrent requests apart: " + ids);
-            } finally {
-                server.stop();
-                mounted.close();
             }
         }
     }
@@ -480,7 +472,7 @@ class FoyWebExtensionTest {
             }
             Server server = Server.builder().host("127.0.0.1").port(port).handler(mounted.handler()).build();
             server.start();
-            try {
+            try (mounted; server) {
                 var uri = URI.create("http://127.0.0.1:" + port + "/count");
                 var alice = HttpClient.newBuilder().cookieHandler(new java.net.CookieManager()).build();
                 var bob = HttpClient.newBuilder().cookieHandler(new java.net.CookieManager()).build();
@@ -489,9 +481,6 @@ class FoyWebExtensionTest {
                         "the same instance for the same session");
                 assertEquals("1", bob.send(HttpRequest.newBuilder(uri).build(), HttpResponse.BodyHandlers.ofString()).body(),
                         "another session, another instance");
-            } finally {
-                server.stop();
-                mounted.close();
             }
         }
     }
@@ -656,7 +645,7 @@ class FoyWebExtensionTest {
     private static List<File> testPath() {
         Set<File> path = new LinkedHashSet<>();
         for (var property : List.of("jdk.module.path", "java.class.path")) {
-            for (var e : System.getProperty(property, "").split(File.pathSeparator)) {
+            for (var e : System.getProperty(property, "").split(File.pathSeparator, -1)) {
                 if (!e.isBlank()) path.add(new File(e));
             }
         }

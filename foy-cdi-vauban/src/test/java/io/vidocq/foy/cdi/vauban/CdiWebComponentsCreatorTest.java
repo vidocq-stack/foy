@@ -53,7 +53,8 @@ class CdiWebComponentsCreatorTest {
         var components = new CdiWebComponentsCreator().create(null,
                 params(Map.of("classes", "java.lang.String, java.lang.Integer,java.util.List")));
         assertEquals(List.of(String.class, Integer.class, List.class), components.componentClasses());
-        assertThrows(UnsupportedOperationException.class, () -> components.componentClasses().clear());
+        var classes = components.componentClasses();
+        assertThrows(UnsupportedOperationException.class, classes::clear);
     }
 
     @Test
@@ -65,8 +66,9 @@ class CdiWebComponentsCreatorTest {
     @Test
     @DisplayName("a class visible from neither loader fails with its name")
     void missingClassIsNamed() {
-        var ex = assertThrows(IllegalStateException.class, () -> new CdiWebComponentsCreator().create(null,
-                params(Map.of("classes", "java.lang.String,no.such.Missing"))));
+        var creator = new CdiWebComponentsCreator();
+        var parameters = params(Map.of("classes", "java.lang.String,no.such.Missing"));
+        var ex = assertThrows(IllegalStateException.class, () -> creator.create(null, parameters));
         assertTrue(ex.getMessage().contains("no.such.Missing"), ex.getMessage());
         assertTrue(ex.getMessage().startsWith("foy: "), ex.getMessage());
         assertTrue(ex.getCause() instanceof ClassNotFoundException, String.valueOf(ex.getCause()));
