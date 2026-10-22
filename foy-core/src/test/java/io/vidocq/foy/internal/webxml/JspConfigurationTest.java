@@ -42,7 +42,8 @@ class JspConfigurationTest {
         assertEquals("/root.tld", merged.getTaglibs().iterator().next().getTaglibLocation());
         assertEquals(List.of("/root/*", "*.jsp"), merged.getJspPropertyGroups().stream()
                 .flatMap(group -> group.getUrlPatterns().stream()).toList());
-        assertThrows(UnsupportedOperationException.class, () -> merged.getTaglibs().clear());
+        var mergedTaglibs = merged.getTaglibs();
+        assertThrows(UnsupportedOperationException.class, mergedTaglibs::clear);
         var other = config("<taglib><taglib-uri>urn:test</taglib-uri><taglib-location>/other.tld</taglib-location></taglib>");
         assertThrows(jakarta.servlet.ServletException.class, () -> JspDescriptors.merge(null, List.of(fragment, other)));
     }
@@ -56,7 +57,7 @@ class JspConfigurationTest {
 
     @Test
     void groupsAndTaglibsReachTheServletContextAsImmutableDescriptors() throws Exception {
-        var xml = WebXmlParser.parse(new ByteArrayInputStream(("""
+        var xml = WebXmlParser.parse(new ByteArrayInputStream("""
                 <web-app xmlns="https://jakarta.ee/xml/ns/jakartaee" version="6.1">
                   <jsp-config>
                     <taglib><taglib-uri>urn:test</taglib-uri><taglib-location>/WEB-INF/test.tld</taglib-location></taglib>
@@ -65,7 +66,7 @@ class JspConfigurationTest {
                     </jsp-property-group>
                   </jsp-config>
                 </web-app>
-                """).getBytes(StandardCharsets.UTF_8)));
+                """.getBytes(StandardCharsets.UTF_8)));
         var model = WebAppModel.builder("/pages");
         var options = DeployOptions.defaults(getClass().getClassLoader());
         DescriptorMerger.merge(xml, DescriptorMerger.AnnotatedComponents.none(), options.componentFactory(), model);
@@ -77,12 +78,13 @@ class JspConfigurationTest {
             assertEquals("UTF-8", group.getPageEncoding());
             assertEquals("true", group.getErrorOnELNotFound());
             assertEquals(List.of("/head.jspf"), List.copyOf(group.getIncludePreludes()));
-            assertThrows(UnsupportedOperationException.class, () -> group.getUrlPatterns().clear());
+            var urlPatterns = group.getUrlPatterns();
+            assertThrows(UnsupportedOperationException.class, urlPatterns::clear);
         }
     }
 
     @Test
-    void absentConfigurationRemainsNull() throws Exception {
+    void absentConfigurationRemainsNull() {
         try (var deployment = WebAppDeployer.deploy(WebAppModel.builder("/pages").build(), DeployOptions.defaults(getClass().getClassLoader()))) {
             assertNull(deployment.servletContext().getJspConfigDescriptor());
         }

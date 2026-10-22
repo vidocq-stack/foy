@@ -112,7 +112,7 @@ class RoleRefEndToEndTest {
             AsyncProbe.insidePlain.countDown();
             try {
                 AsyncProbe.probed.await();
-            } catch (InterruptedException e) {
+            } catch (InterruptedException _) {
                 Thread.currentThread().interrupt();
             }
         }

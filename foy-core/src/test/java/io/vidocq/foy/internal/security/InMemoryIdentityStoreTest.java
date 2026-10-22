@@ -64,16 +64,18 @@ class InMemoryIdentityStoreTest {
     @Test
     void aUserDeclaredTwiceIsRejected() {
         var b = InMemoryIdentityStore.builder().user("alice", "p".toCharArray());
-        assertThrows(IllegalArgumentException.class, () -> b.user("alice", "q".toCharArray()));
+        var other = "q".toCharArray();
+        assertThrows(IllegalArgumentException.class, () -> b.user("alice", other));
     }
 
     @Test
     void aPasswordWithALoneSurrogateDoesNotDigest() {
         // Before the fix both encoded to "a?" and digested to the same value.
-        assertThrows(IllegalArgumentException.class,
-                () -> InMemoryIdentityStore.digest(new byte[16], "a\uD800".toCharArray()));
-        assertThrows(IllegalArgumentException.class,
-                () -> InMemoryIdentityStore.digest(new byte[16], "a\uDC00".toCharArray()));
+        var salt = new byte[16];
+        var highSurrogate = "a\uD800".toCharArray();
+        var lowSurrogate = "a\uDC00".toCharArray();
+        assertThrows(IllegalArgumentException.class, () -> InMemoryIdentityStore.digest(salt, highSurrogate));
+        assertThrows(IllegalArgumentException.class, () -> InMemoryIdentityStore.digest(salt, lowSurrogate));
     }
 
     @Test
@@ -84,7 +86,8 @@ class InMemoryIdentityStoreTest {
     @Test
     void aMalformedPasswordCannotBeRegistered() {
         var b = InMemoryIdentityStore.builder();
-        var e = assertThrows(IllegalArgumentException.class, () -> b.user("u", "a\uD800".toCharArray()));
+        var malformed = "a\uD800".toCharArray();
+        var e = assertThrows(IllegalArgumentException.class, () -> b.user("u", malformed));
         assertEquals("the password is not valid UTF-16", e.getMessage());
         // The failed call leaves the builder unchanged: the name is still free.
         assertDoesNotThrow(() -> b.user("u", "ok".toCharArray()));

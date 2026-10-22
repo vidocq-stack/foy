@@ -102,7 +102,7 @@ class FragmentMergerTest {
     }
 
     @Test
-    void conflictBetweenFragmentsFails() throws Exception {
+    void conflictBetweenFragmentsFails() {
         var e = assertThrows(ServletException.class, () -> FragmentMerger.merge(web(""), List.of(
                 frag("F1", servlet("s", "a.A", "")), frag("F2", servlet("s", "a.B", "")))));
         assertConflict(e, "<servlet-class>", "'s'", "F1", "F2");
@@ -170,7 +170,7 @@ class FragmentMergerTest {
     }
 
     @Test
-    void initParamConflictBetweenFragmentsFails() throws Exception {
+    void initParamConflictBetweenFragmentsFails() {
         var e = assertThrows(ServletException.class, () -> FragmentMerger.merge(web(""), List.of(
                 frag("F1", servlet("s", "a.S", param("k", "1"))),
                 frag("F2", servlet("s", "a.S", param("k", "2"))))));
@@ -196,7 +196,7 @@ class FragmentMergerTest {
                         + "<multipart-config><max-file-size>10</max-file-size></multipart-config>"))));
         var s = servletNamed(m, "s");
         assertEquals(3, s.loadOnStartup());
-        assertEquals(Boolean.TRUE, s.asyncSupported());
+        assertTrue(s.asyncSupported());
         assertEquals("r1", s.runAs());
         assertEquals(10L, s.multipartConfig().maxFileSize());
     }
@@ -209,7 +209,7 @@ class FragmentMergerTest {
                         + "<async-supported>true</async-supported>"))));
         var s = servletNamed(m, "s");
         assertEquals(1, s.loadOnStartup());
-        assertEquals(Boolean.FALSE, s.asyncSupported());
+        assertFalse(s.asyncSupported());
     }
 
     // ---- servlet mappings ---------------------------------------------------------------------
@@ -229,7 +229,7 @@ class FragmentMergerTest {
     }
 
     @Test
-    void samePatternOnTwoServletsInFragmentsFails() throws Exception {
+    void samePatternOnTwoServletsInFragmentsFails() {
         var e = assertThrows(ServletException.class, () -> FragmentMerger.merge(web(""), List.of(
                 frag("F1", servlet("a", "a.A", "") + mapping("a", "/x")),
                 frag("F2", servlet("b", "a.B", "") + mapping("b", "/x")))));
@@ -237,7 +237,7 @@ class FragmentMergerTest {
     }
 
     @Test
-    void patternMappedByWebXmlAndByAFragmentToAnotherServletFails() throws Exception {
+    void patternMappedByWebXmlAndByAFragmentToAnotherServletFails() {
         var e = assertThrows(ServletException.class, () -> FragmentMerger.merge(
                 web(servlet("a", "a.A", "") + mapping("a", "/x")),
                 List.of(frag("F1", servlet("b", "a.B", "") + mapping("b", "/x")))));
@@ -270,7 +270,7 @@ class FragmentMergerTest {
     // ---- filters ------------------------------------------------------------------------------
 
     @Test
-    void filterClassConflictBetweenFragmentsFails() throws Exception {
+    void filterClassConflictBetweenFragmentsFails() {
         var e = assertThrows(ServletException.class, () -> FragmentMerger.merge(web(""), List.of(
                 frag("F1", filter("f", "a.A", "")), frag("F2", filter("f", "a.B", "")))));
         assertConflict(e, "<filter-class>", "'f'", "F1", "F2");
@@ -286,7 +286,7 @@ class FragmentMergerTest {
         var f = m.filters().getFirst();
         assertEquals("a.F", f.className());
         assertEquals(Map.of("k", "xml", "x", "1"), f.initParams());
-        assertEquals(Boolean.TRUE, f.asyncSupported());
+        assertTrue(f.asyncSupported());
     }
 
     @Test
@@ -334,7 +334,7 @@ class FragmentMergerTest {
     }
 
     @Test
-    void contextParamConflictBetweenFragmentsFails() throws Exception {
+    void contextParamConflictBetweenFragmentsFails() {
         var e = assertThrows(ServletException.class, () -> FragmentMerger.merge(web(""), List.of(
                 frag("F1", contextParam("k", "1")), frag("F2", contextParam("k", "2")))));
         assertConflict(e, "<context-param>", "'k'", "F1", "F2");
@@ -373,7 +373,7 @@ class FragmentMergerTest {
     }
 
     @Test
-    void errorPageConflictBetweenFragmentsFails() throws Exception {
+    void errorPageConflictBetweenFragmentsFails() {
         var e = assertThrows(ServletException.class, () -> FragmentMerger.merge(web(""), List.of(
                 frag("F1", errorType("a.Boom", "/one")), frag("F2", errorType("a.Boom", "/two")))));
         assertConflict(e, "<error-page>", "a.Boom", "F1", "F2");
@@ -460,7 +460,7 @@ class FragmentMergerTest {
     }
 
     @Test
-    void conflictingSingletonsBetweenFragmentsFail() throws Exception {
+    void conflictingSingletonsBetweenFragmentsFail() {
         var timeout = assertThrows(ServletException.class, () -> FragmentMerger.merge(web(""), List.of(
                 frag("F1", session("<session-timeout>1</session-timeout>")),
                 frag("F2", session("<session-timeout>2</session-timeout>")))));
@@ -512,7 +512,7 @@ class FragmentMergerTest {
                         + "</cookie-config>"))));
         var c = m.cookieConfig();
         assertEquals("XML", c.name());
-        assertEquals(Boolean.TRUE, c.httpOnly());
+        assertTrue(c.httpOnly());
         assertEquals("example.com", c.domain());
         assertEquals(Map.of("SameSite", "Lax"), c.attributes());
         assertNull(c.path());
@@ -627,8 +627,8 @@ class FragmentMergerTest {
                 assertNull(xml.displayName());
                 assertEquals(List.of("index.html"), xml.welcomeFiles());
                 assertNull(xml.defaultContextPath());
-                assertThrows(UnsupportedOperationException.class,
-                        () -> servletNamed(m, "s").initParams().put("y", "2"));
+                var mergedParams = servletNamed(m, "s").initParams();
+                assertThrows(UnsupportedOperationException.class, () -> mergedParams.put("y", "2"));
                 assertEquals(Map.of("k", "v"), servletNamed(xml, "s").initParams());
             }
         }

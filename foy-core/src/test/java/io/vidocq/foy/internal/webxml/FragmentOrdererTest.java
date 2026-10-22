@@ -101,7 +101,7 @@ class FragmentOrdererTest {
     }
 
     @Test
-    void beforeAndAfterOthersTogetherFails() throws Exception {
+    void beforeAndAfterOthersTogetherFails() {
         var both = new Ordering(List.of(), true, List.of(), true);
         assertThrows(ServletException.class, () -> FragmentOrderer.order(null, List.of(f("A", both))));
     }

@@ -51,7 +51,7 @@ class SessionListenerLockingTest {
 
     /** An id-change listener waits for another thread that invalidates the same session. */
     @Test
-    void anIdChangeListenerMayWaitForAnInvalidationOfItsSession() throws Exception {
+    void anIdChangeListenerMayWaitForAnInvalidationOfItsSession() {
         var manager = new SessionManager(new InMemorySessionStore(), new VidocqServletContext("/"), 1800);
         var registry = new ListenerRegistry();
         List<String> events = new CopyOnWriteArrayList<>();
@@ -65,7 +65,7 @@ class SessionListenerLockingTest {
                 });
                 try {
                     invalidated.set(other.join(java.time.Duration.ofSeconds(2)));
-                } catch (InterruptedException e) {
+                } catch (InterruptedException _) {
                     Thread.currentThread().interrupt();
                 }
                 events.add("idChanged end");
@@ -107,13 +107,13 @@ class SessionListenerLockingTest {
                     try {
                         manager.createNew();
                         otherOutcome.compareAndSet(null, "created");
-                    } catch (IllegalStateException e) {
+                    } catch (IllegalStateException _) {
                         otherOutcome.compareAndSet(null, "refused");
                     }
                 });
                 try {
                     if (!other.join(java.time.Duration.ofSeconds(2))) otherOutcome.compareAndSet(null, "blocked");
-                } catch (InterruptedException e) {
+                } catch (InterruptedException _) {
                     Thread.currentThread().interrupt();
                 }
                 events.add("created end");

@@ -106,7 +106,8 @@ class CertificateIdentityTest {
     void aMalformedOrDuplicateDnIsRejectedAtBuild() {
         var b = InMemoryIdentityStore.builder().certificateUser(TlsTestCertificates.ALICE_DN, "admin");
         assertThrows(IllegalArgumentException.class, () -> b.certificateUser("CN=Alice Example,OU=Foy Tests,O=Vidocq,C=FR"));
-        assertThrows(IllegalArgumentException.class, () -> InMemoryIdentityStore.builder().certificateUser("not a dn"));
+        var fresh = InMemoryIdentityStore.builder();
+        assertThrows(IllegalArgumentException.class, () -> fresh.certificateUser("not a dn"));
     }
 
     @Test
@@ -120,12 +121,12 @@ class CertificateIdentityTest {
     @Test
     void credentialCheckTurnsAThrowingOrNullStoreIntoARefusal() {
         IdentityStore throwing = new IdentityStore() {
-            public Optional<Identity> validate(String u, char[] p) { return Optional.empty(); }
-            public Optional<Identity> validate(X509Certificate[] c) { throw new IllegalStateException("down"); }
+            @Override public Optional<Identity> validate(String u, char[] p) { return Optional.empty(); }
+            @Override public Optional<Identity> validate(X509Certificate[] c) { throw new IllegalStateException("down"); }
         };
         IdentityStore nulls = new IdentityStore() {
-            public Optional<Identity> validate(String u, char[] p) { return Optional.empty(); }
-            public Optional<Identity> validate(X509Certificate[] c) { return null; }
+            @Override public Optional<Identity> validate(String u, char[] p) { return Optional.empty(); }
+            @Override public Optional<Identity> validate(X509Certificate[] c) { return null; }
         };
         var chain = new X509Certificate[] {CERTS.certificate("alice")};
         assertTrue(CredentialCheck.validate(throwing, chain).isEmpty());

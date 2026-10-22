@@ -65,7 +65,7 @@ class ServletSecurityRegistrationEndToEndTest {
             var reg = ctx.addServlet("dyn", new Hello());
             reg.addMapping("/dyn", "/dd");
             try { reg.setServletSecurity(null); nullThrows.set(false); }
-            catch (IllegalArgumentException e) { nullThrows.set(true); }
+            catch (IllegalArgumentException _) { nullThrows.set(true); }
             conflicts.set(reg.setServletSecurity(
                     new ServletSecurityElement(new HttpConstraintElement(TransportGuarantee.NONE, "admin"))));
             ctx.declareRoles("auditor");
@@ -84,8 +84,8 @@ class ServletSecurityRegistrationEndToEndTest {
             assertEquals(200, app.send("GET", "/star", "ann:x").statusCode(), "* covers a role declared by declareRoles");
             var ctx = app.deployment.servletContext();
             var reg = (jakarta.servlet.ServletRegistration.Dynamic) ctx.getServletRegistration("dyn");
-            assertThrows(IllegalStateException.class, () -> reg.setServletSecurity(
-                    new ServletSecurityElement(new HttpConstraintElement())));
+            var lateSecurity = new ServletSecurityElement(new HttpConstraintElement());
+            assertThrows(IllegalStateException.class, () -> reg.setServletSecurity(lateSecurity));
             assertThrows(IllegalStateException.class, () -> ctx.declareRoles("late"));
         }
     }
@@ -119,7 +119,7 @@ class ServletSecurityRegistrationEndToEndTest {
     }
 
     @Test
-    void runAsIsReportedByTheRegistration() throws Exception {
+    void runAsIsReportedByTheRegistration() {
         var model = WebAppModel.builder("/")
                 .servlet(new ServletDecl("ra", Hello.class, Hello::new, List.of("/ra"), Map.of(), -1, false))
                 .runAsRole("ra", "admin").build();

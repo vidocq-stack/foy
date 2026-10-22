@@ -25,6 +25,7 @@ import io.vidocq.chappe.api.HttpMethod;
 import io.vidocq.chappe.api.HttpVersion;
 import io.vidocq.chappe.api.Request;
 import io.vidocq.chappe.api.Server;
+import io.vidocq.foy.internal.TestPause;
 import io.vidocq.foy.internal.TestServerLauncherAccess;
 import io.vidocq.foy.internal.boot.DeployOptions;
 import io.vidocq.foy.internal.boot.Deployment;
@@ -53,6 +54,7 @@ import org.junit.jupiter.api.Test;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.OutputStream;
+import java.net.InetAddress;
 import java.net.Socket;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
@@ -64,6 +66,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Supplier;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -88,13 +91,13 @@ class SessionCoreTest {
                     String fresh = req.changeSessionId();
                     out.write("OLD=" + old + "|NEW=" + fresh + "|ID=" + s.getId() + "|A=" + s.getAttribute("a")
                             + "|CT=" + (created == s.getCreationTime())
-                            + "|SAME=" + (req.getSession(false) == s));
+                            + "|SAME=" + s.equals(req.getSession(false)));
                 }
                 case "nochange" -> {
                     try {
                         req.changeSessionId();
                         out.write("NO-ISE");
-                    } catch (IllegalStateException e) {
+                    } catch (IllegalStateException _) {
                         out.write("ISE");
                     }
                 }
@@ -143,14 +146,14 @@ class SessionCoreTest {
     record Reply(int status, String body, String head) {
         List<String> headers(String name) {
             var values = new ArrayList<String>();
-            for (String line : head.split("\r\n")) {
+            for (String line : head.split("\r\n", -1)) {
                 int c = line.indexOf(':');
                 if (c > 0 && line.substring(0, c).equalsIgnoreCase(name)) values.add(line.substring(c + 1).trim());
             }
             return values;
         }
         String value(String key) {
-            for (String part : body.split("\\|")) {
+            for (String part : body.split("\\|", -1)) {
                 if (part.startsWith(key + "=")) return part.substring(key.length() + 1);
             }
             return null;
@@ -181,7 +184,7 @@ class SessionCoreTest {
     }
 
     private Reply get(String target, String cookie) throws IOException {
-        try (Socket s = new Socket("127.0.0.1", port)) {
+        try (Socket s = new Socket(InetAddress.ofLiteral("127.0.0.1"), port)) {
             s.setSoTimeout(10_000);
             OutputStream out = s.getOutputStream();
             String cookieLine = cookie == null ? "" : "Cookie: " + cookie + "\r\n";
@@ -238,16 +241,16 @@ class SessionCoreTest {
     void lastAccessedTimeIsThePreviousRequestTime() throws Exception {
         deploy(WebAppModel.builder("/ctx").servlet(ops()));
         var first = get("/ctx/s/last", null);
-        String cookie = first.headers("Set-Cookie").getFirst().split(";")[0];
+        String cookie = first.headers("Set-Cookie").getFirst().split(";", -1)[0];
         assertEquals(first.value("CT"), first.value("LA"), "a new session was last accessed at creation");
         long afterFirst = System.currentTimeMillis();
-        Thread.sleep(30);
+        TestPause.millis(30);
         long beforeSecond = System.currentTimeMillis();
         var second = get("/ctx/s/last", cookie);
         long la = Long.parseLong(second.value("LA"));
         assertTrue(la <= afterFirst, "last accessed " + la + " must be the previous request, before " + afterFirst);
         assertTrue(la < beforeSecond);
-        Thread.sleep(30);
+        TestPause.millis(30);
         var third = get("/ctx/s/last", cookie);
         assertTrue(Long.parseLong(third.value("LA")) >= beforeSecond, "the second request is now the last access");
     }
@@ -261,12 +264,12 @@ class SessionCoreTest {
     void aRequestCarryingTheSessionIdAccessesTheSessionWithoutGetSession() throws Exception {
         deploy(WebAppModel.builder("/ctx").servlet(ops()));
         var first = get("/ctx/s/last", null);
-        String cookie = first.headers("Set-Cookie").getFirst().split(";")[0];
-        Thread.sleep(30);
+        String cookie = first.headers("Set-Cookie").getFirst().split(";", -1)[0];
+        TestPause.millis(30);
         long before = System.currentTimeMillis();
         assertEquals("UNTOUCHED", get("/ctx/s/untouched", cookie).body());
         long after = System.currentTimeMillis();
-        Thread.sleep(30);
+        TestPause.millis(30);
         long la = Long.parseLong(get("/ctx/s/last", cookie).value("LA"));
         assertTrue(la >= before && la <= after,
                 "last accessed " + la + " must be the request that did not call getSession, in [" + before
@@ -284,9 +287,7 @@ class SessionCoreTest {
     }
 
     private int sessionCount() {
-        int n = 0;
-        for (var ignored : deployment.sessionManager().store().sessions()) n++;
-        return n;
+        return deployment.sessionManager().store().sessions().size();
     }
 
     // ---- expiry ----
@@ -341,25 +342,35 @@ class SessionCoreTest {
                 destroyed.countDown();
             }
         });
-        SessionManager m;
-        Thread.currentThread().setContextClassLoader(appLoader);
-        try {
-            // Deployment: the application's class loader is the context class loader.
-            m = new SessionManager(new InMemorySessionStore(), new VidocqServletContext("/"), 1);
-        } finally {
-            Thread.currentThread().setContextClassLoader(original);
-        }
+        // Deployment: the application's class loader is the context class loader.
+        SessionManager m = under(appLoader,
+                () -> new SessionManager(new InMemorySessionStore(), new VidocqServletContext("/"), 1));
         manager = m;
         m.setListenerRegistry(registry);
         m.createNew();
-        Thread.currentThread().setContextClassLoader(otherLoader);
-        try {
-            m.startReaper(Duration.ofMillis(100));
-        } finally {
-            Thread.currentThread().setContextClassLoader(original);
-        }
+        runUnder(otherLoader, () -> m.startReaper(Duration.ofMillis(100)));
         assertTrue(destroyed.await(5, TimeUnit.SECONDS), "sessionDestroyed not fired by the reaper");
         assertSame(appLoader, seen.get());
+    }
+
+    /** Runs {@code action} with {@code loader} as the context class loader, then restores the previous one. */
+    private static <T> T under(ClassLoader loader, Supplier<T> action) {
+        Thread current = Thread.currentThread();
+        ClassLoader previous = current.getContextClassLoader();
+        current.setContextClassLoader(loader);
+        try {
+            return action.get();
+        } finally {
+            current.setContextClassLoader(previous);
+        }
+    }
+
+    /** Runs {@code action} with {@code loader} as the context class loader, then restores the previous one. */
+    private static void runUnder(ClassLoader loader, Runnable action) {
+        under(loader, () -> {
+            action.run();
+            return null;
+        });
     }
 
     @Test
@@ -369,7 +380,7 @@ class SessionCoreTest {
         var m = shortLived(probe, store);
         var s = m.createNew();
         s.setAttribute("probe", probe);
-        Thread.sleep(1_200);
+        TestPause.millis(1_200);
         assertNull(m.find(s.getId()));
         assertEquals(0, probe.destroyed.getCount());
         assertEquals(0, probe.unbound.getCount());
@@ -382,11 +393,11 @@ class SessionCoreTest {
         var m = shortLived(probe, new InMemorySessionStore());
         var s = m.createNew();
         s.beginAccess();
-        Thread.sleep(1_200);
+        TestPause.millis(1_200);
         m.reap();
         assertFalse(s.isInvalidated(), "an in-flight request keeps its session alive");
         s.endAccess();
-        Thread.sleep(1_200);
+        TestPause.millis(1_200);
         m.reap();
         assertTrue(s.isInvalidated());
         assertEquals(0, probe.destroyed.getCount());
@@ -606,7 +617,7 @@ class SessionCoreTest {
         assertFalse(config.isSecure());
     }
 
-    private SessionManager racing(List<String> events, HttpSessionListener destroyed,
+    private SessionManager racing(HttpSessionListener destroyed,
                                   HttpSessionIdListener changed, InMemorySessionStore store) {
         var registry = new ListenerRegistry();
         registry.register(destroyed);
@@ -622,11 +633,11 @@ class SessionCoreTest {
         var inDestroy = new CountDownLatch(1);
         var release = new CountDownLatch(1);
         var store = new InMemorySessionStore();
-        var m = racing(events, new HttpSessionListener() {
+        var m = racing(new HttpSessionListener() {
             @Override public void sessionDestroyed(HttpSessionEvent se) {
                 events.add("destroyed");
                 inDestroy.countDown();
-                try { release.await(5, TimeUnit.SECONDS); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
+                try { release.await(5, TimeUnit.SECONDS); } catch (InterruptedException _) { Thread.currentThread().interrupt(); }
             }
         }, (event, oldId) -> events.add("changed"), store);
         var s = m.createNew();
@@ -645,18 +656,18 @@ class SessionCoreTest {
         var inChange = new CountDownLatch(1);
         var release = new CountDownLatch(1);
         var store = new InMemorySessionStore();
-        var m = racing(events, new HttpSessionListener() {
+        var m = racing(new HttpSessionListener() {
             @Override public void sessionDestroyed(HttpSessionEvent se) { events.add("destroyed"); }
         }, (event, oldId) -> {
             events.add("changed");
             inChange.countDown();
-            try { release.await(5, TimeUnit.SECONDS); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
+            try { release.await(5, TimeUnit.SECONDS); } catch (InterruptedException _) { Thread.currentThread().interrupt(); }
         }, store);
         var s = m.createNew();
         Thread changer = Thread.ofVirtual().start(() -> m.changeSessionId(s));
         assertTrue(inChange.await(5, TimeUnit.SECONDS));
         Thread destroyer = Thread.ofVirtual().start(s::invalidate);
-        Thread.sleep(150);
+        TestPause.millis(150);
         assertEquals(List.of("changed"), events, "the invalidation waits for sessionIdChanged");
         release.countDown();
         changer.join(5_000);
@@ -690,7 +701,7 @@ class SessionCoreTest {
             @Override public void sessionCreated(HttpSessionEvent se) {
                 events.add("created");
                 inCreated.countDown();
-                try { release.await(5, TimeUnit.SECONDS); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
+                try { release.await(5, TimeUnit.SECONDS); } catch (InterruptedException _) { Thread.currentThread().interrupt(); }
             }
             @Override public void sessionDestroyed(HttpSessionEvent se) { events.add("destroyed"); }
         });
@@ -700,7 +711,7 @@ class SessionCoreTest {
         Thread creator = Thread.ofVirtual().start(manager::createNew);
         assertTrue(inCreated.await(5, TimeUnit.SECONDS));
         Thread closer = Thread.ofVirtual().start(manager::close);
-        Thread.sleep(150);
+        TestPause.millis(150);
         assertEquals(List.of("created"), events, "close waits for the creation in flight");
         release.countDown();
         creator.join(5_000);

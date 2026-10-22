@@ -19,8 +19,6 @@
  */
 package io.vidocq.foy.internal.session;
 
-import io.vidocq.foy.spi.session.SessionStore;
-
 import io.vidocq.foy.internal.container.VidocqServletContext;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -85,8 +83,8 @@ class HttpSessionImplTest {
         var s = manager.createNew();
         s.invalidate();
         assertThrows(IllegalStateException.class, () -> s.getAttribute("k"));
-        assertThrows(IllegalStateException.class, () -> s.getAttributeNames());
-        assertThrows(IllegalStateException.class, () -> s.invalidate());
+        assertThrows(IllegalStateException.class, s::getAttributeNames);
+        assertThrows(IllegalStateException.class, s::invalidate);
     }
 
     @Test

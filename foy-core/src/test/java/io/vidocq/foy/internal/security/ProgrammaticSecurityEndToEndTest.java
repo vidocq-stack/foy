@@ -51,7 +51,7 @@ class ProgrammaticSecurityEndToEndTest {
                 case "/twice" -> {
                     req.login("alice", "a-secret");
                     try { req.login("alice", "a-secret"); w.append("no exception"); }
-                    catch (ServletException e) { w.append("second login refused"); }
+                    catch (ServletException _) { w.append("second login refused"); }
                 }
                 case "/session" -> { req.getSession(); w.append("session"); }
                 case "/bad" -> {
@@ -81,7 +81,7 @@ class ProgrammaticSecurityEndToEndTest {
                 case "/committed" -> {
                     resp.getWriter().write("x");
                     resp.flushBuffer();
-                    try { req.authenticate(resp); } catch (IllegalStateException e) { resp.getWriter().write(" ISE"); }
+                    try { req.authenticate(resp); } catch (IllegalStateException _) { resp.getWriter().write(" ISE"); }
                     return;
                 }
                 default -> w.append("user=").append(req.getRemoteUser());
