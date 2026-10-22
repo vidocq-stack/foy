@@ -119,7 +119,8 @@ public final class ServletOutputStreamImpl extends ServletOutputStream {
     private volatile ResponsePipe pipe;
     private volatile boolean suppressed;
     private boolean closed;
-    private boolean discarding;
+    /** Set by the response without the lock (sendError, sendRedirect, end of a forward), read under it. */
+    private volatile boolean discarding;
 
     /** Set once by the response's request binding, read from any thread (not guarded by lock). */
     private volatile NonBlockingHost host;
