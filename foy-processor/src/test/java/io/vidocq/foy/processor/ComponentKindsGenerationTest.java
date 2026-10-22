@@ -137,11 +137,23 @@ class ComponentKindsGenerationTest {
                             jakarta.servlet.ServletContainerInitializer {
                         public void onStartup(java.util.Set<Class<?>> c, jakarta.servlet.ServletContext ctx) {}
                     }
+                    """,
+                "a.ServletToo", """
+                    package a;
+                    @jakarta.servlet.annotation.WebServlet("/s")
+                    @jakarta.servlet.annotation.HandlesTypes(java.lang.Runnable.class)
+                    public class ServletToo extends jakarta.servlet.http.HttpServlet
+                            implements jakarta.servlet.ServletContainerInitializer {
+                        public void onStartup(java.util.Set<Class<?>> c, jakarta.servlet.ServletContext ctx) {}
+                    }
                     """));
         assertTrue(r.success(), r.messages());
         var d = component(r, "a.Both").descriptor();
         assertEquals(Kind.LISTENER, d.kind());
         assertEquals(List.of("java.lang.Runnable"), d.handlesTypes());
+        var servlet = component(r, "a.ServletToo").descriptor();
+        assertEquals(Kind.SERVLET, servlet.kind());
+        assertEquals(List.of("java.lang.Runnable"), servlet.handlesTypes());
     }
 
     @Test

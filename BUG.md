@@ -17,7 +17,9 @@
   INITIALIZER kind. `IndexedHandlesTypesResolver` then saw no handled type and answered `null`.
   Vaadin's `DevModeStartupListener` is such a class.
 - Status: FIXED (b7f2870). Both keep `handlesTypes` for any class that implements
-  `ServletContainerInitializer`, whatever its kind.
+  `ServletContainerInitializer`, whatever its kind. A `$$FoyComponent` generated before the fix takes
+  precedence over the class-file tier and keeps the empty list: rebuild the jar, or rerun
+  `vidocq:generate` without its cache for a dependency jar.
 - Validation:
   - `ComponentKindsGenerationTest.webListenerThatIsAlsoAnInitializerKeepsItsHandledTypes`,
     `ClassFileDescriptorReaderTest.webListenerThatIsAlsoAnInitializerKeepsItsHandledTypes` and the
