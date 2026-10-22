@@ -165,6 +165,9 @@ Each run writes a fresh `META-INF/services/io.vidocq.foy.spi.gen.WebComponent` a
 | `Builder.sessionTimeoutSeconds(int seconds)`
 | Session timeout in seconds, rounded up to whole minutes; a `web.xml` `<session-timeout>` wins. Default: `1800` (30 min).
 
+| `Builder.defaultResponseCharacterEncoding(String encoding)`
+| [.tag-new]#NEW# Default response character encoding when neither `web.xml` nor a fragment declares `<response-character-encoding>`; an initializer or listener calling `ServletContext.setResponseCharacterEncoding` still overrides it. A runtime gives `"UTF-8"` to make it its applications' default. Default: `null`, the Servlet default (`ISO-8859-1` for `getWriter`).
+
 | `Builder.classLoader(ClassLoader cl)`
 | Class loader used for resources and class resolution during deployment.
 

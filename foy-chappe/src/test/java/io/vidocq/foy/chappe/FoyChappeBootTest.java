@@ -40,6 +40,7 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.nio.charset.StandardCharsets;
 import java.lang.reflect.Proxy;
 import java.security.cert.CertificateFactory;
 import java.security.cert.X509Certificate;
@@ -484,6 +485,35 @@ class FoyChappeBootTest {
                 .build().orElseThrow();
         try {
             assertEquals(2, mounted.servletContext().getSessionTimeout());
+        } finally {
+            mounted.close();
+        }
+    }
+
+    @Test
+    void builderResponseCharacterEncodingAppliesOnlyWhenNoDescriptorDeclaresOne() throws Exception {
+        assertEquals("UTF-8", responseEncoding("", "UTF-8"), "the builder default when web.xml says nothing");
+        assertEquals("ISO-8859-1",
+                responseEncoding("<response-character-encoding>ISO-8859-1</response-character-encoding>", "UTF-8"),
+                "the descriptor wins over the builder default");
+        assertNull(responseEncoding("", null), "no default: the Servlet default applies");
+    }
+
+    /** The context's response encoding with {@code element} in web.xml and {@code builderDefault} on the builder. */
+    private String responseEncoding(String element, String builderDefault) throws ServletException {
+        String xml = """
+            <web-app xmlns="https://jakarta.ee/xml/ns/jakartaee" version="6.1">
+              %s
+              <servlet><servlet-name>h</servlet-name><servlet-class>%s</servlet-class></servlet>
+              <servlet-mapping><servlet-name>h</servlet-name><url-pattern>/hello</url-pattern></servlet-mapping>
+            </web-app>""".formatted(element, Plain.class.getName());
+        var mounted = FoyChappeBoot.builder().contextPath("/")
+                .defaultResponseCharacterEncoding(builderDefault)
+                .classLoader(getClass().getClassLoader())
+                .webXml(new ByteArrayInputStream(xml.getBytes(StandardCharsets.UTF_8)))
+                .build().orElseThrow();
+        try {
+            return mounted.servletContext().getResponseCharacterEncoding();
         } finally {
             mounted.close();
         }

@@ -155,6 +155,7 @@ public final class FoyChappeBoot {
         private BeanManager beanManager;
         private String contextPath;
         private int sessionTimeoutSeconds = 30 * 60;
+        private String defaultResponseCharacterEncoding;
         private ClassLoader classLoader = Thread.currentThread().getContextClassLoader();
         private ModuleLayer applicationLayer = ModuleLayer.boot();
         private Function<ModuleLayer, Optional<JspEngine>> jspEngineLookup = WebAppDeployer::jspEngine;
@@ -193,6 +194,24 @@ public final class FoyChappeBoot {
          * expire.
          */
         public Builder sessionTimeoutSeconds(int seconds) { this.sessionTimeoutSeconds = seconds; return this; }
+
+        /**
+         * Default response character encoding (Servlet 6.1 section 5.6), used only when neither web.xml nor
+         * any merged web fragment declares a {@code <response-character-encoding>}; an initializer or a
+         * listener calling {@code ServletContext.setResponseCharacterEncoding} still overrides it.
+         * {@code null}, the default, keeps the Servlet default: no context encoding, ISO-8859-1 for
+         * {@code getWriter}. A runtime gives {@code "UTF-8"} here to make it the default of its applications.
+         */
+        public Builder defaultResponseCharacterEncoding(String encoding) {
+            this.defaultResponseCharacterEncoding = encoding;
+            return this;
+        }
+
+        /** The response encoding the descriptors declare, else the builder default (null: the Servlet default). */
+        private String responseCharacterEncoding(WebAppDescriptor effective) {
+            String declared = effective.responseCharacterEncoding();
+            return declared != null ? declared : defaultResponseCharacterEncoding;
+        }
 
         /** Seconds rounded up to whole minutes; zero or less gives 0 (sessions never expire). */
         static int sessionTimeoutMinutes(int seconds) {
@@ -522,6 +541,7 @@ public final class FoyChappeBoot {
             if (effective.sessionTimeoutMinutes() == -1) {
                 modelBuilder.sessionTimeoutMinutes(sessionTimeoutMinutes(sessionTimeoutSeconds));
             }
+            modelBuilder.responseCharacterEncoding(responseCharacterEncoding(effective));
             WebAppModel model = modelBuilder.build();
 
             Deployment deployment;

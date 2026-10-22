@@ -18,6 +18,7 @@ New in the `{project-version}` development line — everything listed here lande
 * **`FoyChappeBoot.Builder.applicationLayer(ModuleLayer)`** — the layer the JSP engine is looked up in (default `ModuleLayer.boot()`), in named modules and their ancestors only. xref:reference.adoc#optional-jsp-engine-service[JSP-engine service].
 * **JSP-only applications are deployed** — `JspEngine.hasPages(ModuleLayer)`, a new default method answering `true`, is asked when the application has no servlet, filter, listener, descriptor content or initializer. `build()` is empty only when there is no engine, or it answers `false`. xref:reference.adoc#optional-jsp-engine-service[JSP-engine service].
 * **`FoyChappeBoot.Builder.componentSource(Function<Class<?>, URL>)`** — attributes discovered classes to their real jar, so the exclusions of an absolute ordering and of `metadata-complete`, the application roots and the initializers hold when a harness loads several jars from one class loader (BUG-20261012-01, vidocq#228). xref:usage.adoc#native-layout-descriptors-fragments-and-resources[Native layout].
+* **`FoyChappeBoot.Builder.defaultResponseCharacterEncoding(String)`** — the response encoding of an application whose descriptors declare none, for a runtime that wants UTF-8 by default (the Vidocq runtime does); `<response-character-encoding>` and `ServletContext.setResponseCharacterEncoding` still win. xref:reference.adoc[Reference].
 
 == Observability
 
@@ -43,6 +44,7 @@ New in the `{project-version}` development line — everything listed here lande
 == Streaming
 
 * **What was flushed before an exception reaches the client** — when a servlet throws after `flushBuffer()`, the head and the bytes it had flushed are delivered before the body is aborted. They could be dropped when the abort came before the connection read them, and the client then saw the connection close before the status line (BUG-20261021-01). xref:usage.adoc#streaming-and-response-buffering[Streaming and response buffering].
+* **A static text file no longer claims ISO-8859-1** — a `text/*` response written as bytes through `getOutputStream()`, as the default servlet serves files, used to carry `charset=ISO-8859-1` although the container does not know the file's encoding; the header overrode the page's own `<meta charset>` and showed UTF-8 text garbled. The `Content-Type` now names a charset only when one was set, configured with `<response-character-encoding>`, or fixed by `getWriter()`; `getCharacterEncoding()` still answers `ISO-8859-1` by default (BUG-20261022-03, found by the nightly OWASP ZAP scan). xref:usage.adoc#response-semantics[Response semantics].
 
 == Multipart and request bodies
 
