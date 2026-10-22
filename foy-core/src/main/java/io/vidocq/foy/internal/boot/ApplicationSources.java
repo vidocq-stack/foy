@@ -158,14 +158,14 @@ public final class ApplicationSources {
      */
     public static Set<URL> applicationRoots(ClassLoader loader, Set<URL> fragmentJars) throws ServletException {
         Set<String> fragmentKeys = keys(fragmentJars);
-        var out = new LinkedHashSet<URL>();
+        var out = new ArrayList<URL>();
         for (String resource : WEB_XML) {
             for (URL url : resources(loader, resource)) {
                 String key = rootKey(url, resource);
                 if (!fragmentKeys.contains(key)) out.add(toUrl(key, url));
             }
         }
-        return Collections.unmodifiableSet(out);
+        return distinct(out);
     }
 
     /** The normalised code-source roots of the classes of {@code annotated}'s components. */
@@ -179,14 +179,14 @@ public final class ApplicationSources {
      */
     public static Set<URL> codeSources(DescriptorMerger.AnnotatedComponents annotated,
                                        Function<Class<?>, URL> sourceOf) {
-        var out = new LinkedHashSet<URL>();
+        var out = new ArrayList<URL>();
         annotated.servlets().forEach(s -> addRoot(out, s.type(), sourceOf));
         annotated.filters().forEach(f -> addRoot(out, f.type(), sourceOf));
         annotated.listeners().forEach(l -> addRoot(out, l.type(), sourceOf));
-        return Collections.unmodifiableSet(out);
+        return distinct(out);
     }
 
-    private static void addRoot(Set<URL> out, Class<?> type, Function<Class<?>, URL> sourceOf) {
+    private static void addRoot(List<URL> out, Class<?> type, Function<Class<?>, URL> sourceOf) {
         URL root = root(type, sourceOf);
         if (root != null) out.add(root);
     }
@@ -195,9 +195,9 @@ public final class ApplicationSources {
     public static Set<URL> excludedJars(List<Fragment> all, List<Fragment> ordered) {
         Set<String> kept = new HashSet<>();
         for (Fragment f : ordered) kept.add(Fragment.sourceKey(f.jar()));
-        var out = new LinkedHashSet<URL>();
+        var out = new ArrayList<URL>();
         for (Fragment f : all) if (!kept.contains(Fragment.sourceKey(f.jar()))) out.add(f.jar());
-        return Collections.unmodifiableSet(out);
+        return distinct(out);
     }
 
     /**
@@ -264,7 +264,7 @@ public final class ApplicationSources {
                     Path module = Path.of(uri);
                     if (module.getNameCount() == 2 && Files.isDirectory(module)) out.add(module);
                 }
-            } catch (IllegalArgumentException | FileSystemNotFoundException e) {
+            } catch (IllegalArgumentException | FileSystemNotFoundException _) {
                 // not a local location: not scanned
             }
         }
@@ -281,6 +281,14 @@ public final class ApplicationSources {
     private static URL root(Class<?> type, Function<Class<?>, URL> sourceOf) {
         URL location = sourceOf.apply(type);
         return location == null ? null : toUrl(Fragment.sourceKey(location), location);
+    }
+
+    /**
+     * {@code urls} in order without duplicates, two URLs being the same when their external forms
+     * are: {@link URL#equals} and {@link URL#hashCode} may resolve host names.
+     */
+    private static Set<URL> distinct(List<URL> urls) {
+        return KeyedSet.of(URL.class, urls, URL::toExternalForm);
     }
 
     private static Set<String> keys(Set<URL> urls) {
@@ -303,7 +311,7 @@ public final class ApplicationSources {
         if (s.endsWith(name)) s = s.substring(0, s.length() - name.length());
         try {
             return Fragment.sourceKey(URI.create(s).toURL());
-        } catch (MalformedURLException | IllegalArgumentException e) {
+        } catch (MalformedURLException | IllegalArgumentException _) {
             return Fragment.sourceKey(url);
         }
     }
@@ -311,7 +319,7 @@ public final class ApplicationSources {
     private static URL toUrl(String key, URL fallback) {
         try {
             return URI.create(key).toURL();
-        } catch (MalformedURLException | IllegalArgumentException e) {
+        } catch (MalformedURLException | IllegalArgumentException _) {
             return fallback;
         }
     }

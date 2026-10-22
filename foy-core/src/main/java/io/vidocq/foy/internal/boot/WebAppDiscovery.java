@@ -92,42 +92,71 @@ public final class WebAppDiscovery {
         boolean indexed = !index.isEmpty();
         // One index bean per archive built with foy-cdi-vauban: merge them all, in bean then list order.
         for (Bean<?> indexBean : index) {
-            CdiWebComponents components = reference(bm, indexBean, CdiWebComponents.class).get();
-            for (Class<?> cls : components.componentClasses()) {
-                if (!seen.add(cls)) continue;
-                // A lookup by type also matches the beans of subclasses: keep the class's own bean.
-                Set<Bean<?>> own = new LinkedHashSet<>();
-                for (Bean<?> bean : bm.getBeans(cls, ANY)) {
-                    if (bean.getBeanClass() == cls) own.add(bean);
-                }
-                if (own.isEmpty()) {
-                    LOG.log(System.Logger.Level.WARNING, "foy: " + cls.getName() + " is listed by "
-                            + CdiWebComponents.class.getSimpleName() + " but has no bean of that class"
-                            + " (vetoed, or loaded by another class loader); skipped");
-                    continue;
-                }
-                result.add(new Candidate(cls, own.size() == 1 ? own.iterator().next() : bm.resolve(own)));
-            }
+            addIndexed(bm, reference(bm, indexBean, CdiWebComponents.class).get(), seen, result);
         }
         if (!indexed) {
             LOG.log(System.Logger.Level.INFO, "foy: no " + CdiWebComponents.class.getSimpleName()
                     + " bean (CDI container other than Vauban); walking the Servlet, Filter and EventListener beans");
         }
         for (Class<?> base : List.of(Servlet.class, Filter.class, EventListener.class)) {
-            for (Bean<?> bean : bm.getBeans(base, ANY)) {
-                Class<?> cls = bean.getBeanClass();
-                if (!seen.add(cls)) continue;
-                if (indexed) {
-                    if (!isWebComponent(registry, cls)) continue;
-                    LOG.log(System.Logger.Level.WARNING, "foy: " + cls.getName() + " is a web component bean"
-                            + " missing from every " + CdiWebComponents.class.getSimpleName() + " index; its"
-                            + " archive was built without foy-cdi-vauban on the annotation processor path."
-                            + " Discovered anyway; build that archive with foy-cdi-vauban on the processor path");
-                }
+            addWalked(bm, registry, base, indexed, seen, result);
+        }
+        return result;
+    }
+
+    /** Adds the classes {@code components} lists and {@code seen} does not hold yet to {@code result}. */
+    private static void addIndexed(BeanManager bm, CdiWebComponents components, Set<Class<?>> seen,
+                                   List<Candidate> result) {
+        for (Class<?> cls : components.componentClasses()) {
+            if (!seen.add(cls)) continue;
+            Candidate candidate = indexedCandidate(bm, cls);
+            if (candidate != null) result.add(candidate);
+        }
+    }
+
+    /**
+     * Adds the {@code base} beans whose class {@code seen} does not hold yet to {@code result}; with
+     * class indexes ({@code indexed}), only the web components they missed.
+     */
+    private static void addWalked(BeanManager bm, WebComponentRegistry registry, Class<?> base, boolean indexed,
+                                  Set<Class<?>> seen, List<Candidate> result) {
+        for (Bean<?> bean : bm.getBeans(base, ANY)) {
+            Class<?> cls = bean.getBeanClass();
+            if (seen.add(cls) && (!indexed || missedByTheIndexes(registry, cls))) {
                 result.add(new Candidate(cls, bean));
             }
         }
-        return result;
+    }
+
+    /**
+     * The class {@code cls} listed by an index with its own bean: a lookup by type also matches the
+     * beans of subclasses. {@code null}, with a warning, when the class has no bean of its own.
+     */
+    private static Candidate indexedCandidate(BeanManager bm, Class<?> cls) {
+        Set<Bean<?>> own = new LinkedHashSet<>();
+        for (Bean<?> bean : bm.getBeans(cls, ANY)) {
+            if (bean.getBeanClass() == cls) own.add(bean);
+        }
+        if (own.isEmpty()) {
+            LOG.log(System.Logger.Level.WARNING, "foy: " + cls.getName() + " is listed by "
+                    + CdiWebComponents.class.getSimpleName() + " but has no bean of that class"
+                    + " (vetoed, or loaded by another class loader); skipped");
+            return null;
+        }
+        return new Candidate(cls, own.size() == 1 ? own.iterator().next() : bm.resolve(own));
+    }
+
+    /**
+     * Whether the bean class {@code cls}, which no index lists, is a web component: discovered
+     * anyway, with a warning naming the archive's missing build step.
+     */
+    private static boolean missedByTheIndexes(WebComponentRegistry registry, Class<?> cls) {
+        if (!isWebComponent(registry, cls)) return false;
+        LOG.log(System.Logger.Level.WARNING, "foy: " + cls.getName() + " is a web component bean"
+                + " missing from every " + CdiWebComponents.class.getSimpleName() + " index; its"
+                + " archive was built without foy-cdi-vauban on the annotation processor path."
+                + " Discovered anyway; build that archive with foy-cdi-vauban on the processor path");
+        return true;
     }
 
     private static boolean isWebComponent(WebComponentRegistry registry, Class<?> cls) {

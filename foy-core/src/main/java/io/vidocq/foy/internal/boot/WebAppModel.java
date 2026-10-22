@@ -102,6 +102,7 @@ public record WebAppModel(String contextPath,
                           Map<String, Map<String, String>> securityRoleRefs,
                           Map<String, String> runAsRoles,
                           jakarta.servlet.descriptor.JspConfigDescriptor jspConfigDescriptor) {
+    private static final String FACTORY = "factory";
 
     public WebAppModel {
         validateContextPath(contextPath);
@@ -163,7 +164,7 @@ public record WebAppModel(String contextPath,
             Objects.requireNonNull(name, "name");
             if (jspFile == null) {
                 Objects.requireNonNull(type, "type");
-                Objects.requireNonNull(factory, "factory");
+                Objects.requireNonNull(factory, FACTORY);
             } else if (!jspFile.startsWith("/")) throw new IllegalArgumentException("JSP file must start with /: " + jspFile);
             urlPatterns = List.copyOf(urlPatterns);
             initParams = copyOf(initParams);
@@ -201,7 +202,7 @@ public record WebAppModel(String contextPath,
         public FilterDecl {
             Objects.requireNonNull(name, "name");
             Objects.requireNonNull(type, "type");
-            Objects.requireNonNull(factory, "factory");
+            Objects.requireNonNull(factory, FACTORY);
             initParams = copyOf(initParams);
         }
     }
@@ -231,7 +232,7 @@ public record WebAppModel(String contextPath,
                                Supplier<? extends EventListener> factory) {
         public ListenerDecl {
             Objects.requireNonNull(type, "type");
-            Objects.requireNonNull(factory, "factory");
+            Objects.requireNonNull(factory, FACTORY);
         }
     }
 
@@ -259,29 +260,41 @@ public record WebAppModel(String contextPath,
     public static void validateContextPath(String contextPath) {
         Objects.requireNonNull(contextPath, "contextPath");
         if (contextPath.isEmpty() || "/".equals(contextPath)) return;
-        String reason = null;
-        if (contextPath.charAt(0) != '/') reason = "must be empty or start with '/'";
-        else if (contextPath.endsWith("/")) reason = "must not end with '/'";
-        else {
-            for (int i = 0; i < contextPath.length() && reason == null; i++) {
-                char c = contextPath.charAt(i);
-                if (c < 0x20 || c == 0x7f) reason = "must not contain a control character";
-                else if (c == '\\') reason = "must not contain a backslash";
-                else if ("%;?#".indexOf(c) >= 0) reason = "must not contain '" + c + "'";
-            }
-            if (reason == null) {
-                for (String segment : contextPath.substring(1).split("/", -1)) {
-                    if (segment.isEmpty()) reason = "must not contain an empty segment";
-                    else if (".".equals(segment) || "..".equals(segment)) {
-                        reason = "must not contain a '" + segment + "' segment";
-                    }
-                    if (reason != null) break;
-                }
-            }
-        }
+        String reason = contextPathError(contextPath);
         if (reason != null) {
             throw new IllegalArgumentException("invalid context path \"" + printable(contextPath) + "\": " + reason);
         }
+    }
+
+    /** Why {@code contextPath}, neither empty nor {@code "/"}, is invalid; {@code null} when it is valid. */
+    private static String contextPathError(String contextPath) {
+        if (contextPath.charAt(0) != '/') return "must be empty or start with '/'";
+        if (contextPath.endsWith("/")) return "must not end with '/'";
+        String reason = characterError(contextPath);
+        return reason != null ? reason : segmentError(contextPath);
+    }
+
+    /** The reason against the first character of {@code contextPath} not allowed in it, {@code null} without one. */
+    private static String characterError(String contextPath) {
+        for (int i = 0; i < contextPath.length(); i++) {
+            char c = contextPath.charAt(i);
+            if (c < 0x20 || c == 0x7f) return "must not contain a control character";
+            if (c == '\\') return "must not contain a backslash";
+            if ("%;?#".indexOf(c) >= 0) return "must not contain '" + c + "'";
+        }
+        return null;
+    }
+
+    /**
+     * The reason against the first empty, {@code "."} or {@code ".."} segment of {@code contextPath},
+     * which starts with {@code '/'}; {@code null} without one.
+     */
+    private static String segmentError(String contextPath) {
+        for (String segment : contextPath.substring(1).split("/", -1)) {
+            if (segment.isEmpty()) return "must not contain an empty segment";
+            if (".".equals(segment) || "..".equals(segment)) return "must not contain a '" + segment + "' segment";
+        }
+        return null;
     }
 
     /** The path with control characters escaped as Java Unicode escapes, for an error message. */

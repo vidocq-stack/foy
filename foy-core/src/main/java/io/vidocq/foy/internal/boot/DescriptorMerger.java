@@ -37,6 +37,7 @@ import jakarta.servlet.ServletException;
 import java.net.URL;
 import java.security.CodeSource;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.EnumSet;
 import java.util.EventListener;
 import java.util.HashSet;
@@ -65,6 +66,7 @@ import java.util.function.Supplier;
 public final class DescriptorMerger {
 
     private static final System.Logger LOG = System.getLogger(DescriptorMerger.class.getName());
+    private static final String SERVLET = "servlet";
 
     private DescriptorMerger() {}
 
@@ -98,7 +100,7 @@ public final class DescriptorMerger {
          * @throws IllegalArgumentException when {@code descriptorOf} reports a class misusing the
          *         Servlet annotations; callers fail the deployment
          */
-        public static AnnotatedComponents fromDescriptors(Iterable<? extends Class<?>> classes,
+        public static AnnotatedComponents fromDescriptors(Iterable<Class<?>> classes,
                                                           Function<Class<?>, WebComponentDescriptor> descriptorOf,
                                                           BiFunction<Class<?>, Class<?>, ? extends Supplier<?>> instances) {
             List<ServletDecl> servlets = new ArrayList<>();
@@ -108,35 +110,53 @@ public final class DescriptorMerger {
             for (Class<?> cls : classes) {
                 WebComponentDescriptor d = descriptorOf.apply(cls);
                 switch (d.kind()) {
-                    case SERVLET -> {
-                        if (!Servlet.class.isAssignableFrom(cls)) continue;
-                        servlets.add(new ServletDecl(d.name(), cls.asSubclass(Servlet.class),
-                                cast(instances.apply(cls, Servlet.class), Servlet.class), d.urlPatterns(), d.initParams(),
-                                d.loadOnStartup(), d.asyncSupported(), d.servletSecurity(), d.multipartConfig(),
-                                true));
-                    }
-                    case FILTER -> {
-                        if (!Filter.class.isAssignableFrom(cls)) continue;
-                        filters.add(new FilterDecl(d.name(), cls.asSubclass(Filter.class),
-                                cast(instances.apply(cls, Filter.class), Filter.class), d.initParams(), d.asyncSupported()));
-                        Set<DispatcherType> types = d.dispatcherTypes().isEmpty()
-                                ? EnumSet.of(DispatcherType.REQUEST) : EnumSet.copyOf(d.dispatcherTypes());
-                        for (String pattern : d.urlPatterns()) {
-                            filterMappings.add(new FilterMappingDecl(d.name(), pattern, null, types));
-                        }
-                        for (String servletName : d.servletNames()) {
-                            filterMappings.add(new FilterMappingDecl(d.name(), null, servletName, types));
-                        }
-                    }
-                    case LISTENER -> {
-                        if (!EventListener.class.isAssignableFrom(cls)) continue;
-                        listeners.add(new ListenerDecl(cls.asSubclass(EventListener.class),
-                                cast(instances.apply(cls, EventListener.class), EventListener.class)));
-                    }
+                    case SERVLET -> addServlet(cls, d, instances, servlets);
+                    case FILTER -> addFilter(cls, d, instances, filters, filterMappings);
+                    case LISTENER -> addListener(cls, instances, listeners);
                     default -> { /* not a web component */ }
                 }
             }
             return new AnnotatedComponents(servlets, filters, filterMappings, listeners);
+        }
+
+        /** Adds {@code cls}, described by {@code d}, to {@code servlets} when it is a {@link Servlet}. */
+        private static void addServlet(Class<?> cls, WebComponentDescriptor d,
+                                       BiFunction<Class<?>, Class<?>, ? extends Supplier<?>> instances,
+                                       List<ServletDecl> servlets) {
+            if (!Servlet.class.isAssignableFrom(cls)) return;
+            servlets.add(new ServletDecl(d.name(), cls.asSubclass(Servlet.class),
+                    cast(instances.apply(cls, Servlet.class), Servlet.class), d.urlPatterns(), d.initParams(),
+                    d.loadOnStartup(), d.asyncSupported(), d.servletSecurity(), d.multipartConfig(),
+                    true));
+        }
+
+        /**
+         * Adds {@code cls}, described by {@code d}, to {@code filters} with its mappings to
+         * {@code filterMappings} when it is a {@link Filter}.
+         */
+        private static void addFilter(Class<?> cls, WebComponentDescriptor d,
+                                      BiFunction<Class<?>, Class<?>, ? extends Supplier<?>> instances,
+                                      List<FilterDecl> filters, List<FilterMappingDecl> filterMappings) {
+            if (!Filter.class.isAssignableFrom(cls)) return;
+            filters.add(new FilterDecl(d.name(), cls.asSubclass(Filter.class),
+                    cast(instances.apply(cls, Filter.class), Filter.class), d.initParams(), d.asyncSupported()));
+            Set<DispatcherType> types = d.dispatcherTypes().isEmpty()
+                    ? EnumSet.of(DispatcherType.REQUEST) : EnumSet.copyOf(d.dispatcherTypes());
+            for (String pattern : d.urlPatterns()) {
+                filterMappings.add(new FilterMappingDecl(d.name(), pattern, null, types));
+            }
+            for (String servletName : d.servletNames()) {
+                filterMappings.add(new FilterMappingDecl(d.name(), null, servletName, types));
+            }
+        }
+
+        /** Adds {@code cls} to {@code listeners} when it is an {@link EventListener}. */
+        private static void addListener(Class<?> cls,
+                                        BiFunction<Class<?>, Class<?>, ? extends Supplier<?>> instances,
+                                        List<ListenerDecl> listeners) {
+            if (!EventListener.class.isAssignableFrom(cls)) return;
+            listeners.add(new ListenerDecl(cls.asSubclass(EventListener.class),
+                    cast(instances.apply(cls, EventListener.class), EventListener.class)));
         }
 
         private static <T> Supplier<T> cast(Supplier<?> supplier, Class<T> type) {
@@ -149,7 +169,7 @@ public final class DescriptorMerger {
          * equals a normalised jar. A class without code source is never dropped. Filter mappings
          * of a dropped filter are dropped with it.
          */
-        public AnnotatedComponents excludingSources(Set<URL> jars) {
+        public AnnotatedComponents excludingSources(Collection<URL> jars) {
             return excludingSources(jars, AnnotatedComponents::codeSource);
         }
 
@@ -163,7 +183,7 @@ public final class DescriptorMerger {
          * harness loading a war's classes from a shared class loader and attributing each one to
          * a synthetic {@code WEB-INF/lib/<jar>} URL.</p>
          */
-        public AnnotatedComponents excludingSources(Set<URL> jars, Function<Class<?>, URL> sourceOf) {
+        public AnnotatedComponents excludingSources(Collection<URL> jars, Function<Class<?>, URL> sourceOf) {
             if (jars.isEmpty()) return this;
             Set<String> keys = new HashSet<>();
             for (URL u : jars) keys.add(Fragment.sourceKey(u));
@@ -238,7 +258,7 @@ public final class DescriptorMerger {
     /**
      * As {@link #mergeMerged(WebAppDescriptor, List, AnnotatedComponents, ComponentFactory,
      * WebAppModel.Builder)}, the jar of an annotated class being {@code sourceOf.apply(type)}
-     * instead of its code source (see {@link AnnotatedComponents#excludingSources(Set, Function)}):
+     * instead of its code source (see {@link AnnotatedComponents#excludingSources(Collection, Function)}):
      * the annotations of the classes of {@code metadata-complete} fragments' jars are dropped by
      * that mapping.
      */
@@ -246,7 +266,7 @@ public final class DescriptorMerger {
                                    AnnotatedComponents annotated, Function<Class<?>, URL> sourceOf,
                                    ComponentFactory factory, WebAppModel.Builder target)
             throws ServletException {
-        Set<URL> complete = new HashSet<>();
+        List<URL> complete = new ArrayList<>();
         for (Fragment f : fragments) if (f.descriptor().metadataComplete()) complete.add(f.jar());
         mergeEffective(effective, annotated.excludingSources(complete, sourceOf), factory, target);
     }
@@ -298,7 +318,7 @@ public final class DescriptorMerger {
             int minor = dot < 0 ? 0 : Integer.parseInt(v.substring(dot + 1));
             if (major < 0 || minor < 0) return;
             target.effectiveVersion(major, minor);
-        } catch (NumberFormatException ignored) {
+        } catch (NumberFormatException _) {
             // malformed version: the container version stays
         }
     }
@@ -313,56 +333,96 @@ public final class DescriptorMerger {
 
         Set<String> done = new HashSet<>();
         for (var def : webXml.servlets()) {
-            ServletDecl a = annotatedByName.get(def.name());
             // The web.xml declaration overrides the annotated one of the same name, even when skipped.
             done.add(def.name());
-            if (def.className() == null && def.jspFile() != null) {
-                target.servlet(new ServletDecl(def.name(), null, null, webXml.patternsFor(def.name()),
-                        def.initParams(), def.loadOnStartup(), Boolean.TRUE.equals(def.asyncSupported()),
-                        null, null, def.enabled(), def.jspFile()));
-                continue;
-            }
-            Class<? extends Servlet> type = loadComponent(factory, def.className(), Servlet.class, "servlet",
-                    def.name());
-            if (type == null) continue;
-            List<String> xmlPatterns = webXml.patternsFor(def.name());
-            List<String> patterns = !xmlPatterns.isEmpty() || a == null ? xmlPatterns : a.urlPatterns();
-            Map<String, String> params = new LinkedHashMap<>();
-            if (a != null) params.putAll(a.initParams());
-            params.putAll(def.initParams());
-            int load = def.loadOnStartup() != Integer.MIN_VALUE || a == null
-                    ? def.loadOnStartup() : a.loadOnStartup();
-            // §8.2.3: a web.xml value overrides the annotation; absent means "take the annotation".
-            boolean async = def.asyncSupported() != null ? def.asyncSupported()
-                    : (a != null && a.asyncSupported());
-            // §13.4.1: @ServletSecurity applies to the class, whatever declared the servlet
-            // (unless metadata-complete turns annotation processing off, §8.1).
-            var classDescriptor = webXml.metadataComplete() ? null
-                    : descriptor(factory, type, "servlet", def.name());
-            if (!def.securityRoleRefs().isEmpty()) target.securityRoleRefs(def.name(), def.securityRoleRefs());
-            if (classDescriptor != null) declared.addAll(classDescriptor.declaredRoles());
-            // A descriptor <run-as> overrides the class's @RunAs.
-            String runAs = def.runAs() != null ? def.runAs() : classDescriptor == null ? null : classDescriptor.runAs();
-            if (runAs != null) target.runAsRole(def.name(), runAs);
-            var security = classDescriptor == null ? null : classDescriptor.servletSecurity();
-            // §8.2.3: a descriptor <multipart-config> overrides the class's @MultipartConfig.
-            var multipart = def.multipartConfig() != null ? multipartElement(def.multipartConfig())
-                    : classDescriptor == null ? null : classDescriptor.multipartConfig();
-            target.servlet(new ServletDecl(def.name(), type, supplier(factory, type), patterns,
-                    params, load, async, security, multipart, def.enabled()));
+            mergeXmlServlet(webXml, def, annotatedByName.get(def.name()), factory, target, declared);
         }
         for (ServletDecl a : ann.servlets()) {
-            if (done.contains(a.name())) continue;
-            // ann is empty under metadata-complete, so these are annotated servlets being processed.
-            var classDescriptor = descriptor(factory, a.type(), "servlet", a.name());
-            declared.addAll(classDescriptor.declaredRoles());
-            if (classDescriptor.runAs() != null) target.runAsRole(a.name(), classDescriptor.runAs());
-            List<String> xmlPatterns = webXml.patternsFor(a.name());
-            target.servlet(xmlPatterns.isEmpty() ? a : new ServletDecl(a.name(), a.type(), a.factory(),
-                    xmlPatterns, a.initParams(), a.loadOnStartup(), a.asyncSupported(), a.servletSecurity(),
-                    a.multipartConfig(), a.enabled()));
+            if (!done.contains(a.name())) mergeAnnotatedServlet(webXml, a, factory, target, declared);
         }
         return declared;
+    }
+
+    /**
+     * Merges the web.xml servlet {@code def} with the annotated servlet of the same name
+     * ({@code a}, {@code null} without one) into {@code target}, adding the roles the class's
+     * {@code @DeclareRoles} declares to {@code declared}. A servlet whose class has the wrong type
+     * is skipped.
+     */
+    private static void mergeXmlServlet(WebAppDescriptor webXml, WebAppDescriptor.ServletDef def, ServletDecl a,
+                                        ComponentFactory factory, WebAppModel.Builder target,
+                                        Set<String> declared) throws ServletException {
+        if (def.className() == null && def.jspFile() != null) {
+            target.servlet(new ServletDecl(def.name(), null, null, webXml.patternsFor(def.name()),
+                    def.initParams(), def.loadOnStartup(), Boolean.TRUE.equals(def.asyncSupported()),
+                    null, null, def.enabled(), def.jspFile()));
+            return;
+        }
+        Class<? extends Servlet> type = loadComponent(factory, def.className(), Servlet.class, SERVLET,
+                def.name());
+        if (type == null) return;
+        List<String> xmlPatterns = webXml.patternsFor(def.name());
+        List<String> patterns = !xmlPatterns.isEmpty() || a == null ? xmlPatterns : a.urlPatterns();
+        Map<String, String> params = new LinkedHashMap<>();
+        if (a != null) params.putAll(a.initParams());
+        params.putAll(def.initParams());
+        int load = def.loadOnStartup() != Integer.MIN_VALUE || a == null
+                ? def.loadOnStartup() : a.loadOnStartup();
+        boolean async = asyncSupported(def.asyncSupported(), a != null && a.asyncSupported());
+        // §13.4.1: @ServletSecurity applies to the class, whatever declared the servlet
+        // (unless metadata-complete turns annotation processing off, §8.1).
+        var classDescriptor = webXml.metadataComplete() ? null
+                : descriptor(factory, type, SERVLET, def.name());
+        mergeServletRoles(def, classDescriptor, target, declared);
+        var security = classDescriptor == null ? null : classDescriptor.servletSecurity();
+        target.servlet(new ServletDecl(def.name(), type, supplier(factory, type), patterns,
+                params, load, async, security, multipartConfig(def, classDescriptor), def.enabled()));
+    }
+
+    /**
+     * The role settings of the web.xml servlet {@code def} into {@code target}: its
+     * {@code security-role-ref}s and its run-as role, the roles its class's {@code @DeclareRoles}
+     * declares into {@code declared}; {@code classDescriptor} is {@code null} under
+     * metadata-complete.
+     */
+    private static void mergeServletRoles(WebAppDescriptor.ServletDef def, WebComponentDescriptor classDescriptor,
+                                          WebAppModel.Builder target, Set<String> declared) {
+        if (!def.securityRoleRefs().isEmpty()) target.securityRoleRefs(def.name(), def.securityRoleRefs());
+        if (classDescriptor != null) declared.addAll(classDescriptor.declaredRoles());
+        String runAs = runAs(def, classDescriptor);
+        if (runAs != null) target.runAsRole(def.name(), runAs);
+    }
+
+    /** A descriptor {@code <run-as>} overrides the class's {@code @RunAs}; {@code null} without either. */
+    private static String runAs(WebAppDescriptor.ServletDef def, WebComponentDescriptor classDescriptor) {
+        if (def.runAs() != null) return def.runAs();
+        return classDescriptor == null ? null : classDescriptor.runAs();
+    }
+
+    /** §8.2.3: a descriptor {@code <multipart-config>} overrides the class's {@code @MultipartConfig}. */
+    private static MultipartConfigElement multipartConfig(WebAppDescriptor.ServletDef def,
+                                                          WebComponentDescriptor classDescriptor) {
+        if (def.multipartConfig() != null) return multipartElement(def.multipartConfig());
+        return classDescriptor == null ? null : classDescriptor.multipartConfig();
+    }
+
+    /** §8.2.3: a web.xml value overrides the annotation; absent ({@code null}) means "take the annotation". */
+    private static boolean asyncSupported(Boolean xml, boolean annotated) {
+        return xml != null ? xml : annotated;
+    }
+
+    /** Merges the annotated servlet {@code a}, which web.xml does not declare, into {@code target}. */
+    private static void mergeAnnotatedServlet(WebAppDescriptor webXml, ServletDecl a, ComponentFactory factory,
+                                              WebAppModel.Builder target, Set<String> declared)
+            throws ServletException {
+        // ann is empty under metadata-complete, so these are annotated servlets being processed.
+        var classDescriptor = descriptor(factory, a.type(), SERVLET, a.name());
+        declared.addAll(classDescriptor.declaredRoles());
+        if (classDescriptor.runAs() != null) target.runAsRole(a.name(), classDescriptor.runAs());
+        List<String> xmlPatterns = webXml.patternsFor(a.name());
+        target.servlet(xmlPatterns.isEmpty() ? a : new ServletDecl(a.name(), a.type(), a.factory(),
+                xmlPatterns, a.initParams(), a.loadOnStartup(), a.asyncSupported(), a.servletSecurity(),
+                a.multipartConfig(), a.enabled()));
     }
 
     private static MultipartConfigElement multipartElement(WebAppDescriptor.MultipartConfigDef d) {
@@ -390,16 +450,21 @@ public final class DescriptorMerger {
             Map<String, String> params = new LinkedHashMap<>();
             if (a != null) params.putAll(a.initParams());
             params.putAll(def.initParams());
-            // §8.2.3: a web.xml value overrides the annotation; absent means "take the annotation".
-            boolean async = def.asyncSupported() != null ? def.asyncSupported()
-                    : (a != null && a.asyncSupported());
+            boolean async = asyncSupported(def.asyncSupported(), a != null && a.asyncSupported());
             target.filter(new FilterDecl(def.name(), type, supplier(factory, type), params, async));
         }
         for (FilterDecl a : ann.filters()) {
             if (!done.contains(a.name())) target.filter(a);
         }
+        mergeFilterMappings(webXml, ann, skipped, target);
+    }
 
-        // web.xml mappings come first and replace the annotation mappings of the same filter.
+    /**
+     * Merges the filter mappings into {@code target}, but those of the {@code skipped} filters:
+     * web.xml mappings come first and replace the annotation mappings of the same filter.
+     */
+    private static void mergeFilterMappings(WebAppDescriptor webXml, AnnotatedComponents ann, Set<String> skipped,
+                                            WebAppModel.Builder target) {
         Set<String> mappedInXml = new HashSet<>();
         for (var m : webXml.filterMappings()) {
             mappedInXml.add(m.filterName());
