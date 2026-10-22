@@ -108,7 +108,9 @@ class ClassFileDescriptorReaderTest {
     @WebListener
     @HandlesTypes(Runnable.class)
     public static class ListenerAndInitializer implements ServletContextListener, ServletContainerInitializer {
-        @Override public void onStartup(Set<Class<?>> c, ServletContext ctx) {}
+        @Override public void onStartup(Set<Class<?>> c, ServletContext ctx) {
+            // a fixture: the reader only reads its annotations, nothing runs it
+        }
     }
 
     @WebServlet("/s")

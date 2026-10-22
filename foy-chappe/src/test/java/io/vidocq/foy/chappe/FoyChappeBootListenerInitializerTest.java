@@ -25,6 +25,7 @@ import org.junit.jupiter.api.io.TempDir;
 
 import java.net.URL;
 import java.net.URLClassLoader;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.jar.JarEntry;
@@ -77,7 +78,7 @@ class FoyChappeBootListenerInitializerTest {
                 out.closeEntry();
             }
             out.putNextEntry(new JarEntry("META-INF/services/jakarta.servlet.ServletContainerInitializer"));
-            out.write("bothpkg.Both\n".getBytes());
+            out.write("bothpkg.Both\n".getBytes(StandardCharsets.UTF_8));
             out.closeEntry();
         }
         return jar;
