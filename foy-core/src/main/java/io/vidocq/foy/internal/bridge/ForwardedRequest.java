@@ -108,7 +108,7 @@ public final class ForwardedRequest extends HttpServletRequestWrapper {
     }
     @Override public StringBuffer getRequestURL() {
         if (target.named()) return super.getRequestURL();
-        return RequestUrls.of(this);
+        return new StringBuffer(RequestUrls.of(this));
     }
     @Override public String getServletPath() { return target.named() ? super.getServletPath() : target.servletPath(); }
     @Override public String getPathInfo() { return target.named() ? super.getPathInfo() : target.pathInfo(); }

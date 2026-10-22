@@ -79,7 +79,7 @@ public final class AsyncDispatchRequest extends HttpServletRequestWrapper {
         String path = RequestPaths.encodeUriPath(target.path());
         return ctx.equals("/") ? path : ctx + path;
     }
-    @Override public StringBuffer getRequestURL() { return RequestUrls.of(this); }
+    @Override public StringBuffer getRequestURL() { return new StringBuffer(RequestUrls.of(this)); }
 
     DispatchTarget target() { return target; }
     // §2.3.3.3 : isAsyncStarted reste géré par la request originale

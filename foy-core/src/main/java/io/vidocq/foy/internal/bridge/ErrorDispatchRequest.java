@@ -56,7 +56,7 @@ public final class ErrorDispatchRequest extends HttpServletRequestWrapper {
     }
     @Override public StringBuffer getRequestURL() {
         if (target.path() == null) return super.getRequestURL();
-        return RequestUrls.of(this);
+        return new StringBuffer(RequestUrls.of(this));
     }
     /** Section 9.1: a relative path is resolved against the error-page location. */
     @Override public RequestDispatcher getRequestDispatcher(String path) {

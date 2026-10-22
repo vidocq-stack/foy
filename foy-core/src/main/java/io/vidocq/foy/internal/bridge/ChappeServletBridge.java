@@ -1022,7 +1022,7 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
         }
         if (res.isCommitted()) return; // closed by the application (sendError, redirect): it stands
         try { res.sendError(500); }
-        catch (IOException ignored) { /* the response is buffered: sendError cannot fail on I/O */ }
+        catch (IOException _) { /* the response is buffered: sendError cannot fail on I/O */ }
     }
 
     /**
