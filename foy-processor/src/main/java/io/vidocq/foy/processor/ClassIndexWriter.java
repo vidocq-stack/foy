@@ -64,6 +64,15 @@ final class ClassIndexWriter {
         if (binary.endsWith(COMPANION_SUFFIX)) {
             return;
         }
+        lines.put(binary, binary + "|" + String.join(",", supertypes(type)) + "|"
+                + String.join(",", runtimeAnnotations(type)));
+        if (origin == null) {
+            origin = type;
+        }
+    }
+
+    /** The binary names of the transitive superclasses and interfaces of {@code type}, sorted. */
+    private Set<String> supertypes(TypeElement type) {
         var supers = new TreeSet<String>();
         var seen = new TreeSet<String>();
         var queue = new ArrayDeque<TypeMirror>();
@@ -79,18 +88,20 @@ final class ClassIndexWriter {
                 }
             }
         }
+        return supers;
+    }
+
+    /** The binary names of the {@code RUNTIME}-retained annotations on {@code type} and its members, sorted. */
+    private Set<String> runtimeAnnotations(TypeElement type) {
         var annotations = new TreeSet<String>();
         collectRuntimeAnnotations(type, annotations);
         for (Element member : type.getEnclosedElements()) {
             switch (member.getKind()) {
                 case FIELD, ENUM_CONSTANT, METHOD, CONSTRUCTOR -> collectRuntimeAnnotations(member, annotations);
-                default -> { }
+                default -> { /* the class-bytes scan reads the annotations of fields and methods only */ }
             }
         }
-        lines.put(binary, binary + "|" + String.join(",", supers) + "|" + String.join(",", annotations));
-        if (origin == null) {
-            origin = type;
-        }
+        return annotations;
     }
 
     /** Adds the binary names of the {@code RUNTIME}-retained annotations on {@code element}. */

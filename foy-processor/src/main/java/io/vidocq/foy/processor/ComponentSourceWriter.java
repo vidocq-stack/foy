@@ -61,51 +61,8 @@ final class ComponentSourceWriter {
         sb.append("            ").append(GEN).append("WebComponentDescriptor.plain()\n");
         sb.append("                    .withKind(").append(GEN).append("WebComponentDescriptor.Kind.")
                 .append(m.kind().name()).append(")");
-        if (m.name() != null) {
-            sb.append("\n                    .withName(").append(literal(m.name())).append(")");
-        }
-        if (!m.urlPatterns().isEmpty()) {
-            sb.append("\n                    .withUrlPatterns(").append(literals(m.urlPatterns())).append(")");
-        }
-        if (!m.initParams().isEmpty()) {
-            List<String> flat = new ArrayList<>();
-            for (String[] kv : m.initParams()) {
-                flat.add(kv[0]);
-                flat.add(kv[1]);
-            }
-            sb.append("\n                    .withInitParams(").append(literals(flat)).append(")");
-        }
-        if (m.loadOnStartup() != Integer.MIN_VALUE) {
-            sb.append("\n                    .withLoadOnStartup(").append(m.loadOnStartup()).append(")");
-        }
-        if (m.asyncSupported()) {
-            sb.append("\n                    .withAsyncSupported(true)");
-        }
-        if (!m.dispatcherTypes().isEmpty()) {
-            sb.append("\n                    .withDispatcherTypes(");
-            for (int i = 0; i < m.dispatcherTypes().size(); i++) {
-                sb.append(i > 0 ? ", " : "").append("jakarta.servlet.DispatcherType.").append(m.dispatcherTypes().get(i));
-            }
-            sb.append(")");
-        }
-        if (!m.servletNames().isEmpty()) {
-            sb.append("\n                    .withServletNames(").append(literals(m.servletNames())).append(")");
-        }
-        if (m.multipart() != null) {
-            sb.append("\n                    .withMultipartConfig(").append(m.multipart()).append(")");
-        }
-        if (m.security() != null) {
-            sb.append("\n                    .withServletSecurity(").append(m.security()).append(")");
-        }
-        if (!m.declaredRoles().isEmpty()) {
-            sb.append("\n                    .withDeclaredRoles(").append(literals(m.declaredRoles())).append(")");
-        }
-        if (m.runAs() != null) {
-            sb.append("\n                    .withRunAs(").append(literal(m.runAs())).append(")");
-        }
-        if (!m.handlesTypes().isEmpty()) {
-            sb.append("\n                    .withHandlesTypes(").append(literals(m.handlesTypes())).append(")");
-        }
+        appendElements(sb, m);
+        appendMetadata(sb, m);
         sb.append(";\n");
         sb.append("    public ").append(simple).append("() {}\n");
         sb.append("    @Override public Class<?> type() { return ").append(m.typeFqcn()).append(".class; }\n");
@@ -113,6 +70,64 @@ final class ComponentSourceWriter {
         sb.append("    @Override public Object newInstance() { return new ").append(m.typeFqcn()).append("(); }\n");
         sb.append("}\n");
         return sb.toString();
+    }
+
+    /** The descriptor calls for the {@code @WebServlet}/{@code @WebFilter} elements; a default value is left out. */
+    private static void appendElements(StringBuilder sb, ComponentModel m) {
+        if (m.name() != null) {
+            with(sb, "Name", literal(m.name()));
+        }
+        if (!m.urlPatterns().isEmpty()) {
+            with(sb, "UrlPatterns", literals(m.urlPatterns()));
+        }
+        if (!m.initParams().isEmpty()) {
+            List<String> flat = new ArrayList<>();
+            for (String[] kv : m.initParams()) {
+                flat.add(kv[0]);
+                flat.add(kv[1]);
+            }
+            with(sb, "InitParams", literals(flat));
+        }
+        if (m.loadOnStartup() != Integer.MIN_VALUE) {
+            with(sb, "LoadOnStartup", String.valueOf(m.loadOnStartup()));
+        }
+        if (m.asyncSupported()) {
+            with(sb, "AsyncSupported", "true");
+        }
+        if (!m.dispatcherTypes().isEmpty()) {
+            var types = new StringBuilder();
+            for (int i = 0; i < m.dispatcherTypes().size(); i++) {
+                types.append(i > 0 ? ", " : "").append("jakarta.servlet.DispatcherType.").append(m.dispatcherTypes().get(i));
+            }
+            with(sb, "DispatcherTypes", types.toString());
+        }
+        if (!m.servletNames().isEmpty()) {
+            with(sb, "ServletNames", literals(m.servletNames()));
+        }
+    }
+
+    /** The descriptor calls for the other annotations: multipart, security, roles, run-as, handled types. */
+    private static void appendMetadata(StringBuilder sb, ComponentModel m) {
+        if (m.multipart() != null) {
+            with(sb, "MultipartConfig", m.multipart());
+        }
+        if (m.security() != null) {
+            with(sb, "ServletSecurity", m.security());
+        }
+        if (!m.declaredRoles().isEmpty()) {
+            with(sb, "DeclaredRoles", literals(m.declaredRoles()));
+        }
+        if (m.runAs() != null) {
+            with(sb, "RunAs", literal(m.runAs()));
+        }
+        if (!m.handlesTypes().isEmpty()) {
+            with(sb, "HandlesTypes", literals(m.handlesTypes()));
+        }
+    }
+
+    /** Appends the descriptor call {@code with<property>(<arguments>)} on a new line of the chain. */
+    private static void with(StringBuilder sb, String property, String arguments) {
+        sb.append("\n                    .with").append(property).append('(').append(arguments).append(')');
     }
 
     private static String literals(List<String> values) {

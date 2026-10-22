@@ -31,6 +31,7 @@ import javax.tools.Diagnostic;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 /**
@@ -76,6 +77,7 @@ record ComponentModel(String packageName,
     enum Kind { SERVLET, FILTER, LISTENER, INITIALIZER, PLAIN }
 
     private static final String PKG = "jakarta.servlet.";
+    private static final String VALUE = "value";
     static final String WEB_SERVLET = PKG + "annotation.WebServlet";
     static final String WEB_FILTER = PKG + "annotation.WebFilter";
     static final String WEB_LISTENER = PKG + "annotation.WebListener";
@@ -97,104 +99,164 @@ record ComponentModel(String packageName,
      * @return the model, or empty when the class is not a web component or is invalid
      */
     static Optional<ComponentModel> from(TypeElement type, ProcessingEnvironment env) {
-        AnnotationMirror webServlet = AnnotationReader.find(type, WEB_SERVLET);
-        AnnotationMirror webFilter = AnnotationReader.find(type, WEB_FILTER);
-        AnnotationMirror webListener = AnnotationReader.find(type, WEB_LISTENER);
-        boolean servlet = is(type, SERVLET, env);
-        boolean filter = is(type, FILTER, env);
-        boolean listener = LISTENERS.stream().anyMatch(l -> is(type, l, env));
+        AnnotationMirror main = mainAnnotation(type);
         boolean initializer = is(type, INITIALIZER, env);
-        Kind kind;
-        AnnotationMirror main = webServlet != null ? webServlet : webFilter != null ? webFilter : webListener;
-        if (webServlet != null) {
-            if (!servlet) {
-                return error(env, type, main, "@WebServlet requires " + type.getQualifiedName() + " to implement " + SERVLET);
-            }
-            kind = Kind.SERVLET;
-        } else if (webFilter != null) {
-            if (!filter) {
-                return error(env, type, main, "@WebFilter requires " + type.getQualifiedName() + " to implement " + FILTER);
-            }
-            kind = Kind.FILTER;
-        } else if (main != null) {
-            if (!listener) {
-                return error(env, type, main, "@WebListener requires " + type.getQualifiedName()
-                        + " to implement one of " + String.join(", ", LISTENERS));
-            }
-            kind = Kind.LISTENER;
-        } else if (type.getKind() != ElementKind.CLASS || type.getModifiers().contains(Modifier.ABSTRACT)) {
-            return Optional.empty();
-        } else if (initializer) {
-            kind = Kind.INITIALIZER;
-        } else if (servlet || filter || listener) {
-            kind = Kind.PLAIN;
-        } else {
+        Kind kind = kind(type, main, initializer, env);
+        if (kind == null) {
             return Optional.empty();
         }
-
-        String name = null;
-        List<String> patterns = new ArrayList<>();
-        List<String[]> params = new ArrayList<>();
-        int load = Integer.MIN_VALUE;
-        boolean async = false;
-        var dispatchers = new LinkedHashSet<String>();
-        List<String> servletNames = new ArrayList<>();
         String fqcn = env.getElementUtils().getBinaryName(type).toString();
-        if (kind == Kind.SERVLET || kind == Kind.FILTER) {
-            var explicit = AnnotationReader.explicit(main);
-            boolean hasValue = !AnnotationReader.list(explicit.get("value")).isEmpty();
-            boolean hasPatterns = !AnnotationReader.list(explicit.get("urlPatterns")).isEmpty();
-            if (hasValue && hasPatterns) {
-                return error(env, type, main, "foy: set either 'value' or 'urlPatterns' on "
-                        + type.getQualifiedName() + ", not both");
-            }
-            var values = AnnotationReader.values(main, env);
-            String declared = (String) values.get(kind == Kind.SERVLET ? "name" : "filterName").getValue();
-            name = declared.isEmpty() ? fqcn : declared;
-            patterns.addAll(AnnotationReader.strings(hasValue ? values.get("value") : values.get("urlPatterns")));
-            async = (Boolean) values.get("asyncSupported").getValue();
-            for (AnnotationValue o : AnnotationReader.list(values.get("initParams"))) {
-                var p = AnnotationReader.values((AnnotationMirror) o.getValue(), env);
-                params.add(new String[]{(String) p.get("name").getValue(), (String) p.get("value").getValue()});
-            }
-            if (kind == Kind.SERVLET) {
-                int declaredLoad = (Integer) values.get("loadOnStartup").getValue();
-                load = declaredLoad < 0 ? Integer.MIN_VALUE : declaredLoad;
-            } else {
-                servletNames.addAll(AnnotationReader.strings(values.get("servletNames")));
-                dispatchers.addAll(AnnotationReader.enumNames(values.get("dispatcherTypes")));
-                if (dispatchers.isEmpty()) {
-                    dispatchers.add("REQUEST");
-                }
-            }
-            if (patterns.isEmpty() && servletNames.isEmpty()) {
-                return error(env, type, main, "foy: " + type.getQualifiedName() + " declares no 'urlPatterns'/'value'"
-                        + (kind == Kind.FILTER ? " and no 'servletNames'" : ""));
-            }
+        MainElements e = kind == Kind.SERVLET || kind == Kind.FILTER
+                ? mainElements(type, main, kind, fqcn, env) : MainElements.none();
+        if (e == null) {
+            return Optional.empty();
         }
-
         AnnotationMirror multipart = AnnotationReader.find(type, PKG + "annotation.MultipartConfig");
         AnnotationMirror security = AnnotationReader.find(type, PKG + "annotation.ServletSecurity");
         AnnotationMirror roles = AnnotationReader.find(type, "jakarta.annotation.security.DeclareRoles");
         AnnotationMirror runAs = AnnotationReader.find(type, "jakarta.annotation.security.RunAs");
-        AnnotationMirror handles = AnnotationReader.find(type, PKG + "annotation.HandlesTypes");
         String pkg = env.getElementUtils().getPackageOf(type).getQualifiedName().toString();
         String binarySimple = pkg.isEmpty() ? fqcn : fqcn.substring(pkg.length() + 1);
         return Optional.of(new ComponentModel(pkg, binarySimple, type.getQualifiedName().toString(), main != null,
-                kind, name, patterns, params, load, async, new ArrayList<>(dispatchers), servletNames,
+                kind, e.name(), e.patterns(), e.params(), e.load(), e.async(), e.dispatchers(), e.servletNames(),
                 multipart == null ? null : AnnotationReader.multipartExpression(multipart, env),
                 security == null ? null : AnnotationReader.securityExpression(security, env),
-                roles == null ? List.of() : AnnotationReader.strings(AnnotationReader.values(roles, env).get("value")),
-                runAs == null ? null : (String) AnnotationReader.values(runAs, env).get("value").getValue(),
-                // Any initializer, whatever its kind: a @WebListener may also be the jar's initializer.
-                handles == null || !initializer ? List.of()
-                        : AnnotationReader.binaryNames(AnnotationReader.values(handles, env).get("value"), env)));
+                roles == null ? List.of() : AnnotationReader.strings(AnnotationReader.values(roles, env).get(VALUE)),
+                runAs == null ? null : (String) AnnotationReader.values(runAs, env).get(VALUE).getValue(),
+                handlesTypes(type, initializer, env)));
     }
 
-    private static Optional<ComponentModel> error(ProcessingEnvironment env, TypeElement type,
-                                                  AnnotationMirror at, String message) {
+    /** The {@code @WebServlet}, else the {@code @WebFilter}, else the {@code @WebListener} of {@code type}; {@code null} without one. */
+    private static AnnotationMirror mainAnnotation(TypeElement type) {
+        AnnotationMirror webServlet = AnnotationReader.find(type, WEB_SERVLET);
+        if (webServlet != null) {
+            return webServlet;
+        }
+        AnnotationMirror webFilter = AnnotationReader.find(type, WEB_FILTER);
+        return webFilter != null ? webFilter : AnnotationReader.find(type, WEB_LISTENER);
+    }
+
+    /**
+     * The kind of {@code type}, whose component annotation is {@code main} ({@code null} without
+     * one); {@code null} when it is not a web component, or when it misuses {@code main}: a compile
+     * error is then reported.
+     */
+    private static Kind kind(TypeElement type, AnnotationMirror main, boolean initializer, ProcessingEnvironment env) {
+        boolean servlet = is(type, SERVLET, env);
+        boolean filter = is(type, FILTER, env);
+        boolean listener = LISTENERS.stream().anyMatch(l -> is(type, l, env));
+        if (main == null) {
+            return plainKind(type, initializer, servlet || filter || listener);
+        }
+        String annotation = ((TypeElement) main.getAnnotationType().asElement()).getQualifiedName().toString();
+        if (annotation.equals(WEB_SERVLET)) {
+            if (!servlet) {
+                report(env, type, main, "@WebServlet requires " + type.getQualifiedName() + " to implement " + SERVLET);
+                return null;
+            }
+            return Kind.SERVLET;
+        }
+        if (annotation.equals(WEB_FILTER)) {
+            if (!filter) {
+                report(env, type, main, "@WebFilter requires " + type.getQualifiedName() + " to implement " + FILTER);
+                return null;
+            }
+            return Kind.FILTER;
+        }
+        if (!listener) {
+            report(env, type, main, "@WebListener requires " + type.getQualifiedName()
+                    + " to implement one of " + String.join(", ", LISTENERS));
+            return null;
+        }
+        return Kind.LISTENER;
+    }
+
+    /** The kind of the unannotated {@code type}: only a concrete class is a component. */
+    private static Kind plainKind(TypeElement type, boolean initializer, boolean component) {
+        if (type.getKind() != ElementKind.CLASS || type.getModifiers().contains(Modifier.ABSTRACT)) {
+            return null;
+        }
+        if (initializer) {
+            return Kind.INITIALIZER;
+        }
+        return component ? Kind.PLAIN : null;
+    }
+
+    /** The elements of a {@code @WebServlet} or {@code @WebFilter}, with the annotation defaults. */
+    private record MainElements(String name, List<String> patterns, List<String[]> params, int load,
+                                boolean async, List<String> dispatchers, List<String> servletNames) {
+        /** Neither {@code @WebServlet} nor {@code @WebFilter}. */
+        static MainElements none() {
+            return new MainElements(null, new ArrayList<>(), new ArrayList<>(), Integer.MIN_VALUE, false,
+                    new ArrayList<>(), new ArrayList<>());
+        }
+    }
+
+    /**
+     * Reads {@code main}, the {@code @WebServlet} ({@code kind == SERVLET}) or {@code @WebFilter} of
+     * {@code type}; {@code null} when it is misused: a compile error is then reported.
+     */
+    private static MainElements mainElements(TypeElement type, AnnotationMirror main, Kind kind, String fqcn,
+                                             ProcessingEnvironment env) {
+        var explicit = AnnotationReader.explicit(main);
+        boolean hasValue = !AnnotationReader.list(explicit.get(VALUE)).isEmpty();
+        boolean hasPatterns = !AnnotationReader.list(explicit.get("urlPatterns")).isEmpty();
+        if (hasValue && hasPatterns) {
+            report(env, type, main, "foy: set either 'value' or 'urlPatterns' on "
+                    + type.getQualifiedName() + ", not both");
+            return null;
+        }
+        var values = AnnotationReader.values(main, env);
+        boolean servlet = kind == Kind.SERVLET;
+        String declared = (String) values.get(servlet ? "name" : "filterName").getValue();
+        String name = declared.isEmpty() ? fqcn : declared;
+        List<String> patterns = new ArrayList<>(
+                AnnotationReader.strings(hasValue ? values.get(VALUE) : values.get("urlPatterns")));
+        boolean async = (Boolean) values.get("asyncSupported").getValue();
+        List<String[]> params = new ArrayList<>();
+        for (AnnotationValue o : AnnotationReader.list(values.get("initParams"))) {
+            var p = AnnotationReader.values((AnnotationMirror) o.getValue(), env);
+            params.add(new String[]{(String) p.get("name").getValue(), (String) p.get(VALUE).getValue()});
+        }
+        int load = servlet ? loadOnStartup(values) : Integer.MIN_VALUE;
+        List<String> servletNames = servlet ? new ArrayList<>()
+                : new ArrayList<>(AnnotationReader.strings(values.get("servletNames")));
+        List<String> dispatchers = servlet ? new ArrayList<>() : dispatcherTypes(values);
+        if (patterns.isEmpty() && servletNames.isEmpty()) {
+            report(env, type, main, "foy: " + type.getQualifiedName() + " declares no 'urlPatterns'/'value'"
+                    + (servlet ? "" : " and no 'servletNames'"));
+            return null;
+        }
+        return new MainElements(name, patterns, params, load, async, dispatchers, servletNames);
+    }
+
+    /** A negative {@code loadOnStartup} means lazy: {@link Integer#MIN_VALUE}. */
+    private static int loadOnStartup(Map<String, AnnotationValue> values) {
+        int declaredLoad = (Integer) values.get("loadOnStartup").getValue();
+        return declaredLoad < 0 ? Integer.MIN_VALUE : declaredLoad;
+    }
+
+    /** A filter's dispatcher types, each once; {@code REQUEST} when none is declared. */
+    private static List<String> dispatcherTypes(Map<String, AnnotationValue> values) {
+        var dispatchers = new LinkedHashSet<>(AnnotationReader.enumNames(values.get("dispatcherTypes")));
+        if (dispatchers.isEmpty()) {
+            dispatchers.add("REQUEST");
+        }
+        return new ArrayList<>(dispatchers);
+    }
+
+    /** The {@code @HandlesTypes} classes of any initializer, whatever its kind: a {@code @WebListener} may also be the jar's initializer. */
+    private static List<String> handlesTypes(TypeElement type, boolean initializer, ProcessingEnvironment env) {
+        AnnotationMirror handles = AnnotationReader.find(type, PKG + "annotation.HandlesTypes");
+        if (handles == null || !initializer) {
+            return List.of();
+        }
+        return AnnotationReader.binaryNames(AnnotationReader.values(handles, env).get(VALUE), env);
+    }
+
+    /** Reports {@code message} as a compile error on {@code type}'s annotation {@code at}. */
+    private static void report(ProcessingEnvironment env, TypeElement type, AnnotationMirror at, String message) {
         env.getMessager().printMessage(Diagnostic.Kind.ERROR, message, type, at);
-        return Optional.empty();
     }
 
     private static boolean is(TypeElement type, String qualifiedName, ProcessingEnvironment env) {

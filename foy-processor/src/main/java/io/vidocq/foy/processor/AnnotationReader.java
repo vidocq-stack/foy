@@ -41,6 +41,7 @@ final class AnnotationReader {
 
     private static final String SERVLET_PKG = "jakarta.servlet.";
     private static final String SECURITY = SERVLET_PKG + "annotation.ServletSecurity";
+    private static final String VALUE = "value";
 
     private AnnotationReader() {
     }
@@ -72,8 +73,9 @@ final class AnnotationReader {
     }
 
     @SuppressWarnings("unchecked")
-    static List<? extends AnnotationValue> list(AnnotationValue v) {
-        return v == null ? List.of() : (List<? extends AnnotationValue>) v.getValue();
+    static List<AnnotationValue> list(AnnotationValue v) {
+        // An array member's value is a List<? extends AnnotationValue>, only read here.
+        return v == null ? List.of() : (List<AnnotationValue>) v.getValue();
     }
 
     static List<String> strings(AnnotationValue v) {
@@ -121,13 +123,13 @@ final class AnnotationReader {
     static String securityExpression(AnnotationMirror m, ProcessingEnvironment env) {
         var v = values(m, env);
         var sb = new StringBuilder("new " + SERVLET_PKG + "ServletSecurityElement(")
-                .append(constraint((AnnotationMirror) v.get("value").getValue(), "value", env))
+                .append(constraint((AnnotationMirror) v.get(VALUE).getValue(), VALUE, env))
                 .append(", java.util.List.of(");
         boolean first = true;
         for (AnnotationValue c : list(v.get("httpMethodConstraints"))) {
             var mc = (AnnotationMirror) c.getValue();
-            sb.append(first ? "" : ", ").append("new " + SERVLET_PKG + "HttpMethodConstraintElement(")
-                    .append(ComponentSourceWriter.literal((String) values(mc, env).get("value").getValue()))
+            sb.append(first ? "" : ", ").append("new ").append(SERVLET_PKG).append("HttpMethodConstraintElement(")
+                    .append(ComponentSourceWriter.literal((String) values(mc, env).get(VALUE).getValue()))
                     .append(", ").append(constraint(mc, "emptyRoleSemantic", env)).append(")");
             first = false;
         }
