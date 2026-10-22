@@ -112,7 +112,7 @@ class TlsAttributesEndToEndTest {
                 var again = impl.peerCertificates();
                 resp.getWriter().write("mutated peers=" + again.length + " leaf="
                         + again[0].getSubjectX500Principal().getName()
-                        + " distinct=" + (first != again) + " attribute=" + req.getAttribute("jakarta.servlet.request.X509Certificate"));
+                        + " distinct=" + !Identity.isSame(first, again) + " attribute=" + req.getAttribute("jakarta.servlet.request.X509Certificate"));
             }
         };
     }

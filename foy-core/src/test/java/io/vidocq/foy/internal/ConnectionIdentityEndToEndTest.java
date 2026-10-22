@@ -76,7 +76,7 @@ class ConnectionIdentityEndToEndTest {
     }
 
     private static String field(String body, String name) {
-        for (String token : body.split(" ")) {
+        for (String token : body.split(" ", -1)) {
             if (token.startsWith(name + "=")) return token.substring(name.length() + 1);
         }
         throw new AssertionError(name + " missing in " + body);

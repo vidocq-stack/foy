@@ -43,6 +43,8 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.net.InetAddress;
+import java.net.InetSocketAddress;
 import java.net.Socket;
 import java.net.SocketException;
 import java.nio.charset.StandardCharsets;
@@ -98,7 +100,7 @@ class ServletNonBlockingIoEndToEndTest {
         try (var client = new Client(port)) {
             client.send(head());
             client.send("5\r\nHello\r\n");
-            Thread.sleep(1000); // part of the scenario: the second chunk comes later
+            Pause.forMillis(1000); // part of the scenario: the second chunk comes later
             client.send("5\r\nWorld\r\n0\r\n\r\n");
             String body = client.readAll();
             assertTrue(body.startsWith("HTTP/1.1 200"), body);
@@ -194,7 +196,7 @@ class ServletNonBlockingIoEndToEndTest {
                         while (in.isReady() && in.read(buf) != -1) { /* drain */ }
                     }
                     @Override public void onAllDataRead() { ac.complete(); }
-                    @Override public void onError(Throwable t) {}
+                    @Override public void onError(Throwable t) { /* the failure is not asserted in this scenario */ }
                 });
             }
         });
@@ -221,8 +223,8 @@ class ServletNonBlockingIoEndToEndTest {
                         resp.setStatus(413);
                         ac.complete();
                     }
-                    @Override public void onAllDataRead() {}
-                    @Override public void onError(Throwable t) {}
+                    @Override public void onAllDataRead() { /* the end of the data is not observed in this scenario */ }
+                    @Override public void onError(Throwable t) { /* the failure is not asserted in this scenario */ }
                 });
             }
         });
@@ -262,8 +264,8 @@ class ServletNonBlockingIoEndToEndTest {
                         }
                         ac.complete();
                     }
-                    @Override public void onAllDataRead() {}
-                    @Override public void onError(Throwable t) {}
+                    @Override public void onAllDataRead() { /* the end of the data is not observed in this scenario */ }
+                    @Override public void onError(Throwable t) { /* the failure is not asserted in this scenario */ }
                 });
             }
         };
@@ -277,7 +279,7 @@ class ServletNonBlockingIoEndToEndTest {
 
         try (var socket = new Socket()) {
             socket.setReceiveBufferSize(4096);
-            socket.connect(new java.net.InetSocketAddress("127.0.0.1", port));
+            socket.connect(new InetSocketAddress(InetAddress.getLoopbackAddress(), port));
             socket.setSoTimeout(5_000);
             var out = socket.getOutputStream();
             out.write((head() + "5\r\nHello\r\n").getBytes(StandardCharsets.US_ASCII)); // then silence
@@ -289,7 +291,7 @@ class ServletNonBlockingIoEndToEndTest {
             byte[] buf = new byte[64 * 1024];
             try {
                 while (in.read(buf) != -1) { /* what was sent before the timeout */ }
-            } catch (SocketException reset) {
+            } catch (SocketException _) {
                 // a reset closes the connection as well
             }
         }
@@ -316,7 +318,7 @@ class ServletNonBlockingIoEndToEndTest {
                         while (in.isReady() && in.read(buf) != -1) { /* drain */ }
                     }
                     @Override public void onAllDataRead() { ac.complete(); }
-                    @Override public void onError(Throwable t) {}
+                    @Override public void onError(Throwable t) { /* the failure is not asserted in this scenario */ }
                 });
             }
         });
@@ -342,12 +344,12 @@ class ServletNonBlockingIoEndToEndTest {
                 }
                 try {
                     req.getInputStream().setReadListener(new ReadListener() {
-                        @Override public void onDataAvailable() {}
-                        @Override public void onAllDataRead() {}
-                        @Override public void onError(Throwable t) {}
+                        @Override public void onDataAvailable() { /* the data is not read in this scenario */ }
+                        @Override public void onAllDataRead() { /* the end of the data is not observed in this scenario */ }
+                        @Override public void onError(Throwable t) { /* the failure is not asserted in this scenario */ }
                     });
                     resp.getWriter().print("no exception");
-                } catch (IllegalStateException e) {
+                } catch (IllegalStateException _) {
                     resp.getWriter().print("IllegalStateException");
                 }
             }
@@ -374,7 +376,7 @@ class ServletNonBlockingIoEndToEndTest {
                     @Override public void onComplete(AsyncEvent e) { events.add("async.onComplete"); completed.countDown(); }
                     @Override public void onTimeout(AsyncEvent e) { events.add("async.onTimeout"); }
                     @Override public void onError(AsyncEvent e) { events.add("async.onError"); }
-                    @Override public void onStartAsync(AsyncEvent e) {}
+                    @Override public void onStartAsync(AsyncEvent e) { /* not relevant to this scenario */ }
                 });
                 ServletInputStream in = req.getInputStream();
                 in.setReadListener(new ReadListener() {
@@ -473,9 +475,9 @@ class ServletNonBlockingIoEndToEndTest {
         });
         try (var socket = new Socket()) {
             socket.setReceiveBufferSize(64 * 1024);
-            socket.connect(new java.net.InetSocketAddress("127.0.0.1", port));
+            socket.connect(new InetSocketAddress(InetAddress.getLoopbackAddress(), port));
             socket.setSoTimeout(10_000);
-            socket.getOutputStream().write(("GET /nio HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
+            socket.getOutputStream().write("GET /nio HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n"
                     .getBytes(StandardCharsets.US_ASCII));
             socket.getOutputStream().flush();
             assertTrue(notReady.await(10, TimeUnit.SECONDS), "isReady() never answered false");
@@ -530,7 +532,7 @@ class ServletNonBlockingIoEndToEndTest {
                         }
                         try {
                             writer.print("!");
-                        } catch (IllegalStateException expected) {
+                        } catch (IllegalStateException _) {
                             refused.set(true);
                         }
                     }
@@ -554,13 +556,19 @@ class ServletNonBlockingIoEndToEndTest {
     }
 
     private static void pause() {
-        try { Thread.sleep(100); }
-        catch (InterruptedException e) { Thread.currentThread().interrupt(); }
+        try { Pause.forMillis(100); }
+        catch (InterruptedException _) { Thread.currentThread().interrupt(); }
     }
 
     private static String head() {
-        return "POST /nio HTTP/1.1\r\nHost: localhost\r\nContent-Type: text/plain; charset=utf-8\r\n"
-                + "Transfer-Encoding: chunked\r\nConnection: close\r\n\r\n";
+        return """
+                POST /nio HTTP/1.1\r
+                Host: localhost\r
+                Content-Type: text/plain; charset=utf-8\r
+                Transfer-Encoding: chunked\r
+                Connection: close\r
+                \r
+                """;
     }
 
     private static final Pattern TOKEN = Pattern.compile("=[A-Za-z]+");
@@ -588,7 +596,7 @@ class ServletNonBlockingIoEndToEndTest {
         private final OutputStream out;
 
         Client(int port) throws IOException {
-            socket = new Socket("127.0.0.1", port);
+            socket = new Socket(InetAddress.getLoopbackAddress(), port);
             socket.setSoTimeout(5_000);
             in = socket.getInputStream();
             out = socket.getOutputStream();
@@ -613,7 +621,7 @@ class ServletNonBlockingIoEndToEndTest {
             try {
                 int n;
                 while ((n = in.read(buf)) != -1) all.write(buf, 0, n);
-            } catch (SocketException reset) {
+            } catch (SocketException _) {
                 // a reset ends the response as well
             }
             return all.toString(StandardCharsets.UTF_8);

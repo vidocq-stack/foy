@@ -33,10 +33,12 @@ import org.junit.jupiter.api.Test;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.net.InetAddress;
 import java.net.Socket;
 import java.nio.charset.StandardCharsets;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -92,7 +94,7 @@ class ServletTrailerEndToEndTest {
     @Test
     void tckTrailerRequest_trailersExposedLowercase() throws IOException {
         startTrailerServlet();
-        try (var socket = new Socket("127.0.0.1", port)) {
+        try (var socket = new Socket(InetAddress.getLoopbackAddress(), port)) {
             socket.setSoTimeout(5000);
             var out = socket.getOutputStream();
 
@@ -121,11 +123,16 @@ class ServletTrailerEndToEndTest {
     @Test
     void nonChunkedRequest_readyTrueAndEmpty() throws IOException {
         startTrailerServlet();
-        try (var socket = new Socket("127.0.0.1", port)) {
+        try (var socket = new Socket(InetAddress.getLoopbackAddress(), port)) {
             socket.setSoTimeout(5000);
             var out = socket.getOutputStream();
-            write(out, "POST /TrailerTestServlet HTTP/1.1\r\nHost: h\r\n"
-                    + "Content-Length: 3\r\nConnection: close\r\n\r\nXYZ");
+            write(out, """
+                    POST /TrailerTestServlet HTTP/1.1\r
+                    Host: h\r
+                    Content-Length: 3\r
+                    Connection: close\r
+                    \r
+                    XYZ""");
             out.flush();
 
             var response = readAll(socket.getInputStream());
@@ -148,7 +155,7 @@ class ServletTrailerEndToEndTest {
                 new ServletDispatcher.Mapping(UrlPatternMatcher.of("/peek"), peeking, "P")));
         startWith(new ChappeServletBridge(dispatcher, TestSecurity.permitAll(new VidocqServletContext("/")), "/"));
 
-        try (var socket = new Socket("127.0.0.1", port)) {
+        try (var socket = new Socket(InetAddress.getLoopbackAddress(), port)) {
             socket.setSoTimeout(5000);
             var out = socket.getOutputStream();
             write(out, "POST /peek HTTP/1.1\r\nHost: h\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n");
@@ -177,7 +184,7 @@ class ServletTrailerEndToEndTest {
                 resp.setHeader("Transfer-Encoding", "chunked");
                 try {
                     resp.setTrailerFields(() -> Map.of("myTrailer", "foo"));
-                } catch (IllegalStateException e) {
+                } catch (IllegalStateException _) {
                     resp.getWriter().write("Get IllegalStateException when call setTrailerFields");
                     return;
                 }
@@ -195,13 +202,13 @@ class ServletTrailerEndToEndTest {
     @Test
     void trailersOnHttp11Chunked() throws IOException {
         startServlet("/TrailerTestServlet", responseTrailerServlet());
-        try (var socket = new Socket("127.0.0.1", port)) {
+        try (var socket = new Socket(InetAddress.getLoopbackAddress(), port)) {
             socket.setSoTimeout(5000);
             write(socket.getOutputStream(), "POST /TrailerTestServlet HTTP/1.1\r\nHost: 127.0.0.1:" + port
                     + "\r\n" + TCK_REQUEST_TAIL);
             var response = readChunkedResponse(socket.getInputStream());
             assertTrue(response.startsWith("HTTP/1.1 200"), response);
-            assertTrue(response.toLowerCase().contains("transfer-encoding: chunked"), response);
+            assertTrue(response.toLowerCase(Locale.ROOT).contains("transfer-encoding: chunked"), response);
             String marker = "Current trailer field:";
             int at = response.indexOf(marker);
             assertTrue(at >= 0, response);
@@ -213,7 +220,7 @@ class ServletTrailerEndToEndTest {
     @Test
     void setTrailerFieldsOnHttp10Throws() throws IOException {
         startServlet("/TrailerTestServlet", responseTrailerServlet());
-        try (var socket = new Socket("127.0.0.1", port)) {
+        try (var socket = new Socket(InetAddress.getLoopbackAddress(), port)) {
             socket.setSoTimeout(5000);
             write(socket.getOutputStream(), "POST /TrailerTestServlet HTTP/1.0\r\nHost: h\r\n" + TCK_REQUEST_TAIL);
             var response = readAll(socket.getInputStream());
@@ -232,12 +239,12 @@ class ServletTrailerEndToEndTest {
                 try {
                     resp.setTrailerFields(() -> Map.of("myTrailer", "foo"));
                     out.write("no exception");
-                } catch (IllegalStateException e) {
+                } catch (IllegalStateException _) {
                     out.write("ISE");
                 }
             }
         });
-        try (var socket = new Socket("127.0.0.1", port)) {
+        try (var socket = new Socket(InetAddress.getLoopbackAddress(), port)) {
             socket.setSoTimeout(5000);
             write(socket.getOutputStream(), "POST /committed HTTP/1.1\r\nHost: h\r\nConnection: close\r\n"
                     + TCK_REQUEST_TAIL);
@@ -257,13 +264,13 @@ class ServletTrailerEndToEndTest {
                 try {
                     resp.setTrailerFields(() -> Map.of("myTrailer", "foo"));
                     outcome = "BAD";
-                } catch (IllegalStateException e) {
+                } catch (IllegalStateException _) {
                     outcome = "ISE";
                 }
                 resp.getWriter().write(outcome);
             }
         });
-        try (var socket = new Socket("127.0.0.1", port)) {
+        try (var socket = new Socket(InetAddress.getLoopbackAddress(), port)) {
             socket.setSoTimeout(5000);
             write(socket.getOutputStream(), "POST /cl HTTP/1.1\r\nHost: h\r\nConnection: close\r\n"
                     + TCK_REQUEST_TAIL);
@@ -291,7 +298,7 @@ class ServletTrailerEndToEndTest {
                 resp.getWriter().write("body");
             }
         });
-        try (var socket = new Socket("127.0.0.1", port)) {
+        try (var socket = new Socket(InetAddress.getLoopbackAddress(), port)) {
             socket.setSoTimeout(5000);
             write(socket.getOutputStream(), "GET /forbidden HTTP/1.1\r\nHost: h\r\n\r\n");
             var response = readChunkedResponse(socket.getInputStream());
@@ -315,7 +322,7 @@ class ServletTrailerEndToEndTest {
                 produced.append("second");
             }
         });
-        try (var socket = new Socket("127.0.0.1", port)) {
+        try (var socket = new Socket(InetAddress.getLoopbackAddress(), port)) {
             socket.setSoTimeout(5000);
             write(socket.getOutputStream(), "GET /streamed HTTP/1.1\r\nHost: h\r\n\r\n");
             var response = readChunkedResponse(socket.getInputStream());
@@ -353,7 +360,7 @@ class ServletTrailerEndToEndTest {
             int headerEnd = sb.indexOf("\r\n\r\n");
             if (headerEnd >= 0) {
                 String headers = sb.substring(0, headerEnd + 4);
-                var clIdx = headers.toLowerCase().indexOf("content-length: ");
+                var clIdx = headers.toLowerCase(Locale.ROOT).indexOf("content-length: ");
                 int contentLength = 0;
                 if (clIdx >= 0) {
                     var clEnd = headers.indexOf("\r\n", clIdx);

@@ -100,7 +100,7 @@ public final class TlsTestCertificates {
     private static void deleteTree(Path root) {
         try (var walk = Files.walk(root)) {
             walk.sorted(java.util.Comparator.reverseOrder()).forEach(p -> p.toFile().delete());
-        } catch (IOException | RuntimeException ignored) {
+        } catch (IOException | RuntimeException _) {
             // best effort: the directory lives under java.io.tmpdir
         }
     }

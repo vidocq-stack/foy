@@ -44,6 +44,7 @@ import java.io.ByteArrayOutputStream;
 import java.io.EOFException;
 import java.io.IOException;
 import java.io.InputStream;
+import java.net.InetAddress;
 import java.net.Socket;
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -205,7 +206,7 @@ class ServletMultipartEndToEndTest {
             try { req.getParts(); } catch (IllegalStateException e) { first = e; }
             try { req.getPart("a"); } catch (IllegalStateException e) { again = e; }
             String type = first == null ? "nothing thrown" : first.getClass().getSimpleName();
-            return (first != null && first == again) + ":" + type + ":" + req.getInputStream().read();
+            return (first != null && first.equals(again)) + ":" + type + ":" + req.getInputStream().read();
         }), new MultipartConfigElement("", 4, -1, 0));
         assertEquals("true:MultipartLimitException:-1", postMultipart(field("a", "too long") + end()).body());
     }
@@ -275,7 +276,7 @@ class ServletMultipartEndToEndTest {
                         during.set(tempFiles());
                         ac.getResponse().getWriter().write(
                                 new String(req.getPart("f").getInputStream().readAllBytes(), UTF_8));
-                    } catch (Exception e) {
+                    } catch (Exception _) {
                         during.set(-2);
                     }
                     ac.complete();
@@ -300,7 +301,7 @@ class ServletMultipartEndToEndTest {
         start(servlet(req -> new String(req.getPart("a").getInputStream().readAllBytes(), UTF_8)),
                 new MultipartConfigElement(""));
         byte[] body = (field("a", "first") + end() + "an epilogue the parser never reads").getBytes(UTF_8);
-        try (var socket = new Socket("127.0.0.1", port)) {
+        try (var socket = new Socket(InetAddress.getLoopbackAddress(), port)) {
             socket.setSoTimeout(5000);
             var out = socket.getOutputStream();
             var in = new java.io.BufferedInputStream(socket.getInputStream());
@@ -323,7 +324,7 @@ class ServletMultipartEndToEndTest {
         start(servlet(req -> req.getParts().size() + ":" + req.isTrailerFieldsReady() + ":"
                 + req.getTrailerFields().get("x-checksum")), new MultipartConfigElement(""));
         byte[] body = (field("a", "1") + end()).getBytes(UTF_8);
-        try (var socket = new Socket("127.0.0.1", port)) {
+        try (var socket = new Socket(InetAddress.getLoopbackAddress(), port)) {
             socket.setSoTimeout(5000);
             var out = socket.getOutputStream();
             var in = new java.io.BufferedInputStream(socket.getInputStream());
@@ -346,7 +347,7 @@ class ServletMultipartEndToEndTest {
             if (c < 0) throw new EOFException("connection closed after: " + head.toString(ISO_8859_1));
             head.write(c);
         }
-        String[] lines = head.toString(ISO_8859_1).split("\r\n");
+        String[] lines = head.toString(ISO_8859_1).split("\r\n", -1);
         int length = -1;
         boolean chunked = false;
         for (String line : lines) {
@@ -357,7 +358,7 @@ class ServletMultipartEndToEndTest {
         var body = new ByteArrayOutputStream();
         if (chunked) {
             while (true) {
-                int n = Integer.parseInt(readLine(in).split(";")[0].trim(), 16);
+                int n = Integer.parseInt(readLine(in).split(";", -1)[0].trim(), 16);
                 if (n == 0) {
                     while (!readLine(in).isEmpty()) { /* trailers */ }
                     break;

@@ -19,7 +19,6 @@
  */
 package io.vidocq.foy.internal;
 
-import io.vidocq.foy.spi.session.SessionStore;
 
 import io.vidocq.chappe.api.Server;
 import io.vidocq.foy.internal.bridge.ChappeServletBridge;

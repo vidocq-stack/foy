@@ -38,6 +38,7 @@ import java.io.ByteArrayOutputStream;
 import java.io.DataInputStream;
 import java.io.DataOutputStream;
 import java.io.IOException;
+import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.Socket;
 import java.nio.charset.StandardCharsets;
@@ -76,7 +77,7 @@ class ReadListenerHttp2ResetEndToEndTest {
         var outcome = new CompletableFuture<String>();
         int port = start(outcome);
         try (var socket = new Socket()) {
-            socket.connect(new InetSocketAddress("127.0.0.1", port), 5000);
+            socket.connect(new InetSocketAddress(InetAddress.getLoopbackAddress(), port), 5000);
             socket.setSoTimeout(5000);
             var in = new DataInputStream(socket.getInputStream());
             var out = new DataOutputStream(socket.getOutputStream());
@@ -94,7 +95,7 @@ class ReadListenerHttp2ResetEndToEndTest {
         var outcome = new CompletableFuture<String>();
         int port = start(outcome);
         try (var socket = new Socket()) {
-            socket.connect(new InetSocketAddress("127.0.0.1", port), 5000);
+            socket.connect(new InetSocketAddress(InetAddress.getLoopbackAddress(), port), 5000);
             socket.setSoTimeout(5000);
             var in = new DataInputStream(socket.getInputStream());
             var out = new DataOutputStream(socket.getOutputStream());

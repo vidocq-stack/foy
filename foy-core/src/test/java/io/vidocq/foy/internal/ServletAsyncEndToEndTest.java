@@ -66,7 +66,7 @@ class ServletAsyncEndToEndTest {
                 AsyncContext ac = req.startAsync();
                 ac.start(() -> {
                     try {
-                        Thread.sleep(30);
+                        Pause.forMillis(30);
                         HttpServletResponse r = (HttpServletResponse) ac.getResponse();
                         r.setContentType("text/plain");
                         r.getWriter().write("async-ok");
@@ -294,7 +294,7 @@ class ServletAsyncEndToEndTest {
                         recorder.completed.await();
                         ac.complete(); // a no-op on a container-completed cycle
                         try { ac.dispatch("/x"); late.complete("dispatch accepted"); }
-                        catch (IllegalStateException e) { late.complete("ISE"); }
+                        catch (IllegalStateException _) { late.complete("ISE"); }
                     } catch (Throwable t) { late.complete(t.toString()); }
                 });
                 throw new IllegalStateException("thrown after startAsync");
@@ -443,7 +443,7 @@ class ServletAsyncEndToEndTest {
                 out.write('x');
                 if (flush) out.flush();
                 if (timedOut.getCount() == 0) afterTimeout++;
-                else Thread.sleep(1);
+                else Pause.forMillis(1);
             }
             done.complete(null);
         } catch (Throwable t) {

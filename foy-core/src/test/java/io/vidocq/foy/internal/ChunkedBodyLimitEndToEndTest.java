@@ -36,6 +36,7 @@ import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.OutputStream;
+import java.net.InetAddress;
 import java.net.Socket;
 import java.net.SocketException;
 import java.net.URI;
@@ -109,8 +110,7 @@ class ChunkedBodyLimitEndToEndTest {
         var written = new AtomicLong();
         var writerDone = new AtomicBoolean();
         Thread writer = null;
-        Socket socket = new Socket("127.0.0.1", port);
-        try {
+        try (Socket socket = new Socket(InetAddress.getLoopbackAddress(), port)) {
             socket.setSoTimeout(15_000);
             OutputStream out = socket.getOutputStream();
             out.write("POST /body HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n"
@@ -124,7 +124,7 @@ class ChunkedBodyLimitEndToEndTest {
                         out.flush();
                         written.addAndGet(chunk.length);
                     }
-                } catch (IOException cutOff) {
+                } catch (IOException _) {
                     // a clean close or a reset both mean the server cut the upload off
                 } finally {
                     writerDone.set(true);
@@ -134,7 +134,7 @@ class ChunkedBodyLimitEndToEndTest {
             var response = new ByteArrayOutputStream();
             try {
                 socket.getInputStream().transferTo(response);
-            } catch (SocketException reset) {
+            } catch (SocketException _) {
                 // a reset instead of a clean EOF also counts as cut off
             }
             String text = response.toString(StandardCharsets.ISO_8859_1);
@@ -143,15 +143,16 @@ class ChunkedBodyLimitEndToEndTest {
 
             assertTrue(writer.join(Duration.ofSeconds(15)), "the writer must stop once the server closes");
             assertTrue(writerDone.get());
-            // chappe drains 1 MiB at most (maxDrainSize), but the client also fills the kernel's socket
-            // buffers before its writes fail: on Linux, autotuning grows them up to 6 MiB (receive) and
-            // 4 MiB (send) by default, so about 11 MiB can be written against a correct server
-            // (BUG-20261021-02). The writer stopping within 15 s already rules out an unbounded drain;
-            // this bound only catches a drain far beyond the limit.
+            // Chappe drains at most 1 MiB, but the client also fills the kernel's socket buffers before its
+            // writes fail: on Linux, autotuning grows them up to 6 MiB for receiving and 4 MiB for sending
+            // by default, so about 11 MiB can be written against a correct server (BUG-20261021-02).
+            // The writer stopping within 15 s already rules out an unbounded drain; this bound only
+            // catches a drain far beyond the limit.
             assertTrue(written.get() < 64L * 1024 * 1024, "wrote " + written.get() + " bytes");
         } finally {
-            socket.close();
-            if (writer != null) writer.interrupt();
+            if (writer != null) {
+                writer.interrupt();
+            }
         }
     }
 

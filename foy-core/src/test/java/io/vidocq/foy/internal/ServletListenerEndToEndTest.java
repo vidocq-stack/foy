@@ -125,10 +125,10 @@ class ServletListenerEndToEndTest {
                 String op = req.getParameter("op");
                 var session = req.getSession();
                 switch (op == null ? "set" : op) {
-                    case "set"     -> session.setAttribute("t", new Tracking());
-                    case "replace" -> session.setAttribute("t", new Tracking());
-                    case "remove"  -> session.removeAttribute("t");
-                    case "kill"    -> session.invalidate();
+                    case "set", "replace" -> session.setAttribute("t", new Tracking());
+                    case "remove" -> session.removeAttribute("t");
+                    case "kill" -> session.invalidate();
+                    default -> throw new IllegalArgumentException("unknown operation " + op);
                 }
                 resp.getWriter().write("ok");
             }
@@ -250,7 +250,7 @@ class ServletListenerEndToEndTest {
                     "an Error still propagates out of the bridge");
             long deadline = System.nanoTime() + Duration.ofSeconds(5).toNanos();
             while ((uncaught.isEmpty() || uncaught.size() < served.get()) && System.nanoTime() < deadline) {
-                Thread.sleep(10);
+                Pause.forMillis(10);
             }
         } finally {
             Thread.setDefaultUncaughtExceptionHandler(previousHandler);

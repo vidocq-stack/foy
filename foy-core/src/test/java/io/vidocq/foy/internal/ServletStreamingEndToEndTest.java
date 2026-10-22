@@ -44,6 +44,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.io.PrintWriter;
+import java.net.InetAddress;
 import java.net.Socket;
 import java.net.SocketException;
 import java.nio.charset.StandardCharsets;
@@ -80,7 +81,7 @@ class ServletStreamingEndToEndTest {
                 PrintWriter w = resp.getWriter();
                 w.println("first line");
                 resp.flushBuffer();
-                try { Thread.sleep(1500); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
+                try { Pause.forMillis(1500); } catch (InterruptedException _) { Thread.currentThread().interrupt(); }
                 w.println("second line");
             }
         });
@@ -130,7 +131,7 @@ class ServletStreamingEndToEndTest {
                 try {
                     resp.setBufferSize(1024);
                     out.print("-no-ise");
-                } catch (IllegalStateException e) {
+                } catch (IllegalStateException _) {
                     out.print("-ise");
                 }
             }
@@ -170,7 +171,7 @@ class ServletStreamingEndToEndTest {
                 resp.flushBuffer();
                 // The client can only see the first part if chappe flushed it with a known length.
                 try { servletSawClient.set(clientGotFirstPart.await(5, TimeUnit.SECONDS)); }
-                catch (InterruptedException e) { Thread.currentThread().interrupt(); }
+                catch (InterruptedException _) { Thread.currentThread().interrupt(); }
                 out.write("secondpart".getBytes(StandardCharsets.US_ASCII));
             }
         });
@@ -229,12 +230,12 @@ class ServletStreamingEndToEndTest {
                     while (System.nanoTime() < deadline) {
                         out.write("tick\n".getBytes(StandardCharsets.US_ASCII));
                         out.flush();
-                        Thread.sleep(50);
+                        Pause.forMillis(50);
                     }
                     writeFailure.completeExceptionally(new AssertionError("no write failed within 10 s"));
                 } catch (IOException e) {
                     writeFailure.complete(e);
-                } catch (InterruptedException e) {
+                } catch (InterruptedException _) {
                     Thread.currentThread().interrupt();
                 }
             }
@@ -428,7 +429,7 @@ class ServletStreamingEndToEndTest {
         private final OutputStream out;
 
         RawClient(int port) throws IOException {
-            socket = new Socket("127.0.0.1", port);
+            socket = new Socket(InetAddress.getLoopbackAddress(), port);
             socket.setSoTimeout(10_000);
             in = new BufferedInputStream(socket.getInputStream());
             out = socket.getOutputStream();
@@ -442,7 +443,7 @@ class ServletStreamingEndToEndTest {
         Head readHead() throws IOException {
             String status = readLine(in);
             assertNotNull(status, "connection closed before the status line");
-            int code = Integer.parseInt(status.split(" ")[1]);
+            int code = Integer.parseInt(status.split(" ", -1)[1]);
             var fields = new ArrayList<String[]>();
             String line;
             while ((line = readLine(in)) != null && !line.isEmpty()) {
@@ -467,7 +468,7 @@ class ServletStreamingEndToEndTest {
             try {
                 int n;
                 while ((n = in.read(buf)) != -1) all.write(buf, 0, n);
-            } catch (SocketException reset) {
+            } catch (SocketException _) {
                 // A reset is an acceptable way for the connection to end.
             }
             return all.toByteArray();
@@ -520,7 +521,7 @@ class ServletStreamingEndToEndTest {
             if (remaining > 0) return true;
             String size = readLine(in);
             if (size == null) throw new IOException("connection closed inside a chunked body");
-            remaining = Long.parseLong(size.split(";")[0].trim(), 16);
+            remaining = Long.parseLong(size.split(";", -1)[0].trim(), 16);
             if (remaining == 0) {
                 String trailer;
                 while ((trailer = readLine(in)) != null && !trailer.isEmpty()) { /* trailers ignored */ }

@@ -35,6 +35,7 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.List;
 
@@ -89,7 +90,7 @@ class ServletFormParametersEndToEndTest {
     void streamReadFirstLeavesParametersQueryOnly() throws Exception {
         start(new HttpServlet() {
             @Override protected void doPost(HttpServletRequest req, HttpServletResponse resp) throws IOException {
-                String raw = new String(req.getInputStream().readAllBytes());
+                String raw = new String(req.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
                 resp.getWriter().write(raw + "|" + req.getParameter("p"));
             }
         });
@@ -101,7 +102,7 @@ class ServletFormParametersEndToEndTest {
         start(new HttpServlet() {
             @Override protected void doPost(HttpServletRequest req, HttpServletResponse resp) throws IOException {
                 req.getParameter("p");
-                resp.getWriter().write("[" + new String(req.getInputStream().readAllBytes()) + "]");
+                resp.getWriter().write("[" + new String(req.getInputStream().readAllBytes(), StandardCharsets.UTF_8) + "]");
             }
         });
         assertEquals("[]", post("", "application/x-www-form-urlencoded", "p=fromBody"));

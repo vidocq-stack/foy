@@ -41,12 +41,12 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
-import io.vidocq.foy.internal.LogCapture;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.net.InetAddress;
 import java.net.Socket;
 import java.net.SocketException;
 import java.nio.charset.StandardCharsets;
@@ -168,14 +168,20 @@ class ServletUpgradeEndToEndTest {
                     resp.getWriter().print("upgraded");
                 } catch (IOException e) {
                     resp.getWriter().print("IOException: " + e.getMessage());
-                } catch (ServletException e) {
+                } catch (ServletException _) {
                     resp.getWriter().print("ServletException");
                 }
             }
         });
         try (var client = new Client(port)) {
-            client.send("POST /up HTTP/1.0\r\nHost: localhost\r\nUpgrade: YES\r\nConnection: Upgrade\r\n"
-                    + "Content-Length: 0\r\n\r\n");
+            client.send("""
+                    POST /up HTTP/1.0\r
+                    Host: localhost\r
+                    Upgrade: YES\r
+                    Connection: Upgrade\r
+                    Content-Length: 0\r
+                    \r
+                    """);
             String response = client.readAll();
             assertTrue(response.startsWith("HTTP/1.0 200") || response.startsWith("HTTP/1.1 200"), response);
             assertTrue(response.endsWith("IOException: HTTP upgrade is not supported over HTTP/1.0"), response);
@@ -191,7 +197,7 @@ class ServletUpgradeEndToEndTest {
                 try {
                     req.upgrade(FailingHandler.class);
                     resp.getWriter().print("upgraded");
-                } catch (ServletException e) {
+                } catch (ServletException _) {
                     resp.getWriter().print("ServletException");
                 }
             }
@@ -217,7 +223,7 @@ class ServletUpgradeEndToEndTest {
                 try {
                     req.upgrade(ClosingHandler.class);
                     probe.events.add("second upgrade accepted");
-                } catch (IllegalStateException e) {
+                } catch (IllegalStateException _) {
                     probe.events.add("ise");
                 }
             }
@@ -296,7 +302,7 @@ class ServletUpgradeEndToEndTest {
                 try {
                     req.upgrade(ClosingHandler.class);
                     resp.getWriter().print("upgraded");
-                } catch (IllegalStateException e) {
+                } catch (IllegalStateException _) {
                     resp.getWriter().print("ise");
                 }
                 ac.complete();
@@ -322,7 +328,7 @@ class ServletUpgradeEndToEndTest {
                     try {
                         req.upgrade(ClosingHandler.class);
                         resp.getWriter().print("upgraded");
-                    } catch (IllegalStateException e) {
+                    } catch (IllegalStateException _) {
                         resp.setStatus(200);
                         resp.getWriter().print("ise");
                     }
@@ -358,7 +364,7 @@ class ServletUpgradeEndToEndTest {
                 try {
                     req.upgrade(ClosingHandler.class);
                     resp.getWriter().print("upgraded");
-                } catch (IllegalStateException e) {
+                } catch (IllegalStateException _) {
                     resp.getWriter().print("ise");
                 }
             }
@@ -389,7 +395,7 @@ class ServletUpgradeEndToEndTest {
                 try {
                     req.startAsync();
                     probe.events.add("async accepted");
-                } catch (IllegalStateException e) {
+                } catch (IllegalStateException _) {
                     probe.events.add("ise");
                 }
             }
@@ -621,12 +627,12 @@ class ServletUpgradeEndToEndTest {
                         byte[] chunk = new byte[64 * 1024];
                         try {
                             for (int i = 0; i < 1024; i++) out.write(chunk);
-                        } catch (IOException closed) {
+                        } catch (IOException _) {
                             // the connection was closed under the write
                         }
                     }
-                    @Override public void onAllDataRead() {}
-                    @Override public void onError(Throwable t) {}
+                    @Override public void onAllDataRead() { /* the end of the data is not observed in this scenario */ }
+                    @Override public void onError(Throwable t) { /* the failure is not asserted in this scenario */ }
                 });
             } catch (IOException e) {
                 throw new RuntimeException(e);
@@ -843,8 +849,8 @@ class ServletUpgradeEndToEndTest {
             throw new IllegalStateException("no instance");
         }
 
-        @Override public void init(WebConnection wc) {}
-        @Override public void destroy() {}
+        @Override public void init(WebConnection wc) { /* nothing to set up in this scenario */ }
+        @Override public void destroy() { /* nothing to release in this scenario */ }
     }
 
     // ---- helpers ----
@@ -869,8 +875,16 @@ class ServletUpgradeEndToEndTest {
 
     /** The TCK request head: POST with Upgrade and Connection, no body length. */
     private static String tckHead() {
-        return "POST /up HTTP/1.1\r\nUser-Agent: Java/25\r\nHost: localhost\r\nAccept: text/html\r\n"
-                + "Upgrade: YES\r\nConnection: Upgrade\r\nContent-type: application/x-www-form-urlencoded\r\n\r\n";
+        return """
+                POST /up HTTP/1.1\r
+                User-Agent: Java/25\r
+                Host: localhost\r
+                Accept: text/html\r
+                Upgrade: YES\r
+                Connection: Upgrade\r
+                Content-type: application/x-www-form-urlencoded\r
+                \r
+                """;
     }
 
     private void start(HttpServlet servlet) {
@@ -894,7 +908,7 @@ class ServletUpgradeEndToEndTest {
         private final ByteArrayOutputStream received = new ByteArrayOutputStream();
 
         Client(int port) throws IOException {
-            socket = new Socket("127.0.0.1", port);
+            socket = new Socket(InetAddress.getLoopbackAddress(), port);
             socket.setSoTimeout(10_000);
             in = socket.getInputStream();
             out = socket.getOutputStream();
@@ -948,7 +962,7 @@ class ServletUpgradeEndToEndTest {
             try {
                 int n;
                 while ((n = in.read(buf)) != -1) all.write(buf, 0, n);
-            } catch (SocketException reset) {
+            } catch (SocketException _) {
                 // a reset ends the connection too
             }
             received.writeBytes(all.toByteArray());

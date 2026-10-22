@@ -39,8 +39,12 @@ public final class LogCapture implements AutoCloseable {
         private final boolean useParentHandlers;
         private final Handler handler = new Handler() {
             @Override public void publish(LogRecord r) { records.add(r); }
-            @Override public void flush() {}
-            @Override public void close() {}
+            @Override public void flush() {
+                // nothing is buffered
+            }
+            @Override public void close() {
+                // the logger owns no resource here
+            }
         };
 
         Jul(String name) {
@@ -52,7 +56,7 @@ public final class LogCapture implements AutoCloseable {
         }
 
         List<String> warnings() {
-            return records.stream().filter(r -> r.getLevel() == Level.WARNING)
+            return records.stream().filter(r -> Level.WARNING.equals(r.getLevel()))
                     .map(r -> r.getParameters() == null ? r.getMessage()
                             : java.text.MessageFormat.format(r.getMessage(), r.getParameters()))
                     .toList();
@@ -83,12 +87,12 @@ public final class LogCapture implements AutoCloseable {
         return new LogCapture(new Jul(loggerName));
     }
 
-    /** @return the formatted messages logged at WARNING */
+    /** Returns the formatted messages logged at WARNING. */
     public List<String> warnings() {
         return jul.warnings();
     }
 
-    /** @return the throwables attached to the captured records, in order */
+    /** Returns the throwables attached to the captured records, in order. */
     public List<Throwable> thrown() {
         return jul.thrown();
     }
