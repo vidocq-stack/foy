@@ -135,6 +135,8 @@ final class WebConnectionImpl implements WebConnection {
         try {
             handler.init(this);
         } catch (Throwable t) {
+            // The boundary of the application's init on chappe's connection thread: whatever it
+            // throws, an Error included, closes the connection and leaves the thread to chappe.
             LOG.log(System.Logger.Level.WARNING, "HttpUpgradeHandler.init failed; connection closed", t);
             close();
         } finally {
@@ -190,6 +192,8 @@ final class WebConnectionImpl implements WebConnection {
         try {
             handler.destroy();
         } catch (Throwable t) {
+            // The boundary of the application's destroy, which may run on the undeploy hook: whatever
+            // it throws, an Error included, must not stop the close of the other connections.
             LOG.log(System.Logger.Level.WARNING, "HttpUpgradeHandler.destroy failed", t);
         } finally {
             thread.setContextClassLoader(previous);

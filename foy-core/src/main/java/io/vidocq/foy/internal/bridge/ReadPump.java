@@ -157,13 +157,13 @@ final class ReadPump {
         lock.lock();
         try { t = thread; }
         finally { lock.unlock(); }
-        if (t == null || t == Thread.currentThread()) return;
+        if (t == null || t.equals(Thread.currentThread())) return;
         boolean interrupted = false;
         while (true) {
             try {
                 t.join();
                 break;
-            } catch (InterruptedException e) {
+            } catch (InterruptedException _) {
                 interrupted = true;
             }
         }
@@ -172,56 +172,80 @@ final class ReadPump {
 
     private void run() {
         byte[] chunk = new byte[CAPACITY];
-        while (true) {
-            lock.lock();
-            try {
-                while (!stopped && pos < limit) drained.awaitUninterruptibly();
-                if (stopped) return;
-            } finally {
-                lock.unlock();
-            }
+        while (awaitDrained()) {
             int n;
             try {
-                n = source.read(chunk, 0, CAPACITY);
-                if (n == 0) {
-                    // A source may return 0 without data: block on a single byte rather than spin.
-                    int b = source.read();
-                    if (b < 0) n = -1;
-                    else { chunk[0] = (byte) b; n = 1; }
-                }
+                n = readChunk(chunk);
             } catch (IOException e) {
-                if (record(e)) listener.failed(e);
+                reportFailure(e);
                 return;
             } catch (RuntimeException e) {
-                IOException wrapped = new IOException(e);
-                if (record(wrapped)) listener.failed(wrapped);
+                reportFailure(new IOException(e));
                 return;
             }
             if (n < 0) {
-                lock.lock();
-                try {
-                    if (stopped) return;
-                    eof = true;
-                } finally {
-                    lock.unlock();
-                }
-                listener.endOfStream();
+                if (markEof()) listener.endOfStream();
                 return;
             }
-            lock.lock();
-            try {
-                if (stopped) return;
-                System.arraycopy(chunk, 0, buffer, 0, n);
-                pos = 0;
-                limit = n;
-            } finally {
-                lock.unlock();
-            }
+            if (!publish(chunk, n)) return;
             listener.dataAvailable();
         }
     }
 
-    private boolean record(IOException e) {
+    /** Waits until the application took every buffered byte; {@code false} once the pump is stopped. */
+    private boolean awaitDrained() {
+        lock.lock();
+        try {
+            while (!stopped && pos < limit) drained.awaitUninterruptibly();
+            return !stopped;
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    /** Reads the next chunk into {@code chunk}: the number of bytes read, or {@code -1} at the end of the stream. */
+    private int readChunk(byte[] chunk) throws IOException {
+        int n = source.read(chunk, 0, CAPACITY);
+        if (n != 0) return n;
+        // A source may return 0 without data: block on a single byte rather than spin.
+        int b = source.read();
+        if (b < 0) return -1;
+        chunk[0] = (byte) b;
+        return 1;
+    }
+
+    /** Records the end of the stream; {@code false} when the pump was stopped meanwhile. */
+    private boolean markEof() {
+        lock.lock();
+        try {
+            if (stopped) return false;
+            eof = true;
+            return true;
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    /** Buffers the {@code n} bytes read; {@code false} when the pump was stopped meanwhile. */
+    private boolean publish(byte[] chunk, int n) {
+        lock.lock();
+        try {
+            if (stopped) return false;
+            System.arraycopy(chunk, 0, buffer, 0, n);
+            pos = 0;
+            limit = n;
+            return true;
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    /** Records {@code e} and reports it, unless the pump was stopped meanwhile. */
+    private void reportFailure(IOException e) {
+        if (recordFailure(e)) listener.failed(e);
+    }
+
+    private boolean recordFailure(IOException e) {
         lock.lock();
         try {
             if (stopped) return false;

@@ -77,7 +77,7 @@ final class InputHandBackResponse implements Response {
             if (!released.compareAndSet(false, true)) return;
             try {
                 delegate.release();
-            } catch (RuntimeException ignored) {
+            } catch (RuntimeException _) {
                 // Body.release never throws; the hook must run regardless
             } finally {
                 afterRelease.run();

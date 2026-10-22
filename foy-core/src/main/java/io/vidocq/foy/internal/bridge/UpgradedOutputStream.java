@@ -237,7 +237,7 @@ final class UpgradedOutputStream extends ServletOutputStream {
                 nanos = writeDone.awaitNanos(nanos);
             }
             return true;
-        } catch (InterruptedException e) {
+        } catch (InterruptedException _) {
             Thread.currentThread().interrupt();
             return inFlight == null;
         } finally {
@@ -304,7 +304,8 @@ final class UpgradedOutputStream extends ServletOutputStream {
     private void deliverError(Throwable t) {
         try {
             listener.onError(t);
-        } catch (Throwable e) {
+        } catch (RuntimeException e) {
+            // An Error goes on to the callback serializer, which logs it the same way.
             LOG.log(System.Logger.Level.WARNING, "WriteListener.onError threw", e);
         } finally {
             host.failed(t);

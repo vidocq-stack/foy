@@ -103,9 +103,9 @@ public final class ServletOutputStreamImpl extends ServletOutputStream {
 
     private static final Owner DETACHED = new Owner() {
         @Override public long declaredLength() { return -1; }
-        @Override public void overflow() {}
-        @Override public void flushRequested() {}
-        @Override public void contentLengthReached() {}
+        @Override public void overflow() { /* detached: nothing to commit */ }
+        @Override public void flushRequested() { /* detached: nothing to commit */ }
+        @Override public void contentLengthReached() { /* detached: nothing to commit */ }
     };
 
     private final ReentrantLock lock = new ReentrantLock();
@@ -140,10 +140,10 @@ public final class ServletOutputStreamImpl extends ServletOutputStream {
     private boolean errored;
     /** Nesting depth of response-writer operations: their bytes were checked once, up front. */
     private int writerOpDepth;
-    /** Bytes kept for the pipe in non-blocking mode: {@code pend[pStart, pEnd)}. */
+    /** Bytes kept for the pipe in non-blocking mode: {@code pend[pendStart, pendEnd)}. */
     private byte[] pend = new byte[0];
-    private int pStart;
-    private int pEnd;
+    private int pendStart;
+    private int pendEnd;
 
     /** The owner of non-blocking mode; without one {@link #setWriteListener} throws. */
     void setHost(NonBlockingHost host) { this.host = host; }
@@ -226,7 +226,7 @@ public final class ServletOutputStreamImpl extends ServletOutputStream {
             boolean ready;
             try {
                 ready = readyNow();
-            } catch (IOException e) {
+            } catch (IOException _) {
                 return false; // onError follows
             }
             notReady = !ready;
@@ -369,30 +369,32 @@ public final class ServletOutputStreamImpl extends ServletOutputStream {
         if (discarding || len == 0) return;
         if (closed) throw new IOException("stream closed");
         long declared = owner.declaredLength();
+        int count = len;
         if (declared >= 0) {
             long room = declared - written;
             if (room <= 0) return; // content beyond the declared Content-Length is never sent
-            if (len > room) len = (int) room;
+            count = (int) Math.min(len, room);
         }
-        if (!isStreaming() && buffer.size() + len > limit) {
+        if (!isStreaming() && buffer.size() + count > limit) {
             owner.overflow();
         }
-        if (suppressed) {
-            written += len;
-        } else if (pipe != null) {
-            if (buffer.size() + len > limit) {
-                push();
-                if (len >= limit) toPipe(b, off, len);
-                else buffer.write(b, off, len);
-            } else {
-                buffer.write(b, off, len);
-            }
-            written += len;
-        } else {
-            buffer.write(b, off, len);
-            written += len;
-        }
+        accept(b, off, count);
         if (declared >= 0 && written >= declared) owner.contentLengthReached();
+    }
+
+    /**
+     * Takes {@code len} body bytes: dropped when the body is suppressed, pushed through the pipe
+     * of a live body once the buffer would overflow, buffered otherwise. Caller holds the lock.
+     */
+    private void accept(byte[] b, int off, int len) throws IOException {
+        if (pipe != null && !suppressed && buffer.size() + len > limit) {
+            push();
+            if (len >= limit) toPipe(b, off, len);
+            else buffer.write(b, off, len);
+        } else if (!suppressed) {
+            buffer.write(b, off, len);
+        }
+        written += len;
     }
 
     /**
@@ -497,38 +499,38 @@ public final class ServletOutputStreamImpl extends ServletOutputStream {
 
     // ---- kept bytes (non-blocking mode) ----
 
-    private boolean pendingEmpty() { return pStart == pEnd; }
+    private boolean pendingEmpty() { return pendStart == pendEnd; }
 
     private void appendPending(byte[] b, int off, int len) {
-        int kept = pEnd - pStart;
-        if (pEnd + len > pend.length) {
+        int kept = pendEnd - pendStart;
+        if (pendEnd + len > pend.length) {
             if (kept + len <= pend.length) {
-                System.arraycopy(pend, pStart, pend, 0, kept);
+                System.arraycopy(pend, pendStart, pend, 0, kept);
             } else {
                 byte[] grown = new byte[Math.max(2 * pend.length, kept + len)];
-                System.arraycopy(pend, pStart, grown, 0, kept);
+                System.arraycopy(pend, pendStart, grown, 0, kept);
                 pend = grown;
             }
-            pStart = 0;
-            pEnd = kept;
+            pendStart = 0;
+            pendEnd = kept;
         }
-        System.arraycopy(b, off, pend, pEnd, len);
-        pEnd += len;
+        System.arraycopy(b, off, pend, pendEnd, len);
+        pendEnd += len;
     }
 
     /** Moves what fits now from the kept bytes into the pipe. */
     private void offerPending() throws IOException {
         if (pendingEmpty()) return;
-        pStart += pipe.offer(pend, pStart, pEnd - pStart);
-        if (pStart == pEnd) pStart = pEnd = 0;
+        pendStart += pipe.offer(pend, pendStart, pendEnd - pendStart);
+        if (pendStart == pendEnd) pendStart = pendEnd = 0;
     }
 
     /** Blocking mode again: the kept bytes go first, waiting for room. */
     private void flushPendingBlocking() throws IOException {
         if (pendingEmpty()) return;
-        int from = pStart;
-        int len = pEnd - pStart;
-        pStart = pEnd = 0;
+        int from = pendStart;
+        int len = pendEnd - pendStart;
+        pendStart = pendEnd = 0;
         pipeWrite(pend, from, len);
     }
 
@@ -619,7 +621,8 @@ public final class ServletOutputStreamImpl extends ServletOutputStream {
     private void deliverError(Throwable t) {
         try {
             listener.onError(t);
-        } catch (Throwable e) {
+        } catch (RuntimeException e) {
+            // An Error goes on to the callback serializer, which logs it the same way.
             LOG.log(System.Logger.Level.WARNING, "WriteListener.onError threw", e);
         } finally {
             host.failed(t);

@@ -252,31 +252,23 @@ public final class ServletInputStreamImpl extends ServletInputStream {
         finally { lock.unlock(); }
     }
 
-    /** Submits {@code callback} unless the stream is over or failed. Caller holds {@link #lock}. */
-    private void submit(CallbackSerializer.ThrowingRunnable callback) {
-        host.callbacks().submit(() -> {
-            lock.lock();
-            try {
-                if (ended || errored) return;
-            } finally {
-                lock.unlock();
-            }
-            callback.run();
-        }, this::callbackFailed);
+    private void onDataAvailableIfStillAvailable() throws IOException {
+        if (stillBuffered()) listener.onDataAvailable();
     }
 
-    private void onDataAvailableIfStillAvailable() throws IOException {
+    /**
+     * Whether the pump still holds bytes. When another callback consumed them meanwhile, the next
+     * arrival is awaited instead.
+     */
+    private boolean stillBuffered() {
         lock.lock();
         try {
-            // Another callback consumed the bytes meanwhile: wait for the next arrival instead.
-            if (pump.buffered() == 0) {
-                if (!pump.atEof()) armed = true;
-                return;
-            }
+            if (pump.buffered() != 0) return true;
+            if (!pump.atEof()) armed = true;
+            return false;
         } finally {
             lock.unlock();
         }
-        listener.onDataAvailable();
     }
 
     /** onDataAvailable or onAllDataRead threw: onError, then the owner fails. */
@@ -294,7 +286,8 @@ public final class ServletInputStreamImpl extends ServletInputStream {
     private void deliverError(Throwable t) {
         try {
             listener.onError(t);
-        } catch (Throwable e) {
+        } catch (RuntimeException e) {
+            // An Error goes on to the callback serializer, which logs it the same way.
             LOG.log(System.Logger.Level.WARNING, "ReadListener.onError threw", e);
         } finally {
             host.failed(t);
@@ -303,6 +296,20 @@ public final class ServletInputStreamImpl extends ServletInputStream {
 
     /** The pump's reports, on the pump thread. */
     private final class PumpEvents implements ReadPump.Listener {
+
+        /** Submits {@code callback} unless the stream is over or failed. Caller holds {@link #lock}. */
+        private void submit(CallbackSerializer.ThrowingRunnable<IOException> callback) {
+            host.callbacks().submit(() -> {
+                lock.lock();
+                try {
+                    if (ended || errored) return;
+                } finally {
+                    lock.unlock();
+                }
+                callback.run();
+            }, ServletInputStreamImpl.this::callbackFailed);
+        }
+
         @Override public void dataAvailable() {
             lock.lock();
             try {

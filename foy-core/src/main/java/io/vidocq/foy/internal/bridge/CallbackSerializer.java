@@ -43,16 +43,20 @@ import java.util.function.Consumer;
  */
 final class CallbackSerializer {
 
-    /** A callback that may throw; the exception goes to the {@code onError} consumer. */
+    /**
+     * A callback that may throw; the exception goes to the {@code onError} consumer.
+     *
+     * @param <E> the checked exception the callback may throw
+     */
     @FunctionalInterface
-    interface ThrowingRunnable {
-        void run() throws Exception;
+    interface ThrowingRunnable<E extends Exception> {
+        void run() throws E;
     }
 
     private static final System.Logger LOG = System.getLogger(CallbackSerializer.class.getName());
     private static final AtomicLong THREADS = new AtomicLong();
 
-    private record Task(ThrowingRunnable callback, Consumer<Throwable> onError) {}
+    private record Task(ThrowingRunnable<?> callback, Consumer<Throwable> onError) {}
 
     private final ClassLoader applicationLoader;
     private final ReentrantLock lock = new ReentrantLock();
@@ -73,7 +77,7 @@ final class CallbackSerializer {
     }
 
     /** Queues {@code r}; runs on a virtual thread after any running callback; exceptions go to {@code onError}. */
-    void submit(ThrowingRunnable r, Consumer<Throwable> onError) {
+    void submit(ThrowingRunnable<?> r, Consumer<Throwable> onError) {
         lock.lock();
         try {
             if (closed) return;
@@ -127,7 +131,7 @@ final class CallbackSerializer {
         try {
             closed = true;
             queue.clear();
-            if (drainer != Thread.currentThread()) awaitIdle();
+            if (!Thread.currentThread().equals(drainer)) awaitIdle();
         } finally {
             lock.unlock();
         }
@@ -147,7 +151,7 @@ final class CallbackSerializer {
     boolean isCallbackThread() {
         lock.lock();
         try {
-            return drainer == Thread.currentThread();
+            return Thread.currentThread().equals(drainer);
         } finally {
             lock.unlock();
         }
@@ -164,7 +168,7 @@ final class CallbackSerializer {
     }
 
     private void awaitIdle() {
-        if (drainer == Thread.currentThread()) {
+        if (Thread.currentThread().equals(drainer)) {
             throw new IllegalStateException("a callback cannot wait for itself");
         }
         while (running) idle.awaitUninterruptibly();
@@ -178,36 +182,48 @@ final class CallbackSerializer {
     }
 
     private void drain() {
-        while (true) {
-            Task task;
-            lock.lock();
-            try {
-                task = held || closed ? null : queue.poll();
-                if (task == null) {
-                    running = false;
-                    drainer = null;
-                    idle.signalAll();
-                    return;
-                }
-            } finally {
-                lock.unlock();
-            }
+        for (Task task = next(); task != null; task = next()) {
             runOne(task);
         }
     }
 
+    /** The next callback to run, or {@code null} when the drain stops (queue empty, held or closed). */
+    private Task next() {
+        lock.lock();
+        try {
+            Task task = held || closed ? null : queue.poll();
+            if (task == null) {
+                running = false;
+                drainer = null;
+                idle.signalAll();
+            }
+            return task;
+        } finally {
+            lock.unlock();
+        }
+    }
+
     private void runOne(Task task) {
-        // Per callback: a callback may change the TCCL, the next one still gets the application's.
+        Throwable failure = failureOf(task.callback());
+        if (failure == null) return;
+        Throwable onErrorFailure = failureOf(() -> task.onError().accept(failure));
+        if (onErrorFailure != null) LOG.log(System.Logger.Level.WARNING, "a listener's onError threw", onErrorFailure);
+    }
+
+    /**
+     * Runs {@code code} with the application's class loader as the thread context class loader, set
+     * for each call (a callback may change it, the next one still gets the application's), and
+     * returns what it threw, or {@code null}. This is the boundary of the application code on the
+     * callback thread: whatever a callback throws, an Error included, goes to its {@code onError}
+     * (whose Servlet API signature takes a {@code Throwable}), and the drain thread survives it.
+     */
+    private Throwable failureOf(ThrowingRunnable<?> code) {
         Thread.currentThread().setContextClassLoader(applicationLoader);
         try {
-            task.callback().run();
+            code.run();
+            return null;
         } catch (Throwable t) {
-            Thread.currentThread().setContextClassLoader(applicationLoader);
-            try {
-                task.onError().accept(t);
-            } catch (Throwable e) {
-                LOG.log(System.Logger.Level.WARNING, "a listener's onError threw", e);
-            }
+            return t;
         }
     }
 }

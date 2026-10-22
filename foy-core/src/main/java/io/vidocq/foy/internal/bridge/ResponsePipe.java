@@ -134,17 +134,21 @@ final class ResponsePipe {
      */
     void onCapacity(Runnable r) {
         Objects.requireNonNull(r, "callback");
+        if (!deferred(r)) r.run();
+    }
+
+    /** Keeps {@code r} for later when the pipe is full and still live; {@code false} when it must run now. */
+    private boolean deferred(Runnable r) {
         lock.lock();
         try {
-            if (count == ring.length && !broken && aborted == null && !finished) {
-                if (capacityCallback != null) throw new IllegalStateException("a capacity callback is already pending");
-                capacityCallback = r;
-                return;
-            }
+            boolean waitForRoom = count == ring.length && !broken && aborted == null && !finished;
+            if (!waitForRoom) return false;
+            if (capacityCallback != null) throw new IllegalStateException("a capacity callback is already pending");
+            capacityCallback = r;
+            return true;
         } finally {
             lock.unlock();
         }
-        r.run();
     }
 
     /** Normal end of body: the reader sees EOF after the buffered bytes. Idempotent. */
@@ -218,7 +222,7 @@ final class ResponsePipe {
                     if (finished) return -1;
                     try {
                         readable.await();
-                    } catch (InterruptedException e) {
+                    } catch (InterruptedException _) {
                         Thread.currentThread().interrupt();
                         throw new InterruptedIOException("interrupted while waiting for the response body");
                     }
