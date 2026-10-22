@@ -251,6 +251,32 @@ class HttpServletResponseImplTest {
     }
 
     @Test
+    void aTextTypeWrittenAsBytesNamesNoCharsetThatWasNeverSet() throws IOException {
+        // BUG-20261022-03: the static files of the default servlet go through getOutputStream; the container
+        // does not know their encoding, so it must not claim ISO-8859-1 over the page's own meta charset.
+        var res = new HttpServletResponseImpl();
+        res.setContentType("text/html");
+        res.getOutputStream();
+        assertEquals("text/html", res.getHeader("Content-Type"));
+        assertEquals("text/html", res.getContentType());
+        assertEquals("ISO-8859-1", res.getCharacterEncoding(), "the default of getCharacterEncoding is unchanged");
+    }
+
+    @Test
+    void theWriterStillNamesTheCharsetItWrites() throws IOException {
+        var res = new HttpServletResponseImpl();
+        res.setContentType("text/html");
+        res.getWriter();
+        assertEquals("text/html;charset=ISO-8859-1", res.getHeader("Content-Type"));
+        var configured = new HttpServletResponseImpl();
+        configured.setDefaultCharacterEncoding("UTF-8");
+        configured.setContentType("text/html");
+        configured.getOutputStream();
+        assertEquals("text/html;charset=UTF-8", configured.getHeader("Content-Type"),
+                "a response encoding configured for the context is named, bytes or writer");
+    }
+
+    @Test
     void explicitCharsetStillWins() {
         var res = new HttpServletResponseImpl();
         res.setCharacterEncoding("UTF-8");

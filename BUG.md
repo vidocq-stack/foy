@@ -12,9 +12,11 @@
 - Cause hypothesis: `HttpServletResponseImpl.refreshContentTypeHeader` adds `ISO-8859-1` to every
   `text/*` type when no charset was set, also when the body is written through `getOutputStream`, which
   the default servlet uses. Tomcat names a charset only when one was set or `getWriter` was called.
-- Status: OPEN. Informational for ZAP, so it does not fail the nightly. The change touches the charset
-  rules the Servlet TCK checks (`getContentType` after `setContentType` without a charset): run the TCK
-  with the fix.
+- Status: FIXED on `fix/static-charset`: `refreshContentTypeHeader` names a charset only when one was
+  set, configured for the context, or fixed by `getWriter()` (which still resolves `ISO-8859-1` by
+  default); `getCharacterEncoding()` keeps answering `ISO-8859-1`. Tests:
+  `HttpServletResponseImplTest.aTextTypeWrittenAsBytesNamesNoCharsetThatWasNeverSet` (failed before the
+  fix) and `theWriterStillNamesTheCharsetItWrites`. Official Servlet TCK, full suite, run with the fix.
 
 ## BUG-20261022-02 — The session cookie has no SameSite attribute
 

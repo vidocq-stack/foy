@@ -457,12 +457,11 @@ public final class HttpServletResponseImpl implements HttpServletResponse {
     /** Recalculates the {@code Content-Type} header by combining mediaType + charset. */
     private void refreshContentTypeHeader() {
         if (mediaType == null) return;
-        // For text/* types the charset is always included (explicit or default
-        // "ISO-8859-1", cf. Servlet 6.1 §5.4) afin que le header Content-Type final
-        // reflects the encoding actually used by getWriter().
-        boolean isText = mediaType.toLowerCase(Locale.ROOT).startsWith("text/");
-        String enc = configuredEncoding() != null ? configuredEncoding()
-                : (isText ? "ISO-8859-1" : null);
+        // The header names a charset only when one was set, configured for the context, or fixed by
+        // getWriter() (ISO-8859-1 by default, Servlet 6.1 section 5.6), as getContentType()'s Javadoc
+        // says. Bytes written through getOutputStream with nothing set, such as a static file, carry no
+        // charset: the container does not know their encoding (BUG-20261022-03).
+        String enc = configuredEncoding();
         String composed = enc != null ? mediaType + ";charset=" + enc : mediaType;
         List<String> list = new ArrayList<>();
         list.add(composed);
