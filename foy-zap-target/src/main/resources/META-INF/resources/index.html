@@ -1,0 +1,18 @@
+<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="UTF-8"><title>Foy ZAP target</title></head>
+<body>
+<h1>Foy ZAP target</h1>
+<p>The surfaces a Servlet container is responsible for, scanned every night by OWASP ZAP.</p>
+<ul>
+<li><a href="echo">A page that echoes a parameter</a>, with a form that posts to it
+    (<a href="echo?q=hello">an example</a>)</li>
+<li><a href="session">A servlet that uses the HTTP session</a></li>
+<li><a href="redirect">A redirect</a></li>
+<li><a href="missing">An error sent with sendError(404)</a>,
+    and <a href="missing?item=demo">one whose message names a request parameter</a></li>
+<li><a href="broken">An error sent with sendError(500)</a></li>
+<li><a href="boom">An exception thrown by a servlet</a></li>
+</ul>
+</body>
+</html>

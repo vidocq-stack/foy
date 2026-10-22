@@ -99,6 +99,8 @@
         <module>foy-chappe</module>
         <module>foy-it-other-containers</module>
         <module>foy-architecture-tests</module>
+        <!-- The target of the nightly ZAP scan (zap-nightly.yml): a test vehicle, never published. -->
+        <module>foy-zap-target</module>
     </modules>
 
     <dependencyManagement>

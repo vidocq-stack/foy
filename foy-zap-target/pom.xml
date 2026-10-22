@@ -1,0 +1,135 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>io.vidocq.foy</groupId>
+        <artifactId>foy-parent</artifactId>
+        <version>0.4.0-SNAPSHOT</version>
+    </parent>
+
+    <artifactId>foy-zap-target</artifactId>
+
+    <name>Foy :: ZAP scan target</name>
+    <description>The small web application the nightly OWASP ZAP scan runs against: Foy on Chappe with Vauban,
+        serving the surfaces a Servlet container is responsible for (Vidocq/vidocq#273)</description>
+
+    <properties>
+        <!-- Test vehicle: never released, installed or deployed, and not analysed by SonarQube (QUALITY.md). -->
+        <maven.deploy.skip>true</maven.deploy.skip>
+        <maven.install.skip>true</maven.install.skip>
+        <maven.javadoc.skip>true</maven.javadoc.skip>
+        <maven.source.skip>true</maven.source.skip>
+        <gpg.skip>true</gpg.skip>
+        <sonar.skip>true</sonar.skip>
+    </properties>
+
+    <!--
+        Foy, Chappe, Vauban and the Jakarta APIs only. The runtime modules (chappe-core, foy-cdi-vauban) are
+        runtime-scoped: the application compiles against the APIs, as the getting-started page shows.
+    -->
+    <dependencies>
+        <dependency>
+            <groupId>jakarta.servlet</groupId>
+            <artifactId>jakarta.servlet-api</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>jakarta.enterprise</groupId>
+            <artifactId>jakarta.enterprise.cdi-api</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.vidocq.foy</groupId>
+            <artifactId>foy-chappe</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.vidocq.chappe</groupId>
+            <artifactId>chappe-api</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.vidocq.vauban</groupId>
+            <artifactId>vauban-core</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.vidocq.foy</groupId>
+            <artifactId>foy-cdi-vauban</artifactId>
+            <scope>runtime</scope>
+        </dependency>
+        <dependency>
+            <groupId>io.vidocq.chappe</groupId>
+            <artifactId>chappe-core</artifactId>
+            <scope>runtime</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <!-- The processors of a Foy application with CDI (usage.adoc, build-time code generation). -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <configuration>
+                    <annotationProcessorPaths>
+                        <path>
+                            <groupId>io.vidocq.foy</groupId>
+                            <artifactId>foy-processor</artifactId>
+                            <version>${project.version}</version>
+                        </path>
+                        <path>
+                            <groupId>io.vidocq.vauban</groupId>
+                            <artifactId>vauban-processor</artifactId>
+                            <version>${vauban.version}</version>
+                        </path>
+                        <path>
+                            <groupId>io.vidocq.foy</groupId>
+                            <artifactId>foy-cdi-vauban</artifactId>
+                            <version>${project.version}</version>
+                        </path>
+                    </annotationProcessorPaths>
+                </configuration>
+                <executions>
+                    <!-- The tests are plain unit tests, not web components or beans. -->
+                    <execution>
+                        <id>default-testCompile</id>
+                        <configuration>
+                            <proc>none</proc>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+            <!-- The module path of the scan: zap-nightly.yml runs
+                 java -p target/lib:target/classes -m io.vidocq.foy.zap/io.vidocq.foy.zap.ZapTarget -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-dependency-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <id>module-path</id>
+                        <phase>package</phase>
+                        <goals>
+                            <goal>copy-dependencies</goal>
+                        </goals>
+                        <configuration>
+                            <includeScope>runtime</includeScope>
+                            <outputDirectory>${project.build.directory}/lib</outputDirectory>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+            <!-- maven.deploy.skip is not enough: central-publishing replaces maven-deploy-plugin. -->
+            <plugin>
+                <groupId>org.sonatype.central</groupId>
+                <artifactId>central-publishing-maven-plugin</artifactId>
+                <configuration>
+                    <skipPublishing>true</skipPublishing>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
+</project>

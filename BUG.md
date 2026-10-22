@@ -1,5 +1,21 @@
 # BUG.md — foy
 
+## BUG-20261022-03 — Static text files are served with charset=ISO-8859-1
+
+- Date: 2026-10-22 (seen in the first local run of the nightly OWASP ZAP scan, Vidocq/vidocq#273).
+- Symptom: ZAP raises *Charset Mismatch (Header Versus Meta Charset)* (rule 90011, informational) on
+  `/` and `/index.html` of `foy-zap-target`: the default servlet answers
+  `Content-Type: text/html;charset=ISO-8859-1` for a file whose `<meta charset="UTF-8">` says otherwise.
+  The header wins over the meta element, so a UTF-8 page with non-ASCII characters is shown garbled.
+- Minimal repro: `curl -sI http://127.0.0.1:18081/index.html` on the running target
+  (`zap-foy-local.sh <worktree> probe`).
+- Cause hypothesis: `HttpServletResponseImpl.refreshContentTypeHeader` adds `ISO-8859-1` to every
+  `text/*` type when no charset was set, also when the body is written through `getOutputStream`, which
+  the default servlet uses. Tomcat names a charset only when one was set or `getWriter` was called.
+- Status: OPEN. Informational for ZAP, so it does not fail the nightly. The change touches the charset
+  rules the Servlet TCK checks (`getContentType` after `setContentType` without a charset): run the TCK
+  with the fix.
+
 ## BUG-20261022-02 — The session cookie has no SameSite attribute
 
 - Date: 2026-10-22 (found by the first local run of the nightly OWASP ZAP scan, Vidocq/vidocq#273).
