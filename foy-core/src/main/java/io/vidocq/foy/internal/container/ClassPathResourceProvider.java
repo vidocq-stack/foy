@@ -37,7 +37,6 @@ import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
@@ -149,7 +148,7 @@ public final class ClassPathResourceProvider implements ResourceProvider {
             if (loc.isFile()) {
                 try {
                     return loc.open();
-                } catch (IOException e) {
+                } catch (IOException _) {
                     return null;
                 }
             }
@@ -210,7 +209,7 @@ public final class ClassPathResourceProvider implements ResourceProvider {
                 Loc loc = Loc.of(url, this::index);
                 if (loc != null && !(jarsOnly && loc instanceof DirLoc)) add(out, f.apply(loc));
             }
-        } catch (IOException e) {
+        } catch (IOException _) {
             // unreadable roots are skipped
         }
     }
@@ -221,7 +220,7 @@ public final class ClassPathResourceProvider implements ResourceProvider {
         int i = s.lastIndexOf(name);
         try {
             return new URI(i < 0 ? s : s.substring(0, i)).toURL();
-        } catch (Exception e) {
+        } catch (Exception _) {
             return url;
         }
     }
@@ -230,7 +229,7 @@ public final class ClassPathResourceProvider implements ResourceProvider {
         try {
             URI uri = new URI(key);
             return "file".equalsIgnoreCase(uri.getScheme()) ? Path.of(uri) : null;
-        } catch (URISyntaxException | IllegalArgumentException | java.nio.file.FileSystemNotFoundException e) {
+        } catch (URISyntaxException | IllegalArgumentException | java.nio.file.FileSystemNotFoundException _) {
             return null;
         }
     }
@@ -261,32 +260,35 @@ public final class ClassPathResourceProvider implements ResourceProvider {
 
         private Data build() {
             Map<String, Metadata> files = new HashMap<>();
-            Map<String, TreeSet<String>> children = new HashMap<>();
+            Map<String, Set<String>> children = new HashMap<>();
             try (JarFile f = new JarFile(jar.toFile())) {
-                f.stream().forEach(e -> {
-                    String name = e.getName();
-                    boolean dir = name.endsWith("/");
-                    String trimmed = dir ? name.substring(0, name.length() - 1) : name;
-                    if (trimmed.isEmpty()) return;
-                    if (!dir) files.put(trimmed, new Metadata(e.getSize(), e.getTime()));
-                    String child = trimmed;
-                    boolean childIsDir = dir;
-                    while (true) {
-                        int slash = child.lastIndexOf('/');
-                        String parent = slash < 0 ? "" : child.substring(0, slash);
-                        children.computeIfAbsent(parent, k -> new TreeSet<>())
-                                .add(child.substring(slash + 1) + (childIsDir ? "/" : ""));
-                        if (slash < 0) break;
-                        child = parent;
-                        childIsDir = true;
-                    }
-                });
-            } catch (IOException e) {
+                f.stream().forEach(e -> addEntry(e, files, children));
+            } catch (IOException _) {
                 return null;
             }
             Map<String, List<String>> frozen = new HashMap<>();
             children.forEach((k, v) -> frozen.put(k, List.copyOf(v)));
             return new Data(Map.copyOf(files), Map.copyOf(frozen));
+        }
+
+        /** Indexes {@code e}: its metadata when a file, and its name under each of its parent directories. */
+        private static void addEntry(JarEntry e, Map<String, Metadata> files, Map<String, Set<String>> children) {
+            String name = e.getName();
+            boolean dir = name.endsWith("/");
+            String trimmed = dir ? name.substring(0, name.length() - 1) : name;
+            if (trimmed.isEmpty()) return;
+            if (!dir) files.put(trimmed, new Metadata(e.getSize(), e.getTime()));
+            String child = trimmed;
+            boolean childIsDir = dir;
+            int slash;
+            do {
+                slash = child.lastIndexOf('/');
+                String parent = slash < 0 ? "" : child.substring(0, slash);
+                children.computeIfAbsent(parent, _ -> new TreeSet<>())
+                        .add(child.substring(slash + 1) + (childIsDir ? "/" : ""));
+                child = parent;
+                childIsDir = true;
+            } while (slash >= 0);
         }
 
         boolean isFile(String entry) { return data().files().containsKey(entry); }
@@ -331,7 +333,7 @@ public final class ClassPathResourceProvider implements ResourceProvider {
                 if (s.startsWith("file:")) {
                     return DirLoc.root(Path.of(url.toURI()));
                 }
-            } catch (URISyntaxException | java.net.MalformedURLException | IllegalArgumentException e) {
+            } catch (URISyntaxException | java.net.MalformedURLException | IllegalArgumentException _) {
                 // not a location we can read
             }
             return null;
@@ -374,11 +376,18 @@ public final class ClassPathResourceProvider implements ResourceProvider {
         static DirLoc root(Path dir) {
             try {
                 Path n = dir.toAbsolutePath().normalize();
-                Path real;
-                try { real = n.toRealPath(); } catch (IOException e) { real = n; }
-                return new DirLoc(n, real, n);
-            } catch (java.nio.file.InvalidPathException | java.io.IOError e) {
+                return new DirLoc(n, realPathOrSelf(n), n);
+            } catch (java.nio.file.InvalidPathException | java.io.IOError _) {
                 return new DirLoc(dir, dir, dir);
+            }
+        }
+
+        /** The real path of {@code dir}, or {@code dir} itself when it cannot be resolved (missing, say). */
+        private static Path realPathOrSelf(Path dir) {
+            try {
+                return dir.toRealPath();
+            } catch (IOException _) {
+                return dir;
             }
         }
 
@@ -390,7 +399,7 @@ public final class ClassPathResourceProvider implements ResourceProvider {
                 if (Files.exists(p) && !p.toRealPath().startsWith(realBase)) return new Missing();
                 if (!ResourcePaths.realNameMatches(p, rel)) return new Missing();
                 return new DirLoc(base, realBase, p);
-            } catch (java.nio.file.InvalidPathException | IOException e) {
+            } catch (java.nio.file.InvalidPathException | IOException _) {
                 return new Missing();
             }
         }
@@ -401,25 +410,25 @@ public final class ClassPathResourceProvider implements ResourceProvider {
             try (Stream<Path> s = Files.list(path)) {
                 return s.filter(this::inside)
                         .map(p -> p.getFileName() + (Files.isDirectory(p) ? "/" : "")).sorted().toList();
-            } catch (IOException | java.io.UncheckedIOException e) {
+            } catch (IOException | java.io.UncheckedIOException _) {
                 return List.of();
             }
         }
         private boolean inside(Path p) {
-            try { return p.toRealPath().startsWith(realBase); } catch (IOException e) { return false; }
+            try { return p.toRealPath().startsWith(realBase); } catch (IOException _) { return false; }
         }
         @Override public InputStream open() throws IOException { return Files.newInputStream(path); }
         @Override public Metadata metadata() {
             try {
                 return new Metadata(Files.size(path), Files.getLastModifiedTime(path).toMillis());
-            } catch (IOException e) {
+            } catch (IOException _) {
                 return null;
             }
         }
         @Override public URL url() {
             try {
                 return path.toUri().toURL();
-            } catch (java.net.MalformedURLException e) {
+            } catch (java.net.MalformedURLException _) {
                 return null;
             }
         }
@@ -462,7 +471,7 @@ public final class ClassPathResourceProvider implements ResourceProvider {
             try {
                 String raw = new URI(null, null, entry, null).getRawPath();
                 return new URI("jar:" + index.jar.toUri() + "!/" + raw + (isFile() ? "" : "/")).toURL();
-            } catch (URISyntaxException | java.net.MalformedURLException e) {
+            } catch (URISyntaxException | java.net.MalformedURLException _) {
                 return null;
             }
         }

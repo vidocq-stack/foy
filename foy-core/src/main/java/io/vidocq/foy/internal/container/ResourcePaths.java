@@ -127,7 +127,7 @@ public final class ResourcePaths {
         Path real;
         try {
             real = file.toRealPath(LinkOption.NOFOLLOW_LINKS);
-        } catch (IOException e) {
+        } catch (IOException _) {
             return false;
         }
         int n = real.getNameCount();

@@ -145,30 +145,35 @@ public final class DefaultServlet extends GenericServlet {
         String mime = getServletContext().getMimeType(path);
         if (mime != null) res.setContentType(mime);
         boolean clean = isClean(res);
-        long start = 0;
-        long count = length;
-        if (conditional && clean) {
-            res.setHeader("Accept-Ranges", "bytes");
-            String range = req.getHeader("Range");
-            if (range != null && ifRangeAllows(req, lastModified)) {
-                long[] span = parseRange(range, length);
-                if (span == UNSATISFIABLE) {
-                    res.setHeader("Content-Range", "bytes */" + length);
-                    res.setStatus(HttpServletResponse.SC_REQUESTED_RANGE_NOT_SATISFIABLE);
-                    return;
-                }
-                if (span != null) {
-                    start = span[0];
-                    count = span[1] - span[0] + 1;
-                    res.setStatus(HttpServletResponse.SC_PARTIAL_CONTENT);
-                    res.setHeader("Content-Range", "bytes " + span[0] + "-" + span[1] + "/" + length);
-                }
-            }
-        }
+        ByteRange span = conditional && clean ? applyRange(req, res, length, lastModified) : ByteRange.IGNORED;
+        if (span.equals(ByteRange.UNSATISFIABLE)) return;
+        long start = span.isSpan() ? span.first() : 0;
+        long count = span.isSpan() ? span.last() - span.first() + 1 : length;
         if (clean) res.setContentLengthLong(count);
         if (head) return;
         if (start > 0) in.skipNBytes(start);
         copy(in, count == length && start == 0 ? -1 : count, res);
+    }
+
+    /**
+     * Announces byte ranges and answers the {@code Range} header: 416 with its {@code Content-Range}
+     * when unsatisfiable, 206 with its {@code Content-Range} for one span, nothing for the whole body
+     * ({@link ByteRange#IGNORED}).
+     */
+    private static ByteRange applyRange(HttpServletRequest req, HttpServletResponse res, long length,
+                                        long lastModified) {
+        res.setHeader("Accept-Ranges", "bytes");
+        String header = req.getHeader("Range");
+        if (header == null || !ifRangeAllows(req, lastModified)) return ByteRange.IGNORED;
+        ByteRange span = parseRange(header, length);
+        if (span.equals(ByteRange.UNSATISFIABLE)) {
+            res.setHeader("Content-Range", "bytes */" + length);
+            res.setStatus(HttpServletResponse.SC_REQUESTED_RANGE_NOT_SATISFIABLE);
+        } else if (span.isSpan()) {
+            res.setStatus(HttpServletResponse.SC_PARTIAL_CONTENT);
+            res.setHeader("Content-Range", "bytes " + span.first() + "-" + span.last() + "/" + length);
+        }
+        return span;
     }
 
     /** {@code If-None-Match} (weak comparison) wins; else {@code If-Modified-Since}, second precision. */
@@ -204,38 +209,50 @@ public final class DefaultServlet extends GenericServlet {
     private static long dateHeader(HttpServletRequest req, String name) {
         try {
             return req.getDateHeader(name);
-        } catch (IllegalArgumentException unparsable) {
+        } catch (IllegalArgumentException _) {
             return -1;
         }
     }
 
-    private static final long[] UNSATISFIABLE = new long[0];
-
     /**
-     * The single byte range {@code [first, last]} of {@code header}; {@code null} when the header is
-     * to be ignored (malformed, another unit, several ranges); {@link #UNSATISFIABLE}.
+     * The outcome of a {@code Range} header: {@link #IGNORED} (malformed, another unit, several
+     * ranges), {@link #UNSATISFIABLE}, or the single span {@code [first, last]}, never negative.
      */
-    static long[] parseRange(String header, long length) {
+    record ByteRange(long first, long last) {
+        static final ByteRange IGNORED = new ByteRange(-1, -1);
+        static final ByteRange UNSATISFIABLE = new ByteRange(-2, -2);
+
+        boolean isSpan() { return first >= 0; }
+    }
+
+    /** The single byte range of {@code header} for a resource of {@code length} bytes. */
+    static ByteRange parseRange(String header, long length) {
         String h = header.trim();
-        if (!h.regionMatches(true, 0, "bytes=", 0, 6)) return null;
+        if (!h.regionMatches(true, 0, "bytes=", 0, 6)) return ByteRange.IGNORED;
         String spec = h.substring(6).trim();
-        if (spec.indexOf(',') >= 0) return null;
         int dash = spec.indexOf('-');
-        if (dash < 0) return null;
-        long first = number(spec.substring(0, dash).trim());
+        if (spec.indexOf(',') >= 0 || dash < 0) return ByteRange.IGNORED;
+        String firstText = spec.substring(0, dash);
         String lastText = spec.substring(dash + 1).trim();
-        if (spec.substring(0, dash).isBlank()) {
-            long suffix = number(lastText);
-            if (suffix < 0) return null;
-            if (suffix == 0 || length == 0) return UNSATISFIABLE;
-            return new long[] {Math.max(0, length - suffix), length - 1};
-        }
-        if (first < 0) return null;
+        return firstText.isBlank() ? suffixRange(lastText, length)
+                : boundedRange(number(firstText.trim()), lastText, length);
+    }
+
+    /** {@code bytes=-n}: the last {@code n} bytes. */
+    private static ByteRange suffixRange(String lastText, long length) {
+        long suffix = number(lastText);
+        if (suffix < 0) return ByteRange.IGNORED;
+        if (suffix == 0 || length == 0) return ByteRange.UNSATISFIABLE;
+        return new ByteRange(Math.max(0, length - suffix), length - 1);
+    }
+
+    /** {@code bytes=a-b} or {@code bytes=a-} ({@code lastText} empty). */
+    private static ByteRange boundedRange(long first, String lastText, long length) {
+        if (first < 0) return ByteRange.IGNORED;
         long last = lastText.isEmpty() ? length - 1 : number(lastText);
-        if (last < 0 && !lastText.isEmpty()) return null;
-        if (!lastText.isEmpty() && last < first) return null;
-        if (first >= length) return UNSATISFIABLE;
-        return new long[] {first, Math.min(last, length - 1)};
+        if (!lastText.isEmpty() && (last < 0 || last < first)) return ByteRange.IGNORED;
+        if (first >= length) return ByteRange.UNSATISFIABLE;
+        return new ByteRange(first, Math.min(last, length - 1));
     }
 
     /** A non-negative decimal number, {@code -1} otherwise. */
@@ -277,9 +294,9 @@ public final class DefaultServlet extends GenericServlet {
             URL url = ctx.getResource(path);
             if (url == null || !"file".equalsIgnoreCase(url.getProtocol())) return true;
             return ResourcePaths.realNameMatches(Path.of(url.toURI()), path.substring(1));
-        } catch (java.net.MalformedURLException e) {
+        } catch (java.net.MalformedURLException _) {
             return true; // locate() reports the same failure as a missing resource
-        } catch (java.net.URISyntaxException | IllegalArgumentException e) {
+        } catch (java.net.URISyntaxException | IllegalArgumentException _) {
             return false; // a file: URL that is no path fails closed
         }
     }
@@ -297,52 +314,64 @@ public final class DefaultServlet extends GenericServlet {
         if (!allowed || path.endsWith("/")) return null;
         var ctx = getServletContext();
         if (!caseMatches(ctx, path)) return null;
-        long length = -1;
-        long lastModified = -1;
-        URL url = null;
         var meta = ctx instanceof VidocqServletContext v ? v.resourceMetadata(path) : null;
-        if (meta != null) {
-            length = meta.length();
-            lastModified = meta.lastModified() > 0 ? meta.lastModified() : -1;
-        } else {
-            try {
-                url = ctx.getResource(path);
-            } catch (java.net.MalformedURLException e) {
-                return null;
-            }
-            if (url != null && "file".equalsIgnoreCase(url.getProtocol())) {
-                Path file;
-                try {
-                    file = Path.of(url.toURI());
-                } catch (java.net.URISyntaxException | IllegalArgumentException e) {
-                    return null;
-                }
-                if (!Files.isRegularFile(file)) return null;
-                length = Files.size(file);
-                lastModified = Files.getLastModifiedTime(file).toMillis();
-            } else if (url != null && url.toString().endsWith("/")) {
-                return null; // a directory of some other scheme
-            }
-        }
-        // The provider's own stream (it releases jars on close), else the URL's; the caller closes it.
-        InputStream in = ctx.getResourceAsStream(path);
-        if (in == null && url != null) {
-            try {
-                in = url.openStream();
-            } catch (IOException e) {
-                return null;
-            }
-        }
+        Located found;
+        if (meta != null) found = new Located(null, meta.length(), meta.lastModified() > 0 ? meta.lastModified() : -1);
+        else found = locateByUrl(ctx, path);
+        if (found == null) return null;
+        InputStream in = open(ctx, path, found.url());
         if (in == null) return null;
-        if (length < 0) {
+        if (found.length() < 0) {
             // Neither provider metadata nor a file: the length is that of the bytes actually read.
             byte[] bytes;
             try (InputStream all = in) {
                 bytes = all.readAllBytes();
             }
-            return new Resource(new ByteArrayInputStream(bytes), bytes.length, lastModified);
+            return new Resource(new ByteArrayInputStream(bytes), bytes.length, found.lastModified());
         }
-        return new Resource(in, length, lastModified);
+        return new Resource(in, found.length(), found.lastModified());
+    }
+
+    /**
+     * What is known of a resource before it is opened: its URL ({@code null} when the provider's
+     * metadata answered), its length and its last-modified time ({@code -1}: unknown).
+     */
+    private record Located(URL url, long length, long lastModified) {}
+
+    /** The resource as its URL describes it: a file's length and time; {@code null} when refused. */
+    private static Located locateByUrl(jakarta.servlet.ServletContext ctx, String path) throws IOException {
+        URL url;
+        try {
+            url = ctx.getResource(path);
+        } catch (java.net.MalformedURLException _) {
+            return null;
+        }
+        if (url != null && "file".equalsIgnoreCase(url.getProtocol())) return locateFile(url);
+        if (url != null && url.toString().endsWith("/")) return null; // a directory of some other scheme
+        return new Located(url, -1, -1);
+    }
+
+    /** A {@code file:} resource: {@code null} unless a regular file. */
+    private static Located locateFile(URL url) throws IOException {
+        Path file;
+        try {
+            file = Path.of(url.toURI());
+        } catch (java.net.URISyntaxException | IllegalArgumentException _) {
+            return null;
+        }
+        if (!Files.isRegularFile(file)) return null;
+        return new Located(url, Files.size(file), Files.getLastModifiedTime(file).toMillis());
+    }
+
+    /** The provider's own stream (it releases jars on close), else the URL's; the caller closes it. */
+    private static InputStream open(jakarta.servlet.ServletContext ctx, String path, URL url) {
+        InputStream in = ctx.getResourceAsStream(path);
+        if (in != null || url == null) return in;
+        try {
+            return url.openStream();
+        } catch (IOException _) {
+            return null;
+        }
     }
 
     /** Whether this servlet writes the body alone, as bytes, so that a Content-Length and a range describe it. */
@@ -356,7 +385,7 @@ public final class DefaultServlet extends GenericServlet {
         String enc = res.getCharacterEncoding();
         try {
             return enc == null ? StandardCharsets.ISO_8859_1 : java.nio.charset.Charset.forName(enc);
-        } catch (RuntimeException unsupported) {
+        } catch (RuntimeException _) {
             return StandardCharsets.ISO_8859_1;
         }
     }
@@ -366,22 +395,8 @@ public final class DefaultServlet extends GenericServlet {
         OutputStream out;
         try {
             out = res.getOutputStream();
-        } catch (IllegalStateException writerInUse) {
-            InputStream bounded = count < 0 ? in : new java.io.FilterInputStream(in) {
-                private long left = count;
-                @Override public int read() throws IOException {
-                    if (left <= 0) return -1;
-                    int b = super.read();
-                    if (b >= 0) left--;
-                    return b;
-                }
-                @Override public int read(byte[] b, int off, int len) throws IOException {
-                    if (left <= 0) return -1;
-                    int n = super.read(b, off, (int) Math.min(len, left));
-                    if (n > 0) left -= n;
-                    return n;
-                }
-            };
+        } catch (IllegalStateException _) {
+            InputStream bounded = count < 0 ? in : new Truncated(in, count);
             // The writer encodes with the response's charset: decode the resource with the same one.
             new InputStreamReader(bounded, responseCharset(res)).transferTo(res.getWriter());
             return;
@@ -397,6 +412,30 @@ public final class DefaultServlet extends GenericServlet {
             if (n < 0) break;
             out.write(buffer, 0, n);
             left -= n;
+        }
+    }
+
+    /** The first {@code count} bytes of a stream, then its end. */
+    private static final class Truncated extends java.io.FilterInputStream {
+        private long left;
+
+        Truncated(InputStream in, long count) {
+            super(in);
+            this.left = count;
+        }
+
+        @Override public int read() throws IOException {
+            if (left <= 0) return -1;
+            int b = super.read();
+            if (b >= 0) left--;
+            return b;
+        }
+
+        @Override public int read(byte[] b, int off, int len) throws IOException {
+            if (left <= 0) return -1;
+            int n = super.read(b, off, (int) Math.min(len, left));
+            if (n > 0) left -= n;
+            return n;
         }
     }
 }

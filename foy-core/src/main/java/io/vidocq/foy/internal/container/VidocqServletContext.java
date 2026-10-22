@@ -195,44 +195,51 @@ public final class VidocqServletContext implements ServletContext {
         return DEFAULT_LOCALE_ENCODINGS.get(lang);
     }
 
+    private static final String LATIN_1 = "ISO-8859-1";
+    private static final String LATIN_2 = "ISO-8859-2";
+    private static final String CYRILLIC = "ISO-8859-5";
+    /** Parameter names in the messages of the name checks. */
+    private static final String SERVLET_NAME = "servletName";
+    private static final String FILTER_NAME = "filterName";
+
     private static final Map<String, String> DEFAULT_LOCALE_ENCODINGS = Map.ofEntries(
             Map.entry("ar", "ISO-8859-6"),
-            Map.entry("be", "ISO-8859-5"),
-            Map.entry("bg", "ISO-8859-5"),
-            Map.entry("ca", "ISO-8859-1"),
-            Map.entry("cs", "ISO-8859-2"),
-            Map.entry("da", "ISO-8859-1"),
-            Map.entry("de", "ISO-8859-1"),
+            Map.entry("be", CYRILLIC),
+            Map.entry("bg", CYRILLIC),
+            Map.entry("ca", LATIN_1),
+            Map.entry("cs", LATIN_2),
+            Map.entry("da", LATIN_1),
+            Map.entry("de", LATIN_1),
             Map.entry("el", "ISO-8859-7"),
-            Map.entry("en", "ISO-8859-1"),
-            Map.entry("es", "ISO-8859-1"),
-            Map.entry("et", "ISO-8859-1"),
-            Map.entry("fi", "ISO-8859-1"),
-            Map.entry("fr", "ISO-8859-1"),
-            Map.entry("hr", "ISO-8859-2"),
-            Map.entry("hu", "ISO-8859-2"),
-            Map.entry("is", "ISO-8859-1"),
-            Map.entry("it", "ISO-8859-1"),
+            Map.entry("en", LATIN_1),
+            Map.entry("es", LATIN_1),
+            Map.entry("et", LATIN_1),
+            Map.entry("fi", LATIN_1),
+            Map.entry("fr", LATIN_1),
+            Map.entry("hr", LATIN_2),
+            Map.entry("hu", LATIN_2),
+            Map.entry("is", LATIN_1),
+            Map.entry("it", LATIN_1),
             Map.entry("iw", "ISO-8859-8"),
             Map.entry("ja", "Shift_JIS"),
             Map.entry("ko", "EUC-KR"),
-            Map.entry("lt", "ISO-8859-2"),
-            Map.entry("lv", "ISO-8859-2"),
-            Map.entry("mk", "ISO-8859-5"),
-            Map.entry("nl", "ISO-8859-1"),
-            Map.entry("no", "ISO-8859-1"),
-            Map.entry("pl", "ISO-8859-2"),
-            Map.entry("pt", "ISO-8859-1"),
-            Map.entry("ro", "ISO-8859-2"),
-            Map.entry("ru", "ISO-8859-5"),
-            Map.entry("sh", "ISO-8859-5"),
-            Map.entry("sk", "ISO-8859-2"),
-            Map.entry("sl", "ISO-8859-2"),
-            Map.entry("sq", "ISO-8859-2"),
-            Map.entry("sr", "ISO-8859-5"),
-            Map.entry("sv", "ISO-8859-1"),
+            Map.entry("lt", LATIN_2),
+            Map.entry("lv", LATIN_2),
+            Map.entry("mk", CYRILLIC),
+            Map.entry("nl", LATIN_1),
+            Map.entry("no", LATIN_1),
+            Map.entry("pl", LATIN_2),
+            Map.entry("pt", LATIN_1),
+            Map.entry("ro", LATIN_2),
+            Map.entry("ru", CYRILLIC),
+            Map.entry("sh", CYRILLIC),
+            Map.entry("sk", LATIN_2),
+            Map.entry("sl", LATIN_2),
+            Map.entry("sq", LATIN_2),
+            Map.entry("sr", CYRILLIC),
+            Map.entry("sv", LATIN_1),
             Map.entry("tr", "ISO-8859-9"),
-            Map.entry("uk", "ISO-8859-5"),
+            Map.entry("uk", CYRILLIC),
             Map.entry("zh", "GB2312"),
             Map.entry("zh_TW", "Big5"));
 
@@ -569,7 +576,7 @@ public final class VidocqServletContext implements ServletContext {
         try {
             Path file = Path.of(url.toURI());
             return Files.exists(file) ? file.toAbsolutePath().toString() : null;
-        } catch (URISyntaxException | IllegalArgumentException | FileSystemNotFoundException e) {
+        } catch (URISyntaxException | IllegalArgumentException | FileSystemNotFoundException _) {
             return null;
         }
     }
@@ -647,7 +654,7 @@ public final class VidocqServletContext implements ServletContext {
     @Override public ServletRegistration.Dynamic addServlet(String name, String className) {
         if (programmaticListenerActive) throw programmaticForbidden();
         if (initialized) throw alreadyInitialized();
-        requireNonEmptyName(name, "servletName");
+        requireNonEmptyName(name, SERVLET_NAME);
         if (dynamicServlets.containsKey(name) || reservedServletNames.contains(name)) return null;
         var r = new DynamicServletRegistration(name, className);
         r.attach(this);
@@ -657,7 +664,7 @@ public final class VidocqServletContext implements ServletContext {
     @Override public ServletRegistration.Dynamic addServlet(String name, Servlet servlet) {
         if (programmaticListenerActive) throw programmaticForbidden();
         if (initialized) throw alreadyInitialized();
-        requireNonEmptyName(name, "servletName");
+        requireNonEmptyName(name, SERVLET_NAME);
         if (dynamicServlets.containsKey(name) || reservedServletNames.contains(name)) return null;
         var r = new DynamicServletRegistration(name, servlet);
         r.attach(this);
@@ -667,7 +674,7 @@ public final class VidocqServletContext implements ServletContext {
     @Override public ServletRegistration.Dynamic addServlet(String name, Class<? extends Servlet> c) {
         if (programmaticListenerActive) throw programmaticForbidden();
         if (initialized) throw alreadyInitialized();
-        requireNonEmptyName(name, "servletName");
+        requireNonEmptyName(name, SERVLET_NAME);
         if (dynamicServlets.containsKey(name) || reservedServletNames.contains(name)) return null;
         var r = new DynamicServletRegistration(name, c);
         r.attach(this);
@@ -678,7 +685,7 @@ public final class VidocqServletContext implements ServletContext {
         if (programmaticListenerActive) throw programmaticForbidden();
         if (initialized) throw alreadyInitialized();
         // §4.4 addJspFile : IllegalArgumentException si servletName null ou vide.
-        requireNonEmptyName(name, "servletName");
+        requireNonEmptyName(name, SERVLET_NAME);
         if (dynamicServlets.containsKey(name) || reservedServletNames.contains(name)) return null;
         var application = jspApplication.get();
         var r = application == null ? new DynamicServletRegistration(name, (String) null)
@@ -714,7 +721,7 @@ public final class VidocqServletContext implements ServletContext {
     @Override public FilterRegistration.Dynamic addFilter(String name, String className) {
         if (programmaticListenerActive) throw programmaticForbidden();
         if (initialized) throw alreadyInitialized();
-        requireNonEmptyName(name, "filterName");
+        requireNonEmptyName(name, FILTER_NAME);
         if (dynamicFilters.containsKey(name) || reservedFilterNames.contains(name)) return null;
         var r = new DynamicFilterRegistration(name, className);
         dynamicFilters.put(name, r);
@@ -723,7 +730,7 @@ public final class VidocqServletContext implements ServletContext {
     @Override public FilterRegistration.Dynamic addFilter(String name, Filter f) {
         if (programmaticListenerActive) throw programmaticForbidden();
         if (initialized) throw alreadyInitialized();
-        requireNonEmptyName(name, "filterName");
+        requireNonEmptyName(name, FILTER_NAME);
         if (dynamicFilters.containsKey(name) || reservedFilterNames.contains(name)) return null;
         var r = new DynamicFilterRegistration(name, f);
         dynamicFilters.put(name, r);
@@ -732,7 +739,7 @@ public final class VidocqServletContext implements ServletContext {
     @Override public FilterRegistration.Dynamic addFilter(String name, Class<? extends Filter> c) {
         if (programmaticListenerActive) throw programmaticForbidden();
         if (initialized) throw alreadyInitialized();
-        requireNonEmptyName(name, "filterName");
+        requireNonEmptyName(name, FILTER_NAME);
         if (dynamicFilters.containsKey(name) || reservedFilterNames.contains(name)) return null;
         var r = new DynamicFilterRegistration(name, c);
         dynamicFilters.put(name, r);

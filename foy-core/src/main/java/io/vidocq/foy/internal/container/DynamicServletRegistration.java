@@ -103,7 +103,7 @@ public final class DynamicServletRegistration implements ServletRegistration.Dyn
             if (owner != null && owner.isUrlPatternMappedElsewhere(name, p)) conflicts.add(p);
         }
         if (!conflicts.isEmpty()) return conflicts;
-        for (String p : urlPatterns) mappings.add(p);
+        Collections.addAll(mappings, urlPatterns);
         return conflicts;
     }
     @Override public Collection<String> getMappings() { return Collections.unmodifiableSet(mappings); }
