@@ -56,20 +56,17 @@ final class ResponseHead {
      * Blocks chappe's thread until the head is settled. An interrupt (server stop) abandons the
      * head, so a commit arriving later sees {@link #complete} return {@code false} and fails the
      * servlet's writes instead of feeding a pipe nobody reads.
+     *
+     * @throws ExecutionException the head failed: its cause is what {@link #fail} was given
      */
-    Response await() throws Exception {
+    Response await() throws InterruptedException, ExecutionException {
         try {
             return future.get();
         } catch (InterruptedException e) {
             future.cancel(false);
             throw e;
-        } catch (CancellationException e) {
+        } catch (CancellationException _) {
             throw new InterruptedException("response head abandoned");
-        } catch (ExecutionException e) {
-            Throwable cause = e.getCause();
-            if (cause instanceof Exception ex) throw ex;
-            if (cause instanceof Error err) throw err;
-            throw e;
         }
     }
 }
