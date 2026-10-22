@@ -250,7 +250,7 @@ class ServletListenerEndToEndTest {
                     "an Error still propagates out of the bridge");
             long deadline = System.nanoTime() + Duration.ofSeconds(5).toNanos();
             while ((uncaught.isEmpty() || uncaught.size() < served.get()) && System.nanoTime() < deadline) {
-                Pause.forMillis(10);
+                Thread.sleep(10);
             }
         } finally {
             Thread.setDefaultUncaughtExceptionHandler(previousHandler);

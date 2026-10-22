@@ -100,7 +100,7 @@ class ServletNonBlockingIoEndToEndTest {
         try (var client = new Client(port)) {
             client.send(head());
             client.send("5\r\nHello\r\n");
-            Pause.forMillis(1000); // part of the scenario: the second chunk comes later
+            Thread.sleep(1000); // part of the scenario: the second chunk comes later
             client.send("5\r\nWorld\r\n0\r\n\r\n");
             String body = client.readAll();
             assertTrue(body.startsWith("HTTP/1.1 200"), body);
@@ -556,7 +556,7 @@ class ServletNonBlockingIoEndToEndTest {
     }
 
     private static void pause() {
-        try { Pause.forMillis(100); }
+        try { Thread.sleep(100); }
         catch (InterruptedException _) { Thread.currentThread().interrupt(); }
     }
 

@@ -81,7 +81,7 @@ class ServletStreamingEndToEndTest {
                 PrintWriter w = resp.getWriter();
                 w.println("first line");
                 resp.flushBuffer();
-                try { Pause.forMillis(1500); } catch (InterruptedException _) { Thread.currentThread().interrupt(); }
+                try { Thread.sleep(1500); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
                 w.println("second line");
             }
         });
@@ -230,7 +230,7 @@ class ServletStreamingEndToEndTest {
                     while (System.nanoTime() < deadline) {
                         out.write("tick\n".getBytes(StandardCharsets.US_ASCII));
                         out.flush();
-                        Pause.forMillis(50);
+                        Thread.sleep(50);
                     }
                     writeFailure.completeExceptionally(new AssertionError("no write failed within 10 s"));
                 } catch (IOException e) {

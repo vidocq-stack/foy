@@ -66,7 +66,7 @@ class ServletAsyncEndToEndTest {
                 AsyncContext ac = req.startAsync();
                 ac.start(() -> {
                     try {
-                        Pause.forMillis(30);
+                        Thread.sleep(30);
                         HttpServletResponse r = (HttpServletResponse) ac.getResponse();
                         r.setContentType("text/plain");
                         r.getWriter().write("async-ok");
@@ -443,7 +443,7 @@ class ServletAsyncEndToEndTest {
                 out.write('x');
                 if (flush) out.flush();
                 if (timedOut.getCount() == 0) afterTimeout++;
-                else Pause.forMillis(1);
+                else Thread.sleep(1);
             }
             done.complete(null);
         } catch (Throwable t) {
