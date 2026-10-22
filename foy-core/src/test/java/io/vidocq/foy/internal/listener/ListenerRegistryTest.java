@@ -38,8 +38,8 @@ class ListenerRegistryTest {
     @Test
     void registerAddsToMultipleTypedLists() {
         class MultiListener implements ServletContextListener, HttpSessionListener {
-            @Override public void contextInitialized(ServletContextEvent e) {}
-            @Override public void sessionCreated(HttpSessionEvent e) {}
+            @Override public void contextInitialized(ServletContextEvent e) { /* not needed by this test */ }
+            @Override public void sessionCreated(HttpSessionEvent e) { /* not needed by this test */ }
         }
         var reg = new ListenerRegistry();
         reg.register(new MultiListener());
@@ -84,10 +84,11 @@ class ListenerRegistryTest {
     @Test
     void emptyRegistryIsNoop() {
         var reg = new ListenerRegistry();
-        reg.fireContextInitialized(new VidocqServletContext("/"));
-        reg.fireSessionCreated(null);
-        reg.fireRequestInitialized(new VidocqServletContext("/"), null);
-        // no throw
+        assertDoesNotThrow(() -> {
+            reg.fireContextInitialized(new VidocqServletContext("/"));
+            reg.fireSessionCreated(null);
+            reg.fireRequestInitialized(new VidocqServletContext("/"), null);
+        });
     }
 
     @Test

@@ -318,7 +318,7 @@ class ErrorPageDispatchTest {
             int n;
             while ((n = in.read(buf)) != -1) received.write(buf, 0, n);
             fail("the body must not end normally, got: " + received);
-        } catch (IOException expected) {
+        } catch (IOException _) {
             // truncated chunked body
         }
         assertEquals("committed-content", received.toString(StandardCharsets.UTF_8));

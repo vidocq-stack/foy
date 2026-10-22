@@ -56,7 +56,7 @@ class ClassFileDescriptorReaderTest {
     @WebFilter(value = "/f", dispatcherTypes = DispatcherType.ASYNC)
     public static class AFilter implements jakarta.servlet.Filter {
         @Override public void doFilter(jakarta.servlet.ServletRequest q, jakarta.servlet.ServletResponse r,
-                                       jakarta.servlet.FilterChain c) {}
+                                       jakarta.servlet.FilterChain c) { /* not needed by this test */ }
     }
 
     public static class Plain extends HttpServlet {}
@@ -99,7 +99,7 @@ class ClassFileDescriptorReaderTest {
 
     @HandlesTypes({Runnable.class, SomeNested.class})
     public static class Initializer implements ServletContainerInitializer {
-        @Override public void onStartup(Set<Class<?>> c, ServletContext ctx) {}
+        @Override public void onStartup(Set<Class<?>> c, ServletContext ctx) { /* not needed by this test */ }
     }
 
     @WebListener
@@ -127,13 +127,13 @@ class ClassFileDescriptorReaderTest {
     @WebFilter(servletNames = "cf", dispatcherTypes = {DispatcherType.FORWARD, DispatcherType.FORWARD})
     public static class NamedFilter implements jakarta.servlet.Filter {
         @Override public void doFilter(jakarta.servlet.ServletRequest q, jakarta.servlet.ServletResponse r,
-                                       jakarta.servlet.FilterChain c) {}
+                                       jakarta.servlet.FilterChain c) { /* not needed by this test */ }
     }
 
     @WebFilter("/g")
     public static class DefaultDispatcherFilter implements jakarta.servlet.Filter {
         @Override public void doFilter(jakarta.servlet.ServletRequest q, jakarta.servlet.ServletResponse r,
-                                       jakarta.servlet.FilterChain c) {}
+                                       jakarta.servlet.FilterChain c) { /* not needed by this test */ }
     }
 
     @MultipartConfig

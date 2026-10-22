@@ -62,7 +62,7 @@ class AsyncSupportedDispatchTest {
         boolean supported = req.isAsyncSupported();
         boolean ise = false;
         if (!supported) {
-            try { req.startAsync(); } catch (IllegalStateException e) { ise = true; }
+            try { req.startAsync(); } catch (IllegalStateException _) { ise = true; }
         }
         return supported + "/" + ise;
     }

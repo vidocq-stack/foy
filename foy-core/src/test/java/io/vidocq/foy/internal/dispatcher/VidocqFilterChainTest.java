@@ -45,9 +45,9 @@ class VidocqFilterChainTest {
     }
 
     @Test
-    void emptyChainWithNullServletIsNoop() throws Exception {
+    void emptyChainWithNullServletIsNoop() {
         var chain = new VidocqFilterChain(List.of(), null);
-        chain.doFilter(null, null); // no throw
+        assertDoesNotThrow(() -> chain.doFilter(null, null));
     }
 
     @Test
@@ -89,21 +89,21 @@ class VidocqFilterChainTest {
 
     private static Servlet stubServlet(AtomicBoolean called) {
         return new Servlet() {
-            @Override public void init(ServletConfig c) {}
+            @Override public void init(ServletConfig c) { /* not needed by this test */ }
             @Override public ServletConfig getServletConfig() { return null; }
             @Override public void service(ServletRequest r, ServletResponse s) { called.set(true); }
             @Override public String getServletInfo() { return ""; }
-            @Override public void destroy() {}
+            @Override public void destroy() { /* not needed by this test */ }
         };
     }
 
     private static Servlet recordingServlet(List<String> trace, String label) {
         return new Servlet() {
-            @Override public void init(ServletConfig c) {}
+            @Override public void init(ServletConfig c) { /* not needed by this test */ }
             @Override public ServletConfig getServletConfig() { return null; }
             @Override public void service(ServletRequest r, ServletResponse s) { trace.add(label); }
             @Override public String getServletInfo() { return ""; }
-            @Override public void destroy() {}
+            @Override public void destroy() { /* not needed by this test */ }
         };
     }
 

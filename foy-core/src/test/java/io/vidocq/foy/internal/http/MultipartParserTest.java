@@ -168,8 +168,17 @@ class MultipartParserTest {
 
     @Test
     void submittedFileNameIsReturnedRaw() throws IOException {
-        var parts = parse("--B\r\nContent-Disposition: form-data; name=\"a\"; filename=\"../../etc/passwd\"\r\n\r\nv\r\n"
-                + "--B\r\nContent-Disposition: form-data; name=\"b\"; filename=\"C:\\dir\\f.txt\"\r\n\r\nv\r\n--B--\r\n", "B", OPEN);
+        var parts = parse("""
+                --B\r
+                Content-Disposition: form-data; name="a"; filename="../../etc/passwd"\r
+                \r
+                v\r
+                --B\r
+                Content-Disposition: form-data; name="b"; filename="C:\\dir\\f.txt"\r
+                \r
+                v\r
+                --B--\r
+                """, "B", OPEN);
         assertEquals("../../etc/passwd", parts.get(0).getSubmittedFileName());
         assertEquals("C:\\dir\\f.txt", parts.get(1).getSubmittedFileName(), "backslashes of a Windows path are kept");
     }
@@ -240,22 +249,23 @@ class MultipartParserTest {
         var limits = new MultipartParser.Limits(-1, -1, 1024, -1, 64);
         String body = "--B\r\nContent-Disposition: form-data; name=\"a\"\r\nX-Long: " + "y".repeat(100) + "\r\n\r\nv\r\n--B--\r\n";
         assertThrows(MultipartLimitException.class, () -> parse(body, "B", limits));
+        var endlessHeader = endless("--B\r\nX-Endless: ");
         assertThrows(MultipartLimitException.class,
-                () -> parse(endless("--B\r\nX-Endless: "), "B", limits), "an endless header line stops at the limit");
+                () -> parse(endlessHeader, "B", limits), "an endless header line stops at the limit");
     }
 
     @Test
     void maxFileSizeIsEnforcedWhileStreaming() {
         var limits = new MultipartParser.Limits(1024, -1, 0, -1, 8192);
-        assertThrows(MultipartLimitException.class,
-                () -> parse(endless("--B\r\nContent-Disposition: form-data; name=\"f\"; filename=\"f\"\r\n\r\n"), "B", limits));
+        var endlessFile = endless("--B\r\nContent-Disposition: form-data; name=\"f\"; filename=\"f\"\r\n\r\n");
+        assertThrows(MultipartLimitException.class, () -> parse(endlessFile, "B", limits));
     }
 
     @Test
     void maxRequestSizeIsEnforcedWhileStreaming() {
         var limits = new MultipartParser.Limits(-1, 64 * 1024, 0, -1, 8192);
-        assertThrows(MultipartLimitException.class,
-                () -> parse(endless("--B\r\nContent-Disposition: form-data; name=\"f\"; filename=\"f\"\r\n\r\n"), "B", limits));
+        var endlessFile = endless("--B\r\nContent-Disposition: form-data; name=\"f\"; filename=\"f\"\r\n\r\n");
+        assertThrows(MultipartLimitException.class, () -> parse(endlessFile, "B", limits));
     }
 
     @Test

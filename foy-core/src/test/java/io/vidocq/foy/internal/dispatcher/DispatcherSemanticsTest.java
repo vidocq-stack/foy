@@ -19,6 +19,7 @@
  */
 package io.vidocq.foy.internal.dispatcher;
 
+import io.vidocq.foy.internal.TestPause;
 import io.vidocq.foy.internal.TestSecurity;
 import io.vidocq.chappe.api.Server;
 import io.vidocq.foy.internal.TestServerLauncherAccess;
@@ -268,7 +269,7 @@ class DispatcherSemanticsTest {
                     var ac = req.startAsync();
                     ac.start(() -> {
                         try {
-                            Thread.sleep(50);
+                            TestPause.millis(50);
                             ac.getResponse().getWriter().write("late;");
                         } catch (Exception e) {
                             throw new IllegalStateException(e);
@@ -393,7 +394,7 @@ class DispatcherSemanticsTest {
                     req.getRequestDispatcher("/t").forward(req, wrapper);
                 }), "c"),
                 map("/t", plain((req, resp) -> {
-                    events.add("same=" + (resp == passed.get()));
+                    events.add("same=" + sameInstance(resp, passed.get()));
                     resp.getWriter().write("x");
                 }), "t"));
         assertEquals("[x", get("/c"));
@@ -408,11 +409,11 @@ class DispatcherSemanticsTest {
                     try {
                         req.getRequestDispatcher("/boom").forward(request, response);
                         events.add("no exception");
-                    } catch (ServletException expected) {
-                        events.add("afterThrow=" + (request.getRequest() == req) + "," + (response.getResponse() == resp));
+                    } catch (ServletException _) {
+                        events.add("afterThrow=" + sameInstance(request.getRequest(), req) + "," + sameInstance(response.getResponse(), resp));
                     }
                     req.getRequestDispatcher("/t").forward(request, response);
-                    events.add("afterReturn=" + (request.getRequest() == req) + "," + (response.getResponse() == resp));
+                    events.add("afterReturn=" + sameInstance(request.getRequest(), req) + "," + sameInstance(response.getResponse(), resp));
                 }), "c"),
                 map("/t", plain((req, resp) -> resp.getWriter().write("x")), "t"),
                 map("/boom", plain((req, resp) -> { throw new ServletException("boom"); }), "boom"));
@@ -426,13 +427,13 @@ class DispatcherSemanticsTest {
         start(map("/c", servlet((req, resp) -> {
                     ServletRequestWrapper wrapper = plainWrapper(req);
                     req.getRequestDispatcher("/t").include(wrapper, resp);
-                    boolean afterReturn = wrapper.getRequest() == req;
+                    boolean afterReturn = sameInstance(wrapper.getRequest(), req);
                     boolean afterThrow;
                     try {
                         req.getRequestDispatcher("/boom").include(wrapper, resp);
                         afterThrow = false;
-                    } catch (ServletException expected) {
-                        afterThrow = wrapper.getRequest() == req;
+                    } catch (ServletException _) {
+                        afterThrow = sameInstance(wrapper.getRequest(), req);
                     }
                     resp.getWriter().write(afterReturn && afterThrow ? "restored" : "leaked");
                 }), "c"),
@@ -446,13 +447,13 @@ class DispatcherSemanticsTest {
         start(map("/c", servlet((req, resp) -> {
                     ServletRequestWrapper outer = plainWrapper(req);
                     req.getRequestDispatcher("/i").include(outer, resp);
-                    resp.getWriter().write("|" + (outer.getRequest() == req ? "restored" : "leaked"));
+                    resp.getWriter().write("|" + (sameInstance(outer.getRequest(), req) ? "restored" : "leaked"));
                 }), "c"),
                 map("/i", plain((req, resp) -> {
                     var wrapper = (ServletRequestWrapper) req;
                     ServletRequest included = wrapper.getRequest();
                     req.getRequestDispatcher("/t").forward(new ServletRequestWrapper(req), resp);
-                    resp.getWriter().write("|" + (wrapper.getRequest() == included ? "inner-restored" : "inner-leaked"));
+                    resp.getWriter().write("|" + (sameInstance(wrapper.getRequest(), included) ? "inner-restored" : "inner-leaked"));
                 }), "i"),
                 map("/t", wrapperReporter(), "t"));
         assertEquals("w|FORWARD|false|inner-restored|restored", get("/c"));
@@ -490,7 +491,7 @@ class DispatcherSemanticsTest {
                     req.getRequestDispatcher("/t").forward(wrapper, resp);
                 }), "c"),
                 map("/t", servlet((req, resp) -> {
-                    events.add("same=" + (req == passed.get()));
+                    events.add("same=" + sameInstance(req, passed.get()));
                     resp.getWriter().write(req.getParameter("p") + "|" + req.getDispatcherType() + "|"
                             + req.getServletPath());
                 }), "t"));
@@ -507,7 +508,7 @@ class DispatcherSemanticsTest {
                     req.getRequestDispatcher("/t").include(wrapper, resp);
                 }), "c"),
                 map("/t", servlet((req, resp) -> {
-                    events.add("same=" + (req == passed.get()));
+                    events.add("same=" + sameInstance(req, passed.get()));
                     // During an include the path methods are the includer's; the included path is in
                     // the include.* attributes.
                     resp.getWriter().write(req.getParameter("p") + "|" + req.getDispatcherType() + "|"
@@ -541,7 +542,7 @@ class DispatcherSemanticsTest {
                     wrapper.getWriter().flush();
                 }), "c"),
                 map("/t", servlet((req, resp) -> {
-                    events.add("same=" + (resp == passed.get()));
+                    events.add("same=" + sameInstance(resp, passed.get()));
                     resp.getWriter().write("x");
                 }), "t"));
         assertEquals("[x", get("/c"));
@@ -556,20 +557,20 @@ class DispatcherSemanticsTest {
                     var sb = new StringBuilder();
                     try {
                         req.getRequestDispatcher("/boom").include(request, response);
-                    } catch (ServletException expected) {
-                        sb.append("includeThrow=").append(request.getRequest() == req)
-                                .append(',').append(response.getResponse() == resp).append(';');
+                    } catch (ServletException _) {
+                        sb.append("includeThrow=").append(sameInstance(request.getRequest(), req))
+                                .append(',').append(sameInstance(response.getResponse(), resp)).append(';');
                     }
                     req.getRequestDispatcher("/t").include(request, response);
-                    sb.append("includeReturn=").append(request.getRequest() == req)
-                            .append(',').append(response.getResponse() == resp).append(';');
+                    sb.append("includeReturn=").append(sameInstance(request.getRequest(), req))
+                            .append(',').append(sameInstance(response.getResponse(), resp)).append(';');
                     try {
                         req.getRequestDispatcher("/boom").forward(request, response);
-                    } catch (ServletException expected) {
-                        sb.append("forwardThrow=").append(request.getRequest() == req).append(';');
+                    } catch (ServletException _) {
+                        sb.append("forwardThrow=").append(sameInstance(request.getRequest(), req)).append(';');
                     }
                     req.getRequestDispatcher("/t").forward(request, response);
-                    sb.append("forwardReturn=").append(request.getRequest() == req);
+                    sb.append("forwardReturn=").append(sameInstance(request.getRequest(), req));
                     events.add(sb.toString());
                 }), "c"),
                 map("/t", servlet((req, resp) -> resp.getWriter().write("x")), "t"),
@@ -611,14 +612,14 @@ class DispatcherSemanticsTest {
                     var a = httpWrapper(req);
                     applied.set(a);
                     req.getRequestDispatcher("/t").forward(a, resp);
-                    events.add("outer=" + (a.getRequest() == req));
+                    events.add("outer=" + sameInstance(a.getRequest(), req));
                 }), "c"),
                 map("/t", servlet((req, resp) -> {
                     ServletRequestWrapper a = applied.get();
                     ServletRequest forwarded = a.getRequest();
                     req.getRequestDispatcher("/i").include(req, resp);
-                    events.add("inner=" + (req == filtered.get()) + "," + (filtered.get().getRequest() == a)
-                            + "," + (a.getRequest() == forwarded));
+                    events.add("inner=" + sameInstance(req, filtered.get()) + "," + sameInstance(filtered.get().getRequest(), a)
+                            + "," + sameInstance(a.getRequest(), forwarded));
                     resp.getWriter().write("|after");
                 }), "t"),
                 map("/i", servlet((req, resp) -> resp.getWriter().write(req.getDispatcherType() + "|"
@@ -679,7 +680,7 @@ class DispatcherSemanticsTest {
                                 if (mode.equals("include")) rd.include(req, resp); else rd.forward(req, resp);
                                 sb.append(mode).append(':').append(t).append("=none;");
                             } catch (IOException | ServletException | RuntimeException e) {
-                                boolean same = e == runtime || e == io || e == servletEx;
+                                boolean same = sameInstance(e, runtime) || sameInstance(e, io) || sameInstance(e, servletEx);
                                 sb.append(mode).append(':').append(t).append('=')
                                         .append(e.getClass().getSimpleName()).append(same ? "/same;" : "/other;");
                             }
@@ -718,9 +719,15 @@ class DispatcherSemanticsTest {
 
     // ---- helpers ----
 
+    /** True when both references designate the very same object, whatever {@code equals} says. */
+    @SuppressWarnings("ReferenceEquality")
+    private static boolean sameInstance(Object a, Object b) {
+        return a == b;
+    }
+
     private void awaitEvents(int count) throws InterruptedException {
         long deadline = System.nanoTime() + Duration.ofSeconds(5).toNanos();
-        while (events.size() < count && System.nanoTime() < deadline) Thread.sleep(5);
+        while (events.size() < count && System.nanoTime() < deadline) TestPause.millis(5);
     }
 
     private void start(ServletDispatcher.Mapping... mappings) {

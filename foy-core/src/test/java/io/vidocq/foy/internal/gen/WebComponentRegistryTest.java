@@ -46,7 +46,7 @@ class WebComponentRegistryTest {
     /** Simulates an APT-generated companion (tier 2). */
     public static class Pre extends HttpServlet {}
     public static final class Pre$$FoyComponent implements WebComponent {
-        public Pre$$FoyComponent() {}
+        public Pre$$FoyComponent() { /* not needed by this test */ }
         @Override public Class<?> type() { return Pre.class; }
         @Override public WebComponentDescriptor descriptor() {
             return WebComponentDescriptor.plain().withKind(WebComponentDescriptor.Kind.SERVLET).withName("pre");
@@ -59,7 +59,7 @@ class WebComponentRegistryTest {
     /** A companion claiming another type: must be rejected. */
     @WebServlet("/liar") public static class Liar extends HttpServlet {}
     public static final class Liar$$FoyComponent implements WebComponent {
-        public Liar$$FoyComponent() {}
+        public Liar$$FoyComponent() { /* not needed by this test */ }
         @Override public Class<?> type() { return Pre.class; }
         @Override public WebComponentDescriptor descriptor() { return WebComponentDescriptor.plain(); }
         @Override public Object newInstance() { return new Pre(); }
@@ -116,10 +116,10 @@ class WebComponentRegistryTest {
     }
 
     public static class Async implements jakarta.servlet.AsyncListener {
-        public void onComplete(jakarta.servlet.AsyncEvent e) {}
-        public void onTimeout(jakarta.servlet.AsyncEvent e) {}
-        public void onError(jakarta.servlet.AsyncEvent e) {}
-        public void onStartAsync(jakarta.servlet.AsyncEvent e) {}
+        @Override public void onComplete(jakarta.servlet.AsyncEvent e) { /* not needed by this test */ }
+        @Override public void onTimeout(jakarta.servlet.AsyncEvent e) { /* not needed by this test */ }
+        @Override public void onError(jakarta.servlet.AsyncEvent e) { /* not needed by this test */ }
+        @Override public void onStartAsync(jakarta.servlet.AsyncEvent e) { /* not needed by this test */ }
     }
 
     public static class Bare extends HttpServlet {}

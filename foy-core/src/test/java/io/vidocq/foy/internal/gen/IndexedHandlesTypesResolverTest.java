@@ -30,30 +30,32 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class IndexedHandlesTypesResolverTest {
 
-    public static class Impl implements Runnable { public void run() {} }
-    @Deprecated public static class Marked {}
+    public static class Impl implements Runnable { @Override public void run() { /* not needed by this test */ } }
+    /** Marks the classes the initializer receives through their type-level annotation. */
+    public @interface Mark { }
+    @Mark public static class Marked {}
     public static class Other {}
     /** Implements Runnable and is itself handled by {@link HandledSci}. */
-    public static class Handled implements Runnable { public void run() {} }
+    public static class Handled implements Runnable { @Override public void run() { /* not needed by this test */ } }
 
-    @HandlesTypes({Runnable.class, Deprecated.class})
+    @HandlesTypes({Runnable.class, Mark.class})
     public static class Sci implements ServletContainerInitializer {
-        public void onStartup(Set<Class<?>> c, ServletContext ctx) {}
+        @Override public void onStartup(Set<Class<?>> c, ServletContext ctx) { /* not needed by this test */ }
     }
     @HandlesTypes({Runnable.class, Handled.class})
     public static class HandledSci implements ServletContainerInitializer {
-        public void onStartup(Set<Class<?>> c, ServletContext ctx) {}
+        @Override public void onStartup(Set<Class<?>> c, ServletContext ctx) { /* not needed by this test */ }
     }
     @HandlesTypes({Comparable.class})
     public static class NoMatchSci implements ServletContainerInitializer {
-        public void onStartup(Set<Class<?>> c, ServletContext ctx) {}
+        @Override public void onStartup(Set<Class<?>> c, ServletContext ctx) { /* not needed by this test */ }
     }
     @HandlesTypes({})
     public static class EmptyHandles implements ServletContainerInitializer {
-        public void onStartup(Set<Class<?>> c, ServletContext ctx) {}
+        @Override public void onStartup(Set<Class<?>> c, ServletContext ctx) { /* not needed by this test */ }
     }
     public static class NoHandles implements ServletContainerInitializer {
-        public void onStartup(Set<Class<?>> c, ServletContext ctx) {}
+        @Override public void onStartup(Set<Class<?>> c, ServletContext ctx) { /* not needed by this test */ }
     }
 
     private final ClassLoader cl = getClass().getClassLoader();

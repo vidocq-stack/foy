@@ -85,11 +85,11 @@ class ServletDispatcherTest {
 
     private static Servlet stub(String name) {
         return new Servlet() {
-            @Override public void init(ServletConfig config) {}
+            @Override public void init(ServletConfig config) { /* not needed by this test */ }
             @Override public ServletConfig getServletConfig() { return null; }
-            @Override public void service(ServletRequest req, ServletResponse res) {}
+            @Override public void service(ServletRequest req, ServletResponse res) { /* not needed by this test */ }
             @Override public String getServletInfo() { return name; }
-            @Override public void destroy() {}
+            @Override public void destroy() { /* not needed by this test */ }
         };
     }
 }

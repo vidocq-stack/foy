@@ -84,7 +84,8 @@ class PartImplTest {
     void maxFileSizeIsEnforcedAndTheSpilledFileDeleted() throws IOException {
         var sink = new PartSink(new PartStorage(temp), 0, 4);
         sink.write("abc".getBytes(StandardCharsets.US_ASCII), 0, 3);
-        assertThrows(MultipartLimitException.class, () -> sink.write("de".getBytes(StandardCharsets.US_ASCII), 0, 2));
+        var excess = "de".getBytes(StandardCharsets.US_ASCII);
+        assertThrows(MultipartLimitException.class, () -> sink.write(excess, 0, 2));
         sink.close();
         assertEquals(0, count(temp));
     }
