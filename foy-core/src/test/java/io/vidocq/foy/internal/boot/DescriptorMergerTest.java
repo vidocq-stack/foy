@@ -561,7 +561,7 @@ class DescriptorMergerTest {
         var factory = ComponentFactory.reflective(getClass().getClassLoader());
         var asked = new CopyOnWriteArrayList<String>();
         var ann = AnnotatedComponents.fromDescriptors(
-                List.of(FromXml.class, WebAnnotatedServlet.class, WebAnnotatedFilter.class, WebAnnotatedListener.class),
+                List.<Class<?>>of(FromXml.class, WebAnnotatedServlet.class, WebAnnotatedFilter.class, WebAnnotatedListener.class),
                 factory::descriptor, (cls, base) -> {
                     asked.add(cls.getSimpleName() + ":" + base.getSimpleName());
                     return () -> {
@@ -587,7 +587,7 @@ class DescriptorMergerTest {
     @Test
     void fromDescriptorsPropagatesAnAnnotationMisuse() {
         var factory = ComponentFactory.reflective(getClass().getClassLoader());
-        var misused = List.of(NotAServlet.class);
+        var misused = List.<Class<?>>of(NotAServlet.class);
         assertThrows(IllegalArgumentException.class, () -> AnnotatedComponents.fromDescriptors(
                 misused, factory::descriptor, (cls, base) -> () -> null));
     }

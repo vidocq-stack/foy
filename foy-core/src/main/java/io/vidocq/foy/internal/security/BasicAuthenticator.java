@@ -118,8 +118,7 @@ public final class BasicAuthenticator implements Authenticator {
 
     /** {@code user:password} decoded, or {@code null} when malformed; the intermediate chars are cleared. */
     private static UserPassword split(byte[] decoded) {
-        char[] all = decodeUtf8(decoded);
-        if (all == null) return null;
+        char[] all = decodeUtf8(decoded); // empty when malformed: no colon, so null below
         try {
             int colon = colonIndex(all);
             if (colon <= 0) return null;
@@ -129,7 +128,7 @@ public final class BasicAuthenticator implements Authenticator {
         }
     }
 
-    /** The strict UTF-8 decoding of {@code bytes}, or {@code null} when malformed; the decoder's buffer is cleared. */
+    /** The strict UTF-8 decoding of {@code bytes}, empty when malformed; the decoder's buffer is cleared. */
     private static char[] decodeUtf8(byte[] bytes) {
         CharBuffer chars;
         try {
@@ -138,7 +137,7 @@ public final class BasicAuthenticator implements Authenticator {
                     .onUnmappableCharacter(CodingErrorAction.REPORT)
                     .decode(ByteBuffer.wrap(bytes));
         } catch (CharacterCodingException _) {
-            return null;
+            return new char[0];
         }
         char[] all = new char[chars.remaining()];
         chars.get(all);
