@@ -1,0 +1,5 @@
+# ZAP alerts accepted in the nightly scan of foy-zap-target (zap-nightly.yml): the plugin id, a tab, the evidence
+# accepted (exactly as ZAP reports it, or * for any), a tab, then why. Any other alert of risk Low or above fails
+# the nightly. Accept an alert only with its reason, and never a defect of the container.
+90022	HTTP/1.1 500 Internal Server Error	/broken and /boom answer 500 on purpose (sendError(500), a thrown exception); the rule flags any 500 status line, the body is the container's generic page
+10023	Internal Server Error	the generic body of the 500 the container answers for an unhandled exception (/boom); the exception and its message are only logged

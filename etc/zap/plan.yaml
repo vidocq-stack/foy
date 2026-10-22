@@ -1,0 +1,27 @@
+# ZAP automation plan of the nightly scan (zap-nightly.yml): crawl, passive rules, a bounded active scan,
+# then the JSON report check.py reads. ZAP_TARGET and ZAP_REPORT_DIR come from the environment.
+# Same plan as Chappe's.
+env:
+  contexts:
+    - name: foy
+      urls:
+        - ${ZAP_TARGET}
+  parameters:
+    failOnError: true
+    progressToStdout: true
+jobs:
+  - type: spider
+    parameters:
+      maxDuration: 2
+  - type: passiveScan-wait
+    parameters:
+      maxDuration: 5
+  - type: activeScan
+    parameters:
+      maxRuleDurationInMins: 2
+      maxScanDurationInMins: 15
+  - type: report
+    parameters:
+      template: traditional-json
+      reportDir: ${ZAP_REPORT_DIR}
+      reportFile: zap.json
