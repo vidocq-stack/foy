@@ -1,5 +1,37 @@
 # BUG.md — foy
 
+## BUG-20261024-01 — The multipart end-to-end test bounded each request to 5 s of disk work
+
+- Date: 2026-10-24 (seen in the downstream rebuild of Vidocq/vauban run 46487, `pr-validate`, `foy-core`;
+  CI study of Vidocq/vidocq#285).
+- Symptom: `ServletMultipartEndToEndTest.uploadsFileAndFormField`,
+  `partsSpillToTheContextTempDirAndAreDeletedAfterTheRequest` and
+  `aRelativeWriteLandsInTheLocationAndOutlivesTheRequest` failed with
+  `java.net.http.HttpTimeoutException: request timed out` (5.0 s, 5.0 s and 7.6 s). The other 12 tests of
+  the class passed in the same run.
+- Frequency: 1 failing run out of the 23 CI logs of the study that ran the class (15 Vauban, 8 Chappe
+  downstream rebuilds).
+- Cause (confirmed): the runner's temporary file system was slow, and the test treated the request's
+  5-second bound as a hang guard. In run 46487, the five test classes that create multipart temporary
+  files were 5 to 29 times slower than their slowest time in the 22 other runs
+  (`MultipartLifecycleTest` 1.683 s against at most 0.061 s, `PartStorageTest` 0.768 s against 0.093 s,
+  `MultipartParserTest` 1.555 s against 0.314 s), while the rest of the suite ran at its usual speed.
+  The three failing tests are the ones that do the most file operations per request (two spilled parts,
+  or one part plus `Part.write`): `fileSizeThreshold` 0 sends every part to disk, so each request
+  creates, writes, reads and deletes files under `@TempDir`. The server is slow, not stuck: injecting a
+  delay in the file operations makes each request longer by that delay times the number of operations,
+  no more.
+- Repro: a test-only default file system provider (`-Djava.nio.file.spi.DefaultFileSystemProvider`)
+  that adds 300 ms to every file operation under JUnit's `@TempDir` makes the class fail 5 runs out of 5,
+  with the CI's exception on `uploadsFileAndFormField` and
+  `partsSpillToTheContextTempDirAndAreDeletedAfterTheRequest` (`aRelativeWrite…` still passed at 400 ms;
+  the harness adds a flat delay, while a real disk's cost varies with the operation). CPU pressure alone (54 busy loops on 18 cores) did not reproduce it: 0 failures out of 20.
+- Status: FIXED on `fix/flaky-multipart-e2e`: the client timeout and the socket read timeout of the
+  class become one `EXCHANGE_TIMEOUT` of 60 s. It still fails a hung request; it no longer fails a
+  request that is only slow because the disk is. Foy's multipart code is unchanged.
+- Validation: with the same 300 ms per file operation, 0 failures out of 50 runs (three parallel loops, one of them with 18 busy loops; 5 out of 5 before); the whole `foy-core` suite and
+  the Foy `clean install` pass.
+
 ## BUG-20261022-06 — A request runs with the server thread's context class loader, not the application's
 
 - Date: 2026-10-22. Found by Bodoni (JSTL 3.0) while testing `fmt:message` on its Ibarra IT host

@@ -67,6 +67,13 @@ class ServletMultipartEndToEndTest {
 
     private static final String BOUNDARY = "FOY-TEST-BOUNDARY";
 
+    /**
+     * Bounds every exchange so that a hang fails the test. It is not a latency check: a request here
+     * creates, writes and deletes temporary files, and a loaded runner's disk can take seconds per
+     * file operation (BUG-20261024-01); the server is then slow, not stuck.
+     */
+    private static final Duration EXCHANGE_TIMEOUT = Duration.ofSeconds(60);
+
     @TempDir Path temp;
     private Server server;
     private int port;
@@ -130,7 +137,7 @@ class ServletMultipartEndToEndTest {
     private HttpResponse<String> post(String contentType, String body) throws Exception {
         return HttpClient.newHttpClient().send(
                 HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port + "/upload"))
-                        .header("Content-Type", contentType).timeout(Duration.ofSeconds(5))
+                        .header("Content-Type", contentType).timeout(EXCHANGE_TIMEOUT)
                         .POST(HttpRequest.BodyPublishers.ofString(body, UTF_8)).build(),
                 HttpResponse.BodyHandlers.ofString());
     }
@@ -145,7 +152,7 @@ class ServletMultipartEndToEndTest {
         return HttpClient.newBuilder().version(HttpClient.Version.HTTP_1_1).build().send(
                 HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port + "/upload"))
                         .header("Content-Type", "multipart/form-data; boundary=" + BOUNDARY)
-                        .timeout(Duration.ofSeconds(5))
+                        .timeout(EXCHANGE_TIMEOUT)
                         .POST(HttpRequest.BodyPublishers.ofInputStream(() -> new ByteArrayInputStream(bytes))).build(),
                 HttpResponse.BodyHandlers.ofString());
     }
@@ -302,7 +309,7 @@ class ServletMultipartEndToEndTest {
                 new MultipartConfigElement(""));
         byte[] body = (field("a", "first") + end() + "an epilogue the parser never reads").getBytes(UTF_8);
         try (var socket = new Socket(InetAddress.getLoopbackAddress(), port)) {
-            socket.setSoTimeout(5000);
+            socket.setSoTimeout((int) EXCHANGE_TIMEOUT.toMillis());
             var out = socket.getOutputStream();
             var in = new java.io.BufferedInputStream(socket.getInputStream());
             out.write(("POST /upload HTTP/1.1\r\nHost: localhost\r\nContent-Type: multipart/form-data; boundary="
@@ -325,7 +332,7 @@ class ServletMultipartEndToEndTest {
                 + req.getTrailerFields().get("x-checksum")), new MultipartConfigElement(""));
         byte[] body = (field("a", "1") + end()).getBytes(UTF_8);
         try (var socket = new Socket(InetAddress.getLoopbackAddress(), port)) {
-            socket.setSoTimeout(5000);
+            socket.setSoTimeout((int) EXCHANGE_TIMEOUT.toMillis());
             var out = socket.getOutputStream();
             var in = new java.io.BufferedInputStream(socket.getInputStream());
             out.write(("POST /upload HTTP/1.1\r\nHost: localhost\r\nContent-Type: multipart/form-data; boundary="
