@@ -98,7 +98,7 @@ The response is committed, and its head sent, at the first of:
 
 From then on the body goes to the client while the servlet keeps writing: small writes are coalesced in the buffer and pushed when it fills, on a flush, and at the end of the request. Without a declared `Content-Length`, an HTTP/1.1 body is sent chunked; on HTTP/2 it is sent as DATA frames. A client that reads slowly slows the writing servlet down (the pipe between the servlet and the connection is bounded): memory stays bounded whatever the body size.
 
-An exception that escapes after the commit cannot change the response any more: it is logged and the body is aborted (connection aborted on HTTP/1.x, stream reset with `RST_STREAM` `INTERNAL_ERROR` on HTTP/2), so the client sees a truncated body rather than a complete-looking one. [.tag-new]#NEW# What the servlet flushed before the exception still reaches the client first: the head and the bytes already sent to the connection are delivered, then the body ends.
+An exception that escapes after the commit cannot change the response any more: it is logged and the body is aborted (connection aborted on HTTP/1.x, stream reset with `RST_STREAM` `INTERNAL_ERROR` on HTTP/2), so the client sees a truncated body rather than a complete-looking one.What the servlet flushed before the exception still reaches the client first: the head and the bytes already sent to the connection are delivered, then the body ends.
 
 == Non-blocking I/O (`ReadListener`, `WriteListener`)
 
@@ -287,7 +287,7 @@ The internal `SessionManager` is backed by `InMemorySessionStore` by default. Ti
 
 Expired sessions are invalidated with their listeners (`sessionDestroyed`, then `valueUnbound`/`attributeRemoved`), either when a request asks for them or by a reaper running on a virtual thread every `min(60 s, max(1 s, timeout / 2))`. A session used by an in-flight request never expires, and `getLastAccessedTime()` is the time of the previous request. On undeploy the reaper stops and every live session is invalidated the same way: Foy does not persist sessions across deployments, and once undeploy started `getSession(true)` throws `IllegalStateException`. A `<session-timeout>` (or `setSessionTimeout`) of zero or less means that sessions never expire.
 
-`changeSessionId()` keeps the session's attributes, fires `HttpSessionIdListener.sessionIdChanged` and sends the new session cookie. The default tracking modes are `COOKIE` and `URL` (a `<tracking-mode>` or `setSessionTrackingModes` replaces them), and they also govern input: the session cookie is read only when `COOKIE` is effective and then wins over a `;jsessionid=` path parameter, which is read only without a session cookie and when `URL` is effective. When the effective tracking modes include `URL`, `encodeURL`/`encodeRedirectURL` add `;jsessionid=<id>` to URLs of the application while the client does not send the session cookie. Without `COOKIE` in the tracking modes, no session cookie is sent. On a secure request the session cookie is `Secure`, unless the application set the flag through `SessionCookieConfig.setSecure` or `<secure>`. [.tag-new]#NEW# The session cookie is `HttpOnly` and `SameSite=Lax` by default: a `SameSite` attribute set by the application (`SessionCookieConfig.setAttribute("SameSite", "Strict")`, or an `<attribute>` in `<cookie-config>`) replaces `Lax`. The default is the container's: `SessionCookieConfig.getAttribute("SameSite")` stays `null` until the application sets it.
+`changeSessionId()` keeps the session's attributes, fires `HttpSessionIdListener.sessionIdChanged` and sends the new session cookie. The default tracking modes are `COOKIE` and `URL` (a `<tracking-mode>` or `setSessionTrackingModes` replaces them), and they also govern input: the session cookie is read only when `COOKIE` is effective and then wins over a `;jsessionid=` path parameter, which is read only without a session cookie and when `URL` is effective. When the effective tracking modes include `URL`, `encodeURL`/`encodeRedirectURL` add `;jsessionid=<id>` to URLs of the application while the client does not send the session cookie. Without `COOKIE` in the tracking modes, no session cookie is sent. On a secure request the session cookie is `Secure`, unless the application set the flag through `SessionCookieConfig.setSecure` or `<secure>`.The session cookie is `HttpOnly` and `SameSite=Lax` by default: a `SameSite` attribute set by the application (`SessionCookieConfig.setAttribute("SameSite", "Strict")`, or an `<attribute>` in `<cookie-config>`) replaces `Lax`. The default is the container's: `SessionCookieConfig.getAttribute("SameSite")` stays `null` until the application sets it.
 
 For a distributed or persistent session, implement `io.vidocq.foy.spi.session.SessionStore` (see xref:reference.adoc[Reference]).
 
@@ -389,7 +389,7 @@ exports or opens. Ordinary Servlet `forward` and `include` remain available thro
 
 == Response semantics
 
-`sendError` and `sendRedirect` reset the buffer and the declared `Content-Length` and commit the response. [.tag-new]#NEW# When no error page handles it, `sendError(sc, msg)` answers the container's minimal HTML page with the status and the message, HTML-escaped, so a message that carries a request value cannot inject markup; the `jakarta.servlet.error.message` attribute an error page reads keeps the raw message, which that page escapes itself. `setStatus`, headers, `setLocale`, `setContentType` and charset changes are ignored once the response is committed (on buffer overflow, after `flushBuffer`, or once the declared `Content-Length` is reached; see <<streaming-and-response-buffering>>). A cookie with a `Max-Age` also carries an `Expires` attribute (RFC 6265). The default character encoding follows `<response-character-encoding>`, then the `ISO-8859-1` default, and a `Content-Type` charset or locale-encoding mapping overrides it until `getWriter` is called. [.tag-new]#NEW# The `Content-Type` header names a charset only when one was set, configured with `<response-character-encoding>` or `ServletContext.setResponseCharacterEncoding`, or fixed by `getWriter` (`ISO-8859-1` by default): bytes written through `getOutputStream` with nothing set, a static file of the default servlet for instance, go out as `text/html` with no charset, so the browser follows the page's own `<meta charset>`. `getCharacterEncoding()` still answers `ISO-8859-1` then. [.tag-new]#NEW# A `Content-Type` set with `setHeader` or `addHeader` counts as `setContentType` for its media type: a later charset change or `getWriter` keeps that type, and `getContentType()` reports it.
+`sendError` and `sendRedirect` reset the buffer and the declared `Content-Length` and commit the response.When no error page handles it, `sendError(sc, msg)` answers the container's minimal HTML page with the status and the message, HTML-escaped, so a message that carries a request value cannot inject markup; the `jakarta.servlet.error.message` attribute an error page reads keeps the raw message, which that page escapes itself. `setStatus`, headers, `setLocale`, `setContentType` and charset changes are ignored once the response is committed (on buffer overflow, after `flushBuffer`, or once the declared `Content-Length` is reached; see <<streaming-and-response-buffering>>). A cookie with a `Max-Age` also carries an `Expires` attribute (RFC 6265). The default character encoding follows `<response-character-encoding>`, then the `ISO-8859-1` default, and a `Content-Type` charset or locale-encoding mapping overrides it until `getWriter` is called.The `Content-Type` header names a charset only when one was set, configured with `<response-character-encoding>` or `ServletContext.setResponseCharacterEncoding`, or fixed by `getWriter` (`ISO-8859-1` by default): bytes written through `getOutputStream` with nothing set, a static file of the default servlet for instance, go out as `text/html` with no charset, so the browser follows the page's own `<meta charset>`. `getCharacterEncoding()` still answers `ISO-8859-1` then.A `Content-Type` set with `setHeader` or `addHeader` counts as `setContentType` for its media type: a later charset change or `getWriter` keeps that type, and `getContentType()` reports it.
 
 == Legacy deployment descriptors
 
@@ -495,7 +495,7 @@ Add `foy-processor` to the compiler's annotation processor path. It generates, a
 ====
 Foy does **not** (yet) expose `ServletContext`, `HttpServletRequest` or `HttpSession` as injectable CDI beans — there are no `@ApplicationScoped` / `@RequestScoped` / `@SessionScoped` producers for the Servlet API objects. Use the request/response parameters passed to `service()`/`doGet()`.
 
-[.tag-new]#NEW# Your own `@RequestScoped` beans do work: Foy activates the CDI request context for each request, under Vauban or any other CDI container. `@SessionScoped` beans do not: the session context is not activated (xref:reference.adoc#other-containers[Other CDI containers]).
+Your own `@RequestScoped` beans do work: Foy activates the CDI request context for each request, under Vauban or any other CDI container. `@SessionScoped` beans do not: the session context is not activated (xref:reference.adoc#other-containers[Other CDI containers]).
 ====
 
 Servlet, Filter and Listener instances **are** resolved through the `BeanManager`, so they can `@Inject` your application beans:
@@ -520,7 +520,7 @@ public class MeServlet extends HttpServlet {
 Resolution is fully build-time through xref:vauban::index.adoc[Vauban] — no runtime dynamic proxy, no hot-path reflection.
 
 [#application-security]
-== Application security [.tag-new]#NEW#
+== Application security
 
 Foy enforces the Servlet 6.1 security model (chapter 13): `<security-constraint>` and `@ServletSecurity` per url-pattern, `<deny-uncovered-http-methods/>`, the transport guarantee, BASIC and FORM login, `security-role-ref`, and the programmatic `login`/`logout`/`authenticate`. The concepts are in xref:concepts.adoc#application-security[Concepts], the contracts in xref:reference.adoc#security[Reference].
 
@@ -605,7 +605,7 @@ public class ReportServlet extends HttpServlet { ... }
 A descriptor constraint on exactly the same url-pattern wins over the annotation. `ServletRegistration.Dynamic.setServletSecurity` sets the same element programmatically, before the context is initialised.
 
 [#client-cert]
-=== Client certificates (CLIENT-CERT) [.tag-new]#NEW#
+=== Client certificates (CLIENT-CERT)
 
 `<auth-method>CLIENT-CERT</auth-method>` authenticates the caller from the certificate it presented in the TLS handshake. It needs a TLS listener that asks for one, an identity mapped to the certificate, and nothing else in the application.
 

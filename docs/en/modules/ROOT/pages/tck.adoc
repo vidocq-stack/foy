@@ -9,7 +9,7 @@ This page consolidates the status of the official Jakarta Servlet 6.1 TCK runs a
 This is a **measurement**, not a conformance claim. At the latest full run (`jakarta.tck:servlet-tck-runtime:6.1.0`, JSP exit, 2026-10-18):
 
 * **1714** tests run: **1707 passing**, 7 skipped, 0 failures / 0 errors — **99.6 %** of the tests run pass, and every test that runs passes (CLIENT-CERT exit: 1702; Phase 7 exit: 1700; Phase 6 exit: 1692). A skipped test is never counted as passing;
-* [.tag-new]#NEW# The JSP exit runs the JSP pages of the TCK wars with xref:ibarra::index.adoc[Ibarra] (Jakarta Pages 4.0) plugged into Foy's JSP-engine service (see <<jsp-pages>>): the 3 JSP tests of `ServletContext40Tests` and the 2 FORM tests whose error page is a JSP now pass; no class regressed;
+*The JSP exit runs the JSP pages of the TCK wars with xref:ibarra::index.adoc[Ibarra] (Jakarta Pages 4.0) plugged into Foy's JSP-engine service (see <<jsp-pages>>): the 3 JSP tests of `ServletContext40Tests` and the 2 FORM tests whose error page is a JSP now pass; no class regressed;
 * The CLIENT-CERT exit added TLS client authentication (`ClientCertTests` and `ClientCertAnnoTests` now pass, against an `https` Arquillian container, see <<https-container>>) and the Servlet 6.1 section 3.10 TLS request attributes; no class regressed.
 * Phase 7 added streamed multipart (RFC 7578: `@MultipartConfig`, `<multipart-config>` and `setMultipartConfig` reach the request, parts above `fileSizeThreshold` go to owner-only temporary files deleted at the end of the request, form fields are request parameters) and container request body limits; `PartTests` and `Part1Tests` now pass 7 of 7 each, no class regressed and 2 improved (8 tests);
 * Phase 6 added security enforcement: `<security-constraint>` and `@ServletSecurity` per url-pattern, `deny-uncovered-http-methods`, the transport guarantee, BASIC and FORM login, `security-role-ref`, programmatic `login`/`logout`/`authenticate`, `setServletSecurity` and `declareRoles`; no class regressed and 5 improved (33 tests). The `spec.security.*` family passes 55 of its 59 tests (Phase 5 exit: 22);
@@ -87,7 +87,7 @@ No other test battery is excluded. One more harness setting:
 * **Hang safety net** — some TCK clients read raw sockets without `SO_TIMEOUT` and would hang forever on an unanswered request; `foy-tck` sets a global JUnit 120 s timeout (`SEPARATE_THREAD` mode). No test hits it at the Phase 7 exit.
 
 [#jsp-pages]
-== JSP pages [.tag-new]#NEW#
+== JSP pages
 
 Foy has no JSP engine of its own: a page engine plugs into its xref:reference.adoc#jsp-engine[JSP-engine service]. The TCK wars ship JSP source, and `foy-tck` runs them with xref:ibarra::index.adoc[Ibarra] (Jakarta Pages 4.0), which serves pages compiled ahead of time:
 

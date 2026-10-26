@@ -26,7 +26,7 @@ Consolidated technical reference. Use this page as an anchor for external links 
 | **Build-time** annotation processor (no runtime role, never shipped in the application). Generates the `X$$FoyComponent` companions and the `META-INF` indexes. Zero dependency: it requires only the JDK `java.compiler` Java Module. Put it on `annotationProcessorPaths`, not on the class path.
 
 | `io.vidocq.foy:foy-tck`
-| Arquillian harness for the official TCK — **in-reactor, gated behind the `tck` Maven profile** (a plain `mvn install` neither downloads nor runs anything TCK-related; see xref:tck.adoc[TCK status]). [.tag-new]#NEW# Its `sigtest` profile runs the TCK's API signature test with two build-time tools, never shipped: `jakarta.tck:sigtest-maven-plugin` 2.5 (test scope) and `maven-dependency-plugin` (copies the `jakarta.servlet-api` jar under test).
+| Arquillian harness for the official TCK — **in-reactor, gated behind the `tck` Maven profile** (a plain `mvn install` neither downloads nor runs anything TCK-related; see xref:tck.adoc[TCK status]).Its `sigtest` profile runs the TCK's API signature test with two build-time tools, never shipped: `jakarta.tck:sigtest-maven-plugin` 2.5 (test scope) and `maven-dependency-plugin` (copies the `jakarta.servlet-api` jar under test).
 |===
 
 == Java modules and exports
@@ -157,7 +157,7 @@ Each run writes a fresh `META-INF/services/io.vidocq.foy.spi.gen.WebComponent` a
 | Returns a fresh `Builder`.
 
 | `Builder.beanManager(BeanManager bm)`
-| **Required.** The `BeanManager` of the CDI container — Vauban's, Weld's, any CDI 4 container's — from which `@WebServlet` / `@WebFilter` / `@WebListener` beans will be resolved. [.tag-new]#NEW# With it, Foy also activates the CDI request context for each request; see <<other-containers>>.
+| **Required.** The `BeanManager` of the CDI container — Vauban's, Weld's, any CDI 4 container's — from which `@WebServlet` / `@WebFilter` / `@WebListener` beans will be resolved.With it, Foy also activates the CDI request context for each request; see <<other-containers>>.
 
 | `Builder.contextPath(String path)`
 | URL prefix served by this container. Default: `"/"`.
@@ -166,45 +166,45 @@ Each run writes a fresh `META-INF/services/io.vidocq.foy.spi.gen.WebComponent` a
 | Session timeout in seconds, rounded up to whole minutes; a `web.xml` `<session-timeout>` wins. Default: `1800` (30 min).
 
 | `Builder.defaultResponseCharacterEncoding(String encoding)`
-| [.tag-new]#NEW# Default response character encoding when neither `web.xml` nor a fragment declares `<response-character-encoding>`; an initializer or listener calling `ServletContext.setResponseCharacterEncoding` still overrides it. A runtime gives `"UTF-8"` to make it its applications' default. Default: `null`, the Servlet default (`ISO-8859-1` for `getWriter`).
+|Default response character encoding when neither `web.xml` nor a fragment declares `<response-character-encoding>`; an initializer or listener calling `ServletContext.setResponseCharacterEncoding` still overrides it. A runtime gives `"UTF-8"` to make it its applications' default. Default: `null`, the Servlet default (`ISO-8859-1` for `getWriter`).
 
 | `Builder.classLoader(ClassLoader cl)`
 | Class loader used for resources and class resolution during deployment. It is also the application's class loader: `ServletContext.getClassLoader()` answers it, and application code runs with it as the thread context class loader at deployment and undeployment and for the whole request (listeners, filters, servlets, error pages, forwards and includes, async dispatches, `AsyncContext.start` runnables and `AsyncListener` events), the thread's own loader coming back when Foy takes control again. A cross-context dispatch runs the other application with that application's loader, including the async, non-blocking I/O and upgrade work it opens.
 
-| `Builder.applicationLayer(ModuleLayer layer)` [.tag-new]#NEW#
+| `Builder.applicationLayer(ModuleLayer layer)`
 | Layer of the application's modules, default `ModuleLayer.boot()`; `null` throws `NullPointerException`. The JSP engine is looked up in it (named modules and their ancestors only, never the class path), and it is passed to `JspEngine.hasPages` and `JspEngine.deploy`. Two visible engines fail the deployment. Independent of `classLoader(...)`.
 
-| `Builder.componentSource(Function<Class<?>, URL> sourceOf)` [.tag-new]#NEW#
+| `Builder.componentSource(Function<Class<?>, URL> sourceOf)`
 | Attributes a discovered class to its jar or directory, default the code source of the class; `null` throws `NullPointerException`. Used for the absolute-ordering exclusion, the `metadata-complete` exclusion, the application roots and the attribution of initializers. A `null` result keeps the class; an exception fails `build()` with a `ServletException` naming the class. Limited to these four uses: the `@HandlesTypes` scan and `META-INF/resources/` are decided by the jar URLs. The hook must return the jar URL under the same spelling that the class loader reports for the jar's `META-INF/web-fragment.xml`; nested-archive URLs and symbolic-link aliases are not normalised, and such a class is kept. For a harness that loads several jars from one class loader (vidocq#228).
 
 | `Builder.webXml(InputStream in)`
 | Optional `web.xml` stream, merged with the annotated components per Servlet 6.1 §8.2.3.
 
-| `Builder.user(String name, char[] password, String... roles)` [.tag-new]#NEW#
+| `Builder.user(String name, char[] password, String... roles)`
 | Declares a user of the in-memory identity store with its application roles. The password is digested at once (salted SHA-256) and not kept. Exclusive with `identityStore`.
 
-| `Builder.certificateUser(String subjectDn, String... roles)` [.tag-new]#NEW#
+| `Builder.certificateUser(String subjectDn, String... roles)`
 | Declares a CLIENT-CERT identity of the in-memory identity store: the certificate whose leaf subject equals `subjectDn` (compared strictly: spacing and the case of attribute names and values ignored, no Unicode folding, same RDN order) gets these application roles, and the principal name is the subject in RFC 1779 form. Exclusive with `identityStore`. See xref:usage.adoc#client-cert[Client certificates].
 
-| `Builder.identityStore(IdentityStore store)` [.tag-new]#NEW#
+| `Builder.identityStore(IdentityStore store)`
 | The user base behind BASIC, FORM, CLIENT-CERT and `login()`. With neither this nor `user(...)`/`certificateUser(...)`, every login fails. Exclusive with `user` and `certificateUser`.
 
-| `Builder.confidentialPort(int port)` [.tag-new]#NEW#
+| `Builder.confidentialPort(int port)`
 | HTTPS port a CONFIDENTIAL/INTEGRAL constraint redirects plain HTTP to (`302`). Default `-1`: such a request gets `403`. Any other value outside 1–65535 throws `IllegalArgumentException`.
 
-| `Builder.rotateSessionIdOnLogin(boolean rotate)` [.tag-new]#NEW#
+| `Builder.rotateSessionIdOnLogin(boolean rotate)`
 | Whether a successful login changes the id of an existing session. Default `true`; `false` re-opens session fixation.
 
-| `Builder.maxChunkedRequestBodySize(long bytes)` [.tag-new]#NEW#
+| `Builder.maxChunkedRequestBodySize(long bytes)`
 | Ceiling on a request body that declares no `Content-Length`. See <<request-body-limits>>.
 
-| `Builder.maxFormBodySize(long bytes)` [.tag-new]#NEW#
+| `Builder.maxFormBodySize(long bytes)`
 | Ceiling on a form body parsed into parameters. See <<request-body-limits>>.
 
-| `Builder.maxMultipartParts(int parts)` [.tag-new]#NEW#
+| `Builder.maxMultipartParts(int parts)`
 | Ceiling on the parts of one multipart body. See <<request-body-limits>>.
 
-| `Builder.maxMultipartPartHeaderSize(int bytes)` [.tag-new]#NEW#
+| `Builder.maxMultipartPartHeaderSize(int bytes)`
 | Ceiling on the header section of one part. See <<request-body-limits>>.
 
 | `Builder.build()`
@@ -219,10 +219,10 @@ Each run writes a fresh `META-INF/services/io.vidocq.foy.spi.gen.WebComponent` a
 | `Mounted.servletContext()`
 | The live `jakarta.servlet.ServletContext` of the deployment — useful for observability. Declared as the Jakarta type so that Java Modules consumers need not read `io.vidocq.foy.core`.
 
-| `Mounted.activeSessions()` [.tag-new]#NEW#
+| `Mounted.activeSessions()`
 | The number of live HTTP sessions, for observability. A cheap live read of the session store (a concurrent-map count in the default store): no lock, no I/O, no expiry sweep, so an expired session not yet reaped is still counted. `0` once the deployment is closed.
 
-| `Mounted.listenerClassNames()` [.tag-new]#NEW#
+| `Mounted.listenerClassNames()`
 | The class names of every registered listener (`web.xml`, `@WebListener`, fragments, initializers, `addListener`), in registration order, as an unmodifiable list. Container listeners come first. Read-only, for observability.
 
 | `Mounted.close()`
@@ -230,7 +230,7 @@ Each run writes a fresh `META-INF/services/io.vidocq.foy.spi.gen.WebComponent` a
 |===
 
 [#request-body-limits]
-=== Request body limits [.tag-new]#NEW#
+=== Request body limits
 
 Container ceilings, applied to every application of the deployment on top of each servlet's multipart configuration. For the size settings, `-1` lifts the ceiling; a value below `-1` (or `0` parts, or a header size below `1`) makes the setter throw `IllegalArgumentException`.
 
@@ -282,7 +282,7 @@ An uncaught limit thrown from a `Runnable` given to `AsyncContext.start` still a
 |===
 
 [#security]
-== Security [.tag-new]#NEW#
+== Security
 
 === `IdentityStore` contract
 
@@ -498,7 +498,7 @@ On a forward the mapping is that of the target; `jakarta.servlet.forward.mapping
 | Keeps the attributes, fires `HttpSessionIdListener.sessionIdChanged`, sends the new cookie; the requested id is updated.
 
 | Cookie
-| Built from `SessionCookieConfig` (name, path, domain, `HttpOnly`, `Secure`, `Max-Age`, attributes). On a secure request the cookie is `Secure` unless `setSecure` or `<secure>` was set. [.tag-new]#NEW# `SameSite=Lax` unless the application set a `SameSite` attribute. For the root context the cookie path is `/`.
+| Built from `SessionCookieConfig` (name, path, domain, `HttpOnly`, `Secure`, `Max-Age`, attributes). On a secure request the cookie is `Secure` unless `setSecure` or `<secure>` was set.`SameSite=Lax` unless the application set a `SameSite` attribute. For the root context the cookie path is `/`.
 
 | URL rewriting
 | `encodeURL`, `encodeRedirectURL` append `;jsessionid=<id>` to application URLs while the client sends no cookie and `URL` is a tracking mode.
@@ -615,18 +615,18 @@ On a TLS connection the five Servlet 6.1 section 3.10 attributes are seeded when
 |===
 
 [#other-containers]
-== Other CDI containers [.tag-new]#NEW#
+== Other CDI containers
 
 Foy does not need Vauban: give `FoyChappeBoot` the `BeanManager` of any CDI 4 container (`CDI.current().getBeanManager()`). Without `foy-cdi-vauban`'s build-time index, Foy finds the web components by walking the container's `Servlet`, `Filter` and `EventListener` beans (foy#18).
 
 * **The request context is active for each request** — Foy activates it through the standard `RequestContextController` before the application's request listeners, and deactivates it after them, on the thread that served the request (an asynchronous request included: Foy waits for it). `@RequestScoped` beans work in servlets, filters and listeners, and the container fires `@Initialized(RequestScoped.class)` and `@Destroyed(RequestScoped.class)`. If the context is already active (an embedding runtime activated it), Foy leaves it alone. Up to {release-version}, Foy activated it under no container, Vauban included (BUG-20261010-01). On Vauban, this needs a Vauban with its built-in `RequestContextController` (link:https://codefloe.com/Vidocq/vauban/issues/147[vauban#147]); before it, the request context was not activated under Vauban and a `@RequestScoped` bean failed with `ContextNotActiveException`.
-* [.tag-new]#NEW# **The session context, on Vauban** — `@SessionScoped` beans live in the `HttpSession`: one instance per session, created on first use (which creates the session), destroyed with it when it is invalidated or expires, between `@BeforeDestroyed` and `@Destroyed(SessionScoped.class)`; a new session fires `@Initialized(SessionScoped.class)`. CDI Lite leaves the session context to the servlet container (CDI 4.1 §6.7.2): Vauban's `vauban-webcontexts` provides it, and `foy-cdi-vauban`, which depends on it, drives it from Foy's request and session events (foy#21). Nothing to configure. Passivation is not covered: the instances are not written out with the session.
-* [.tag-new]#NEW# **Error pages, denials and async threads keep the contexts** — `requestDestroyed`, where the context listeners unbind, fires after the error page and after `AsyncListener.onComplete`, as in Tomcat; a security denial, a login page and the error page of a refused path (`/WEB-INF/…`, an invalid path) run inside the request listeners too. A `Runnable` given to `AsyncContext.start()` runs with the container's context listeners bound on its own thread: it shares the request's session, and gets a request context of its own (the request-scoped instances of the serving thread are not visible there). The application's request listeners still see one request.
+***The session context, on Vauban** — `@SessionScoped` beans live in the `HttpSession`: one instance per session, created on first use (which creates the session), destroyed with it when it is invalidated or expires, between `@BeforeDestroyed` and `@Destroyed(SessionScoped.class)`; a new session fires `@Initialized(SessionScoped.class)`. CDI Lite leaves the session context to the servlet container (CDI 4.1 §6.7.2): Vauban's `vauban-webcontexts` provides it, and `foy-cdi-vauban`, which depends on it, drives it from Foy's request and session events (foy#21). Nothing to configure. Passivation is not covered: the instances are not written out with the session.
+***Error pages, denials and async threads keep the contexts** — `requestDestroyed`, where the context listeners unbind, fires after the error page and after `AsyncListener.onComplete`, as in Tomcat; a security denial, a login page and the error page of a refused path (`/WEB-INF/…`, an invalid path) run inside the request listeners too. A `Runnable` given to `AsyncContext.start()` runs with the container's context listeners bound on its own thread: it shares the request's session, and gets a request context of its own (the request-scoped instances of the serving thread are not visible there). The application's request listeners still see one request.
 * **The session context, on another container** — Foy finds the listeners that drive a CDI implementation's contexts through the `io.vidocq.foy.spi.cdi.CdiContextListeners` service, registers them ahead of the application's listeners when it is given that implementation's `BeanManager`, and an adapter such as `foy-cdi-vauban` provides them. Unlike a `ServletContainerInitializer`, such a provider does not make Foy start an application that has no web component. Weld's own servlet integration, `weld-servlet-core`, also runs on Foy: its `ServletContainerInitializer` starts Weld and manages the request and session contexts itself; Foy is then given no `BeanManager`, and servlets declared in `web.xml` reach their beans through `CDI.current()`.
 
 `foy-it-weld`, part of every build and never published, runs Foy on Chappe with Weld SE 6.0 (CDI 4.1) on a class path, without `foy-cdi-vauban`: a servlet, a filter and a listener get an injected bean, a `@RequestScoped` bean is one instance per request, and the request context events fire. No Open Liberty module: on a server, use the server's own Servlet container.
 
-[.tag-new]#NEW# The session scope has its own pair of modules, never published, running the same HTTP scenarios from `foy-it-session-scenarios`: `foy-it-weld-servlet`, the reference, where Weld's servlet integration manages the session context, and `foy-it-vauban-session`, where `vauban-webcontexts` does. Both check one cart per session across requests, two carts for two clients, a new and empty cart after `invalidate()` with the old one's `@PreDestroy` run, and the session events.
+The session scope has its own pair of modules, never published, running the same HTTP scenarios from `foy-it-session-scenarios`: `foy-it-weld-servlet`, the reference, where Weld's servlet integration manages the session context, and `foy-it-vauban-session`, where `vauban-webcontexts` does. Both check one cart per session across requests, two carts for two clients, a new and empty cart after `invalidate()` with the old one's `@PreDestroy` run, and the session events.
 
 [#jsp-engine]
 == Optional JSP-engine service
@@ -654,12 +654,12 @@ TLD listeners with restricted dynamic configuration during context initializatio
 They share the normal listener lifecycle and are destroyed before engine close.
 Ibarra provides the optional page-engine implementation and TLD discovery.
 
-[.tag-new]#NEW# `FoyChappeBoot.Builder.applicationLayer(ModuleLayer)` chooses the layer
+`FoyChappeBoot.Builder.applicationLayer(ModuleLayer)` chooses the layer
 the engine is looked up in (default `ModuleLayer.boot()`). The lookup covers the named
 modules of that layer and their ancestors only: an engine on the class path is never
 found, and two visible engines make the deployment fail.
 
-[.tag-new]#NEW# `JspEngine.hasPages(ModuleLayer)` is a default method answering `true`.
+`JspEngine.hasPages(ModuleLayer)` is a default method answering `true`.
 Foy asks at most once per deployment, and only when the application has nothing else to deploy:
 no servlet, filter or listener (from a descriptor or an annotation), no descriptor content and no
 initializer. It asks on the same instance and with the same layer that `deploy` then receives.
