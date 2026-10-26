@@ -1,20 +1,17 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<project xmlns="http://maven.apache.org/POM/4.0.0"
-         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd"
-         >
+<?xml version='1.0' encoding='utf-8'?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
 
     <parent>
         <groupId>io.vidocq</groupId>
         <artifactId>vidocq-parent</artifactId>
-        <version>0.4.0-SNAPSHOT</version>
-        <relativePath/>
+        <version>0.4.0-RC1</version>
+        <relativePath />
     </parent>
 
     <groupId>io.vidocq.foy</groupId>
     <artifactId>foy-parent</artifactId>
-    <version>0.4.0-SNAPSHOT</version>
+    <version>0.4.0-RC1</version>
     <packaging>pom</packaging>
 
     <name>Foy</name>
@@ -28,13 +25,7 @@
         </developer>
     </developers>
 
-    <!--
-        Disjunctive triple license: a recipient may use this software under
-        ANY ONE of the three licences below, at their option. EPL-2.0 is the
-        anchor (see the LICENSE file); per EPL-2.0 section 1, GPL-2.0-or-later
-        is offered as a Secondary License.
-        SPDX-License-Identifier: EPL-2.0 OR EUPL-1.2 OR GPL-2.0-or-later
-    -->
+    
     <licenses>
         <license>
             <name>EPL-2.0</name>
@@ -64,33 +55,20 @@
         <jakarta.cdi.version>4.1.0</jakarta.cdi.version>
         <jakarta.annotation.version>3.0.0</jakarta.annotation.version>
 
-        <chappe.version>0.4.0-SNAPSHOT</chappe.version>
-        <vauban.version>0.4.0-SNAPSHOT</vauban.version>
+        <chappe.version>0.4.0-RC1</chappe.version>
+        <vauban.version>0.4.0-RC1</vauban.version>
 
-        <!-- Quality (Vidocq/vidocq#269), as in Chappe -->
+        
         <errorprone.version>2.50.0</errorprone.version>
         <japicmp.version>0.26.3</japicmp.version>
-        <!-- The API compatibility report (quality profile) covers the modules that turn it on: foy-api,
-             foy-chappe and foy-cdi-vauban, each with the packages its module-info.java exports. foy-core
-             exports internal packages only, and foy-processor runs at build time. -->
+        
         <japicmp.skip>true</japicmp.skip>
 
-        <!--
-            SonarQube (Vidocq/vidocq#284): every module reads the aggregated JaCoCo report of
-            foy-coverage (quality profile), so the tests of foy-it-weld, foy-it-weld-servlet and
-            foy-it-vauban-session count for the code they exercise in the other modules.
-        -->
+        
         <sonar.coverage.jacoco.xmlReportPaths>${maven.multiModuleProjectDirectory}/foy-coverage/target/site/jacoco-aggregate/jacoco.xml</sonar.coverage.jacoco.xmlReportPaths>
     </properties>
 
-    <!--
-        foy-tck joins the reactor only under the `tck` profile (see <profiles>
-        below) — TCK harmonisation, same pattern as the vidocq-runtime-tck-*
-        runners and the dirac pilot: a plain `mvn install` neither downloads nor
-        runs anything TCK-related. The historical out-of-reactor constraint
-        (ShrinkWrap Maven Resolver 3.3 vs Model 4.1.0 POMs) disappeared with the
-        Maven 3.9.16 / Model 4.0.0 migration.
-    -->
+    
     <modules>
         <module>foy-api</module>
         <module>foy-processor</module>
@@ -99,13 +77,13 @@
         <module>foy-chappe</module>
         <module>foy-it-other-containers</module>
         <module>foy-architecture-tests</module>
-        <!-- The target of the nightly ZAP scan (zap-nightly.yml): a test vehicle, never published. -->
+        
         <module>foy-zap-target</module>
     </modules>
 
     <dependencyManagement>
         <dependencies>
-            <!-- Jakarta APIs -->
+            
             <dependency>
                 <groupId>jakarta.servlet</groupId>
                 <artifactId>jakarta.servlet-api</artifactId>
@@ -122,7 +100,7 @@
                 <version>${jakarta.annotation.version}</version>
             </dependency>
 
-            <!-- Chappe (transport HTTP par défaut, optionnel) -->
+            
             <dependency>
                 <groupId>io.vidocq.chappe</groupId>
                 <artifactId>chappe-api</artifactId>
@@ -134,7 +112,7 @@
                 <version>${chappe.version}</version>
             </dependency>
 
-            <!-- Vauban (compile scope pour foy-cdi-vauban) -->
+            
             <dependency>
                 <groupId>io.vidocq.vauban</groupId>
                 <artifactId>vauban-api</artifactId>
@@ -146,7 +124,7 @@
                 <version>${vauban.version}</version>
             </dependency>
 
-            <!-- Foy modules internes -->
+            
             <dependency>
                 <groupId>io.vidocq.foy</groupId>
                 <artifactId>foy-api</artifactId>
@@ -175,24 +153,14 @@
         </dependencies>
     </dependencyManagement>
     <profiles>
-        <!--
-            TCK harmonisation: the official Jakarta Servlet 6.1 TCK runner joins
-            the reactor only when this profile is active.
-
-                ./mvnw -Ptck,tck-official -pl foy-tck test    # suite (see script for modes)
-
-            run-official-tck-servlet6.1.sh remains the friendly wrapper.
-        -->
+        
         <profile>
             <id>tck</id>
             <modules>
                 <module>foy-tck</module>
             </modules>
         </profile>
-        <!--
-            Quality profile (with the one of vidocq-parent, which runs the JaCoCo agent): adds
-            the aggregated coverage report that SonarQube reads (Vidocq/vidocq#284).
-        -->
+        
         <profile>
             <id>quality</id>
             <modules>
@@ -200,9 +168,7 @@
             </modules>
             <build>
                 <plugins>
-                    <!-- API compatibility with the last release (Vidocq/vidocq#288), report mode: japicmp
-                         compares each jar with the latest x.y.z release on Maven Central and writes
-                         target/japicmp/; nothing breaks the build until 1.0.0-RC1 makes it a gate. -->
+                    
                     <plugin>
                         <groupId>com.github.siom79.japicmp</groupId>
                         <artifactId>japicmp-maven-plugin</artifactId>
@@ -229,10 +195,7 @@
                 </plugins>
             </build>
         </profile>
-        <!-- Error Prone (Vidocq/vidocq#269): run locally with -Perrorprone, and by the SonarQube job, which
-             imports its warnings as external issues. Report mode, like the rest of the analysis: every
-             finding is a warning (-XepAllErrorsAsWarnings), none stops the build. Error Prone needs the
-             javac internals .mvn/jvm.config opens. -->
+        
         <profile>
             <id>errorprone</id>
             <build>
@@ -246,8 +209,7 @@
                                     <arg>-XDcompilePolicy=simple</arg>
                                     <arg>--should-stop=ifError=FLOW</arg>
                                     <arg>-Xplugin:ErrorProne -XepAllErrorsAsWarnings -XepExcludedPaths:.*(generated|generated-sources)/.* -XepDisableWarningsInGeneratedCode</arg>
-                                    <!-- javac stops printing warnings after 100 per module by default: SonarQube
-                                         would only import the first 100 findings of a module. -->
+                                    
                                     <arg>-Xmaxwarns</arg>
                                     <arg>100000</arg>
                                 </compilerArgs>
