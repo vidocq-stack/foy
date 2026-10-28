@@ -3,8 +3,10 @@
 # branch plugin). Same workflow in every repository: Vidocq/ci/sonar-analysis creates
 # the project vidocq-<repository> on the server when it is missing.
 #
-# Report mode: the job never fails on a finding, and the pull request gets one
-# comment, kept up to date, with the quality gate. Not a required check. Pull
+# Blocking mode (Vidocq/vidocq#284, October 2026): the job fails when the analysis
+# fails or the quality gate is not passed (new issues, new-code coverage under 80 %,
+# new duplication), and `sonar / sonar` is a required check of main. The pull
+# request still gets one comment, kept up to date, with the quality gate. Pull
 # requests from forks receive no secrets and skip the analysis.
 #
 # A manual run (workflow_dispatch) analyses main again, for instance after an
@@ -35,6 +37,8 @@ jobs:
           sonar-token: ${{ secrets.SONAR_TOKEN }}
           host-url: ${{ vars.SONAR_HOST_URL }}
           bot-token: ${{ secrets.VIDOCQ_BOT_TOKEN }}
+          # A finding, a coverage or a duplication the quality gate refuses fails the job (required check).
+          blocking: 'true'
           # Error Prone in the analysis (Vidocq/vidocq#269), as in Chappe: the action's default, plus the
           # errorprone profile, whose warnings the action imports as external issues.
           maven-args: -B -ntp -Pquality,errorprone -Dmaven.test.failure.ignore=true install
