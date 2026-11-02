@@ -4,6 +4,51 @@
 [.lead]
 This page documents the implementation: what happens between the moment an HTTP connection lands on Chappe and the moment a Servlet writes its response. It complements xref:concepts.adoc[Concepts] (vocabulary) and xref:reference.adoc[Reference] (API).
 
+[#generated-code]
+== Generated code and reflective fallback [.tag-new]#NEW#
+
+Every brick of the suite documents, in a section of this name, what it generates, who generates it and when, what
+looks it up at run time, and what runs instead when it is missing. For Foy that is the description and the factory
+of each Servlet, Filter and listener, and the class index initializers ask about; reading the class file, then
+reflection, stay as the fallback tiers, unchanged (<<_component_resolution_tiers>>).
+
+[cols="2,2,3,3"]
+|===
+| Generated | By, and when | Used at run time by | Without it
+
+| `X$$FoyComponent`, a `WebComponent`: the component's annotations as a descriptor, and a factory that calls its
+  constructor
+| `foy-processor` in javac, with its `META-INF/services` entry; on Vidocq the
+  `vidocq-runtime-foy-servlet-extension-codegen` bundle puts it on the processor path, and `vidocq:generate` runs it
+  over the dependency jars that hold web components, fragments or initializers
+| `WebComponentRegistry` at deployment: the `ServiceLoader` of `WebComponent`, then `X$$FoyComponent` by name
+| The `CLASS_FILE` tier decodes the annotations from the class bytes and defines a hidden factory class; when it
+  cannot, the `REFLECTION` tier. Both need the package opened to `io.vidocq.foy.core` in a named module.
+
+| `META-INF/foy/class-index.list`, the binary names of the compiled classes
+| `foy-processor`
+| `IndexedHandlesTypesResolver`, to answer the `@HandlesTypes` of a `ServletContainerInitializer` without a scan
+| `ClassFileHandlesTypesScanner` reads the class bytes of the jar or directory.
+
+| The web components CDI resolves (`CdiWebComponents`)
+| `FoyWebExtension`, the Build Compatible Extension of `foy-cdi-vauban`, which Vauban runs in javac
+| `CdiWebComponentsCreator`, which loads the recorded class names without initialising them
+| The extension runs at boot.
+|===
+
+=== When the fallback runs
+
+* A component compiled without `foy-processor`, in a jar of another build that `vidocq:generate` did not enrich.
+* A companion found by name in a named module whose package neither `provides` it nor exports it.
+
+=== Which path ran
+
+* One `INFO` line per class resolved through the `CLASS_FILE` tier
+  (`foy: <class> resolved through the Class-File tier (not processed at build time)`), one `WARNING` per class on the
+  `REFLECTION` tier, naming the reason; nothing per request.
+* The `NO_REFLECTION` architecture rule of `foy-architecture-tests` fails Foy's own build on any reflection outside
+  the tiers.
+
 == Big picture: three layers, two Java modules
 
 [plantuml]
