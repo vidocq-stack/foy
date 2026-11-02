@@ -55,7 +55,7 @@
 
     <scm>
         <connection>scm:git:https://codefloe.com/Vidocq/foy.git</connection>
-        <developerConnection>scm:git:ssh://git@forge.vidocq.dev:vidocq/foy.git</developerConnection>
+        <developerConnection>scm:git:ssh://git@codefloe.com/Vidocq/foy.git</developerConnection>
         <url>https://codefloe.com/Vidocq/foy</url>
     </scm>
 
