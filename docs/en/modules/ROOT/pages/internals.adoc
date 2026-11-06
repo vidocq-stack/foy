@@ -5,7 +5,7 @@
 This page documents the implementation: what happens between the moment an HTTP connection lands on Chappe and the moment a Servlet writes its response. It complements xref:concepts.adoc[Concepts] (vocabulary) and xref:reference.adoc[Reference] (API).
 
 [#generated-code]
-== Generated code and reflective fallback [.tag-new]#NEW#
+== Generated code and reflective fallback
 
 Every brick of the suite documents, in a section of this name, what it generates, who generates it and when, what
 looks it up at run time, and what runs instead when it is missing. For Foy that is the description and the factory
