@@ -27,6 +27,9 @@ Consolidated technical reference. Use this page as an anchor for external links 
 
 | `io.vidocq.foy:foy-tck`
 | Arquillian harness for the official TCK — **in-reactor, gated behind the `tck` Maven profile** (a plain `mvn install` neither downloads nor runs anything TCK-related; see xref:tck.adoc[TCK status]).Its `sigtest` profile runs the TCK's API signature test with two build-time tools, never shipped: `jakarta.tck:sigtest-maven-plugin` 2.5 (test scope) and `maven-dependency-plugin` (copies the `jakarta.servlet-api` jar under test).
+
+| `io.vidocq.foy:foy-architecture-tests`
+| **Test only**, never released. Runs Foy's architecture rules (dependencies, layers, no reflection, no platform thread, no `ThreadLocal`) on the classes of every shipped module. The rules come from `io.vidocq:vidocq-archrules`, the shared build and test library of `vidocq-parent`, in test scope; it brings ArchUnit (Apache-2.0), also test scope.
 |===
 
 == Java modules and exports

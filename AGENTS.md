@@ -59,7 +59,8 @@ What Foy ships depends only on the JDK, the Jakarta APIs it implements or reads
 Vauban (workspace rule "Zero external dependency for what ships").
 
 Test-scope libraries are never shipped: **JUnit**, and **ArchUnit**
-(`com.tngtech.archunit:archunit`, Apache-2.0), used only by the test-only module
+(`com.tngtech.archunit:archunit`, Apache-2.0, through the shared `vidocq-archrules`
+library of `vidocq-parent`), used only by the test-only module
 `foy-architecture-tests` from plain JUnit tests (Vidocq/vidocq#289). Its
 `ArchitectureRules` turns these rules into tests on the classes of every shipped
 module (`foy-api`, `foy-processor`, `foy-core`, `foy-cdi-vauban`, `foy-chappe`):
