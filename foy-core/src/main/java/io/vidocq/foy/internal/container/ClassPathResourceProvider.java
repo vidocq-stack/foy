@@ -28,8 +28,11 @@ import java.io.InputStream;
 import java.net.URI;
 import java.net.URISyntaxException;
 import java.net.URL;
+import java.nio.file.FileSystemNotFoundException;
+import java.nio.file.FileSystems;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.ProviderNotFoundException;
 import java.util.ArrayList;
 import java.util.Enumeration;
 import java.util.HashMap;
@@ -38,6 +41,7 @@ import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.TreeSet;
@@ -64,6 +68,12 @@ import java.util.stream.Stream;
  * ({@code jar:file:/a.war!/lib/b.jar!/...}) are not supported here. The index is not refreshed
  * if a jar changes on disk.</p>
  *
+ * <p><b>Run-time image.</b> In a {@code jlink} image every module's code source is {@code jrt:/<module>},
+ * and an ordered root of that form is read from the image's {@code jrt} file system. The class loader of an
+ * image finds the files of its modules but no directory, so the {@code META-INF/resources/} of the image's
+ * other modules are found in the image itself, once: those of the modules whose files the class loader
+ * returns, after the roots the class loader names (BUG-20261111-01).</p>
+ *
  * <p><b>Path safety.</b> Paths holding a {@code ..} or {@code .} segment, an empty segment ({@code //}), a
  * backslash or a NUL character resolve to nothing, and a resolved directory path must stay
  * under its root, symbolic links included (a link leading out of the root resolves to nothing). Callers must <em>not</em> percent-decode a path before passing it here, or
@@ -80,12 +90,19 @@ public final class ClassPathResourceProvider implements ResourceProvider {
 
     private static final String ROOT = "META-INF/resources/";
     private static final String ROOT_NAME = "META-INF/resources";
+    private static final String JRT = "jrt:/";
 
     private final ClassLoader loader;
     private final List<Loc.Root> ordered = new ArrayList<>();
     private final Set<String> orderedKeys = new HashSet<>();
     private final Set<String> excludedKeys = new HashSet<>();
     private final Map<Path, JarIndex> indexes = new ConcurrentHashMap<>();
+    private final Path imageModules;
+    private final Object imageLock = new Object();
+    private volatile ImageRoots imageRoots;
+
+    /** The roots of the image's modules, once found. */
+    private record ImageRoots(List<Loc.Root> roots) {}
 
     /**
      * @param loader      class loader whose other {@code META-INF/resources/} roots come last
@@ -103,15 +120,109 @@ public final class ClassPathResourceProvider implements ResourceProvider {
      *                     {@code orderedJars}
      */
     public ClassPathResourceProvider(ClassLoader loader, List<URL> orderedJars, java.util.Collection<URL> excludedJars) {
+        this(loader, orderedJars, excludedJars, runtimeImageModules());
+    }
+
+    /**
+     * @param imageModules the {@code /modules} directory of the {@code jrt} file system of the run-time image
+     *                     whose {@code jrt:/<module>} roots this provider reads, {@code null} for none
+     */
+    ClassPathResourceProvider(ClassLoader loader, List<URL> orderedJars, java.util.Collection<URL> excludedJars,
+                              Path imageModules) {
         this.loader = java.util.Objects.requireNonNull(loader, "loader");
+        this.imageModules = imageModules;
         for (URL u : excludedJars) excludedKeys.add(Fragment.sourceKey(u));
         for (URL u : orderedJars) {
             String key = Fragment.sourceKey(u);
             if (excludedKeys.contains(key) || !orderedKeys.add(key)) continue;
-            Path p = pathOf(key);
-            if (p != null) {
-                ordered.add(Files.isDirectory(p) ? new Loc.Dir(p.resolve(ROOT)) : new Loc.Jar(index(p)));
+            Loc.Root root = root(key);
+            if (root != null) ordered.add(root);
+        }
+    }
+
+    /** The modules of the run-time image this JVM runs from, {@code null} when it has no {@code jrt} file system. */
+    private static Path runtimeImageModules() {
+        try {
+            return FileSystems.getFileSystem(URI.create(JRT)).getPath("/modules");
+        } catch (ProviderNotFoundException | FileSystemNotFoundException _) {
+            return null;
+        }
+    }
+
+    /** The root of the jar, directory or image module {@code key} names, {@code null} when it names none. */
+    private Loc.Root root(String key) {
+        String module = imageModule(key);
+        if (module != null) {
+            return imageModules == null ? null : new Loc.Dir(imageModules.resolve(module).resolve(ROOT_NAME));
+        }
+        Path p = pathOf(key);
+        if (p == null) return null;
+        return Files.isDirectory(p) ? new Loc.Dir(p.resolve(ROOT)) : new Loc.Jar(index(p));
+    }
+
+    /** The module a {@code jrt:/<module>} key names, {@code null} for any other key. */
+    private static String imageModule(String key) {
+        if (!key.regionMatches(true, 0, JRT, 0, JRT.length())) return null;
+        String module = key.substring(JRT.length());
+        boolean name = !module.isEmpty() && module.indexOf('/') < 0 && !".".equals(module) && !"..".equals(module);
+        return name ? module : null;
+    }
+
+    /**
+     * The {@code META-INF/resources/} roots of the image's modules that the class loader sees, the ordered and
+     * excluded ones aside, found once. The class loader of an image finds the files of its modules but never a
+     * directory, so the lookup of the other roots finds none of them.
+     */
+    private List<Loc.Root> imageRoots() {
+        ImageRoots found = imageRoots;
+        if (found == null) {
+            synchronized (imageLock) {
+                found = imageRoots;
+                if (found == null) {
+                    found = new ImageRoots(findImageRoots());
+                    imageRoots = found;
+                }
             }
+        }
+        return found.roots();
+    }
+
+    private List<Loc.Root> findImageRoots() {
+        if (imageModules == null) return List.of();
+        try (Stream<Path> modules = Files.list(imageModules)) {
+            return modules.map(this::imageRoot).filter(java.util.Objects::nonNull).toList();
+        } catch (IOException | java.io.UncheckedIOException _) {
+            return List.of(); // an unreadable image adds no root
+        }
+    }
+
+    /** The root of image module directory {@code module}, {@code null} when it is not served from this tier. */
+    private Loc.Root imageRoot(Path module) {
+        String name = module.getFileName().toString();
+        String key = JRT + name;
+        Path base = module.resolve(ROOT_NAME);
+        if (orderedKeys.contains(key) || excludedKeys.contains(key) || !Files.isDirectory(base)) return null;
+        return seenByLoader(name, base) ? new Loc.Dir(base) : null;
+    }
+
+    /**
+     * Whether the class loader sees the {@code META-INF/resources/} of image module {@code module}: it finds the
+     * first file of {@code base} under that module's own {@code jrt:} URL.
+     */
+    private boolean seenByLoader(String module, Path base) {
+        try (Stream<Path> files = Files.walk(base)) {
+            Optional<Path> file = files.filter(Files::isRegularFile).findFirst();
+            if (file.isEmpty()) return false;
+            String name = ROOT + base.relativize(file.get());
+            String expected = "/" + module + "/" + name;
+            Enumeration<URL> urls = loader.getResources(name);
+            while (urls.hasMoreElements()) {
+                URI uri = urls.nextElement().toURI();
+                if ("jrt".equalsIgnoreCase(uri.getScheme()) && expected.equals(uri.getPath())) return true;
+            }
+            return false;
+        } catch (IOException | java.io.UncheckedIOException | URISyntaxException _) {
+            return false;
         }
     }
 
@@ -184,6 +295,7 @@ public final class ClassPathResourceProvider implements ResourceProvider {
         // Roots that declare META-INF/resources/ itself are read like the ordered ones: no
         // directory entry is needed below it.
         collect(ROOT_NAME, out, base -> base.resolve(rel), false);
+        for (Loc.Root root : imageRoots()) add(out, root.at(rel));
         String name = ROOT + (rel.endsWith("/") ? rel.substring(0, rel.length() - 1) : rel);
         // Directory roots are fully covered by the lookup above, where every hit is checked against
         // the root's real path: only the jar hits of the per-file lookup are kept.

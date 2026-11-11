@@ -1,5 +1,33 @@
 # BUG.md — foy
 
+## BUG-20261111-01 — In a jlink image, no static resource of a module is served
+
+- Date: 2026-11-11 (reported by Vaadin in mstahv/vaadin-jpms-examples, finding 7: in the jlink image of
+  `03-vidocq`, the theme stylesheet `aura/aura.css` answers 404, with the released Vaadin too).
+- Symptom: `ServletContext.getResource`, `getResourceAsStream` and `getResourcePaths`, and so the default
+  servlet, find nothing under the `META-INF/resources/` of a module linked into the run-time image. The
+  same application served from jars (`vidocq:package`) serves them.
+- Repro: a module `m` holding `META-INF/resources/a/b.css`, linked with `jlink --add-modules m`. In the
+  image, `getResources("META-INF/resources")` and `getResources("META-INF/resources/a")` return nothing,
+  `getResources("META-INF/resources/a/b.css")` returns `jrt:/m/META-INF/resources/a/b.css` (checked on
+  Temurin 25.0.3).
+- Cause: `ClassPathResourceProvider` reads only `jar:` and `file:` locations. In an image, every module's
+  code source is `jrt:/<module>` and its resources have `jrt:` URLs: `Loc.of` returns nothing for them, and
+  `pathOf` drops a `jrt:` application root or fragment jar. The class loader of an image finds no
+  directory, so the `META-INF/resources` lookup that finds the roots of the other tier finds none either.
+- Status: FIXED on `fix/jrt-static-resources`. A `jrt:/<module>` application root or fragment jar is read from
+  the image's `jrt` file system, like a directory. The roots of the other tier now also include the
+  `META-INF/resources/` of the image's modules, found once in the image itself, after the roots the class
+  loader names: a module is kept when the class loader returns the first file of its `META-INF/resources/`
+  under that module's own `jrt:` URL, so a module the application's loader cannot see is not served, and an
+  ordered or excluded module is not added twice. Finding them costs one listing of the image's modules
+  (0.7 ms for the 69 modules of a JDK, measured on Temurin 25.0.3), on the first lookup only.
+- Validation: `ClassPathResourceProviderImageTest` links a real image with `jlink` (in a process of its own:
+  a JDK without `jmods` links from its run-time image, which `jlink` refuses in a JVM patched with
+  `--patch-module`) and reads it through its own `jrt` file system: 5 of its 8 tests failed before the fix
+  (files, listing, application root, ordered root, exclusion), all pass after it, and so does the whole
+  Foy reactor.
+
 ## BUG-20261024-01 — The multipart end-to-end test bounded each request to 5 s of disk work
 
 - Date: 2026-10-24 (seen in the downstream rebuild of Vidocq/vauban run 46487, `pr-validate`, `foy-core`;
