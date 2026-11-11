@@ -153,14 +153,14 @@ class ClassPathResourceProviderImageTest {
     }
 
     @Test
-    void theDirectoriesOfTheModulesAreListedTogether() throws Exception {
+    void theDirectoriesOfTheModulesAreListedTogether() {
         var p = provider(imageLoader("m", "other"), List.of(), Set.of());
         assertEquals(Set.of("/a/b.css", "/a/d.css", "/a/sub/"), p.listPaths("/a/"));
         assertEquals(Set.of("/a/sub/c.txt"), p.listPaths("/a/sub"));
     }
 
     @Test
-    void aModuleTheClassLoaderDoesNotSeeIsNotServed() throws Exception {
+    void aModuleTheClassLoaderDoesNotSeeIsNotServed() {
         var p = provider(imageLoader("m"), List.of(), Set.of());
         assertNull(p.openStream("/h.txt"));
         assertNull(p.openStream("/a/d.css"));

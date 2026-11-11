@@ -44,6 +44,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.TreeSet;
 import java.util.jar.JarEntry;
 import java.util.jar.JarFile;
@@ -98,11 +99,8 @@ public final class ClassPathResourceProvider implements ResourceProvider {
     private final Set<String> excludedKeys = new HashSet<>();
     private final Map<Path, JarIndex> indexes = new ConcurrentHashMap<>();
     private final Path imageModules;
-    private final Object imageLock = new Object();
-    private volatile ImageRoots imageRoots;
-
     /** The roots of the image's modules, once found. */
-    private record ImageRoots(List<Loc.Root> roots) {}
+    private final AtomicReference<List<Loc.Root>> imageRoots = new AtomicReference<>();
 
     /**
      * @param loader      class loader whose other {@code META-INF/resources/} roots come last
@@ -171,20 +169,16 @@ public final class ClassPathResourceProvider implements ResourceProvider {
     /**
      * The {@code META-INF/resources/} roots of the image's modules that the class loader sees, the ordered and
      * excluded ones aside, found once. The class loader of an image finds the files of its modules but never a
-     * directory, so the lookup of the other roots finds none of them.
+     * directory, so the lookup of the other roots finds none of them. Two first lookups at once may both search
+     * the image: they find the same roots, and the first one kept is the one every lookup reads.
      */
     private List<Loc.Root> imageRoots() {
-        ImageRoots found = imageRoots;
+        List<Loc.Root> found = imageRoots.get();
         if (found == null) {
-            synchronized (imageLock) {
-                found = imageRoots;
-                if (found == null) {
-                    found = new ImageRoots(findImageRoots());
-                    imageRoots = found;
-                }
-            }
+            imageRoots.compareAndSet(null, findImageRoots());
+            found = imageRoots.get();
         }
-        return found.roots();
+        return found;
     }
 
     private List<Loc.Root> findImageRoots() {
