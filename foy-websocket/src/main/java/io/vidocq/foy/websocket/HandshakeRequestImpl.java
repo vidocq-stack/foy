@@ -23,6 +23,8 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.websocket.Extension;
 import jakarta.websocket.server.HandshakeRequest;
 
+import java.net.InetAddress;
+import java.net.InetSocketAddress;
 import java.net.URI;
 import java.security.Principal;
 import java.util.ArrayList;
@@ -35,7 +37,7 @@ import java.util.TreeMap;
 
 /**
  * The servlet request of a handshake, as the configurator and the session see it. The headers,
- * the request URI, the query string and the parameters are read once, at construction; the
+ * the request URI, the query string, the parameters and the local address are read once, at construction; the
  * HTTP session, the principal and the roles are asked of the request, which the configurator
  * calls run within.
  */
@@ -46,6 +48,7 @@ final class HandshakeRequestImpl implements HandshakeRequest {
     private final String queryString;
     private final URI requestUri;
     private final Map<String, List<String>> parameters;
+    private final InetSocketAddress localAddress;
 
     /**
      * Reads {@code request}.
@@ -59,6 +62,7 @@ final class HandshakeRequestImpl implements HandshakeRequest {
         this.queryString = request.getQueryString();
         this.requestUri = requestUriOf(request, queryString);
         this.parameters = parametersOf(request);
+        this.localAddress = localAddressOf(request);
     }
 
     /** Every header line, by name ignoring case; read-only. */
@@ -101,6 +105,11 @@ final class HandshakeRequestImpl implements HandshakeRequest {
     @Override
     public String getQueryString() {
         return queryString;
+    }
+
+    /** The address of this server the request reached, {@code null} when the request does not tell it. */
+    InetSocketAddress localAddress() {
+        return localAddress;
     }
 
     /** The subprotocols the client asked for, in its order of preference. */
@@ -146,6 +155,19 @@ final class HandshakeRequestImpl implements HandshakeRequest {
         }
         return URI.create((request.isSecure() ? "wss://" : "ws://") + host + request.getRequestURI()
                 + (query == null ? "" : "?" + query));
+    }
+
+    /** The local address as the request gives it, never resolved through DNS. */
+    private static InetSocketAddress localAddressOf(HttpServletRequest request) {
+        String address = request.getLocalAddr();
+        if (address == null) {
+            return null;
+        }
+        try {
+            return new InetSocketAddress(InetAddress.ofLiteral(address), request.getLocalPort());
+        } catch (IllegalArgumentException _) {
+            return InetSocketAddress.createUnresolved(address, request.getLocalPort());
+        }
     }
 
     private static Map<String, List<String>> parametersOf(HttpServletRequest request) {
