@@ -181,11 +181,24 @@ class HandshakeEndToEndTest {
         }
     }
 
-    /** Sends the id of the HTTP session its configurator saw, as soon as it opens. */
-    public static final class HttpSessionEndpoint extends Endpoint {
+    /**
+     * Reports the HTTP session id its configurator stored, as the configuration given to
+     * {@code onOpen} and the session's user properties hold it: when it opens, then in reply to
+     * every message ({@code "<config value>|<session value>"}).
+     */
+    public static final class UserPropertiesEndpoint extends Endpoint {
+        private EndpointConfig openConfig;
+
         @Override
         public void onOpen(Session session, EndpointConfig config) {
-            send(session, String.valueOf(config.getUserProperties().get(HTTP_SESSION_ID)));
+            openConfig = config;
+            send(session, report(session));
+            session.addMessageHandler(String.class, text -> send(session, report(session)));
+        }
+
+        private String report(Session session) {
+            return openConfig.getUserProperties().get(HTTP_SESSION_ID) + "|"
+                    + session.getUserProperties().get(HTTP_SESSION_ID);
         }
     }
 
@@ -297,19 +310,34 @@ class HandshakeEndToEndTest {
 
     @Test
     void theHandshakeSeesTheHttpSession() throws Exception {
-        server = WebSocketTestServer.start(onStart(ctx -> {
-            ctx.addServlet("login", new LoginServlet()).addMapping("/login");
-            container(ctx).addEndpoint(ServerEndpointConfig.Builder.create(HttpSessionEndpoint.class, "/session")
-                    .configurator(new HttpSessionConfigurator()).build());
-        }));
-        HttpResponse<String> login = HTTP.send(HttpRequest.newBuilder(server.uri("http", "/login")).build(),
-                HttpResponse.BodyHandlers.ofString());
-        String cookie = login.headers().firstValue("Set-Cookie").orElseThrow().split(";", 2)[0];
+        server = WebSocketTestServer.start(sessionAwareEndpoint(httpSessionConfig()));
+        HttpResponse<String> login = login();
         var client = new Client();
 
-        client.connect("/session", "Cookie", cookie);
+        client.connect("/session", "Cookie", cookie(login));
 
-        assertEquals(login.body(), client.next());
+        assertEquals(login.body() + "|" + login.body(), client.next());
+    }
+
+    @Test
+    void theUserPropertiesArePerConnection() throws Exception {
+        ServerEndpointConfig registered = httpSessionConfig();
+        server = WebSocketTestServer.start(sessionAwareEndpoint(registered));
+        HttpResponse<String> alice = login();
+        HttpResponse<String> bob = login();
+        var first = new Client();
+        var second = new Client();
+
+        WebSocket aliceSocket = first.connect("/session", "Cookie", cookie(alice));
+        String aliceAtOpen = first.next();
+        second.connect("/session", "Cookie", cookie(bob));
+        String bobAtOpen = second.next();
+        aliceSocket.sendText("after the second handshake", true).get(WAIT, SECONDS);
+
+        assertEquals(alice.body() + "|" + alice.body(), aliceAtOpen);
+        assertEquals(bob.body() + "|" + bob.body(), bobAtOpen);
+        assertEquals(alice.body() + "|" + alice.body(), first.next(), "the first connection keeps its own value");
+        assertEquals(Map.of(), registered.getUserProperties(), "a handshake never writes the registered config");
     }
 
     @Test
@@ -557,6 +585,31 @@ class HandshakeEndToEndTest {
                 container(ctx).addEndpoint(config);
             }
         });
+    }
+
+    /** {@code /session}: a {@link UserPropertiesEndpoint} whose configurator stores the HTTP session id. */
+    private static ServerEndpointConfig httpSessionConfig() {
+        return ServerEndpointConfig.Builder.create(UserPropertiesEndpoint.class, "/session")
+                .configurator(new HttpSessionConfigurator()).build();
+    }
+
+    /** A login servlet on {@code /login}, which creates the HTTP session, and the endpoint {@code config}. */
+    private static ServletContextListener sessionAwareEndpoint(ServerEndpointConfig config) {
+        return onStart(ctx -> {
+            ctx.addServlet("login", new LoginServlet()).addMapping("/login");
+            container(ctx).addEndpoint(config);
+        });
+    }
+
+    /** A new HTTP session: its id is the body. */
+    private HttpResponse<String> login() throws IOException, InterruptedException {
+        return HTTP.send(HttpRequest.newBuilder(server.uri("http", "/login")).build(),
+                HttpResponse.BodyHandlers.ofString());
+    }
+
+    /** The {@code name=value} of the session cookie {@code login} set. */
+    private static String cookie(HttpResponse<String> login) {
+        return login.headers().firstValue("Set-Cookie").orElseThrow().split(";", 2)[0];
     }
 
     private static ServerEndpointConfig config(Class<?> endpointClass, String path) {

@@ -36,8 +36,6 @@ import java.io.Writer;
 import java.net.URI;
 import java.nio.ByteBuffer;
 import java.security.Principal;
-import java.util.Collections;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -59,7 +57,8 @@ final class FoySession implements Session, WebSocketListener {
     private static final String PROTOCOL_VERSION = "13";
 
     private final FoyServerContainer container;
-    private final ServerEndpointConfig config;
+    /** This connection's config: the registered one with this connection's own user properties. */
+    private final ConnectionConfig config;
     private final Endpoint endpoint;
     private final String id;
     private final URI requestUri;
@@ -68,7 +67,6 @@ final class FoySession implements Session, WebSocketListener {
     private final Map<String, String> pathParameters;
     private final Principal userPrincipal;
     private final String subprotocol;
-    private final Map<String, Object> userProperties;
     private final RemoteEndpoint.Basic basicRemote = new BasicRemote();
     private final AtomicReference<WebSocketPeer> peer = new AtomicReference<>();
     private final AtomicReference<MessageHandler.Whole<String>> textHandler = new AtomicReference<>();
@@ -80,9 +78,10 @@ final class FoySession implements Session, WebSocketListener {
     /**
      * A session for the handshake of {@code request}, run while the handshake does.
      *
+     * @param config      the connection's config, whose user properties {@code modifyHandshake} filled
      * @param subprotocol the negotiated subprotocol, {@code ""} for none
      */
-    FoySession(FoyServerContainer container, ServerEndpointConfig config, Endpoint endpoint,
+    FoySession(FoyServerContainer container, ConnectionConfig config, Endpoint endpoint,
                HandshakeRequestImpl request, Map<String, String> pathParameters, String subprotocol) {
         this.container = container;
         this.config = config;
@@ -94,14 +93,14 @@ final class FoySession implements Session, WebSocketListener {
         this.pathParameters = pathParameters;
         this.userPrincipal = request.getUserPrincipal();
         this.subprotocol = subprotocol;
-        this.userProperties = Collections.synchronizedMap(new HashMap<>(config.getUserProperties()));
         this.maxIdleTimeout = container.getDefaultMaxSessionIdleTimeout();
         this.maxTextMessageBufferSize = container.getDefaultMaxTextMessageBufferSize();
         this.maxBinaryMessageBufferSize = container.getDefaultMaxBinaryMessageBufferSize();
     }
 
+    /** The registered config of the endpoint: the scope of the open sessions. */
     ServerEndpointConfig config() {
-        return config;
+        return config.registered();
     }
 
     // ---------------------------------------------------------------- transport events
@@ -285,10 +284,13 @@ final class FoySession implements Session, WebSocketListener {
         return pathParameters;
     }
 
-    /** A copy of the endpoint configuration's user properties, taken at the handshake. */
+    /**
+     * This connection's user properties: the copy of the registered config's ones that
+     * {@code modifyHandshake} filled, the same map as the config given to {@code onOpen}.
+     */
     @Override
     public Map<String, Object> getUserProperties() {
-        return userProperties;
+        return config.getUserProperties();
     }
 
     @Override
@@ -296,10 +298,10 @@ final class FoySession implements Session, WebSocketListener {
         return userPrincipal;
     }
 
-    /** The open sessions of the same endpoint configuration, this one included while it is open. */
+    /** The open sessions of the same registered endpoint configuration, this one included while it is open. */
     @Override
     public Set<Session> getOpenSessions() {
-        return container.openSessions(config);
+        return container.openSessions(config.registered());
     }
 
     // ---------------------------------------------------------------- helpers

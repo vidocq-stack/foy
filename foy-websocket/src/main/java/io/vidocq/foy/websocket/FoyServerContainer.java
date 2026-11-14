@@ -168,7 +168,8 @@ final class FoyServerContainer implements ServerContainer {
             response.setStatus(BAD_REQUEST);
             return;
         }
-        ServerEndpointConfig config = match.config();
+        // This connection's view of the registered config, with its own user properties.
+        var config = new ConnectionConfig(match.config());
         String origin = request.getHeader("Origin");
         var handshakeResponse = new HandshakeResponseImpl();
         Negotiated negotiated;
@@ -209,12 +210,13 @@ final class FoyServerContainer implements ServerContainer {
     /**
      * The configurator calls, in the order of WEBSOCKET.md section 5.3, on the request thread and
      * within the handshake scope: Atmosphere pairs {@code modifyHandshake} and
-     * {@code getEndpointInstance} through a {@code ThreadLocal}.
+     * {@code getEndpointInstance} through a {@code ThreadLocal}. {@code modifyHandshake} gets the
+     * connection's config, so what it stores in the user properties stays with this connection.
      *
      * @return what they decided, {@code null} when the origin is refused
      * @throws InstantiationException when no endpoint instance can be created
      */
-    private Negotiated negotiate(ServerEndpointConfig config, String origin, HandshakeRequestImpl request,
+    private Negotiated negotiate(ConnectionConfig config, String origin, HandshakeRequestImpl request,
                                  HandshakeResponseImpl response) throws InstantiationException {
         ServerEndpointConfig.Configurator configurator =
                 config.getConfigurator() != null ? config.getConfigurator() : defaultConfigurator;
