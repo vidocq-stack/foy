@@ -761,7 +761,7 @@ class HandshakeEndToEndTest {
 
         @Override
         public void publish(LogRecord logRecord) {
-            if (logRecord.getLevel() == level) {
+            if (level.equals(logRecord.getLevel())) {
                 messages.add(new SimpleFormatter().formatMessage(logRecord));
             }
         }

@@ -142,7 +142,7 @@ class WebSocketTakeoverEndToEndTest {
         ws.sendClose(WebSocket.NORMAL_CLOSURE, "done").get(5, TimeUnit.SECONDS);
         assertTrue(probe.closed.await(5, TimeUnit.SECONDS));
         assertEquals(3, probe.loaders.size(), "onOpen, onText and onClose");
-        assertTrue(probe.loaders.stream().allMatch(l -> l == appLoader), probe.loaders.toString());
+        probe.loaders.forEach(loader -> assertSame(appLoader, loader, probe.loaders.toString()));
     }
 
     @Test

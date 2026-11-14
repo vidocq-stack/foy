@@ -80,7 +80,7 @@ final class OriginPolicy {
         }
         boolean star = false;
         var origins = new ArrayList<Origin>();
-        for (String raw : initParameter.split(",")) {
+        for (String raw : initParameter.split(",", -1)) {
             String entry = raw.trim();
             if ("*".equals(entry)) {
                 star = true;

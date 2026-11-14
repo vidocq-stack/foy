@@ -190,6 +190,6 @@ final class MessageHandlers {
     }
 
     private static boolean holds(Slot<?> slot, MessageHandler handler) {
-        return slot != null && slot.handler() == handler;
+        return slot != null && handler.equals(slot.handler());
     }
 }

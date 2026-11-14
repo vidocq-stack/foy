@@ -122,7 +122,7 @@ final class HandshakeRequestImpl implements HandshakeRequest {
     List<Extension> requestedExtensions() {
         var offers = new ArrayList<Extension>();
         for (String offer : Handshake.tokens(lines(SEC_WEBSOCKET_EXTENSIONS))) {
-            String[] parts = offer.split(";");
+            String[] parts = offer.split(";", -1);
             var offerParameters = new ArrayList<Extension.Parameter>();
             for (int i = 1; i < parts.length; i++) {
                 String[] pair = parts[i].split("=", 2);

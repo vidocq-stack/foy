@@ -66,7 +66,28 @@ final class WebSocketTestServer implements AutoCloseable {
         }
     }
 
-    private record User(String name, String password, String[] roles) {
+    private static final class User {
+        private final String name;
+        private final String password;
+        private final String[] roles;
+
+        User(String name, String password, String[] roles) {
+            this.name = name;
+            this.password = password;
+            this.roles = roles.clone();
+        }
+
+        String name() {
+            return name;
+        }
+
+        String password() {
+            return password;
+        }
+
+        String[] roles() {
+            return roles.clone();
+        }
     }
 
     /** What to deploy: the listener, then the context path, init parameters, descriptor elements and users. */

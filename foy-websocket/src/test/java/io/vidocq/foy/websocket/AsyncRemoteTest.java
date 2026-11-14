@@ -34,6 +34,7 @@ import java.net.SocketTimeoutException;
 import java.nio.ByteBuffer;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -73,16 +74,17 @@ class AsyncRemoteTest {
     }
 
     @Test
-    void asyncSendsKeepTheirOrder() throws InterruptedException {
+    void asyncSendsKeepTheirOrder() throws Exception {
         session = TestSessions.open(endpoint, peer);
         RemoteEndpoint.Async async = session.getAsyncRemote();
         var results = new CountDownLatch(THREADS * PER_THREAD);
         var failures = new CopyOnWriteArrayList<SendResult>();
 
+        var tasks = new ArrayList<Future<?>>();
         try (var senders = Executors.newVirtualThreadPerTaskExecutor()) {
             for (int t = 0; t < THREADS; t++) {
                 int thread = t;
-                senders.submit(() -> {
+                tasks.add(senders.submit(() -> {
                     for (int n = 0; n < PER_THREAD; n++) {
                         async.sendText(thread + ":" + n, result -> {
                             if (!result.isOK()) {
@@ -91,17 +93,20 @@ class AsyncRemoteTest {
                             results.countDown();
                         });
                     }
-                });
+                }));
             }
         }
 
+        for (Future<?> task : tasks) {
+            task.get(WAIT, SECONDS);
+        }
         assertTrue(results.await(WAIT, SECONDS));
         assertEquals(List.of(), failures);
         assertEquals(THREADS * PER_THREAD, peer.messages.size());
         assertFalse(peer.overlapped(), "one send at a time");
-        Map<String, Integer> last = new ConcurrentHashMap<>();
+        Map<String, Integer> last = new HashMap<>();
         for (String message : peer.texts()) {
-            String[] parts = message.split(":");
+            String[] parts = message.split(":", -1);
             int n = Integer.parseInt(parts[1]);
             assertEquals(last.getOrDefault(parts[0], -1) + 1, n, "the order of sender " + parts[0]);
             last.put(parts[0], n);
@@ -109,31 +114,32 @@ class AsyncRemoteTest {
     }
 
     @Test
-    void concurrentBasicAndAsyncSendsKeepEachMessageWhole() throws InterruptedException {
+    void concurrentBasicAndAsyncSendsKeepEachMessageWhole() throws Exception {
         session = TestSessions.open(endpoint, peer);
         RemoteEndpoint.Async async = session.getAsyncRemote();
         RemoteEndpoint.Basic basic = session.getBasicRemote();
         var results = new CountDownLatch(2 * PER_THREAD);
         var expected = ConcurrentHashMap.<String>newKeySet();
 
+        var tasks = new ArrayList<Future<?>>();
         try (var senders = Executors.newVirtualThreadPerTaskExecutor()) {
             for (int t = 0; t < 2; t++) {
                 String prefix = "async" + t + "-";
-                senders.submit(() -> {
+                tasks.add(senders.submit(() -> {
                     for (int n = 0; n < PER_THREAD; n++) {
                         expected.add(prefix + n);
                         async.sendText(prefix + n, result -> results.countDown());
                     }
-                });
+                }));
             }
-            senders.submit(() -> {
+            tasks.add(senders.submit(() -> {
                 for (int n = 0; n < PER_THREAD; n++) {
                     String message = "basic-" + n;
                     expected.add(message);
                     sendQuietly(() -> basic.sendText(message));
                 }
-            });
-            senders.submit(() -> {
+            }));
+            tasks.add(senders.submit(() -> {
                 for (int n = 0; n < PER_THREAD; n++) {
                     expected.add("partial-" + n + "-end");
                     int part = n;
@@ -143,9 +149,12 @@ class AsyncRemoteTest {
                         basic.sendText("end", true);
                     });
                 }
-            });
+            }));
         }
 
+        for (Future<?> task : tasks) {
+            task.get(WAIT, SECONDS);
+        }
         assertTrue(results.await(WAIT, SECONDS));
         assertEquals(new HashSet<>(expected), new HashSet<>(peer.texts()), "every message arrives whole");
         assertEquals(expected.size(), peer.messages.size(), "and once");

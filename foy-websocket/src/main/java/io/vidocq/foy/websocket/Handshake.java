@@ -70,7 +70,7 @@ final class Handshake {
     static List<String> tokens(Enumeration<String> values) {
         var tokens = new ArrayList<String>();
         while (values != null && values.hasMoreElements()) {
-            for (String part : values.nextElement().split(",")) {
+            for (String part : values.nextElement().split(",", -1)) {
                 String token = part.trim();
                 if (!token.isEmpty()) {
                     tokens.add(token);
