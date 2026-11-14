@@ -68,7 +68,7 @@ Foy is at **{project-version}** and the official TCK passes **99.6 %** over the 
 
 | `JettyWebSocketServletContainerInitializer`
 | ❌ Not implemented
-| WebSocket Servlet 6.1 planned, no date.
+| Lot 1 of Jakarta WebSocket (programmatic `ServerContainer`, no annotated endpoints yet) in `foy-websocket`; see xref:usage.adoc#websocket[WebSocket].
 
 | Custom Jetty `Handler`
 | Chappe `Handler`
@@ -102,7 +102,7 @@ No real-world migration has been documented yet — the Tomcat and Jetty tables 
 
 * **HTTP/2 server push** — not supported; `newPushBuilder()` returns `null` (push is deprecated in Servlet 6.1, and Chappe sends no `PUSH_PROMISE`). `103 Early Hints` are not offered either. xref:usage.adoc#http2-server-push[Details].
 * **Directory listings and `multipart/byteranges`** — the default servlet serves single files only (404 for a directory) and answers several ranges with the whole body.
-* **WebSocket Servlet 6.1 / Jakarta WebSocket 2.2** — not implemented (planned, no date).
+* **Jakarta WebSocket 2.2** — lot 1 only (programmatic server API); annotated endpoints (`@ServerEndpoint`) and the client API are not implemented yet. xref:usage.adoc#websocket[Details].
 * **JSP** — not supported by Foy itself; a page engine such as xref:ibarra::index.adoc[Ibarra] (Jakarta Pages 4.0) plugs into the xref:reference.adoc#jsp-engine[JSP-engine service]. For dynamic pages use xref:cassini::index.adoc[Cassini] (REST) or HTML-emitting Servlets.
 * **DIGEST not supported** — it fails closed (`403`). CLIENT-CERT is supported: see xref:usage.adoc#client-cert[Client certificates].
 
@@ -211,6 +211,8 @@ See xref:usage.adoc#file-upload[File upload] and xref:reference.adoc#request-bod
 == Behaviour changes in the next version
 
 These changes may need attention:
+
+* **Dynamic filter mappings honour `isMatchAfter`** (BUG-20261114-01). `FilterRegistration.addMappingForUrlPatterns` and `addMappingForServletNames` used to put every dynamic mapping after the declared ones whatever the flag; `isMatchAfter=false` now places the mapping before the descriptor's, as the Servlet specification says. A filter that relied on the old order must pass `true`.
 
 * **Wrappers: every application wrapper, HTTP or not, now reaches the forward/include target.** The dispatch wrapper sits under the application's, so a wrapper's overrides win. A framework wrapper that caches the request URI at construction time shows the original URI to the target, as on Tomcat.
 * **Wrappers: a request (and, for include, a response) that neither is nor wraps the container's object is rejected** with a `ServletException`.

@@ -4,4 +4,7 @@
 [.lead]
 New in the `{project-version}` development line — everything listed here landed **after the {release-version} release** and is not part of it. Every entry links to the section that documents it, and those sections carry the [.tag-new]#NEW# badge. Each brick of the suite keeps its own page of this kind; xref:home::whats-new.adoc[the ecosystem index] gathers them. When the next release train ships, this page is frozen with it and restarts empty on the dev line.
 
-_Nothing documented yet for this cycle. Add entries here (and place [.tag-new]#NEW# badges on the relevant pages) as features land on main._
+* **Jakarta WebSocket 2.2, lot 1** — the programmatic server API in the new optional `foy-websocket` module: `ServerContainer.addEndpoint(ServerEndpointConfig)`, the RFC 6455 handshake, a same-origin policy with the `io.vidocq.foy.websocket.allowed-origins` init parameter, sessions with limits, timeouts and close codes. Annotated endpoints and the client API come in later lots. xref:usage.adoc#websocket[Usage], xref:reference.adoc#websocket-module[reference].
+* **Takeover SPI** — `io.vidocq.foy.spi.websocket` (`WebSocketUpgradeHandler`, `WebSocketListener`, `WebSocketPeer`) and the `ComponentInstantiator` context attribute let a WebSocket implementation run on Foy without reaching into `foy-core`. xref:reference.adoc#websocket-spi[Reference].
+* **`FoyChappeBoot.Builder.initParameter`** — sets a servlet-context init parameter from code. xref:reference.adoc[Reference].
+* **Fix: dynamic filter mappings honour `isMatchAfter`** (BUG-20261114-01). xref:migration.adoc[Behaviour changes].

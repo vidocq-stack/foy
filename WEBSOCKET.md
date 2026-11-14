@@ -1,6 +1,6 @@
 # Jakarta WebSocket 2.2 in Foy — design
 
-Status: lot 1 design approved (2026-11-14), in implementation. Tracking issue:
+Status: lot 1 implemented, acceptance pending (design approved 2026-11-14). Tracking issue:
 [Vidocq/vidocq#65](https://codefloe.com/Vidocq/vidocq/issues/65). Web Profile plan:
 `vidocq/WEB-PROFILE.md` (WebSocket 2.2, target 1.1.0).
 
@@ -247,13 +247,14 @@ Decided by the maintainer: same-origin by default, opened by configuration only.
   (Atmosphere sets its own when configured). Chappe still re-assembles up to its 64 MiB
   cap before Foy can check; lot 3 decides whether `chappe-api` gets a per-connection limit.
 - **Close.** `close(CloseReason)` maps to Chappe's close; `onClose(Session, CloseReason)`
-  carries the peer's code, or 1006 when the TCP connection was cut. `onError` precedes it
-  for a failure in the transport or in a handler.
+  carries the peer's code, or 1006 when the TCP connection was cut. `onError` precedes
+  `onClose` when a transport failure closes the session; an exception from a message
+  handler reaches `onError` and the session stays open.
 - **Not in lot 1.** `connectToServer` (client API, lot 3) throws `DeploymentException` with
   a message naming lot 3. `ServerContainer.upgradeHttpToWebSocket` reuses steps 4 to 7 of
-  §5.3 (builder's call whether it lands in lot 1). Partial sends
+  §5.3 and landed in lot 1. Partial sends
   (`sendText(String, boolean)`, `getSendStream()`, `getSendWriter()`) buffer the message
-  and send it whole on the last part (builder's call whether they land in lot 1).
+  and send it whole on the last part; they landed in lot 1 too.
 
 ### 5.5 Vidocq runtime
 

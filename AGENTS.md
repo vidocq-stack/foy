@@ -54,7 +54,7 @@ prose, identifiers, or documentation.
 ## Dependencies and test libraries
 
 What Foy ships depends only on the JDK, the Jakarta APIs it implements or reads
-(`jakarta.servlet`, `jakarta.annotation`, `jakarta.enterprise`), Chappe's API
+(`jakarta.servlet`, `jakarta.annotation`, `jakarta.enterprise`, `jakarta.websocket`), Chappe's API
 (`chappe-api`, never `chappe-core` or `chappe-http`) and, in `foy-cdi-vauban` only,
 Vauban (workspace rule "Zero external dependency for what ships").
 
@@ -63,7 +63,7 @@ Test-scope libraries are never shipped: **JUnit**, and **ArchUnit**
 library of `vidocq-parent`), used only by the test-only module
 `foy-architecture-tests` from plain JUnit tests (Vidocq/vidocq#289). Its
 `ArchitectureRules` turns these rules into tests on the classes of every shipped
-module (`foy-api`, `foy-processor`, `foy-core`, `foy-cdi-vauban`, `foy-chappe`):
+module (`foy-api`, `foy-processor`, `foy-core`, `foy-cdi-vauban`, `foy-chappe`, `foy-websocket`):
 the dependencies of each module, the layers between them, no reflection outside
 the documented fallbacks, no platform thread, no `ThreadLocal`.
 `ArchitectureRulesTest` applies them to the shipped classes,

@@ -25,6 +25,9 @@ Consolidated technical reference. Use this page as an anchor for external links 
 | `io.vidocq.foy:foy-processor:{project-version}`
 | **Build-time** annotation processor (no runtime role, never shipped in the application). Generates the `X$$FoyComponent` companions and the `META-INF` indexes. Zero dependency: it requires only the JDK `java.compiler` Java Module. Put it on `annotationProcessorPaths`, not on the class path.
 
+| `io.vidocq.foy:foy-websocket:{project-version}` [.tag-new]#NEW#
+| Optional Jakarta WebSocket 2.2 server (programmatic API) on the Servlet engine; see <<websocket-module>>. Depends on `foy-api`, the Servlet API and `jakarta.websocket-api` and `jakarta.websocket-client-api` 2.2.0, both at `compile` scope: the server API's Java Module requires the client API.
+
 | `io.vidocq.foy:foy-tck`
 | Arquillian harness for the official TCK — **in-reactor, gated behind the `tck` Maven profile** (a plain `mvn install` neither downloads nor runs anything TCK-related; see xref:tck.adoc[TCK status]).Its `sigtest` profile runs the TCK's API signature test with two build-time tools, never shipped: `jakarta.tck:sigtest-maven-plugin` 2.5 (test scope) and `maven-dependency-plugin` (copies the `jakarta.servlet-api` jar under test).
 
@@ -44,6 +47,7 @@ module io.vidocq.foy.api {
     exports io.vidocq.foy.spi.security;   // IdentityStore, Identity
     exports io.vidocq.foy.spi.gen;        // WebComponent, WebComponentDescriptor
     exports io.vidocq.foy.spi.cdi;        // CdiWebComponents
+    exports io.vidocq.foy.spi.websocket;  // WebSocketUpgradeHandler, WebSocketListener, WebSocketPeer
 }
 ----
 
@@ -107,7 +111,23 @@ module io.vidocq.foy.processor {          // build time only
 }
 ----
 
-`foy-core` additionally declares `uses io.vidocq.foy.spi.gen.WebComponent`.
+[source,java]
+----
+module io.vidocq.foy.websocket {          // exports nothing
+    requires jakarta.websocket;
+    requires jakarta.servlet;
+    requires io.vidocq.foy.api;
+
+    provides jakarta.servlet.ServletContainerInitializer
+            with io.vidocq.foy.websocket.WebSocketInitializer;
+    provides jakarta.websocket.server.ServerEndpointConfig.Configurator
+            with io.vidocq.foy.websocket.DefaultConfigurator;
+    provides io.vidocq.foy.spi.gen.WebComponent
+            with io.vidocq.foy.websocket.FoyUpgradeHandlerComponent;
+}
+----
+
+`foy-api` also exports `io.vidocq.foy.spi.websocket` (see <<websocket-spi>>). `foy-core` additionally declares `uses io.vidocq.foy.spi.gen.WebComponent`.
 
 [NOTE]
 ====
@@ -164,6 +184,9 @@ Each run writes a fresh `META-INF/services/io.vidocq.foy.spi.gen.WebComponent` a
 
 | `Builder.contextPath(String path)`
 | URL prefix served by this container. Default: `"/"`.
+
+| `Builder.initParameter(String name, String value)` [.tag-new]#NEW#
+| A servlet-context init parameter, replacing a `<context-param>` of the same name in the descriptors. This is how an embedder sets `io.vidocq.foy.websocket.allowed-origins`.
 
 | `Builder.sessionTimeoutSeconds(int seconds)`
 | Session timeout in seconds, rounded up to whole minutes; a `web.xml` `<session-timeout>` wins. Default: `1800` (30 min).
@@ -282,6 +305,42 @@ An uncaught limit thrown from a `Runnable` given to `AsyncContext.start` still a
 
 | `io.vidocq.foy.spi.security.Identity`
 | Record of a validated caller: its `Principal` and its application roles (`Identity.of(name, roles)`).
+
+| `io.vidocq.foy.spi.gen.ComponentInstantiator` [.tag-new]#NEW#
+| Creates a component through Foy's component factory (CDI injection included). Foy publishes one as the `ServletContext` attribute `io.vidocq.foy.spi.gen.ComponentInstantiator`, so an add-on module such as `foy-websocket` instantiates endpoints without reaching into `foy-core`.
+|===
+
+[#websocket-spi]
+=== WebSocket takeover SPI (`io.vidocq.foy.spi.websocket`) [.tag-new]#NEW#
+
+Not an application API (applications use Jakarta WebSocket): the transport-neutral contract between Foy's bridge and a WebSocket implementation, depending on the JDK and the Servlet API only. An implementation upgrades a request with a `WebSocketUpgradeHandler` (an `HttpUpgradeHandler` that names the negotiated sub-protocol and a listener); the transport answers the handshake, runs the framing and delivers events to a `WebSocketListener`, which sends through a `WebSocketPeer`.
+
+[#websocket-module]
+== WebSocket module (`foy-websocket`) [.tag-new]#NEW#
+
+Lot 1 of Jakarta WebSocket 2.2: the programmatic server API. How to use it: xref:usage.adoc#websocket[WebSocket]. Annotated endpoints and the client API are later lots.
+
+[cols="1,3",options="header"]
+|===
+| Item | Value
+
+| `ServerContainer`
+| `ServletContext` attribute `jakarta.websocket.server.ServerContainer`, one per context.
+
+| Init parameter
+| `io.vidocq.foy.websocket.allowed-origins`: `*`, or a comma-separated list of `http(s)://host[:port]` origins, lower-cased, no path. A malformed value stops the deployment. Default: same origin only.
+
+| Handshake refusals
+| `400` malformed, `426` other version (with `Sec-WebSocket-Version: 13`), `403` refused origin; empty bodies. HTTP/1.1 only.
+
+| Defaults
+| Maximum text and binary message 64 KiB; maximum idle timeout `0`; asynchronous send timeout `0`.
+
+| Close codes
+| 1001 undeploy and idle timeout; 1006 TCP cut; 1009 oversize message; 1011 `onOpen` failure.
+
+| Not in lot 1
+| `@ServerEndpoint` and `@ClientEndpoint`, `addEndpoint(Class)`, `connectToServer` (each throws `DeploymentException` naming the lot), extensions.
 |===
 
 [#security]
@@ -609,8 +668,8 @@ On a TLS connection the five Servlet 6.1 section 3.10 attributes are seeded when
 | DIGEST not supported (it answers `403` on protected resources); Jakarta Authentication and Authorization not implemented.
 
 | WebSocket (Jakarta WebSocket over the upgrade)
-| ❌
-| Not implemented (planned, no date); HTTP Upgrade itself is available.
+| ⚠️
+| Lot 1 (programmatic server API) in `foy-websocket`; annotated endpoints and the client API are not yet available. See <<websocket-module>>.
 
 | JSP
 | ❌

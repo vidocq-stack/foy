@@ -141,6 +141,10 @@ sequenceDiagram
     Chappe-->>Client: last DATA frame (END_STREAM), trailers if any
 ....
 
+=== WebSocket takeover
+
+A WebSocket handshake is an ordinary request until the end of the filter chain: the `foy-websocket` filter (on `/*`, after the application's filters) validates the handshake, negotiates the sub-protocol, runs `modifyHandshake` and `getEndpointInstance` on the request thread, then calls `HttpServletRequest.upgrade` with a `WebSocketUpgradeHandler` (`io.vidocq.foy.spi.websocket`). The bridge hands that handler to Chappe's WebSocket upgrade instead of a raw connection: Chappe writes the `101` and runs the frames, and delivers events to the handler's `WebSocketListener`. `foy-websocket` never touches `chappe-api`; the SPI is the only seam.
+
 == Dispatch pipeline
 
 For one request, `ChappeServletBridge` runs these steps in order (Servlet 6.1 §3.5.2, §10.10, §12.2):
@@ -193,6 +197,7 @@ Package `io.vidocq.foy.internal.security`.
 * **Async.** `request.startAsync()` lets `service()` return; the pipeline thread waits for the end of the cycle (complete, dispatch, timeout, error), runs dispatches and listeners, then ends the body. The container reserves no platform thread.
 * **Trailer supplier.** `setTrailerFields` suppliers are called by Chappe, on its connection thread, after the last byte of the body: request-scoped state is not available there.
 * **HTTP Upgrade.** After the `101` head, Chappe passes the raw connection to Foy; `HttpUpgradeHandler.init` runs on Chappe's connection thread (with the application class loader), and the `WebConnection` listener callbacks run on Foy virtual threads, serialised, never before `init` returns.
+* **WebSocket.** Each session runs one event at a time (`onOpen`, message handlers, `onClose`, `onError`) on a virtual thread, with the application class loader as context class loader. A session has one asynchronous-send drainer virtual thread, started on demand, and one timer virtual thread when it has an idle or send timeout. A per-handshake context is a `ScopedValue`; the module uses no `ThreadLocal`.
 
 [NOTE]
 ====
@@ -339,7 +344,7 @@ A request body has exactly one owner, decided by the first reader: the applicati
 * `getRequestDispatcher` and cross-context lookup compare the context path with a plain prefix test (no segment boundary), so `/app` also matches `/application/x`.
 * Cross-context dispatch (`ServletContext.getContext`): **implemented** via `CrossContextRegistry` (strict contextPath match on the contexts deployed in the same JVM).
 * Multipart: the body parameters of a multipart request are decided by the servlet executing when the parameters are first read; the epilogue after the closing delimiter is read by Foy within the caps, and what a client sends after the response is drained by Chappe, which bounds that drain (`maxDrainSize`, 1 MiB by default); no aggregate in-memory cap on the stored parts beyond the body size (each part stays under `fileSizeThreshold` in memory, the parts together under the body cap); reading the parameters reads the form fields (parts without a file name) whole into memory, so their total size is checked against `maxFormBodySize` first.
-* WebSocket Servlet 6.1: not implemented (planned, no date).
+* Jakarta WebSocket: lot 1 (programmatic server API) only; annotated endpoints and the client API are not implemented yet.
 * JSP: not supported by Foy itself; a page engine such as Ibarra (Jakarta Pages 4.0) plugs into the JSP-engine service (xref:reference.adoc#jsp-engine[Optional JSP-engine service]).
 * Security: DIGEST is not supported (it fails closed with `403`); security constraints match url-patterns case-sensitively, and a resource is served only under its exact real name, so a request that differs in case gets 404 on macOS and Windows (BUG-20261011-05). On a Linux case-insensitive mount (ext4 casefold, vfat/exFAT, CIFS) `toRealPath` returns the requested spelling and the folding goes undetected (BUG-20261013-01); serve static resources from jars or from a case-sensitive file system there.
 

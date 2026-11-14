@@ -130,7 +130,7 @@ Resolution is fully build-time through Vauban — no dynamic proxy, no hot-path 
 
 | WebSocket
 | Separate spec 2.1
-| Separate spec 2.2 — not implemented in Foy (planned, no date)
+| Separate spec 2.2 — programmatic server API in the optional `foy-websocket` module; annotated endpoints and the client API to come
 
 | HTTP/3
 | Out of scope

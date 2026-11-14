@@ -35,6 +35,7 @@ module to become an independent project usable outside the Vidocq Runtime ecosys
 | `foy-processor` | Build-time annotation processor generating `X$$FoyComponent` companions and indexes. Zero dependency (`java.compiler` only); never shipped in the application. |
 | `foy-cdi-vauban` | Bridge to the [Vauban](https://codefloe.com/Vidocq/vauban) CDI container (`FoyVaubanBootstrap.beanManager()`). |
 | `foy-chappe` | [Chappe](https://codefloe.com/Vidocq/chappe) HTTP adapter (`FoyChappeBoot.builder().beanManager(bm).build()`). |
+| `foy-websocket` | Optional Jakarta WebSocket 2.2 server, lot 1 (programmatic API: `ServerContainer`, handshake, sessions) on the Servlet engine; depends on `foy-api` and the WebSocket API only. |
 | `foy-architecture-tests` | The architecture rules (ArchUnit, test scope only) applied to the classes of every shipped module. Never released. |
 | `foy-zap-target` | The web application the nightly OWASP ZAP scan runs against (`zap-nightly.yml`): Foy on Chappe with Vauban, on the module path. Never released. |
 | `foy-tck` | Arquillian harness for the official Jakarta Servlet 6.1 TCK (in-reactor, gated by the `tck` Maven profile). |

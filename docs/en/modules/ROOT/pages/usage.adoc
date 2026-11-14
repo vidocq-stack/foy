@@ -179,7 +179,102 @@ public class EchoUpgradeServlet extends HttpServlet {
 * `WebConnection.close()` lets a non-blocking write still in flight reach the wire first (the usual `out.write(lastFrame); connection.close();` from `onWritePossible`), waiting at most 2 seconds: past that, a peer that does not read gets the connection closed anyway.
 * A handler that neither reads nor closes keeps the connection open until a write fails or the application is undeployed: there is no idle timeout once a connection is upgraded.
 
-WebSocket is not built on top of this yet (Jakarta WebSocket is not implemented).
+Jakarta WebSocket does not go through `HttpUpgradeHandler.init` and a raw connection: see <<websocket>>.
+
+[#websocket]
+== WebSocket [.tag-new]#NEW#
+
+Foy serves Jakarta WebSocket 2.2 through the optional `foy-websocket` module (xref:reference.adoc#websocket-module[reference]). Put it on the class path or the module path next to `foy-chappe`: its `ServletContainerInitializer` is found by the usual service lookup and needs no configuration. This first lot is the **programmatic server API**, enough for a framework that registers its endpoints itself (Atmosphere, hence Vaadin push).
+
+The container is the `ServerContainer`, published as the `ServletContext` attribute `jakarta.websocket.server.ServerContainer`:
+
+[source,java]
+----
+ServerContainer container =
+        (ServerContainer) servletContext.getAttribute("jakarta.websocket.server.ServerContainer");
+container.addEndpoint(ServerEndpointConfig.Builder
+        .create(EchoEndpoint.class, "/echo/{room}")
+        .build());
+----
+
+* `addEndpoint(ServerEndpointConfig)` is accepted during deployment and afterwards (a framework may register at its first request). Registering a path twice throws `DeploymentException`.
+* **Paths.** A path is matched on the part after the context path; a query string is ignored for matching and stays in `Session.getQueryString()`. An exact path beats a template, and among templates the longest literal prefix, segment by segment, wins. `{name}` segments are available through `Session.getPathParameters()`.
+* **Not in this lot.** Annotated endpoints (`@ServerEndpoint`, `@ClientEndpoint`), `addEndpoint(Class)` and the client API (`connectToServer`) throw `DeploymentException`, naming the lot that brings them (lot 2 for annotations and scanning, lot 3 for the client). Extensions negotiate to none.
+* `ServerContainer.upgradeHttpToWebSocket` is available for a servlet that wants to take the upgrade itself.
+
+=== The handshake
+
+A filter registered for `/*`, after the application's filters, recognises the upgrade of a matching path and answers it. The handshake is HTTP/1.1 only and follows RFC 6455: `GET`, `Upgrade: websocket`, a `Connection` header holding the `upgrade` token (other tokens, such as Firefox's `keep-alive, Upgrade`, are fine), a `Sec-WebSocket-Key` that decodes to 16 bytes, and `Sec-WebSocket-Version: 13`. A refusal has an empty body:
+
+[cols="1,3",options="header"]
+|===
+| Status | When
+
+| `400`
+| Malformed handshake, a bad `Sec-WebSocket-Key` included.
+
+| `426`
+| Another protocol version; the response carries `Sec-WebSocket-Version: 13`.
+
+| `403`
+| Refused origin (`Configurator.checkOrigin` answered `false`); the refusal is logged at `WARNING`, naming the origin.
+|===
+
+`Configurator.modifyHandshake` and `getEndpointInstance` run on the request thread, in that order. The `Configurator.checkOrigin` and the user properties of the `ServerEndpointConfig` are per connection: one connection's changes never reach another's.
+
+[#websocket-origins]
+=== Same-origin policy
+
+The container default of `checkOrigin` protects against cross-site WebSocket hijacking. A request without `Origin` (not a browser) is accepted. Otherwise the origin is accepted when it names the same host as the request: its scheme, host and port equal what the `Host` header says. A `Host` without a port means the default port of the origin's scheme, so a TLS-terminating proxy that forwards `Host: app.example.com` for `Origin: https://app.example.com` is accepted although the request reaches Foy over plain HTTP. A proxy that rewrites `Host` needs the public origin listed.
+
+The context init parameter `io.vidocq.foy.websocket.allowed-origins` lists further origins:
+
+* `*` accepts every origin;
+* otherwise a comma-separated list of `http://host[:port]` or `https://host[:port]` entries, with no path. Every entry is checked and compared in lower case.
+* a malformed value stops the deployment.
+
+With `FoyChappeBoot`, set it with `Builder.initParameter("io.vidocq.foy.websocket.allowed-origins", "https://admin.example.com, http://localhost:5173")`; in a descriptor it is a `<context-param>`. An application `Configurator` that overrides `checkOrigin` decides instead: the policy above is then not consulted.
+
+=== Sessions and threads
+
+* One event at a time per session: `onOpen`, the message handlers, `onClose` and `onError` run in order, each on a virtual thread, with the application class loader as context class loader.
+* Asynchronous sends (`getAsyncRemote`) are drained by one virtual thread per session, started on demand. `getBasicRemote` blocks the caller.
+* Partial sends (`sendText(String, boolean)`, `getSendStream()`, `getSendWriter()`) are buffered and sent whole on the last part.
+* The transport answers pings itself; applications see pongs through `PongMessage` handlers.
+* An exception thrown by a message handler reaches `onError`; the session stays open. A failure of `onOpen` closes the session with 1011.
+
+=== Limits and close codes
+
+[cols="1,3",options="header"]
+|===
+| Setting | Default
+
+| Maximum text and binary message
+| 64 KiB (`Session.setMaxTextMessageBufferSize`, `setMaxBinaryMessageBufferSize`); a larger message closes the session with 1009.
+
+| Maximum idle timeout
+| `0`, none. `Session.setMaxIdleTimeout` closes an idle session with 1001; each session with a timeout has one timer virtual thread.
+
+| Asynchronous send timeout
+| `0`, none.
+|===
+
+[cols="1,3",options="header"]
+|===
+| Code | Cause
+
+| 1001
+| The application is undeployed, or the idle timeout expired.
+
+| 1006
+| The TCP connection was cut; every queued asynchronous send then fails.
+
+| 1009
+| A message over the limit.
+
+| 1011
+| `onOpen` threw.
+|===
 
 [#http2-server-push]
 == HTTP/2 server push
