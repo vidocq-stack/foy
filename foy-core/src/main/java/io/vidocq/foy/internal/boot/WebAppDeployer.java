@@ -35,12 +35,14 @@ import io.vidocq.foy.internal.dispatcher.FilterMapping;
 import io.vidocq.foy.internal.dispatcher.FilterRegistry;
 import io.vidocq.foy.internal.dispatcher.ServletDispatcher;
 import io.vidocq.foy.internal.dispatcher.UrlPatternMatcher;
+import io.vidocq.foy.internal.gen.ContextComponentInstantiator;
 import io.vidocq.foy.internal.listener.ListenerRegistry;
 import io.vidocq.foy.internal.security.ConstraintTable;
 import io.vidocq.foy.internal.security.SecuritySettings;
 import io.vidocq.foy.internal.security.WebSecurity;
 import io.vidocq.foy.internal.session.InMemorySessionStore;
 import io.vidocq.foy.internal.session.SessionManager;
+import io.vidocq.foy.spi.gen.ComponentInstantiator;
 import jakarta.servlet.DispatcherType;
 import jakarta.servlet.Filter;
 import jakarta.servlet.Servlet;
@@ -152,9 +154,11 @@ public final class WebAppDeployer {
             // <context-param> init params (web.xml) — must be set before markInitialized.
             if (engine != null) registerJspServlet(ctx);
             ListenerRegistry registry = listenerRegistry(ctx, model, engine != null);
+            // The component factory must be there before the initializers run (foy-websocket's reads it),
+            // and set before the listener registry: the application's attribute listeners never hear
+            // this container attribute.
+            ctx.setAttribute(ComponentInstantiator.ATTRIBUTE, new ContextComponentInstantiator(ctx));
             ctx.setListenerRegistry(registry);
-            ctx.setAttribute(io.vidocq.foy.spi.gen.ComponentInstantiator.ATTRIBUTE,
-                    new io.vidocq.foy.internal.gen.ContextComponentInstantiator(ctx));
             runInitializers(model, options, ctx);
             rollback.contextInitializedListeners = registry;
             registry.fireContextInitialized(ctx);
