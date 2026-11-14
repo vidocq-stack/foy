@@ -33,6 +33,7 @@ import static java.util.concurrent.TimeUnit.MILLISECONDS;
 import static java.util.concurrent.TimeUnit.SECONDS;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class SessionTimerTest {
@@ -43,9 +44,11 @@ class SessionTimerTest {
     private final FakePeer peer = new FakePeer();
     private final Recorder endpoint = new Recorder();
     private final List<Thread> threads = new CopyOnWriteArrayList<>();
-    /** Counts the threads a timer starts. */
+    /** What ended a timer thread abruptly. */
+    private final List<Throwable> uncaught = new CopyOnWriteArrayList<>();
+    /** Counts the threads a timer starts, and keeps what ends them abruptly out of the test output. */
     private final ThreadFactory counting = task -> {
-        Thread thread = Thread.ofVirtual().unstarted(task);
+        Thread thread = Thread.ofVirtual().uncaughtExceptionHandler((t, e) -> uncaught.add(e)).unstarted(task);
         threads.add(thread);
         return thread;
     };
@@ -101,6 +104,30 @@ class SessionTimerTest {
 
         assertTrue(idle.await(WAIT, SECONDS));
         assertEquals(1, expired.getCount(), "the done send's earlier deadline never ran");
+        timer.stop();
+    }
+
+    /**
+     * An expiry that throws ends the timer's thread, not the timer: the idle timeout armed before it and a
+     * send deadline armed after it still fire.
+     */
+    @Test
+    void anExpiryThatThrowsLeavesTheTimerRunning() throws InterruptedException {
+        var idle = new CountDownLatch(1);
+        var expired = new CountDownLatch(1);
+        var timer = new SessionTimer(idle::countDown, counting);
+
+        timer.idle(IDLE_MILLIS);
+        timer.sendDeadline(1, System.nanoTime(), () -> {
+            throw new AssertionError("an expiry that fails an assertion");
+        });
+
+        assertTrue(idle.await(WAIT, SECONDS), "the idle timeout armed before the failure never fired");
+        timer.sendDeadline(2, System.nanoTime(), expired::countDown);
+        assertTrue(expired.await(WAIT, SECONDS), "a send deadline armed after the failure never fired");
+        assertTrue(threads.getFirst().join(Duration.ofSeconds(WAIT)));
+        assertEquals(1, uncaught.size(), uncaught::toString);
+        assertInstanceOf(AssertionError.class, uncaught.getFirst());
         timer.stop();
     }
 

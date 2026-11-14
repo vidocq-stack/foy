@@ -32,7 +32,8 @@ import java.util.concurrent.locks.LockSupport;
  * timestamp ({@link #touch()}): the thread, waking at a deadline the activity moved, sleeps again.
  *
  * <p>An expiry runs on the timer's thread, then the timer keeps going until {@link #stop()}: the
- * idle timeout is disarmed once it fired, and a send deadline fires once.
+ * idle timeout is disarmed once it fired, and a send deadline fires once. An expiry that throws ends
+ * that thread, and another one takes the deadlines over.
  */
 final class SessionTimer {
 
@@ -150,9 +151,21 @@ final class SessionTimer {
         }
     }
 
+    /**
+     * The timer's thread, until {@link #stop()}. An expiry that throws ends it, not the timer: the
+     * slot is freed so the next deadline armed starts another thread, and a deadline still armed
+     * starts it at once (Dekker pairing with {@link #wake(long)}).
+     */
     private void watch() {
-        while (!stopped) {
-            turn();
+        try {
+            while (!stopped) {
+                turn();
+            }
+        } finally {
+            thread.compareAndSet(Thread.currentThread(), null);
+            if (idleNanos > 0 || send.get() != null) {
+                start();
+            }
         }
     }
 

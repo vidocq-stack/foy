@@ -259,6 +259,40 @@ class AsyncRemoteTest {
         assertEquals(List.of("first", "second"), peer.texts());
     }
 
+    /**
+     * An {@code Error} from a send handler ends its drainer, not the queue: the send queued behind it
+     * and a send queued afterwards still complete.
+     */
+    @Test
+    void anErrorFromASendHandlerLeavesTheQueueRunning() throws InterruptedException {
+        session = TestSessions.open(endpoint, peer);
+        RemoteEndpoint.Async async = session.getAsyncRemote();
+        var queued = new CountDownLatch(1);
+        var behind = new CompletableResult();
+        var later = new CompletableResult();
+
+        async.sendText("first", result -> {
+            awaitQuietly(queued);
+            throw new AssertionError("a send handler that fails an assertion");
+        });
+        async.sendText("second", behind);
+        queued.countDown();
+
+        assertTrue(behind.done.await(WAIT, SECONDS), "the send queued behind the Error never completed");
+        assertTrue(behind.value.isOK());
+        async.sendText("third", later);
+        assertTrue(later.done.await(WAIT, SECONDS), "a send queued after the Error never completed");
+        assertEquals(List.of("first", "second", "third"), peer.texts());
+    }
+
+    private static void awaitQuietly(CountDownLatch latch) {
+        try {
+            assertTrue(latch.await(WAIT, SECONDS));
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
+    }
+
     /** A send handler that keeps its result and the thread it ran on. */
     private static final class CompletableResult implements SendHandler {
         final CountDownLatch done = new CountDownLatch(1);

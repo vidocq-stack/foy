@@ -141,20 +141,31 @@ final class AsyncRemote extends FoySession.Remote implements RemoteEndpoint.Asyn
         if (closed) {
             failQueued();
         } else if (draining.compareAndSet(false, true)) {
-            session.applicationThread("foy-websocket-send-", this::drain).start();
+            startDrainer();
         }
     }
 
-    /** The drainer: writes the queued sends in order, and ends when the queue is empty. */
+    private void startDrainer() {
+        session.applicationThread("foy-websocket-send-", this::drain).start();
+    }
+
+    /**
+     * The drainer: writes the queued sends in order, and ends when the queue is empty, or when a
+     * {@link SendHandler} throws an {@code Error}, which propagates once the next drainer is started.
+     */
     private void drain() {
-        do {
+        try {
             for (Send send = queue.poll(); send != null; send = queue.poll()) {
                 write(send);
             }
+        } finally {
             draining.set(false);
-            // A send queued after the last poll, while this thread still held the flag, starts no
-            // other thread: take it here.
-        } while (!queue.isEmpty() && draining.compareAndSet(false, true));
+            // A send queued after the last poll, while this thread still held the flag, started no
+            // other thread, nor did the sends behind a SendHandler that threw: start one for them.
+            if (!queue.isEmpty() && draining.compareAndSet(false, true)) {
+                startDrainer();
+            }
+        }
     }
 
     private void write(Send send) {
