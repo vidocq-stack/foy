@@ -26,13 +26,14 @@ import com.tngtech.archunit.core.importer.ImportOption;
 /** The classes the architecture rules are applied to, imported once per test run. */
 final class FoyClasses {
 
-    /** The root package of each shipped module: foy-api, foy-processor, foy-core, foy-cdi-vauban, foy-chappe. */
+    /** The root package of each shipped module: foy-api, foy-processor, foy-core, foy-cdi-vauban, foy-chappe, foy-websocket. */
     private static final String[] SHIPPED_PACKAGES = {
         "io.vidocq.foy.spi",
         "io.vidocq.foy.processor",
         "io.vidocq.foy.internal",
         "io.vidocq.foy.cdi.vauban",
-        "io.vidocq.foy.chappe"
+        "io.vidocq.foy.chappe",
+        "io.vidocq.foy.websocket"
     };
 
     private static final ImportOption NO_TESTS = new ImportOption.DoNotIncludeTests();

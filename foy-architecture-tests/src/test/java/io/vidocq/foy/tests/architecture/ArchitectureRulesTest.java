@@ -32,8 +32,8 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 
 /**
- * The architecture rules on the classes Foy ships: foy-api, foy-processor, foy-core, foy-cdi-vauban and
- * foy-chappe, test classes left out (Vidocq/vidocq#289). A failure names each class and the dependency or call
+ * The architecture rules on the classes Foy ships: foy-api, foy-processor, foy-core, foy-cdi-vauban,
+ * foy-chappe and foy-websocket, test classes left out (Vidocq/vidocq#289). A failure names each class and the dependency or call
  * that breaks the rule.
  */
 class ArchitectureRulesTest {
@@ -46,6 +46,7 @@ class ArchitectureRulesTest {
         assertTrue(SHIPPED.contain("io.vidocq.foy.internal.gen.WebComponentRegistry"), "foy-core imported");
         assertTrue(SHIPPED.contain("io.vidocq.foy.cdi.vauban.FoyWebExtension"), "foy-cdi-vauban imported");
         assertTrue(SHIPPED.contain("io.vidocq.foy.chappe.FoyChappeBoot"), "foy-chappe imported");
+        assertTrue(SHIPPED.contain("io.vidocq.foy.websocket.FoyServerContainer"), "foy-websocket imported");
     }
 
     static Stream<Named<ArchRule>> rules() {
@@ -55,6 +56,7 @@ class ArchitectureRulesTest {
                 named("CORE_DEPENDENCIES", ArchitectureRules.CORE_DEPENDENCIES),
                 named("CDI_VAUBAN_DEPENDENCIES", ArchitectureRules.CDI_VAUBAN_DEPENDENCIES),
                 named("CHAPPE_ADAPTER_DEPENDENCIES", ArchitectureRules.CHAPPE_ADAPTER_DEPENDENCIES),
+                named("WEBSOCKET_DEPENDENCIES", ArchitectureRules.WEBSOCKET_DEPENDENCIES),
                 named("LAYERS", ArchitectureRules.LAYERS),
                 named("NO_REFLECTION", ArchitectureRules.NO_REFLECTION),
                 named("NO_PLATFORM_THREADS", ArchitectureRules.NO_PLATFORM_THREADS),

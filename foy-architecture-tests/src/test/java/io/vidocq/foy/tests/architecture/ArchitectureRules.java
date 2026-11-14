@@ -37,7 +37,7 @@ import com.tngtech.archunit.lang.ArchRule;
  *
  * <p>The root package of each shipped module: {@code io.vidocq.foy.spi} (foy-api), {@code io.vidocq.foy.processor}
  * (foy-processor), {@code io.vidocq.foy.internal} (foy-core), {@code io.vidocq.foy.cdi.vauban} (foy-cdi-vauban)
- * and {@code io.vidocq.foy.chappe} (foy-chappe).
+ * {@code io.vidocq.foy.chappe} (foy-chappe) and {@code io.vidocq.foy.websocket} (foy-websocket).
  */
 final class ArchitectureRules {
 
@@ -113,6 +113,20 @@ final class ArchitectureRules {
             README_MODULES + "; module-info.java of foy-chappe");
 
     /**
+     * WEBSOCKET.md and the module descriptor of foy-websocket: the Servlet and WebSocket APIs and foy-api's SPI.
+     * Never foy-core, never Chappe (the transport takeover goes through {@code io.vidocq.foy.spi.websocket}).
+     */
+    static final ArchRule WEBSOCKET_DEPENDENCIES = VidocqArchRules.dependOnlyOn(
+            new String[] {"io.vidocq.foy.websocket.."},
+            Packages.of(
+                    Jdk.RUNTIME,
+                    "jakarta.servlet..",
+                    "jakarta.websocket..",
+                    "io.vidocq.foy.spi..",
+                    "io.vidocq.foy.websocket.."),
+            "WEBSOCKET.md; module-info.java of foy-websocket");
+
+    /**
      * README, Modules, and the module descriptors: foy-api is the bottom layer and reads no other Foy module;
      * foy-core builds on it; foy-cdi-vauban builds on foy-api alone, foy-chappe on foy-core; nothing builds on
      * the last two. foy-processor stands alone, a build-time tool.
@@ -123,7 +137,8 @@ final class ArchitectureRules {
             Layer.named("Processor").in("io.vidocq.foy.processor..").accessesNoLayer().accessibleByNone(),
             Layer.named("Core").in("io.vidocq.foy.internal..").accessibleOnlyBy("Chappe adapter"),
             Layer.named("CDI Vauban").in("io.vidocq.foy.cdi.vauban..").accessibleByNone(),
-            Layer.named("Chappe adapter").in("io.vidocq.foy.chappe..").accessibleByNone());
+            Layer.named("Chappe adapter").in("io.vidocq.foy.chappe..").accessibleByNone(),
+            Layer.named("WebSocket").in("io.vidocq.foy.websocket..").accessibleByNone());
 
     /**
      * internals.adoc, Component resolution: the documented reflective fallbacks, each with its reason. The same

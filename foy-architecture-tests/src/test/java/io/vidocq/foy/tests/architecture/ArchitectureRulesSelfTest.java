@@ -41,6 +41,7 @@ import io.vidocq.foy.internal.archfixture.CoreReachingIntoTheAdapter;
 import io.vidocq.foy.internal.archfixture.CoreReachingIntoVauban;
 import io.vidocq.foy.processor.archfixture.ProcessorReachingIntoTheSpi;
 import io.vidocq.foy.spi.archfixture.SpiReachingIntoCore;
+import io.vidocq.foy.websocket.archfixture.WebSocketReachingIntoCore;
 
 import com.tngtech.archunit.core.domain.JavaClasses;
 import com.tngtech.archunit.core.importer.ClassFileImporter;
@@ -78,7 +79,12 @@ class ArchitectureRulesSelfTest {
                 ruleWith(
                         "CHAPPE_ADAPTER_DEPENDENCIES",
                         ArchitectureRules.CHAPPE_ADAPTER_DEPENDENCIES,
-                        AdapterReachingIntoTheChappeEngine.class));
+                        AdapterReachingIntoTheChappeEngine.class),
+                ruleWith(
+                        "WEBSOCKET_DEPENDENCIES",
+                        ArchitectureRules.WEBSOCKET_DEPENDENCIES,
+                        WebSocketReachingIntoCore.class),
+                ruleWith("LAYERS", ArchitectureRules.LAYERS, WebSocketReachingIntoCore.class));
     }
 
     @ParameterizedTest(name = "{0} catches {1}")

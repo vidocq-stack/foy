@@ -26,7 +26,7 @@
     </properties>
 
     <!--
-        Every dependency is test-scoped: the module ships nothing. The five shipped modules are listed
+        Every dependency is test-scoped: the module ships nothing. The six shipped modules are listed
         so that ArchUnit imports their classes; chappe-core and vauban are not imported, chappe-core is
         only here for the fixture that reaches into the Chappe engine.
     -->
@@ -54,6 +54,11 @@
         <dependency>
             <groupId>io.vidocq.foy</groupId>
             <artifactId>foy-chappe</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>io.vidocq.foy</groupId>
+            <artifactId>foy-websocket</artifactId>
             <scope>test</scope>
         </dependency>
         <dependency>
