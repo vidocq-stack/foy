@@ -90,6 +90,16 @@ application once and records what they did; the packaged application loads that 
   at each start (Heisenberg's `InterceptorPriorityExtension`);
 - the brick's Vidocq runtime extension adds its own beans with `VaubanContainerBuilder.addHostBean`, never
   `addBeanClass`, and its `-codegen` bundle brings the brick's CDI jar to the processor path;
+- list in `@io.vidocq.vauban.api.ClientProxies` every interface the extension registers as a synthetic bean of a
+  normal scope (`@ApplicationScoped`, `@TransactionScoped`, ...). Vauban generates client proxies at build from the
+  classes it compiles, and a synthetic bean has none: the freeze records its descriptor, not a proxy, and a deployment
+  that runs its extensions at start has no build step. Without the list, the container builds a
+  `java.lang.reflect.Proxy` at every start: every call goes through reflection, the boot is slower, nothing runs ahead
+  of time, and every application prints the `RUNTIME CODE GENERATION FALLBACK` warning (Vauban BUG-20261113-19:
+  Noether's `EntityManager` and `EntityManagerFactory`). Put it on a class of a module compiled with
+  `vauban-processor` that provides its `_VaubanComponents`: the `*-cdi-vauban` extension, or, for a
+  container-neutral brick, its Vidocq runtime extension (Vidocq's `NoetherPersistenceExtension`). Public interfaces
+  only, no class, no `@Dependent` bean;
 - test both ways: the extensions run at start (TCK, another container) and frozen (the startup report says
   `cdi extensions  N extensions frozen at build`, and an invalid environment still stops the start).
 
