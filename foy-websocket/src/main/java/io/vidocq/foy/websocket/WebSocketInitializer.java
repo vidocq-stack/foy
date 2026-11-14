@@ -48,7 +48,8 @@ public final class WebSocketInitializer implements ServletContainerInitializer {
      */
     @Override
     public void onStartup(Set<Class<?>> classes, ServletContext context) {
-        OriginPolicy origins = OriginPolicy.parse(context.getInitParameter(OriginPolicy.INIT_PARAMETER));
+        OriginPolicy origins = OriginPolicy.parse(context.getInitParameter(OriginPolicy.INIT_PARAMETER),
+                context.getInitParameter(OriginPolicy.SETTING_NAME_PARAMETER));
         var instantiator = context.getAttribute(ComponentInstantiator.ATTRIBUTE) instanceof ComponentInstantiator i
                 ? i : null;
         var container = new FoyServerContainer(origins, instantiator);

@@ -245,6 +245,8 @@ The context init parameter `io.vidocq.foy.websocket.allowed-origins` lists furth
 
 With `FoyChappeBoot`, set it with `Builder.initParameter("io.vidocq.foy.websocket.allowed-origins", "https://admin.example.com, http://localhost:5173")`; in a descriptor it is a `<context-param>`. An application `Configurator` that overrides `checkOrigin` decides instead: the policy above is then not consulted.
 
+A runtime that fills `io.vidocq.foy.websocket.allowed-origins` from its own configuration, such as Vidocq, also sets the init parameter `io.vidocq.foy.websocket.allowed-origins.setting-name` to the key the user writes (Vidocq: `vidocq.websocket.allowed-origins`). It only changes the name given in the `403` refusal WARNING and in the error of a malformed entry; it never changes the policy.
+
 === Sessions and threads
 
 * One event at a time per session: `onOpen`, the message handlers, `onClose` and `onError` run in order, each on a virtual thread, with the application class loader as context class loader.

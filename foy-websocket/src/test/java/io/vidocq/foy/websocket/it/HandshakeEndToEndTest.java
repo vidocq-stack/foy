@@ -77,6 +77,7 @@ import java.util.logging.SimpleFormatter;
 
 import static java.util.concurrent.TimeUnit.SECONDS;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -93,6 +94,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class HandshakeEndToEndTest {
 
     private static final String ALLOWED_ORIGINS = "io.vidocq.foy.websocket.allowed-origins";
+    private static final String SETTING_NAME = ALLOWED_ORIGINS + ".setting-name";
     private static final String HTTP_SESSION_ID = "test.httpSessionId";
     private static final long WAIT = 5;
     private static final HttpClient HTTP = HttpClient.newHttpClient();
@@ -401,6 +403,34 @@ class HandshakeEndToEndTest {
                     warnings.messages()::toString);
         }
         assertEquals(0, INSTANCES.get());
+    }
+
+    @Test
+    void theRefusalNamesTheSettingTheRuntimeReports() throws Exception {
+        server = WebSocketTestServer.builder(endpoints(config(EchoEndpoint.class, "/ws")))
+                .initParameter(ALLOWED_ORIGINS, "https://admin.example.com")
+                .initParameter(SETTING_NAME, "app.ws.origins").start();
+
+        try (var warnings = new LogLines(Level.WARNING)) {
+            String head = RawHandshake.send(server.port(), "/ws", "Origin: http://evil.example");
+
+            assertTrue(head.startsWith("HTTP/1.1 403 "), head);
+            assertTrue(warnings.messages().stream()
+                    .anyMatch(m -> m.contains("http://evil.example") && m.contains("app.ws.origins")
+                            && !m.contains(ALLOWED_ORIGINS)),
+                    warnings.messages()::toString);
+        }
+    }
+
+    @Test
+    void aMalformedEntryNamesTheSettingTheRuntimeReports() {
+        var builder = WebSocketTestServer.builder(endpoints())
+                .initParameter(ALLOWED_ORIGINS, "ftp://files.example").initParameter(SETTING_NAME, "app.ws.origins");
+
+        var failure = assertThrows(ServletException.class, builder::start);
+
+        assertTrue(messages(failure).contains("(in app.ws.origins)"), messages(failure));
+        assertFalse(messages(failure).contains(ALLOWED_ORIGINS), messages(failure));
     }
 
     @Test

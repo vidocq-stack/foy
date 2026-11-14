@@ -51,9 +51,11 @@ final class OriginPolicy {
 
     private static final int MAX_PORT = 65_535;
 
-    private static final OriginPolicy SAME_ORIGIN = new OriginPolicy(false, List.of());
-
-    private static final OriginPolicy ANY = new OriginPolicy(true, List.of());
+    /**
+     * The context init parameter through which a runtime that fills {@link #INIT_PARAMETER} from its own
+     * configuration says which setting the user writes, so the messages name that setting.
+     */
+    static final String SETTING_NAME_PARAMETER = INIT_PARAMETER + ".setting-name";
 
     /** An origin with a lower-case scheme and host, and its port: the scheme's default when it has none. */
     private record Origin(String scheme, String host, int port) {
@@ -61,10 +63,12 @@ final class OriginPolicy {
 
     private final boolean anyOrigin;
     private final List<Origin> listed;
+    private final String settingName;
 
-    private OriginPolicy(boolean anyOrigin, List<Origin> listed) {
+    private OriginPolicy(boolean anyOrigin, List<Origin> listed, String settingName) {
         this.anyOrigin = anyOrigin;
         this.listed = listed;
+        this.settingName = settingName;
     }
 
     /**
@@ -75,8 +79,19 @@ final class OriginPolicy {
      * @throws IllegalArgumentException if an entry is neither {@code *} nor {@code http(s)://host[:port]}
      */
     static OriginPolicy parse(String initParameter) {
+        return parse(initParameter, null);
+    }
+
+    /**
+     * Like {@link #parse(String)}, the messages naming {@code settingName}: the setting the user writes
+     * when a runtime fills the init parameter from its own configuration.
+     *
+     * @param settingName the setting to name, stripped; {@code null} or blank gives {@link #INIT_PARAMETER}
+     */
+    static OriginPolicy parse(String initParameter, String settingName) {
+        String name = settingName == null || settingName.isBlank() ? INIT_PARAMETER : settingName.strip();
         if (initParameter == null || initParameter.isBlank()) {
-            return SAME_ORIGIN;
+            return new OriginPolicy(false, List.of(), name);
         }
         boolean star = false;
         var origins = new ArrayList<Origin>();
@@ -85,13 +100,18 @@ final class OriginPolicy {
             if ("*".equals(entry)) {
                 star = true;
             } else if (!entry.isEmpty()) {
-                origins.add(requireOrigin(entry));
+                origins.add(requireOrigin(entry, name));
             }
         }
         if (star) {
-            return ANY;
+            return new OriginPolicy(true, List.of(), name);
         }
-        return origins.isEmpty() ? SAME_ORIGIN : new OriginPolicy(false, List.copyOf(origins));
+        return new OriginPolicy(false, List.copyOf(origins), name);
+    }
+
+    /** The setting the messages name: the init parameter, or the runtime's own key. */
+    String settingName() {
+        return settingName;
     }
 
     /**
@@ -124,11 +144,11 @@ final class OriginPolicy {
         return host != null && authority(host) != null;
     }
 
-    private static Origin requireOrigin(String entry) {
+    private static Origin requireOrigin(String entry, String settingName) {
         Origin origin = parseOrigin(entry);
         if (origin == null) {
             throw new IllegalArgumentException("Invalid WebSocket origin '" + printable(entry)
-                    + "': expected http(s)://host[:port] or * (init parameter " + INIT_PARAMETER + ")");
+                    + "': expected http(s)://host[:port] or * (in " + settingName + ")");
         }
         return origin;
     }

@@ -1,5 +1,20 @@
 # BUG.md — foy
 
+## BUG-20261114-04 — The WebSocket origin messages name Foy's init parameter, not the setting the user configured
+
+- Date: 2026-11-14 (found while reviewing the Vidocq runtime wiring of `feat/websocket`).
+- Symptom: the 403 WARNING "origin ... is not allowed ... listed in the context init parameter
+  io.vidocq.foy.websocket.allowed-origins" and the malformed-entry error "(init parameter
+  io.vidocq.foy.websocket.allowed-origins)" send a Vidocq user to an init parameter they never wrote. The
+  runtime fills it from its own key `vidocq.websocket.allowed-origins`.
+- Repro: `HandshakeEndToEndTest.theRefusalNamesTheSettingTheRuntimeReports` and
+  `aMalformedEntryNamesTheSettingTheRuntimeReports`; `OriginPolicyTest` for the policy.
+- Cause: `FoyServerContainer.refuseOrigin` and `OriginPolicy.requireOrigin` always used
+  `OriginPolicy.INIT_PARAMETER`; the policy knew no other name.
+- Status: FIXED on `fix/websocket-origin-setting-name`. A runtime sets the context init parameter
+  `io.vidocq.foy.websocket.allowed-origins.setting-name`; the policy keeps it (default: the init parameter)
+  and both messages name it. The policy itself is unchanged.
+
 ## BUG-20261114-03 — A `Sec-WebSocket-Extensions` offer without a name breaks the handshake
 
 - Date: 2026-11-14 (found while fixing the Error Prone findings of `feat/websocket`).

@@ -186,7 +186,7 @@ final class FoyServerContainer implements ServerContainer {
             return;
         }
         if (negotiated == null) {
-            refuseOrigin(request, response, origin);
+            refuseOrigin(request, response, origin, origins.settingName());
             return;
         }
         handshakeResponse.getHeaders()
@@ -198,15 +198,16 @@ final class FoyServerContainer implements ServerContainer {
     }
 
     /**
-     * A 403 and one WARNING naming the origin and the init parameter that would allow it, so a page
+     * A 403 and one WARNING naming the origin and the setting that would allow it, so a page
      * silently falling back to long polling shows in the log (WEBSOCKET.md section 5.3.1).
      */
-    private static void refuseOrigin(HttpServletRequest request, HttpServletResponse response, String origin) {
+    private static void refuseOrigin(HttpServletRequest request, HttpServletResponse response, String origin,
+            String settingName) {
         LOG.log(System.Logger.Level.WARNING, "WebSocket handshake on {0} refused (403): origin {1} is not "
-                        + "allowed. Foy allows the server origin and the origins listed in the context init "
-                        + "parameter {2} (comma-separated, or * for any)",
+                        + "allowed. Foy allows the server origin and the origins listed in {2} "
+                        + "(comma-separated, or * for any)",
                 OriginPolicy.printable(request.getRequestURI()),
-                origin == null ? "(none)" : OriginPolicy.printable(origin), OriginPolicy.INIT_PARAMETER);
+                origin == null ? "(none)" : OriginPolicy.printable(origin), OriginPolicy.printable(settingName));
         response.setStatus(FORBIDDEN);
     }
 

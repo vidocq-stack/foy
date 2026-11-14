@@ -19,8 +19,8 @@
  */
 package io.vidocq.foy.websocket;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -81,7 +81,6 @@ class OriginPolicyTest {
         var origins = OriginPolicy.parse("http://localhost:5173, *");
 
         assertTrue(origins.allowsAny());
-        assertSame(OriginPolicy.parse("*"), origins);
         assertTrue(origins.allows("http://evil.example", "a:8080"));
     }
 
@@ -94,6 +93,32 @@ class OriginPolicyTest {
 
         assertTrue(e.getMessage().contains(entry), e.getMessage());
         assertTrue(e.getMessage().contains("io.vidocq.foy.websocket.allowed-origins"), e.getMessage());
+    }
+
+    @Test
+    void theMalformedEntryMessageNamesTheGivenSetting() {
+        var e = assertThrows(IllegalArgumentException.class,
+                () -> OriginPolicy.parse("ftp://x", "vidocq.websocket.allowed-origins"));
+
+        assertTrue(e.getMessage().endsWith("(in vidocq.websocket.allowed-origins)"), e.getMessage());
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {" ", ""})
+    void aBlankSettingNameFallsBackToTheInitParameter(String blank) {
+        var e = assertThrows(IllegalArgumentException.class, () -> OriginPolicy.parse("ftp://x", blank));
+
+        assertTrue(e.getMessage().endsWith("(in " + OriginPolicy.INIT_PARAMETER + ")"), e.getMessage());
+        assertEquals(OriginPolicy.INIT_PARAMETER, OriginPolicy.parse("*", blank).settingName());
+        assertEquals(OriginPolicy.INIT_PARAMETER, OriginPolicy.parse(null, null).settingName());
+        assertEquals(OriginPolicy.INIT_PARAMETER, OriginPolicy.parse("http://a", null).settingName());
+    }
+
+    @Test
+    void theSettingNameIsStrippedAndKeptByEveryKindOfPolicy() {
+        assertEquals("app.ws.origins", OriginPolicy.parse(null, " app.ws.origins ").settingName());
+        assertEquals("app.ws.origins", OriginPolicy.parse("*", "app.ws.origins").settingName());
+        assertEquals("app.ws.origins", OriginPolicy.parse("http://a", "app.ws.origins").settingName());
     }
 
     /** Every entry is checked, a {@code *} does not skip the others, and a trailing slash is refused. */

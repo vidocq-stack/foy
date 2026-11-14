@@ -335,6 +335,9 @@ Lot 1 of Jakarta WebSocket 2.2: the programmatic server API. How to use it: xref
 | Init parameter
 | `io.vidocq.foy.websocket.allowed-origins`: `*`, or a comma-separated list of `http(s)://host[:port]` origins, lower-cased, no path. A malformed value stops the deployment. Default: same origin only.
 
+| Init parameter
+| `io.vidocq.foy.websocket.allowed-origins.setting-name`: the setting the user writes when a runtime fills `io.vidocq.foy.websocket.allowed-origins` from its own configuration (Vidocq sets `vidocq.websocket.allowed-origins`). It changes the name in the `403` refusal WARNING and in the malformed-entry error, never the policy. Default: `io.vidocq.foy.websocket.allowed-origins`.
+
 | Handshake refusals
 | `400` malformed (a `Host` that is not `host[:port]` included), `426` other version (with `Sec-WebSocket-Version: 13`), `403` refused origin; empty bodies. HTTP/1.1 only.
 
