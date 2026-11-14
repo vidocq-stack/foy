@@ -25,6 +25,8 @@ import jakarta.websocket.server.ServerEndpointConfig;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * The server endpoints of one web application, found by context-relative path.
@@ -38,28 +40,28 @@ public final class EndpointRegistry {
     private record Entry(PathTemplate template, ServerEndpointConfig config) {
     }
 
-    private volatile List<Entry> entries = List.of();
+    private final AtomicReference<List<Entry>> entries = new AtomicReference<>(List.of());
 
     /** Registers an endpoint; refuses an invalid path and a path equivalent to one already registered. */
     public synchronized void add(ServerEndpointConfig config) throws DeploymentException {
         PathTemplate template = PathTemplate.parse(config.getPath());
-        for (Entry existing : entries) {
+        for (Entry existing : entries.get()) {
             if (existing.template().shape().equals(template.shape())) {
                 throw new DeploymentException("Path " + template + " duplicates " + existing.template());
             }
         }
-        List<Entry> next = new ArrayList<>(entries);
+        List<Entry> next = new ArrayList<>(entries.get());
         next.add(new Entry(template, config));
         next.sort((a, b) -> PathTemplate.PRECEDENCE.compare(a.template(), b.template()));
-        entries = List.copyOf(next);
+        entries.set(List.copyOf(next));
     }
 
     /** The endpoint for a context-relative path, or {@code null} when none matches. */
     public EndpointMatch match(String contextRelativePath) {
-        for (Entry entry : entries) {
-            Map<String, String> parameters = entry.template().match(contextRelativePath);
-            if (parameters != null) {
-                return new EndpointMatch(entry.config(), Map.copyOf(parameters));
+        for (Entry entry : entries.get()) {
+            Optional<Map<String, String>> parameters = entry.template().match(contextRelativePath);
+            if (parameters.isPresent()) {
+                return new EndpointMatch(entry.config(), Map.copyOf(parameters.get()));
             }
         }
         return null;

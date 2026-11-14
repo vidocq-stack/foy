@@ -19,6 +19,7 @@
  */
 package io.vidocq.foy.spi.websocket;
 
+import java.io.IOException;
 import java.nio.ByteBuffer;
 
 /**
@@ -38,10 +39,10 @@ public interface WebSocketListener {
      * The handshake is complete and the connection is open. Always the first event.
      *
      * @param peer the sending side of the connection
-     * @throws Exception any failure; it is reported through {@link #onError(Throwable)} and the
-     *                   connection is closed
+     * @throws IOException an I/O failure; it is reported through {@link #onError(Throwable)} and the
+     *                     connection is closed (a runtime exception is reported the same way)
      */
-    default void onOpen(WebSocketPeer peer) throws Exception {
+    default void onOpen(WebSocketPeer peer) throws IOException {
         // no-op by default
     }
 
@@ -49,9 +50,9 @@ public interface WebSocketListener {
      * A complete text message (fragments already reassembled).
      *
      * @param text the message
-     * @throws Exception any failure; see {@link #onOpen(WebSocketPeer)}
+     * @throws IOException an I/O failure; see {@link #onOpen(WebSocketPeer)}
      */
-    default void onText(String text) throws Exception {
+    default void onText(String text) throws IOException {
         // no-op by default
     }
 
@@ -59,9 +60,9 @@ public interface WebSocketListener {
      * A complete binary message (fragments already reassembled).
      *
      * @param data the message, valid for this call only
-     * @throws Exception any failure; see {@link #onOpen(WebSocketPeer)}
+     * @throws IOException an I/O failure; see {@link #onOpen(WebSocketPeer)}
      */
-    default void onBinary(ByteBuffer data) throws Exception {
+    default void onBinary(ByteBuffer data) throws IOException {
         // no-op by default
     }
 
@@ -71,9 +72,9 @@ public interface WebSocketListener {
      * informational: a listener never needs to send a pong in reply.
      *
      * @param data the application data of the frame, valid for this call only
-     * @throws Exception any failure; see {@link #onOpen(WebSocketPeer)}
+     * @throws IOException an I/O failure; see {@link #onOpen(WebSocketPeer)}
      */
-    default void onPing(ByteBuffer data) throws Exception {
+    default void onPing(ByteBuffer data) throws IOException {
         // no-op by default
     }
 
@@ -81,9 +82,9 @@ public interface WebSocketListener {
      * A pong control frame arrived.
      *
      * @param data the application data of the frame, valid for this call only
-     * @throws Exception any failure; see {@link #onOpen(WebSocketPeer)}
+     * @throws IOException an I/O failure; see {@link #onOpen(WebSocketPeer)}
      */
-    default void onPong(ByteBuffer data) throws Exception {
+    default void onPong(ByteBuffer data) throws IOException {
         // no-op by default
     }
 

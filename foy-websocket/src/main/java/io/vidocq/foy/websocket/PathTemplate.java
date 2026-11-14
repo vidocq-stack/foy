@@ -28,6 +28,7 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 
 /**
@@ -67,62 +68,82 @@ final class PathTemplate {
         if (path.length() > 1) {
             String[] segments = path.substring(1).split("/", -1);
             for (int i = 0; i < segments.length; i++) {
-                String segment = segments[i];
-                if (segment.isEmpty()) {
-                    if (i == segments.length - 1 && seen.isEmpty()) {
-                        // A trailing '/' on a template without variables, as Tomcat's UriTemplate allows:
-                        // a literal empty last segment, matched only by a path ending in '/'.
-                        literals.add(segment);
-                        names.add(null);
-                        continue;
-                    }
-                    throw new DeploymentException("An endpoint path has no empty segment, but for a trailing '/'"
-                            + " on a path without variables: " + path);
-                }
-                if (segment.startsWith("{") && segment.endsWith("}")) {
-                    String name = segment.substring(1, segment.length() - 1);
-                    if (name.isEmpty() || name.indexOf('{') >= 0 || name.indexOf('}') >= 0) {
-                        throw new DeploymentException("Invalid path variable '" + segment + "' in " + path);
-                    }
-                    if (!seen.add(name)) {
-                        throw new DeploymentException("Path variable '" + name + "' is repeated in " + path);
-                    }
-                    literals.add(null);
-                    names.add(name);
-                } else if (segment.indexOf('{') >= 0 || segment.indexOf('}') >= 0) {
-                    throw new DeploymentException("A path variable is a whole segment: " + path);
-                } else {
-                    literals.add(segment);
-                    names.add(null);
-                }
+                boolean last = i == segments.length - 1;
+                parseSegment(segments[i], last, path, literals, names, seen);
             }
         }
         return new PathTemplate(path, Collections.unmodifiableList(literals), Collections.unmodifiableList(names));
     }
 
-    /** The variables by name when the path matches, {@code null} otherwise. */
-    Map<String, String> match(String requestPath) {
+    private static void parseSegment(String segment, boolean last, String path, List<String> literals,
+            List<String> names, Set<String> seen) throws DeploymentException {
+        if (segment.isEmpty()) {
+            if (!last || !seen.isEmpty()) {
+                throw new DeploymentException("An endpoint path has no empty segment, but for a trailing '/'"
+                        + " on a path without variables: " + path);
+            }
+            // A trailing '/' on a template without variables, as Tomcat's UriTemplate allows:
+            // a literal empty last segment, matched only by a path ending in '/'.
+            addLiteral(segment, literals, names);
+        } else if (segment.startsWith("{") && segment.endsWith("}")) {
+            String name = variableName(segment, path);
+            if (!seen.add(name)) {
+                throw new DeploymentException("Path variable '" + name + "' is repeated in " + path);
+            }
+            literals.add(null);
+            names.add(name);
+        } else if (hasBrace(segment)) {
+            throw new DeploymentException("A path variable is a whole segment: " + path);
+        } else {
+            addLiteral(segment, literals, names);
+        }
+    }
+
+    private static String variableName(String segment, String path) throws DeploymentException {
+        String name = segment.substring(1, segment.length() - 1);
+        if (name.isEmpty() || hasBrace(name)) {
+            throw new DeploymentException("Invalid path variable '" + segment + "' in " + path);
+        }
+        return name;
+    }
+
+    private static boolean hasBrace(String text) {
+        return text.indexOf('{') >= 0 || text.indexOf('}') >= 0;
+    }
+
+    private static void addLiteral(String literal, List<String> literals, List<String> names) {
+        literals.add(literal);
+        names.add(null);
+    }
+
+    /** The variables by name when the path matches, empty otherwise. */
+    Optional<Map<String, String>> match(String requestPath) {
         if (requestPath == null || !requestPath.startsWith("/")) {
-            return null;
+            return Optional.empty();
         }
         String[] segments = requestPath.length() == 1 ? new String[0] : requestPath.substring(1).split("/", -1);
         if (segments.length != literals.size()) {
-            return null;
+            return Optional.empty();
         }
         Map<String, String> parameters = new HashMap<>();
         for (int i = 0; i < segments.length; i++) {
-            String literal = literals.get(i);
-            if (literal != null) {
-                if (!literal.equals(segments[i])) {
-                    return null;
-                }
-            } else if (segments[i].isEmpty()) {
-                return null;
-            } else {
-                parameters.put(names.get(i), segments[i]);
+            if (!matchSegment(i, segments[i], parameters)) {
+                return Optional.empty();
             }
         }
-        return parameters;
+        return Optional.of(parameters);
+    }
+
+    private boolean matchSegment(int index, String segment, Map<String, String> parameters) {
+        String literal = literals.get(index);
+        if (literal != null) {
+            return literal.equals(segment);
+        }
+        if (segment.isEmpty()) {
+            return false;
+        }
+        parameters.put(names.get(index), segment);
+        return true;
     }
 
     /** The shape of the template, variable names erased: two templates with the same shape are equivalent. */
@@ -131,7 +152,7 @@ final class PathTemplate {
         for (String literal : literals) {
             shape.append('/').append(literal == null ? "{}" : literal);
         }
-        return shape.length() == 0 ? "/" : shape.toString();
+        return shape.isEmpty() ? "/" : shape.toString();
     }
 
     String path() {

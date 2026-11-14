@@ -35,6 +35,7 @@ import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.nio.ByteBuffer;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * The takeover of an upgraded request by a {@link WebSocketUpgradeHandler}: chappe speaks RFC 6455
@@ -64,8 +65,8 @@ final class WebSocketTakeover implements WebSocketHandler {
     private final AtomicBoolean closed = new AtomicBoolean();
     private volatile boolean registered;
     private volatile boolean openFailed;
-    private volatile WebSocketListener listener;
-    private volatile AutoCloseable undeployHook;
+    private final AtomicReference<WebSocketListener> listener = new AtomicReference<>();
+    private final AtomicReference<AutoCloseable> undeployHook = new AtomicReference<>();
 
     WebSocketTakeover(WebSocketUpgradeHandler handler, VidocqServletContext context, ClassLoader applicationLoader) {
         this.handler = handler;
@@ -87,7 +88,7 @@ final class WebSocketTakeover implements WebSocketHandler {
     public void onOpen(WebSocket ws, Request handshake) throws Exception {
         try (var _ = ContextLoaderScope.enter(applicationLoader)) {
             AutoCloseable hook = () -> stopping(ws);
-            undeployHook = hook;
+            undeployHook.set(hook);
             if (context != null && !context.registerUpgradedConnection(hook)) {
                 // Undeployed meanwhile: the handler never starts, so it is not destroyed either.
                 stopping(ws);
@@ -96,8 +97,9 @@ final class WebSocketTakeover implements WebSocketHandler {
             registered = true;
             boolean returned = false;
             try {
-                listener = handler.listener();
-                listener.onOpen(new Peer(ws));
+                var opened = handler.listener();
+                listener.set(opened);
+                opened.onOpen(new Peer(ws));
                 returned = true;
             } catch (Exception e) {
                 // Chappe reports the failure through onError and closes with 1011, but never calls
@@ -118,35 +120,40 @@ final class WebSocketTakeover implements WebSocketHandler {
     @Override
     public void onText(WebSocket ws, String message) throws Exception {
         try (var _ = ContextLoaderScope.enter(applicationLoader)) {
-            if (listener != null) listener.onText(message);
+            var current = listener.get();
+            if (current != null) current.onText(message);
         }
     }
 
     @Override
     public void onBinary(WebSocket ws, ByteBuffer data) throws Exception {
         try (var _ = ContextLoaderScope.enter(applicationLoader)) {
-            if (listener != null) listener.onBinary(data);
+            var current = listener.get();
+            if (current != null) current.onBinary(data);
         }
     }
 
     @Override
     public void onPing(WebSocket ws, ByteBuffer payload) throws Exception {
         try (var _ = ContextLoaderScope.enter(applicationLoader)) {
-            if (listener != null) listener.onPing(payload);
+            var current = listener.get();
+            if (current != null) current.onPing(payload);
         }
     }
 
     @Override
     public void onPong(WebSocket ws, ByteBuffer payload) throws Exception {
         try (var _ = ContextLoaderScope.enter(applicationLoader)) {
-            if (listener != null) listener.onPong(payload);
+            var current = listener.get();
+            if (current != null) current.onPong(payload);
         }
     }
 
     @Override
     public void onError(WebSocket ws, Throwable error) {
         try (var _ = ContextLoaderScope.enter(applicationLoader)) {
-            if (listener != null) listener.onError(error);
+            var current = listener.get();
+            if (current != null) current.onError(error);
         } finally {
             // A failed onOpen is followed by no onClose from chappe: the listener hears the 1011 chappe
             // closes with, then the takeover is released, once.
@@ -168,9 +175,10 @@ final class WebSocketTakeover implements WebSocketHandler {
         if (!registered || !closed.compareAndSet(false, true)) return;
         try (var _ = ContextLoaderScope.enter(applicationLoader)) {
             try {
-                if (listener != null) listener.onClose(code, reason);
+                var current = listener.get();
+                if (current != null) current.onClose(code, reason);
             } finally {
-                if (context != null) context.unregisterUpgradedConnection(undeployHook);
+                if (context != null) context.unregisterUpgradedConnection(undeployHook.get());
                 handler.destroy();
             }
         }

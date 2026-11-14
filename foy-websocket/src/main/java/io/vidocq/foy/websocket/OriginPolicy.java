@@ -59,11 +59,11 @@ final class OriginPolicy {
     private record Origin(String scheme, String host, int port) {
     }
 
-    private final boolean any;
+    private final boolean anyOrigin;
     private final List<Origin> listed;
 
-    private OriginPolicy(boolean any, List<Origin> listed) {
-        this.any = any;
+    private OriginPolicy(boolean anyOrigin, List<Origin> listed) {
+        this.anyOrigin = anyOrigin;
         this.listed = listed;
     }
 
@@ -101,7 +101,7 @@ final class OriginPolicy {
      * @param host   the {@code Host} header, {@code null} when absent
      */
     boolean allows(String origin, String host) {
-        if (origin == null || any) {
+        if (origin == null || anyOrigin) {
             return true;
         }
         Origin parsed = parseOrigin(origin);
@@ -113,7 +113,7 @@ final class OriginPolicy {
 
     /** Whether every origin is allowed. */
     boolean allowsAny() {
-        return any;
+        return anyOrigin;
     }
 
     /**

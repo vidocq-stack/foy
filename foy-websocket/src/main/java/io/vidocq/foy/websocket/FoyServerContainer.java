@@ -192,9 +192,9 @@ final class FoyServerContainer implements ServerContainer {
         handshakeResponse.getHeaders()
                 .forEach((name, values) -> values.forEach(value -> response.addHeader(name, value)));
         response.setStatus(SWITCHING_PROTOCOLS);
-        var session = new FoySession(this, config, negotiated.endpoint(), handshakeRequest, match.pathParameters(),
-                negotiated.subprotocol());
-        request.upgrade(FoyUpgradeHandler.class).prepare(session);
+        // The upgrade handler owns the session from here on: it is handed over, not closed.
+        request.upgrade(FoyUpgradeHandler.class).prepare(new FoySession(this, config, negotiated.endpoint(),
+                handshakeRequest, match.pathParameters(), negotiated.subprotocol()));
     }
 
     /**
