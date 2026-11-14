@@ -118,7 +118,7 @@ class ServletUpgradeEndToEndTest {
     @Test
     void upgradeEchoesThroughAReadListener() throws Exception {
         start(upgradingServlet(EchoHandler.class));
-        try (var client = new Client(port)) {
+        try (var client = new RawClient(port)) {
             client.send(tckHead());
             String head = client.readHead();
             assertTrue(head.startsWith("HTTP/1.1 101 "), head);
@@ -149,7 +149,7 @@ class ServletUpgradeEndToEndTest {
     @Test
     void destroyCalledOnClose() throws Exception {
         start(upgradingServlet(ClosingHandler.class));
-        try (var client = new Client(port)) {
+        try (var client = new RawClient(port)) {
             client.send(tckHead());
             assertTrue(client.readHead().startsWith("HTTP/1.1 101 "));
             assertEquals("bye", client.readAll());
@@ -173,7 +173,7 @@ class ServletUpgradeEndToEndTest {
                 }
             }
         });
-        try (var client = new Client(port)) {
+        try (var client = new RawClient(port)) {
             client.send("""
                     POST /up HTTP/1.0\r
                     Host: localhost\r
@@ -202,7 +202,7 @@ class ServletUpgradeEndToEndTest {
                 }
             }
         });
-        try (var client = new Client(port)) {
+        try (var client = new RawClient(port)) {
             // No upgrade happens: the connection stays HTTP and closes after the response.
             client.send(tckHead().replace("Connection: Upgrade", "Connection: close"));
             String response = client.readAll();
@@ -228,7 +228,7 @@ class ServletUpgradeEndToEndTest {
                 }
             }
         });
-        try (var client = new Client(port)) {
+        try (var client = new RawClient(port)) {
             client.send(tckHead());
             assertTrue(client.readHead().startsWith("HTTP/1.1 101 "));
             assertEquals("bye", client.readAll());
@@ -244,7 +244,7 @@ class ServletUpgradeEndToEndTest {
             @Override public void requestInitialized(ServletRequestEvent sre) { probe.events.add("requestInitialized"); }
             @Override public void requestDestroyed(ServletRequestEvent sre) { probe.events.add("requestDestroyed"); }
         });
-        try (var client = new Client(port)) {
+        try (var client = new RawClient(port)) {
             client.send(tckHead());
             assertTrue(client.readHead().startsWith("HTTP/1.1 101 "));
             assertEquals("bye", client.readAll());
@@ -256,7 +256,7 @@ class ServletUpgradeEndToEndTest {
     @Test
     void aReadErrorGoesToOnErrorThenDestroy() throws Exception {
         start(upgradingServlet(EchoHandler.class));
-        try (var client = new Client(port)) {
+        try (var client = new RawClient(port)) {
             client.send(tckHead());
             client.readHead();
             client.readUntil("TCKHttpUpgradeHandler.init");
@@ -284,7 +284,7 @@ class ServletUpgradeEndToEndTest {
                 resp.getWriter().flush();
             }
         });
-        try (var client = new Client(port)) {
+        try (var client = new RawClient(port)) {
             client.send(tckHead());
             String head = client.readHead();
             assertTrue(head.startsWith("HTTP/1.1 101 "), head);
@@ -308,7 +308,7 @@ class ServletUpgradeEndToEndTest {
                 ac.complete();
             }
         });
-        try (var client = new Client(port)) {
+        try (var client = new RawClient(port)) {
             client.send(tckHead().replace("Connection: Upgrade", "Connection: close"));
             String response = client.readAll();
             assertTrue(response.startsWith("HTTP/1.1 200"), response);
@@ -337,7 +337,7 @@ class ServletUpgradeEndToEndTest {
                 req.startAsync().dispatch("/up");
             }
         });
-        try (var client = new Client(port)) {
+        try (var client = new RawClient(port)) {
             client.send(tckHead().replace("Connection: Upgrade", "Connection: close"));
             String response = client.readAll();
             assertTrue(response.startsWith("HTTP/1.1 200"), response);
@@ -374,7 +374,7 @@ class ServletUpgradeEndToEndTest {
         start(ctx, List.of(
                 new ServletDispatcher.Mapping(UrlPatternMatcher.of("/up"), failing, "S"),
                 new ServletDispatcher.Mapping(UrlPatternMatcher.of("/err"), errorPage, "E")));
-        try (var client = new Client(port)) {
+        try (var client = new RawClient(port)) {
             client.send(tckHead().replace("Connection: Upgrade", "Connection: close"));
             String response = client.readAll();
             assertTrue(response.startsWith("HTTP/1.1 500"), response);
@@ -400,7 +400,7 @@ class ServletUpgradeEndToEndTest {
                 }
             }
         });
-        try (var client = new Client(port)) {
+        try (var client = new RawClient(port)) {
             client.send(tckHead());
             assertTrue(client.readHead().startsWith("HTTP/1.1 101 "));
             assertEquals("bye", client.readAll());
@@ -412,7 +412,7 @@ class ServletUpgradeEndToEndTest {
     @Test
     void closeDeliversTheNonBlockingWriteInFlight() throws Exception {
         start(upgradingServlet(LastFrameHandler.class));
-        try (var client = new Client(port)) {
+        try (var client = new RawClient(port)) {
             client.send(tckHead());
             assertTrue(client.readHead().startsWith("HTTP/1.1 101 "));
             byte[] body = client.readAllBytes();
@@ -425,7 +425,7 @@ class ServletUpgradeEndToEndTest {
     @Test
     void closeAfterANonBlockingWriteIsBoundedOnAStalledPeer() throws Exception {
         start(upgradingServlet(StalledLastFrameHandler.class));
-        try (var client = new Client(port)) {
+        try (var client = new RawClient(port)) {
             client.send(tckHead());
             assertTrue(client.readHead().startsWith("HTTP/1.1 101 "));
             assertTrue(probe.closeReturned.await(10, TimeUnit.SECONDS), "close() never returned");
@@ -456,7 +456,7 @@ class ServletUpgradeEndToEndTest {
                 req.upgrade(ClosingHandler.class);
             }
         });
-        try (var client = new Client(port)) {
+        try (var client = new RawClient(port)) {
             client.send(tckHead().replace("Connection: Upgrade", "Connection: close"));
             String response = client.readAll();
             assertTrue(response.startsWith("HTTP/1.1 500"), response);
@@ -478,7 +478,7 @@ class ServletUpgradeEndToEndTest {
             }
         });
         try (var log = LogCapture.of(ChappeServletBridge.class.getName());
-             var client = new Client(port)) {
+             var client = new RawClient(port)) {
             client.send(tckHead());
             assertTrue(client.readHead().startsWith("HTTP/1.1 200 "));
             assertEquals("bye", client.readAll());
@@ -493,7 +493,7 @@ class ServletUpgradeEndToEndTest {
     @Test
     void onAllDataReadIsDeliveredWhenTheOutputClosedFirst() throws Exception {
         start(upgradingServlet(OutputFirstHandler.class));
-        try (var client = new Client(port)) {
+        try (var client = new RawClient(port)) {
             client.send(tckHead());
             assertTrue(client.readHead().startsWith("HTTP/1.1 101 "));
             client.readUntil("closed");
@@ -512,7 +512,7 @@ class ServletUpgradeEndToEndTest {
     @Test
     void closeReturnsWhileACallbackIsBlockedOnAStalledPeer() throws Exception {
         start(upgradingServlet(StallingHandler.class));
-        try (var client = new Client(port)) {
+        try (var client = new RawClient(port)) {
             client.send(tckHead());
             assertTrue(client.readHead().startsWith("HTTP/1.1 101 "));
             client.send("go");
@@ -531,7 +531,7 @@ class ServletUpgradeEndToEndTest {
     @Test
     void initThrowingDestroysAndCloses() throws Exception {
         start(upgradingServlet(ThrowingInitHandler.class));
-        try (var client = new Client(port)) {
+        try (var client = new RawClient(port)) {
             client.send(tckHead());
             assertTrue(client.readHead().startsWith("HTTP/1.1 101 "));
             assertEquals("x", client.readAll());
@@ -544,7 +544,7 @@ class ServletUpgradeEndToEndTest {
     @Test
     void undeployClosesOpenUpgradedConnections() throws Exception {
         start(upgradingServlet(IdleHandler.class));
-        try (var client = new Client(port)) {
+        try (var client = new RawClient(port)) {
             client.send(tckHead());
             assertTrue(client.readHead().startsWith("HTTP/1.1 101 "));
             client.readUntil("idle");
@@ -563,7 +563,7 @@ class ServletUpgradeEndToEndTest {
     @Test
     void writeListenerResumesOnCapacity() throws Exception {
         start(upgradingServlet(LargeWriteHandler.class));
-        try (var client = new Client(port)) {
+        try (var client = new RawClient(port)) {
             client.send(tckHead());
             assertTrue(client.readHead().startsWith("HTTP/1.1 101 "));
             assertTrue(probe.notReadySeen.await(10, TimeUnit.SECONDS), "isReady() never answered false");
@@ -899,76 +899,5 @@ class ServletUpgradeEndToEndTest {
         var r = TestServerLauncher.start(bridge);
         this.server = r.server;
         this.port = r.port;
-    }
-
-    private static final class Client implements AutoCloseable {
-        private final Socket socket;
-        private final InputStream in;
-        private final OutputStream out;
-        private final ByteArrayOutputStream received = new ByteArrayOutputStream();
-
-        Client(int port) throws IOException {
-            socket = new Socket(InetAddress.getLoopbackAddress(), port);
-            socket.setSoTimeout(10_000);
-            in = socket.getInputStream();
-            out = socket.getOutputStream();
-        }
-
-        void send(String s) throws IOException {
-            out.write(s.getBytes(StandardCharsets.US_ASCII));
-            out.flush();
-        }
-
-        void shutdownOutput() throws IOException { socket.shutdownOutput(); }
-
-        /** Aborts the connection with a TCP reset. */
-        void reset() throws IOException {
-            socket.setSoLinger(true, 0);
-            socket.close();
-        }
-
-        /** The response head, up to and including the blank line. */
-        String readHead() throws IOException {
-            var head = new StringBuilder();
-            int c;
-            while ((c = in.read()) != -1) {
-                head.append((char) c);
-                if (head.toString().endsWith("\r\n\r\n")) break;
-            }
-            return head.toString();
-        }
-
-        /** Reads until everything received after the head contains {@code marker}. */
-        void readUntil(String marker) throws IOException {
-            byte[] buf = new byte[1024];
-            while (!received().contains(marker)) {
-                int n = in.read(buf);
-                if (n == -1) fail("connection closed before '" + marker + "': " + received());
-                received.write(buf, 0, n);
-            }
-        }
-
-        /** What was received after the head so far. */
-        String received() { return received.toString(StandardCharsets.US_ASCII); }
-
-        /** Reads to the end of the connection; returns what this call read. */
-        String readAll() throws IOException {
-            return new String(readAllBytes(), StandardCharsets.US_ASCII);
-        }
-
-        byte[] readAllBytes() throws IOException {
-            var all = new ByteArrayOutputStream();
-            byte[] buf = new byte[64 * 1024];
-            try {
-                int n;
-                while ((n = in.read(buf)) != -1) all.write(buf, 0, n);
-            } catch (SocketException _) {
-                // a reset ends the connection too
-            }
-            received.writeBytes(all.toByteArray());
-            return all.toByteArray();
-        }
-
-        @Override public void close() throws IOException { socket.close(); }
     }
 }

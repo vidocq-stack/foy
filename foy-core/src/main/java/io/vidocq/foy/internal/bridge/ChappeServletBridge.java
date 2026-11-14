@@ -31,6 +31,7 @@ import io.vidocq.chappe.api.Response;
 import io.vidocq.chappe.api.StatusCode;
 import io.vidocq.chappe.api.WebSocketUpgrade;
 import io.vidocq.foy.internal.container.ContextLoaderScope;
+import io.vidocq.foy.spi.websocket.WebSocketUpgradeHandler;
 import io.vidocq.foy.internal.container.DefaultServlet;
 import io.vidocq.foy.internal.container.ResourcePaths;
 import io.vidocq.foy.internal.dispatcher.DispatchResolver;
@@ -743,6 +744,17 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
         ClassLoader loader = req.applicationClassLoader();
         VidocqServletContext upgradeContext =
                 req.upgradeContext() instanceof VidocqServletContext v ? v : servletContext;
+        if (handler instanceof WebSocketUpgradeHandler ws) {
+            // A WebSocket takeover: chappe speaks RFC 6455 and writes the 101 itself.
+            try {
+                return new WebSocketTakeover(ws, upgradeContext, loader).response(headers.build());
+            } catch (IllegalArgumentException e) {
+                LOG.log(System.Logger.Level.WARNING,
+                        "WebSocket upgrade to {0} not performed, the upgrade response is invalid: {1}",
+                        handler.getClass().getName(), e.getMessage());
+                return plainInternalServerError();
+            }
+        }
         int status = res.getStatus();
         if (status != 101) {
             LOG.log(System.Logger.Level.WARNING,
