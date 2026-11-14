@@ -38,7 +38,12 @@ final class RawHandshake {
      * head (status line and headers, up to the blank line). The socket is closed afterwards.
      */
     static String send(int port, String path, String... extraHeaderLines) throws IOException {
-        try (var socket = open(port, path, extraHeaderLines)) {
+        return sendWithHost(port, "127.0.0.1:" + port, path, extraHeaderLines);
+    }
+
+    /** As {@link #send}, with {@code host} as the value of the {@code Host} line. */
+    static String sendWithHost(int port, String host, String path, String... extraHeaderLines) throws IOException {
+        try (var socket = open(port, host, path, extraHeaderLines)) {
             return readHead(socket.getInputStream());
         }
     }
@@ -48,13 +53,13 @@ final class RawHandshake {
      * with nothing read yet: the caller reads the response and owns the socket.
      */
     static Socket connect(int port, String path) throws IOException {
-        return open(port, path);
+        return open(port, "127.0.0.1:" + port, path);
     }
 
-    private static Socket open(int port, String path, String... extraHeaderLines) throws IOException {
+    private static Socket open(int port, String host, String path, String... extraHeaderLines) throws IOException {
         var request = new StringBuilder()
                 .append("GET ").append(path).append(" HTTP/1.1\r\n")
-                .append("Host: 127.0.0.1:").append(port).append("\r\n")
+                .append("Host: ").append(host).append("\r\n")
                 .append("Upgrade: websocket\r\n")
                 .append("Connection: Upgrade\r\n")
                 .append("Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n")

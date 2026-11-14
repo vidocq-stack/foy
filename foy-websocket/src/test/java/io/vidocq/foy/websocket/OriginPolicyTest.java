@@ -109,4 +109,22 @@ class OriginPolicyTest {
 
         assertTrue(origins.allows("https://admin.example.com", "a:8080"));
     }
+
+    /** A {@code Host} value: a name or an IPv4 address, or an IPv6 literal in brackets, and a port up to 65535. */
+    @ParameterizedTest
+    @ValueSource(strings = {"example.com", "Example.COM:8080", "127.0.0.1:0", "[::1]", "[2001:db8::1]:65535"})
+    void anAuthorityIsAHostAndAnOptionalPort(String host) {
+        assertTrue(OriginPolicy.isAuthority(host));
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"", "x/admin?", "x/admin", "x#", "user@x", "x:65536", "x:", "[::1", "x y"})
+    void anythingElseIsNotAnAuthority(String host) {
+        assertFalse(OriginPolicy.isAuthority(host));
+    }
+
+    @Test
+    void anAbsentHostIsNotAnAuthority() {
+        assertFalse(OriginPolicy.isAuthority(null));
+    }
 }

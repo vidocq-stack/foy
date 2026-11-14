@@ -45,6 +45,8 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 import java.io.IOException;
 import java.io.UncheckedIOException;
@@ -389,7 +391,7 @@ class HandshakeEndToEndTest {
     void anotherOriginIs403AndLogged() throws Exception {
         server = WebSocketTestServer.start(endpoints(config(EchoEndpoint.class, "/ws")));
 
-        try (var warnings = new Warnings()) {
+        try (var warnings = new LogLines(Level.WARNING)) {
             String head = RawHandshake.send(server.port(), "/ws", "Origin: http://evil.example");
 
             assertTrue(head.startsWith("HTTP/1.1 403 "), head);
@@ -408,6 +410,54 @@ class HandshakeEndToEndTest {
         String head = RawHandshake.send(server.port(), "/ws");
 
         assertTrue(head.startsWith("HTTP/1.1 101 "), head);
+    }
+
+    /**
+     * A {@code Host} that is not {@code host[:port]} would move the path of {@code Session.getRequestURI()}
+     * away from the one matched and authorized: 400, logged at DEBUG without the query.
+     */
+    @Test
+    void aHostThatIsNotAnAuthorityIs400() throws Exception {
+        server = WebSocketTestServer.start(endpoints(config(EchoEndpoint.class, "/ws")));
+
+        try (var debug = new LogLines(Level.FINE)) {
+            String head = RawHandshake.sendWithHost(server.port(), "x/admin?", "/ws?v-pushId=secret");
+
+            assertTrue(head.startsWith("HTTP/1.1 400 "), head);
+            assertTrue(head.toLowerCase(Locale.ROOT).contains("\r\ncontent-length: 0\r\n"), head);
+            assertTrue(debug.messages().stream().anyMatch(m -> m.contains("\"/ws\"") && m.contains("x/admin?")),
+                    debug.messages()::toString);
+            assertTrue(debug.messages().stream().noneMatch(m -> m.contains("secret")), debug.messages()::toString);
+        }
+        assertEquals(0, INSTANCES.get());
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"app.example.com:8443", "[::1]:8080", "[2001:db8::1]"})
+    void aHostWithAPortOrAnIpv6LiteralIsAccepted(String host) throws Exception {
+        server = WebSocketTestServer.start(endpoints(config(RecordingEndpoint.class, "/ws")));
+
+        String head = RawHandshake.sendWithHost(server.port(), host, "/ws");
+
+        assertTrue(head.startsWith("HTTP/1.1 101 "), head);
+        assertEquals("/ws", nextSession().getRequestURI().getPath());
+    }
+
+    /** A request target {@code java.net.URI} refuses is 400, logged at DEBUG with the reason and without the query. */
+    @Test
+    void aRequestTargetThatIsNotAUriIs400() throws Exception {
+        server = WebSocketTestServer.start(endpoints(config(EchoEndpoint.class, "/ws")));
+
+        try (var debug = new LogLines(Level.FINE)) {
+            String head = RawHandshake.send(server.port(), "/ws?v-pushId=se|cret");
+
+            assertTrue(head.startsWith("HTTP/1.1 400 "), head);
+            assertTrue(debug.messages().stream()
+                            .anyMatch(m -> m.contains("\"/ws\"") && m.contains("Illegal character in query")),
+                    debug.messages()::toString);
+            assertTrue(debug.messages().stream().noneMatch(m -> m.contains("cret")), debug.messages()::toString);
+        }
+        assertEquals(0, INSTANCES.get());
     }
 
     @Test
@@ -689,12 +739,19 @@ class HandshakeEndToEndTest {
         }
     }
 
-    /** Collects the WARNING records of the {@code io.vidocq.foy.websocket} loggers. */
-    private static final class Warnings extends Handler implements AutoCloseable {
+    /**
+     * Collects the records of one level of the {@code io.vidocq.foy.websocket} loggers, the logger
+     * opened to that level meanwhile ({@code DEBUG} is {@code FINE}).
+     */
+    private static final class LogLines extends Handler implements AutoCloseable {
         private final Logger logger = Logger.getLogger("io.vidocq.foy.websocket");
+        private final Level previous = logger.getLevel();
+        private final Level level;
         private final List<String> messages = new CopyOnWriteArrayList<>();
 
-        Warnings() {
+        LogLines(Level level) {
+            this.level = level;
+            logger.setLevel(level);
             logger.addHandler(this);
         }
 
@@ -704,7 +761,7 @@ class HandshakeEndToEndTest {
 
         @Override
         public void publish(LogRecord logRecord) {
-            if (logRecord.getLevel() == Level.WARNING) {
+            if (logRecord.getLevel() == level) {
                 messages.add(new SimpleFormatter().formatMessage(logRecord));
             }
         }
@@ -717,6 +774,7 @@ class HandshakeEndToEndTest {
         @Override
         public void close() {
             logger.removeHandler(this);
+            logger.setLevel(previous);
         }
     }
 }

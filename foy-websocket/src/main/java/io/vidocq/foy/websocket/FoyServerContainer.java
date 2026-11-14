@@ -164,7 +164,10 @@ final class FoyServerContainer implements ServerContainer {
         try {
             handshakeRequest = new HandshakeRequestImpl(request);
         } catch (IllegalArgumentException e) {
-            // The Host header and the request target do not form a URI.
+            // A Host that is not host[:port] (RFC 9112 section 3.2), or a target that is not a URI. The
+            // line names the path and the reason, never the query.
+            LOG.log(System.Logger.Level.DEBUG, () -> "WebSocket handshake on "
+                    + OriginPolicy.printable(request.getRequestURI()) + " refused (400): " + e.getMessage());
             response.setStatus(BAD_REQUEST);
             return;
         }

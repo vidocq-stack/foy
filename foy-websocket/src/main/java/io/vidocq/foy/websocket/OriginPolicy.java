@@ -116,6 +116,14 @@ final class OriginPolicy {
         return any;
     }
 
+    /**
+     * Whether {@code host} is {@code host[:port]}, as a {@code Host} header must be (RFC 9112 section
+     * 3.2): a registered name or an IPv4 address, or an IPv6 literal in brackets, and a port up to 65535.
+     */
+    static boolean isAuthority(String host) {
+        return host != null && authority(host) != null;
+    }
+
     private static Origin requireOrigin(String entry) {
         Origin origin = parseOrigin(entry);
         if (origin == null) {
@@ -138,15 +146,18 @@ final class OriginPolicy {
 
     /** Whether {@code origin} is the server's: the host of {@code host}, and its port or the origin's scheme default. */
     private static boolean isServerOrigin(Origin origin, String host) {
-        if (host == null) {
-            return false;
-        }
-        Matcher m = HOST.matcher(host);
-        if (!m.matches()) {
+        Matcher m = host == null ? null : authority(host);
+        if (m == null) {
             return false;
         }
         int port = m.group(2) == null ? defaultPort(origin.scheme()) : Integer.parseInt(m.group(2));
         return origin.host().equalsIgnoreCase(m.group(1)) && origin.port() == port;
+    }
+
+    /** The match of {@code host} as {@code host[:port]}, {@code null} when it is not one or its port is above 65535. */
+    private static Matcher authority(String host) {
+        Matcher m = HOST.matcher(host);
+        return m.matches() && (m.group(2) == null || Integer.parseInt(m.group(2)) <= MAX_PORT) ? m : null;
     }
 
     private static int defaultPort(String scheme) {

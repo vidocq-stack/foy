@@ -26,6 +26,7 @@ import jakarta.websocket.server.HandshakeRequest;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.URI;
+import java.net.URISyntaxException;
 import java.security.Principal;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -53,8 +54,8 @@ final class HandshakeRequestImpl implements HandshakeRequest {
     /**
      * Reads {@code request}.
      *
-     * @throws IllegalArgumentException when the {@code Host} header and the request target do not
-     *                                  form a URI (a malformed handshake)
+     * @throws IllegalArgumentException when the {@code Host} header is not {@code host[:port]}, or it
+     *                                  and the request target do not form a URI (a malformed handshake)
      */
     HandshakeRequestImpl(HttpServletRequest request) {
         this.request = request;
@@ -77,9 +78,9 @@ final class HandshakeRequestImpl implements HandshakeRequest {
     }
 
     /**
-     * The absolute request URI: {@code ws} or {@code wss}, the {@code Host} header, the request
-     * target as received (context path included, not decoded) and the query string. Atmosphere
-     * derives its path info from this path.
+     * The absolute request URI: {@code ws} or {@code wss}, the {@code Host} header (a
+     * {@code host[:port]}, or the handshake is refused), the request target as received (context path
+     * included, not decoded) and the query string. Atmosphere derives its path info from this path.
      */
     @Override
     public URI getRequestURI() {
@@ -147,14 +148,27 @@ final class HandshakeRequestImpl implements HandshakeRequest {
         return Collections.unmodifiableMap(all);
     }
 
+    /**
+     * The request URI, from a {@code Host} that is {@code host[:port]} only: another value (a path, a
+     * {@code ?}, a {@code #}) would move the path of the URI away from the one the container matched
+     * and authorized.
+     *
+     * @throws IllegalArgumentException with a message that names the reason and never the query string,
+     *                                  which may carry a secret (Vaadin's push id)
+     */
     private static URI requestUriOf(HttpServletRequest request, String query) {
         String host = request.getHeader("Host");
-        if (host == null) {
-            String name = request.getServerName();
-            host = (name.indexOf(':') >= 0 ? "[" + name + "]" : name) + ":" + request.getServerPort();
+        if (!OriginPolicy.isAuthority(host)) {
+            throw new IllegalArgumentException(host == null ? "no Host header"
+                    : "the Host header " + OriginPolicy.printable(host) + " is not host[:port]");
         }
-        return URI.create((request.isSecure() ? "wss://" : "ws://") + host + request.getRequestURI()
-                + (query == null ? "" : "?" + query));
+        try {
+            return new URI((request.isSecure() ? "wss://" : "ws://") + host + request.getRequestURI()
+                    + (query == null ? "" : "?" + query));
+        } catch (URISyntaxException e) {
+            // The reason only: the input and the message of e hold the query string.
+            throw new IllegalArgumentException("the request target is not a URI: " + e.getReason());
+        }
     }
 
     /** The local address as the request gives it, never resolved through DNS. */
