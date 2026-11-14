@@ -1,5 +1,17 @@
 # BUG.md — foy
 
+## BUG-20261114-03 — A `Sec-WebSocket-Extensions` offer without a name breaks the handshake
+
+- Date: 2026-11-14 (found while fixing the Error Prone findings of `feat/websocket`).
+- Symptom: a client offering `Sec-WebSocket-Extensions: ;` made `HandshakeRequestImpl.requestedExtensions`
+  throw `ArrayIndexOutOfBoundsException`, so the handshake failed with an internal error instead of opening.
+  An offer such as `; a=b` reached the configurator's `getNegotiatedExtensions` as an extension named `""`.
+- Repro: `HandshakeRequestImplTest.anOfferWithoutANameIsIgnored`.
+- Cause: the offer was split with `String.split(";")`, which returns an empty array for `;`, and the name
+  `parts[0]` was used without checking that it is not blank.
+- Status: FIXED on `feat/websocket`. An offer without an extension token is not an offer (RFC 6455
+  section 9.1): it is skipped, and the other offers of the header are kept.
+
 ## BUG-20261114-02 — A WebSocket endpoint path ending in `/` is refused, so every Vaadin start logs a stack trace
 
 - Date: 2026-11-14 (found by the end-to-end Vaadin run of `feat/websocket`, Atmosphere 3.0.5).

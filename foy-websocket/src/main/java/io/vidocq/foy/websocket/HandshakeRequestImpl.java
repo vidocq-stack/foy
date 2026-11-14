@@ -123,6 +123,10 @@ final class HandshakeRequestImpl implements HandshakeRequest {
         var offers = new ArrayList<Extension>();
         for (String offer : Handshake.tokens(lines(SEC_WEBSOCKET_EXTENSIONS))) {
             String[] parts = offer.split(";", -1);
+            String name = parts[0].trim();
+            if (name.isEmpty()) {
+                continue; // no extension-token: not an offer (RFC 6455 section 9.1)
+            }
             var offerParameters = new ArrayList<Extension.Parameter>();
             for (int i = 1; i < parts.length; i++) {
                 String[] pair = parts[i].split("=", 2);
@@ -130,7 +134,7 @@ final class HandshakeRequestImpl implements HandshakeRequest {
                     offerParameters.add(new OfferedParameter(pair[0].trim(), pair.length == 2 ? pair[1].trim() : null));
                 }
             }
-            offers.add(new OfferedExtension(parts[0].trim(), List.copyOf(offerParameters)));
+            offers.add(new OfferedExtension(name, List.copyOf(offerParameters)));
         }
         return List.copyOf(offers);
     }
