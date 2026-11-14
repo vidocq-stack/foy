@@ -153,6 +153,8 @@ public final class WebAppDeployer {
             if (engine != null) registerJspServlet(ctx);
             ListenerRegistry registry = listenerRegistry(ctx, model, engine != null);
             ctx.setListenerRegistry(registry);
+            ctx.setAttribute(io.vidocq.foy.spi.gen.ComponentInstantiator.ATTRIBUTE,
+                    new io.vidocq.foy.internal.gen.ContextComponentInstantiator(ctx));
             runInitializers(model, options, ctx);
             rollback.contextInitializedListeners = registry;
             registry.fireContextInitialized(ctx);
