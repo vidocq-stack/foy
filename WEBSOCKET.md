@@ -1,6 +1,6 @@
 # Jakarta WebSocket 2.2 in Foy — design
 
-Status: design, lot 1 under review (2026-11-14). Tracking issue:
+Status: lot 1 design approved (2026-11-14), in implementation. Tracking issue:
 [Vidocq/vidocq#65](https://codefloe.com/Vidocq/vidocq/issues/65). Web Profile plan:
 `vidocq/WEB-PROFILE.md` (WebSocket 2.2, target 1.1.0).
 
@@ -72,7 +72,7 @@ extension always bringing WebSocket as Tomcat and Jetty do, was declined.
 
 | Lot | Content | Exit |
 |---|---|---|
-| 1 | The programmatic server API Atmosphere uses, on Chappe as it is today; the runtime extension; a SNAPSHOT on maven.vidocq.dev | Vaadin `@Push(transport = WEBSOCKET_XHR)` in `vidocq:run`: a 101 on `/VAADIN/push`, the page stays connected more than 5 minutes without activity, then receives a push |
+| 1 | The programmatic server API Atmosphere uses, with the Chappe changes of §5.7; the runtime extension; a SNAPSHOT on maven.vidocq.dev | Vaadin `@Push(transport = WEBSOCKET_XHR)` in `vidocq:run`: a 101 on `/VAADIN/push`, the page stays connected more than 5 minutes without activity, then receives a push |
 | 2 | `@ServerEndpoint` endpoints generated at build time (APT) and at deployment (Class-File API) for jars compiled without the processor; encoders and decoders; `@PathParam`; CDI injection in endpoints under Vidocq | to be designed after lot 1 |
 | 3 | The client API (likely on `java.net.http.WebSocket`); what `chappe-api` must gain, if anything (§7); the official TCK runner under `-Ptck` and its convergence | official TCK green |
 
