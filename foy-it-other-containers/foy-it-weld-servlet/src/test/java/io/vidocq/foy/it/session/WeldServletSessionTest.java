@@ -21,7 +21,6 @@ package io.vidocq.foy.it.session;
 
 import io.vidocq.chappe.api.Server;
 import io.vidocq.foy.chappe.FoyChappeBoot;
-import java.net.ServerSocket;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 
@@ -40,13 +39,10 @@ class WeldServletSessionTest extends SessionScopeScenarios {
                 .classLoader(WeldServletSessionTest.class.getClassLoader())
                 .build()
                 .orElseThrow();
-        int port;
-        try (var socket = new ServerSocket(0)) {
-            port = socket.getLocalPort();
-        }
-        server = Server.builder().host("127.0.0.1").port(port).handler(mounted.handler()).build();
+        // Port 0, then the port the server got: a port picked before the bind can be taken meanwhile.
+        server = Server.builder().host("127.0.0.1").port(0).handler(mounted.handler()).build();
         server.start();
-        base = "http://127.0.0.1:" + port;
+        base = "http://127.0.0.1:" + server.port();
     }
 
     @AfterAll

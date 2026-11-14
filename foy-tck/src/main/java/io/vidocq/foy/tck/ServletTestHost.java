@@ -26,7 +26,6 @@ import io.vidocq.chappe.api.Server;
 import io.vidocq.chappe.api.StatusCode;
 
 import javax.net.ssl.SSLContext;
-import java.net.ServerSocket;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -58,30 +57,19 @@ public final class ServletTestHost implements AutoCloseable {
     }
 
     private ServletTestHost(SSLContext sslContext, ClientAuth clientAuth, boolean tls) {
-        RuntimeException last = null;
-        Server started = null;
-        int bound = -1;
-        for (int attempt = 0; attempt < 5 && started == null; attempt++) {
-            int candidate;
-            try (ServerSocket s = new ServerSocket(0)) { candidate = s.getLocalPort(); }
-            catch (Exception e) { throw new RuntimeException(e); }
-            try {
-                // Short keep-alive idle timeout: some TCK clients (6.1.0 TrailerTest) read the
-                // response to EOF on a keep-alive connection and rely on the container closing
-                // it; 60 s (chappe default) would add a minute per such test.
-                var builder = Server.builder().host("127.0.0.1").port(candidate)
-                        .idleTimeout(java.time.Duration.ofSeconds(5))
-                        .handler(this::route);
-                if (tls) builder = builder.tls(sslContext, clientAuth);
-                Server s = builder.build();
-                s.start();
-                started = s;
-                bound = candidate;
-            } catch (RuntimeException e) { last = e; }
-        }
-        if (started == null) throw last;
+        // Port 0: the server binds a port the system picks and reports it, so no other process can
+        // take the port between the pick and the bind (BUG-20261114-06).
+        // Short keep-alive idle timeout: some TCK clients (6.1.0 TrailerTest) read the response to
+        // EOF on a keep-alive connection and rely on the container closing it; 60 s (chappe default)
+        // would add a minute per such test.
+        var builder = Server.builder().host("127.0.0.1").port(0)
+                .idleTimeout(java.time.Duration.ofSeconds(5))
+                .handler(this::route);
+        if (tls) builder = builder.tls(sslContext, clientAuth);
+        Server started = builder.build();
+        started.start();
         this.server = started;
-        this.port = bound;
+        this.port = started.port();
         this.scheme = tls ? "https" : "http";
     }
 

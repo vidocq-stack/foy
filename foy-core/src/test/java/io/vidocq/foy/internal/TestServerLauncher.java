@@ -24,12 +24,11 @@ import io.vidocq.chappe.api.Handler;
 import io.vidocq.chappe.api.Server;
 
 import javax.net.ssl.SSLContext;
-import java.net.ServerSocket;
 
 /**
- * Test-only helper which starts a {@link Server} Chappe on a free port,
- * with retry to absorb port-allocation races typical of tests
- * (a port obtained via {@link ServerSocket} can be taken before the bind).
+ * Test-only helper which starts a Chappe {@link Server} on a port the system picks: the server
+ * binds port 0 and the port it got is read back, so no other process can take the port between
+ * the pick and the bind (BUG-20261114-06).
  */
 final class TestServerLauncher {
 
@@ -49,22 +48,11 @@ final class TestServerLauncher {
     }
 
     private static Result launch(Handler handler, SSLContext sslContext, ClientAuth clientAuth) {
-        RuntimeException last = null;
-        for (int i = 0; i < 5; i++) {
-            int port;
-            try (ServerSocket s = new ServerSocket(0)) { port = s.getLocalPort(); }
-            catch (Exception e) { throw new RuntimeException(e); }
-            try {
-                var builder = Server.builder().host("127.0.0.1").port(port).handler(handler);
-                if (sslContext != null) builder = builder.tls(sslContext, clientAuth);
-                Server server = builder.build();
-                server.start();
-                return new Result(server, port);
-            } catch (RuntimeException e) {
-                last = e;
-            }
-        }
-        throw last;
+        var builder = Server.builder().host("127.0.0.1").port(0).handler(handler);
+        if (sslContext != null) builder = builder.tls(sslContext, clientAuth);
+        Server server = builder.build();
+        server.start();
+        return new Result(server, server.port());
     }
 
     private TestServerLauncher() {}

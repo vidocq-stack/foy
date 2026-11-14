@@ -38,7 +38,6 @@ import javax.tools.ToolProvider;
 import java.io.File;
 import java.lang.module.ModuleFinder;
 import java.io.IOException;
-import java.net.ServerSocket;
 import java.net.URI;
 import java.net.URL;
 import java.net.URLClassLoader;
@@ -284,12 +283,9 @@ class FoyWebExtensionTest {
 
             var mounted = withTccl(loader, () -> FoyChappeBoot.builder()
                     .beanManager(bm).classLoader(loader).contextPath("/").build().orElseThrow());
-            int port;
-            try (var s = new ServerSocket(0)) {
-                port = s.getLocalPort();
-            }
-            Server server = Server.builder().host("127.0.0.1").port(port).handler(mounted.handler()).build();
+            Server server = Server.builder().host("127.0.0.1").port(0).handler(mounted.handler()).build();
             server.start();
+            int port = server.port();
             try (mounted; server) {
                 var response = HttpClient.newHttpClient().send(
                         HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port + "/hello")).build(),
@@ -337,12 +333,9 @@ class FoyWebExtensionTest {
 
             var mounted = withTccl(loader, () -> FoyChappeBoot.builder()
                     .beanManager(bm).classLoader(loader).contextPath("/").build().orElseThrow());
-            int port;
-            try (var s = new ServerSocket(0)) {
-                port = s.getLocalPort();
-            }
-            Server server = Server.builder().host("127.0.0.1").port(port).handler(mounted.handler()).build();
+            Server server = Server.builder().host("127.0.0.1").port(0).handler(mounted.handler()).build();
             server.start();
+            int port = server.port();
             try (mounted; server) {
                 var client = HttpClient.newHttpClient();
                 for (var path : List.of("app", "lib")) {
@@ -405,12 +398,9 @@ class FoyWebExtensionTest {
              var container = withTccl(loader, () -> boot(loader))) {
             var mounted = withTccl(loader, () -> FoyChappeBoot.builder()
                     .beanManager(container.getBeanManager()).classLoader(loader).contextPath("/").build().orElseThrow());
-            int port;
-            try (var s = new ServerSocket(0)) {
-                port = s.getLocalPort();
-            }
-            Server server = Server.builder().host("127.0.0.1").port(port).handler(mounted.handler()).build();
+            Server server = Server.builder().host("127.0.0.1").port(0).handler(mounted.handler()).build();
             server.start();
+            int port = server.port();
             try (mounted; server) {
                 var client = HttpClient.newHttpClient();
                 var request = HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port + "/token")).build();
@@ -466,12 +456,9 @@ class FoyWebExtensionTest {
              var container = withTccl(loader, () -> boot(loader))) {
             var mounted = withTccl(loader, () -> FoyChappeBoot.builder()
                     .beanManager(container.getBeanManager()).classLoader(loader).contextPath("/").build().orElseThrow());
-            int port;
-            try (var s = new ServerSocket(0)) {
-                port = s.getLocalPort();
-            }
-            Server server = Server.builder().host("127.0.0.1").port(port).handler(mounted.handler()).build();
+            Server server = Server.builder().host("127.0.0.1").port(0).handler(mounted.handler()).build();
             server.start();
+            int port = server.port();
             try (mounted; server) {
                 var uri = URI.create("http://127.0.0.1:" + port + "/count");
                 var alice = HttpClient.newBuilder().cookieHandler(new java.net.CookieManager()).build();

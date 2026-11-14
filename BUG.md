@@ -1,5 +1,20 @@
 # BUG.md — foy
 
+## BUG-20261114-06 — Tests pick a free port, close it, then bind it: another process can take it meanwhile
+
+- Date: 2026-11-14 (found while looping the WebSocket tests of BUG-20261114-05, with other JVMs running on
+  the machine).
+- Symptom: `VaubanSessionTest` failed in `@BeforeAll` with `Failed to bind to 127.0.0.1:53501`.
+- Repro: not deterministic. The tests opened `new ServerSocket(0)`, read its port, closed it, then started a
+  Chappe `Server` on that port; a process that binds an ephemeral port in that window takes it first. The
+  same pattern was in `WeldServletSessionTest`, `WeldPortabilityTest`, `FoyWebExtensionTest` (four tests),
+  `foy-core`'s `TestServerLauncher` and `foy-tck`'s `ServletTestHost`; the last two retried five times,
+  which only made the failure rarer.
+- Cause: a time-of-check to time-of-use race in the tests. Chappe can bind port 0 itself and report the port
+  it got (`Server.port()`), as `foy-websocket`'s `WebSocketTestServer` already does.
+- Status: FIXED on `fix/websocket-shutdown-order`. Every one of them binds port 0 and reads `server.port()`
+  after `start()`; the retries are gone. No new test: the suites that use them stay green.
+
 ## BUG-20261114-05 — An undeploy reports 1006 to `Endpoint.onClose` when the server stops before the peer answers
 
 - Date: 2026-11-14 (CI failure of `SessionEndToEndTest.undeployClosesSessionsWith1001` on a Linux runner,
