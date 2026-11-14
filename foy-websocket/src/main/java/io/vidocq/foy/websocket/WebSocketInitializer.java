@@ -19,16 +19,42 @@
  */
 package io.vidocq.foy.websocket;
 
+import io.vidocq.foy.spi.gen.ComponentInstantiator;
+import jakarta.servlet.DispatcherType;
+import jakarta.servlet.FilterRegistration;
 import jakarta.servlet.ServletContainerInitializer;
 import jakarta.servlet.ServletContext;
+import jakarta.websocket.server.ServerContainer;
 
+import java.util.EnumSet;
 import java.util.Set;
 
-/** Registers the WebSocket container and the upgrade handler when the web application starts. */
+/**
+ * Publishes the web application's WebSocket container when it starts (WEBSOCKET.md section 5.3
+ * step 1): the {@code jakarta.websocket.server.ServerContainer} attribute, which Atmosphere looks
+ * for, and the handshake filter on {@code /*}, after the application's own filters.
+ */
 public final class WebSocketInitializer implements ServletContainerInitializer {
 
+    /** The name of the handshake filter. */
+    private static final String FILTER_NAME = "io.vidocq.foy.websocket";
+
+    /**
+     * Creates the container and registers the filter.
+     *
+     * @throws IllegalArgumentException when the init parameter
+     *         {@code io.vidocq.foy.websocket.allowed-origins} is malformed: it escapes on purpose, so
+     *         the deployment stops (Foy only logs a {@code ServletException} from an initializer)
+     */
     @Override
     public void onStartup(Set<Class<?>> classes, ServletContext context) {
-        // Filled by Task 12.
+        OriginPolicy origins = OriginPolicy.parse(context.getInitParameter(OriginPolicy.INIT_PARAMETER));
+        var instantiator = context.getAttribute(ComponentInstantiator.ATTRIBUTE) instanceof ComponentInstantiator i
+                ? i : null;
+        var container = new FoyServerContainer(origins, instantiator);
+        context.setAttribute(ServerContainer.class.getName(), container);
+        FilterRegistration.Dynamic filter = context.addFilter(FILTER_NAME, new HandshakeFilter(container));
+        filter.setAsyncSupported(true);
+        filter.addMappingForUrlPatterns(EnumSet.of(DispatcherType.REQUEST), true, "/*");
     }
 }

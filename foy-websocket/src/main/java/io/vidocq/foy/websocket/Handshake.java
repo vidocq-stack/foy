@@ -50,7 +50,7 @@ final class Handshake {
     /** The refusal of {@code request}, or {@code null} when it is a valid WebSocket upgrade. */
     static Refusal validate(HttpServletRequest request) {
         if (!"GET".equals(request.getMethod()) || !"HTTP/1.1".equals(request.getProtocol())
-                || !hasToken(request.getHeaders("Upgrade"), "websocket")
+                || !asksForWebSocket(request)
                 || !hasToken(request.getHeaders("Connection"), "upgrade")
                 || !isNonce(request.getHeader("Sec-WebSocket-Key"))) {
             return new Refusal(BAD_REQUEST, null, null);
@@ -59,6 +59,11 @@ final class Handshake {
             return new Refusal(UPGRADE_REQUIRED, "Sec-WebSocket-Version", "13");
         }
         return null;
+    }
+
+    /** Whether {@code request} asks for a WebSocket: an {@code Upgrade} line holds the {@code websocket} token. */
+    static boolean asksForWebSocket(HttpServletRequest request) {
+        return hasToken(request.getHeaders("Upgrade"), "websocket");
     }
 
     /** Every comma-separated token of every header line, trimmed. */

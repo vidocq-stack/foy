@@ -154,7 +154,7 @@ final class OriginPolicy {
     }
 
     /** {@code s} quoted, with every char outside printable ASCII escaped as {@code \}{@code uXXXX}. */
-    private static String printable(String s) {
+    static String printable(String s) {
         var sb = new StringBuilder(s.length() + 2).append('"');
         for (int i = 0, len = s.length(); i < len; i++) {
             char c = s.charAt(i);

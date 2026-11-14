@@ -22,7 +22,10 @@ package io.vidocq.foy.websocket;
 import io.vidocq.foy.spi.gen.WebComponent;
 import io.vidocq.foy.spi.gen.WebComponentDescriptor;
 
-/** Declares the upgrade handler to the Foy component registry. */
+/**
+ * Declares the upgrade handler to the Foy component registry, so {@code HttpServletRequest.upgrade}
+ * creates it by calling its constructor, without reflection.
+ */
 public final class FoyUpgradeHandlerComponent implements WebComponent {
 
     @Override
@@ -30,9 +33,10 @@ public final class FoyUpgradeHandlerComponent implements WebComponent {
         return FoyUpgradeHandler.class;
     }
 
+    /** A plain component: no mapping, no initialisation parameter, no security metadata. */
     @Override
     public WebComponentDescriptor descriptor() {
-        return WebComponentDescriptor.plain(); // neutral until Task 12 fills this component
+        return WebComponentDescriptor.plain();
     }
 
     @Override

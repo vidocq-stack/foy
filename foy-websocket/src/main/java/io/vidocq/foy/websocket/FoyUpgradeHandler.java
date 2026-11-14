@@ -19,6 +19,50 @@
  */
 package io.vidocq.foy.websocket;
 
-/** Takes the HTTP exchange over after the handshake and runs the WebSocket connection on it. */
-public final class FoyUpgradeHandler {
+import io.vidocq.foy.spi.websocket.WebSocketListener;
+import io.vidocq.foy.spi.websocket.WebSocketUpgradeHandler;
+
+import java.util.concurrent.atomic.AtomicReference;
+
+/**
+ * Takes the HTTP exchange over after the handshake: {@code HttpServletRequest.upgrade} creates it
+ * through Foy's component factory ({@link FoyUpgradeHandlerComponent}), the handshake
+ * {@linkplain #prepare prepares} it with its session, and the transport then answers the 101 with
+ * the session's subprotocol and delivers the connection's events to the session.
+ */
+public final class FoyUpgradeHandler implements WebSocketUpgradeHandler {
+
+    /** Set on the request thread, read on the connection's thread. */
+    private final AtomicReference<FoySession> session = new AtomicReference<>();
+
+    /** Hands the session of the handshake to this handler, before the request returns. */
+    void prepare(FoySession prepared) {
+        session.set(prepared);
+    }
+
+    /** The negotiated subprotocol, {@code null} for none. */
+    @Override
+    public String subprotocol() {
+        String negotiated = session().getNegotiatedSubprotocol();
+        return negotiated.isEmpty() ? null : negotiated;
+    }
+
+    @Override
+    public WebSocketListener listener() {
+        return session();
+    }
+
+    /** Nothing to release: the session ended with the connection's close event, which precedes this call. */
+    @Override
+    public void destroy() {
+        // the session holds nothing beyond the connection
+    }
+
+    private FoySession session() {
+        FoySession prepared = session.get();
+        if (prepared == null) {
+            throw new IllegalStateException("the WebSocket upgrade handler was not prepared by a handshake");
+        }
+        return prepared;
+    }
 }

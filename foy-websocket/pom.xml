@@ -64,6 +64,25 @@
         <plugins>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <executions>
+                    <!-- The end-to-end tests use the JDK HTTP and WebSocket client and read the
+                         java.util.logging records; the main module reads neither. -->
+                    <execution>
+                        <id>default-testCompile</id>
+                        <configuration>
+                            <compilerArgs>
+                                <arg>--add-modules</arg>
+                                <arg>java.net.http,java.logging</arg>
+                                <arg>--add-reads</arg>
+                                <arg>io.vidocq.foy.websocket=java.net.http,java.logging</arg>
+                            </compilerArgs>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-surefire-plugin</artifactId>
                 <configuration>
                     <!-- As in foy-chappe: the tests run on the class path. -->
