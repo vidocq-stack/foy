@@ -55,7 +55,9 @@ import java.io.InputStream;
 import java.net.URL;
 import java.util.ArrayList;
 import java.util.EventListener;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.ServiceConfigurationError;
@@ -160,6 +162,7 @@ public final class FoyChappeBoot {
         private Function<ModuleLayer, Optional<JspEngine>> jspEngineLookup = WebAppDeployer::jspEngine;
         private Function<Class<?>, URL> componentSource;
         private InputStream webXml;
+        private final Map<String, String> initParameters = new LinkedHashMap<>();
         private boolean discoverPluggability = true;
         private final List<URL> applicationRoots = new ArrayList<>();
         private VidocqServletContext.ResourceProvider resourceProvider;
@@ -359,6 +362,23 @@ public final class FoyChappeBoot {
          */
         public Builder confidentialPort(int port) {
             this.confidentialPort = SecuritySettings.checkConfidentialPort(port);
+            return this;
+        }
+
+        /**
+         * Sets a servlet context init parameter, as the code that boots Foy (rather than a descriptor) would. The
+         * value is in place before the {@code ServletContainerInitializer}s run and wins over a
+         * {@code <context-param>} of the same name: {@code getInitParameter(name)} answers it and
+         * {@code getInitParameterNames()} lists the name once. Calling this twice with the same name keeps the last
+         * value. It applies when the application is built, by {@link #build()}.
+         *
+         * @param name  the parameter name
+         * @param value the parameter value
+         * @return this builder
+         * @throws NullPointerException when {@code name} or {@code value} is {@code null}
+         */
+        public Builder initParameter(String name, String value) {
+            initParameters.put(Objects.requireNonNull(name, "name"), Objects.requireNonNull(value, "value"));
             return this;
         }
 
@@ -580,6 +600,8 @@ public final class FoyChappeBoot {
             if (effective.sessionTimeoutMinutes() == -1) {
                 modelBuilder.sessionTimeoutMinutes(sessionTimeoutMinutes(sessionTimeoutSeconds));
             }
+            // The builder's init parameters replace the descriptors' <context-param> of the same name.
+            initParameters.forEach(modelBuilder::contextParam);
             modelBuilder.responseCharacterEncoding(responseCharacterEncoding(effective));
             return modelBuilder.build();
         }
