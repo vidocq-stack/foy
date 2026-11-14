@@ -163,7 +163,10 @@ reads `jakarta.websocket` once that module is in the boot layer). Read from its 
 3. The filter passes through any request that is not a WebSocket upgrade or whose path,
    relative to the context, matches no endpoint. Matching follows the spec's precedence:
    an exact path beats a template; among templates, the longest literal prefix segment by
-   segment wins.
+   segment wins. A path has no empty segment, except a trailing `/` on a path without
+   variables (Tomcat's `UriTemplate` rule): Atmosphere registers `/VAADIN/push/` beside
+   `/VAADIN/push`. That trailing `/` is a literal empty segment, so `/a/b/` matches only
+   `/a/b/`, and a variable never matches it.
 4. On a match it validates the handshake (RFC 6455 §4.2.1): `GET`, HTTP/1.1, `Upgrade:
    websocket`, a `Connection` header holding the `upgrade` token, a `Sec-WebSocket-Key`
    that decodes to 16 bytes (else 400), `Sec-WebSocket-Version: 13` (else 426 with

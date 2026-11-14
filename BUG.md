@@ -1,5 +1,28 @@
 # BUG.md — foy
 
+## BUG-20261114-02 — A WebSocket endpoint path ending in `/` is refused, so every Vaadin start logs a stack trace
+
+- Date: 2026-11-14 (found by the end-to-end Vaadin run of `feat/websocket`, Atmosphere 3.0.5).
+- Symptom: `ServerContainer.addEndpoint` throws `DeploymentException: An endpoint path has no empty
+  segment: /VAADIN/push/`. Atmosphere logs a WARN "Duplicate Servlet Mapping Path /VAADIN/push" with the
+  stack trace at every start, and `/VAADIN/push/` gets no endpoint. Push still works, because the client
+  uses `/VAADIN/push`.
+- Repro: `addEndpoint(ServerEndpointConfig.Builder.create(E.class, "/a/b/").build())`. Atmosphere's
+  `JSR356AsyncSupport` constructor registers `/VAADIN/push`, `/VAADIN/push/` (on purpose, its comment
+  lists "/servletPath/"), then `/VAADIN/push/{path0}` to `/VAADIN/push/{path0}/…/{path4}`.
+- Cause: `PathTemplate.parse` refused every empty segment, the trailing one included. Tomcat's
+  `UriTemplate` accepts a trailing `/` on a template without variables.
+- Status: FIXED on `feat/websocket`. The rule now follows Tomcat's. The leading `/` is skipped, and a
+  trailing empty segment is accepted on a template without variables, as a literal empty last segment.
+  `/a/b/` therefore matches only `/a/b/`, and `/a/b/{x}` never matches it, since a variable matches one
+  non-empty segment. Every other empty segment (`/a//b`, `//`, `/a/{x}/`) is still a `DeploymentException`.
+  For precedence, the trailing segment counts as a literal.
+- Validation: `PathTemplateTest` (accept and match `/a/b/`, `/a/b` and `/a/b/` do not match each other,
+  `/a/{x}/` and `/a//b` refused, precedence) and `EndpointRegistryTest
+  .aPathEndingInASlashIsALiteralBesideItsVariableSibling` (`/a/b`, `/a/b/` and `/a/b/{x}` registered
+  together, each request resolves to its own template). Before the fix, three of them failed on the
+  `DeploymentException`.
+
 ## BUG-20261114-01 — Dynamic filter mappings ignore `isMatchAfter`
 
 - Date: 2026-11-14 (found while designing the WebSocket filter, which registers itself with

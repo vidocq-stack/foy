@@ -22,6 +22,7 @@ package io.vidocq.foy.websocket;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import jakarta.websocket.DeploymentException;
 
@@ -87,5 +88,35 @@ class PathTemplateTest {
     @Test
     void anEmptySegmentInATemplateIsRefused() {
         assertThrows(DeploymentException.class, () -> PathTemplate.parse("/a//b"));
+        assertThrows(DeploymentException.class, () -> PathTemplate.parse("//"));
+    }
+
+    /** Atmosphere registers {@code /VAADIN/push/} as well as {@code /VAADIN/push}; Tomcat accepts both. */
+    @Test
+    void aTemplateEndingInASlashMatchesOnlyAPathEndingInASlash() throws DeploymentException {
+        PathTemplate template = PathTemplate.parse("/a/b/");
+        assertEquals(Map.of(), template.match("/a/b/"));
+        assertNull(template.match("/a/b"));
+        assertNull(template.match("/a/b/c"));
+    }
+
+    @Test
+    void aTemplateWithoutTheSlashDoesNotMatchAPathEndingInOne() throws DeploymentException {
+        assertNull(PathTemplate.parse("/a/b").match("/a/b/"));
+    }
+
+    @Test
+    void aTemplateWithAVariableDoesNotEndInASlash() {
+        assertThrows(DeploymentException.class, () -> PathTemplate.parse("/a/{x}/"));
+        assertThrows(DeploymentException.class, () -> PathTemplate.parse("/{x}/b/"));
+    }
+
+    @Test
+    void theTrailingSlashIsALiteralSegmentForPrecedence() throws DeploymentException {
+        PathTemplate literal = PathTemplate.parse("/a/b/");
+        PathTemplate variable = PathTemplate.parse("/a/b/{x}");
+        assertTrue(PathTemplate.PRECEDENCE.compare(literal, variable) < 0);
+        assertTrue(PathTemplate.PRECEDENCE.compare(PathTemplate.parse("/a/b"), literal) < 0);
+        assertNull(variable.match("/a/b/"));
     }
 }

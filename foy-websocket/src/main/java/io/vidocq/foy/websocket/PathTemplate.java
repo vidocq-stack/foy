@@ -34,8 +34,11 @@ import java.util.Set;
  * A context-relative endpoint path: literal segments and whole-segment variables ({@code {name}}).
  *
  * <p>A variable matches exactly one non-empty segment; there is no wildcard and the segment counts
- * must be equal. Templates are ordered by {@link #PRECEDENCE}: fewer segments first, then, at the
- * first position where two templates differ, the literal before the variable.
+ * must be equal. A template has no empty segment, but for a trailing {@code '/'} on a template
+ * without variables (as Tomcat's {@code UriTemplate}): that last segment is the literal empty one,
+ * so {@code /a/b/} matches only {@code /a/b/}, and {@code /a/b/{x}} never matches {@code /a/b/}.
+ * Templates are ordered by {@link #PRECEDENCE}: fewer segments first, then, at the first position
+ * where two templates differ, the literal before the variable.
  */
 final class PathTemplate {
 
@@ -62,9 +65,19 @@ final class PathTemplate {
         List<String> names = new ArrayList<>();
         Set<String> seen = new HashSet<>();
         if (path.length() > 1) {
-            for (String segment : path.substring(1).split("/", -1)) {
+            String[] segments = path.substring(1).split("/", -1);
+            for (int i = 0; i < segments.length; i++) {
+                String segment = segments[i];
                 if (segment.isEmpty()) {
-                    throw new DeploymentException("An endpoint path has no empty segment: " + path);
+                    if (i == segments.length - 1 && seen.isEmpty()) {
+                        // A trailing '/' on a template without variables, as Tomcat's UriTemplate allows:
+                        // a literal empty last segment, matched only by a path ending in '/'.
+                        literals.add(segment);
+                        names.add(null);
+                        continue;
+                    }
+                    throw new DeploymentException("An endpoint path has no empty segment, but for a trailing '/'"
+                            + " on a path without variables: " + path);
                 }
                 if (segment.startsWith("{") && segment.endsWith("}")) {
                     String name = segment.substring(1, segment.length() - 1);

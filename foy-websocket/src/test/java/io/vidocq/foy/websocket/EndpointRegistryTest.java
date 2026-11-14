@@ -80,6 +80,21 @@ class EndpointRegistryTest {
         assertThrows(DeploymentException.class, () -> registry.add(duplicate));
     }
 
+    /**
+     * Atmosphere's {@code JSR356AsyncSupport} registers {@code /VAADIN/push}, {@code /VAADIN/push/},
+     * then {@code /VAADIN/push/{path0}} and deeper: each is accepted and keeps its own requests.
+     */
+    @Test
+    void aPathEndingInASlashIsALiteralBesideItsVariableSibling() throws DeploymentException {
+        EndpointRegistry registry = new EndpointRegistry();
+        registry.add(config("/a/b"));
+        registry.add(config("/a/b/{x}"));
+        registry.add(config("/a/b/"));
+        assertEquals("/a/b/", registry.match("/a/b/").config().getPath());
+        assertEquals("/a/b", registry.match("/a/b").config().getPath());
+        assertEquals("/a/b/{x}", registry.match("/a/b/c").config().getPath());
+    }
+
     @Test
     void theSameExactPathTwiceIsADuplicate() throws DeploymentException {
         EndpointRegistry registry = new EndpointRegistry();
