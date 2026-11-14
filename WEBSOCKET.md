@@ -190,8 +190,9 @@ Decided by the maintainer: same-origin by default, opened by configuration only.
   WARNING naming the refused origin, so a Vaadin page silently falling back to long
   polling shows up in the log.
 - Matching compares host and port, not the scheme, so a TLS-terminating proxy that keeps
-  `Host` does not break it. The server side is the host and port Foy resolves for the
-  request (`getServerName()`, `getServerPort()`).
+  `Host` does not break it. The server side is the host and port of the request's single
+  `Host` line, a `Host` without a port standing for the default port of the origin's
+  scheme; a request with no `Host` or several refuses every origin not listed.
 - A handshake without `Origin` (a non-browser client) is accepted: hijacking needs a
   browser, and browsers always send it.
 - Opening is configuration, never code: a comma-separated list of origins
@@ -219,7 +220,10 @@ Decided by the maintainer: same-origin by default, opened by configuration only.
   lot 1: the handshake request has ended (lot 2 decides). Vaadin with
   `WEBSOCKET_XHR` sends client-to-server messages over XHR, which are ordinary requests.
 - **Session data.** A unique id. `getRequestURI()` as the handshake's full request URI
-  (context path included, query string included). `getQueryString()`,
+  (context path included, query string included), built from the `Host` header: a `Host`
+  that is not `host[:port]` (the grammar of §5.3.1's origins: a name, an IPv4 address or a
+  bracketed IPv6 literal, a port up to 65535) would move the path of that URI away from the
+  one matched and authorized, so it refuses the handshake with 400. `getQueryString()`,
   `getRequestParameterMap()`, `getPathParameters()`, `getUserPrincipal()` and
   `getHttpSession()` (on the handshake request) captured at handshake. `isSecure()`,
   `getProtocolVersion()` = `13`, `getNegotiatedSubprotocol()`,
@@ -247,7 +251,10 @@ Decided by the maintainer: same-origin by default, opened by configuration only.
   (Atmosphere sets its own when configured). Chappe still re-assembles up to its 64 MiB
   cap before Foy can check; lot 3 decides whether `chappe-api` gets a per-connection limit.
 - **Close.** `close(CloseReason)` maps to Chappe's close; `onClose(Session, CloseReason)`
-  carries the peer's code, or 1006 when the TCP connection was cut. `onError` precedes
+  carries the reason of the side that closed first. An idle timeout, a send timeout, an
+  undeploy or any other local close reports the session's own reason, even when the peer
+  then vanishes; otherwise `onClose` carries the peer's code, and 1006 only when TCP is cut
+  with no local close first. `onError` precedes
   `onClose` when a transport failure closes the session; an exception from a message
   handler reaches `onError` and the session stays open.
 - **Not in lot 1.** `connectToServer` (client API, lot 3) throws `DeploymentException` with

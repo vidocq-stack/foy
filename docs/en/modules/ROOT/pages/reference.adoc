@@ -170,6 +170,7 @@ A jar built by an older `foy-processor`, before the marker existed, holds `META-
 
 Each run writes a fresh `META-INF/services/io.vidocq.foy.spi.gen.WebComponent` and `META-INF/foy/class-index.list`. Merging them with the files the jar already holds is the caller's job.
 
+[#foychappeboot]
 == Public API: `FoyChappeBoot`
 
 [cols="1,3",options="header"]
@@ -331,13 +332,13 @@ Lot 1 of Jakarta WebSocket 2.2: the programmatic server API. How to use it: xref
 | `io.vidocq.foy.websocket.allowed-origins`: `*`, or a comma-separated list of `http(s)://host[:port]` origins, lower-cased, no path. A malformed value stops the deployment. Default: same origin only.
 
 | Handshake refusals
-| `400` malformed, `426` other version (with `Sec-WebSocket-Version: 13`), `403` refused origin; empty bodies. HTTP/1.1 only.
+| `400` malformed (a `Host` that is not `host[:port]` included), `426` other version (with `Sec-WebSocket-Version: 13`), `403` refused origin; empty bodies. HTTP/1.1 only.
 
 | Defaults
-| Maximum text and binary message 64 KiB; maximum idle timeout `0`; asynchronous send timeout `0`.
+| Maximum text and binary message 64 KiB; maximum idle timeout `0`; asynchronous send timeout `0`. An expired send timeout fails the send with a `SocketTimeoutException` and closes the session with 1001.
 
 | Close codes
-| 1001 undeploy and idle timeout; 1006 TCP cut; 1009 oversize message; 1011 `onOpen` failure.
+| 1001 undeploy, idle timeout and asynchronous send timeout; 1006 TCP cut with no local close first; 1009 oversize message; 1011 `onOpen` failure. A local close reports its own reason to `onClose`, even when TCP is cut afterwards.
 
 | Not in lot 1
 | `@ServerEndpoint` and `@ClientEndpoint`, `addEndpoint(Class)`, `connectToServer` (each throws `DeploymentException` naming the lot), extensions.

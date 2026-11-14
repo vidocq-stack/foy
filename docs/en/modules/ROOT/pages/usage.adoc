@@ -211,7 +211,7 @@ A filter registered for `/*`, after the application's filters, recognises the up
 | Status | When
 
 | `400`
-| Malformed handshake, a bad `Sec-WebSocket-Key` included.
+| Malformed handshake: a bad `Sec-WebSocket-Key`, a `Host` that is not `host[:port]` (a name, an IPv4 address or a bracketed IPv6 literal, a port up to 65535), or a request target that is not a URI. The last two are logged at `DEBUG` with the path and the reason, never the query string.
 
 | `426`
 | Another protocol version; the response carries `Sec-WebSocket-Version: 13`.
@@ -220,12 +220,12 @@ A filter registered for `/*`, after the application's filters, recognises the up
 | Refused origin (`Configurator.checkOrigin` answered `false`); the refusal is logged at `WARNING`, naming the origin.
 |===
 
-`Configurator.modifyHandshake` and `getEndpointInstance` run on the request thread, in that order. The `Configurator.checkOrigin` and the user properties of the `ServerEndpointConfig` are per connection: one connection's changes never reach another's.
+`Configurator.modifyHandshake` and `getEndpointInstance` run on the request thread, in that order. The user properties of the `ServerEndpointConfig` are per connection: what `modifyHandshake` stores there reaches that connection's session only, never another connection's nor the registered configuration. `Session.getRequestURI()` is `ws://` (or `wss://`), the `Host` header, the request target as received (context path included) and the query string.
 
 [#websocket-origins]
 === Same-origin policy
 
-The container default of `checkOrigin` protects against cross-site WebSocket hijacking. A request without `Origin` (not a browser) is accepted. Otherwise the origin is accepted when it names the same host as the request: its scheme, host and port equal what the `Host` header says. A `Host` without a port means the default port of the origin's scheme, so a TLS-terminating proxy that forwards `Host: app.example.com` for `Origin: https://app.example.com` is accepted although the request reaches Foy over plain HTTP. A proxy that rewrites `Host` needs the public origin listed.
+The container default of `checkOrigin` protects against cross-site WebSocket hijacking. A request without `Origin` (not a browser) is accepted. Otherwise the origin is accepted when it names the same host as the request: its host and port equal the `Host` header's; the scheme is not compared. A `Host` without a port means the default port of the origin's scheme, so a TLS-terminating proxy that forwards `Host: app.example.com` for `Origin: https://app.example.com` is accepted although the request reaches Foy over plain HTTP. A proxy that rewrites `Host` needs the public origin listed.
 
 The context init parameter `io.vidocq.foy.websocket.allowed-origins` lists further origins:
 
@@ -241,7 +241,8 @@ With `FoyChappeBoot`, set it with `Builder.initParameter("io.vidocq.foy.websocke
 * Asynchronous sends (`getAsyncRemote`) are drained by one virtual thread per session, started on demand. `getBasicRemote` blocks the caller.
 * Partial sends (`sendText(String, boolean)`, `getSendStream()`, `getSendWriter()`) are buffered and sent whole on the last part.
 * The transport answers pings itself; applications see pongs through `PongMessage` handlers.
-* An exception thrown by a message handler reaches `onError`; the session stays open. A failure of `onOpen` closes the session with 1011.
+* An exception thrown by a message handler reaches `onError`; the session stays open. An exception thrown by `onOpen` reaches `onError`, then the session closes with 1011. An `Error` thrown by `onOpen` (a failed static initializer) closes the session with 1011 and runs `onClose`, then propagates to the transport.
+* A `SendHandler` that throws, even an `Error`, never stops the session's later sends nor its timeouts.
 
 === Limits and close codes
 
@@ -256,18 +257,20 @@ With `FoyChappeBoot`, set it with `Builder.initParameter("io.vidocq.foy.websocke
 | `0`, none. `Session.setMaxIdleTimeout` closes an idle session with 1001; each session with a timeout has one timer virtual thread.
 
 | Asynchronous send timeout
-| `0`, none.
+| `0`, none. `RemoteEndpoint.Async.setSendTimeout` (or `WebSocketContainer.setAsyncSendTimeout` for the sessions opened afterwards): a send not written that long after it was queued fails its `SendResult` with a `SocketTimeoutException`, and the session closes with 1001. Atmosphere, hence Vaadin push, sets 60 s.
 |===
+
+`onClose` reports the reason of the side that closed first. A session this side closed (`Session.close`, the idle or send timeout, an undeploy, a 1009 or a 1011) reports its own reason, even when the peer then vanishes; 1006 means the TCP connection was cut with no close from this side first.
 
 [cols="1,3",options="header"]
 |===
 | Code | Cause
 
 | 1001
-| The application is undeployed, or the idle timeout expired.
+| The application is undeployed, the idle timeout expired, or an asynchronous send timed out.
 
 | 1006
-| The TCP connection was cut; every queued asynchronous send then fails.
+| The TCP connection was cut with no close from this side first; every queued asynchronous send then fails.
 
 | 1009
 | A message over the limit.

@@ -344,7 +344,11 @@ A request body has exactly one owner, decided by the first reader: the applicati
 * `getRequestDispatcher` and cross-context lookup compare the context path with a plain prefix test (no segment boundary), so `/app` also matches `/application/x`.
 * Cross-context dispatch (`ServletContext.getContext`): **implemented** via `CrossContextRegistry` (strict contextPath match on the contexts deployed in the same JVM).
 * Multipart: the body parameters of a multipart request are decided by the servlet executing when the parameters are first read; the epilogue after the closing delimiter is read by Foy within the caps, and what a client sends after the response is drained by Chappe, which bounds that drain (`maxDrainSize`, 1 MiB by default); no aggregate in-memory cap on the stored parts beyond the body size (each part stays under `fileSizeThreshold` in memory, the parts together under the body cap); reading the parameters reads the form fields (parts without a file name) whole into memory, so their total size is checked against `maxFormBodySize` first.
-* Jakarta WebSocket: lot 1 (programmatic server API) only; annotated endpoints and the client API are not implemented yet.
+* Jakarta WebSocket: lot 1 (programmatic server API) only; annotated endpoints and the client API are not implemented yet. In lot 1:
+** the handshake is HTTP/1.1 only (no WebSocket over HTTP/2, RFC 8441);
+** Chappe reassembles a message up to its own 64 MiB cap before Foy applies the session's limit (64 KiB by default), so an oversize message is read whole before the 1009;
+** no CDI request or session context is active in an endpoint callback;
+** invalidating the `HttpSession` of the handshake does not close the WebSocket with 1008.
 * JSP: not supported by Foy itself; a page engine such as Ibarra (Jakarta Pages 4.0) plugs into the JSP-engine service (xref:reference.adoc#jsp-engine[Optional JSP-engine service]).
 * Security: DIGEST is not supported (it fails closed with `403`); security constraints match url-patterns case-sensitively, and a resource is served only under its exact real name, so a request that differs in case gets 404 on macOS and Windows (BUG-20261011-05). On a Linux case-insensitive mount (ext4 casefold, vfat/exFAT, CIFS) `toRealPath` returns the requested spelling and the folding goes undetected (BUG-20261013-01); serve static resources from jars or from a case-sensitive file system there.
 
