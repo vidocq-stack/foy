@@ -38,6 +38,20 @@ final class RawHandshake {
      * head (status line and headers, up to the blank line). The socket is closed afterwards.
      */
     static String send(int port, String path, String... extraHeaderLines) throws IOException {
+        try (var socket = open(port, path, extraHeaderLines)) {
+            return readHead(socket.getInputStream());
+        }
+    }
+
+    /**
+     * Sends a valid handshake for {@code path} and returns the connected socket, its read timeout set,
+     * with nothing read yet: the caller reads the response and owns the socket.
+     */
+    static Socket connect(int port, String path) throws IOException {
+        return open(port, path);
+    }
+
+    private static Socket open(int port, String path, String... extraHeaderLines) throws IOException {
         var request = new StringBuilder()
                 .append("GET ").append(path).append(" HTTP/1.1\r\n")
                 .append("Host: 127.0.0.1:").append(port).append("\r\n")
@@ -49,11 +63,15 @@ final class RawHandshake {
             request.append(line).append("\r\n");
         }
         request.append("\r\n");
-        try (var socket = new Socket(InetAddress.getLoopbackAddress(), port)) {
+        var socket = new Socket(InetAddress.getLoopbackAddress(), port);
+        try {
             socket.setSoTimeout(READ_TIMEOUT_MILLIS);
             socket.getOutputStream().write(request.toString().getBytes(StandardCharsets.US_ASCII));
             socket.getOutputStream().flush();
-            return readHead(socket.getInputStream());
+            return socket;
+        } catch (IOException e) {
+            socket.close();
+            throw e;
         }
     }
 

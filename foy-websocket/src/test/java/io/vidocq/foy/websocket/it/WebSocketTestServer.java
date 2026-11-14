@@ -30,6 +30,7 @@ import jakarta.servlet.ServletException;
 
 import java.io.ByteArrayInputStream;
 import java.net.URI;
+import java.time.Duration;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -75,6 +76,8 @@ final class WebSocketTestServer implements AutoCloseable {
         private final Map<String, String> initParameters = new LinkedHashMap<>();
         private String descriptorElements = "";
         private final List<User> users = new ArrayList<>();
+        private Duration idleTimeout;
+        private Duration readTimeout;
 
         private Builder(ServletContextListener listener) {
             this.listener = listener;
@@ -93,6 +96,18 @@ final class WebSocketTestServer implements AutoCloseable {
         /** Elements added to the {@code web-app} of the descriptor (security constraints, login config). */
         Builder descriptor(String elements) {
             descriptorElements = elements;
+            return this;
+        }
+
+        /** Chappe's idle timeout of a connection; the server's default when not set. */
+        Builder idleTimeout(Duration timeout) {
+            idleTimeout = timeout;
+            return this;
+        }
+
+        /** Chappe's read timeout, which also bounds a closing handshake; the server's default when not set. */
+        Builder readTimeout(Duration timeout) {
+            readTimeout = timeout;
             return this;
         }
 
@@ -121,7 +136,14 @@ final class WebSocketTestServer implements AutoCloseable {
                     .call(() -> boot.build().orElseThrow());
             Handler handler = mounted.mountPrefix().isEmpty() ? mounted.handler()
                     : Router.builder().mount(mounted.mountPrefix(), mounted.handler(), false).build();
-            Server server = Server.builder().host("127.0.0.1").port(0).handler(handler).build();
+            Server.Builder serverBuilder = Server.builder().host("127.0.0.1").port(0).handler(handler);
+            if (idleTimeout != null) {
+                serverBuilder.idleTimeout(idleTimeout);
+            }
+            if (readTimeout != null) {
+                serverBuilder.readTimeout(readTimeout);
+            }
+            Server server = serverBuilder.build();
             server.start();
             return new WebSocketTestServer(mounted, server);
         }
