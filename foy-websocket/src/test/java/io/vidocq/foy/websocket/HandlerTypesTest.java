@@ -64,6 +64,34 @@ class HandlerTypesTest {
         }
     }
 
+    static final class BinaryHandler implements MessageHandler.Whole<ByteBuffer> {
+        @Override
+        public void onMessage(ByteBuffer message) {
+            // receives nothing in this test
+        }
+    }
+
+    static final class ReaderHandler implements MessageHandler.Whole<Reader> {
+        @Override
+        public void onMessage(Reader message) {
+            // receives nothing in this test
+        }
+    }
+
+    static final class StreamHandler implements MessageHandler.Whole<InputStream> {
+        @Override
+        public void onMessage(InputStream message) {
+            // receives nothing in this test
+        }
+    }
+
+    static final class PongHandler implements MessageHandler.Whole<PongMessage> {
+        @Override
+        public void onMessage(PongMessage message) {
+            // receives nothing in this test
+        }
+    }
+
     /** No signature of its own: its type comes from its superclass. */
     static final class InheritedText extends TextBase {
     }
@@ -83,36 +111,11 @@ class HandlerTypesTest {
 
     @Test
     void theOneArgumentFormResolvesStringAndByteBuffer() {
-        var binary = new MessageHandler.Whole<ByteBuffer>() {
-            @Override
-            public void onMessage(ByteBuffer message) {
-                // receives nothing in this test
-            }
-        };
-        var reader = new MessageHandler.Whole<Reader>() {
-            @Override
-            public void onMessage(Reader message) {
-                // receives nothing in this test
-            }
-        };
-        var stream = new MessageHandler.Whole<InputStream>() {
-            @Override
-            public void onMessage(InputStream message) {
-                // receives nothing in this test
-            }
-        };
-        var pong = new MessageHandler.Whole<PongMessage>() {
-            @Override
-            public void onMessage(PongMessage message) {
-                // receives nothing in this test
-            }
-        };
-
         assertEquals("Ljava/lang/String;", HandlerTypes.messageType(Texts.class));
-        assertEquals("Ljava/nio/ByteBuffer;", HandlerTypes.messageType(binary.getClass()));
-        assertEquals("Ljava/io/Reader;", HandlerTypes.messageType(reader.getClass()));
-        assertEquals("Ljava/io/InputStream;", HandlerTypes.messageType(stream.getClass()));
-        assertEquals("Ljakarta/websocket/PongMessage;", HandlerTypes.messageType(pong.getClass()));
+        assertEquals("Ljava/nio/ByteBuffer;", HandlerTypes.messageType(BinaryHandler.class));
+        assertEquals("Ljava/io/Reader;", HandlerTypes.messageType(ReaderHandler.class));
+        assertEquals("Ljava/io/InputStream;", HandlerTypes.messageType(StreamHandler.class));
+        assertEquals("Ljakarta/websocket/PongMessage;", HandlerTypes.messageType(PongHandler.class));
         assertEquals("[B", HandlerTypes.messageType(Bytes.class), "a type argument bound by a subclass");
         assertEquals("Ljava/lang/String;", HandlerTypes.messageType(InheritedText.class), "a type inherited");
     }

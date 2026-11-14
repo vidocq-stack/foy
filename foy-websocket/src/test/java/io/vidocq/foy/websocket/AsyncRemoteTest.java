@@ -147,7 +147,7 @@ class AsyncRemoteTest {
         }
 
         assertTrue(results.await(WAIT, SECONDS));
-        assertEquals(expected, new HashSet<>(peer.texts()), "every message arrives whole");
+        assertEquals(new HashSet<>(expected), new HashSet<>(peer.texts()), "every message arrives whole");
         assertEquals(expected.size(), peer.messages.size(), "and once");
     }
 
@@ -307,7 +307,7 @@ class AsyncRemoteTest {
     private static void awaitQuietly(CountDownLatch latch) {
         try {
             assertTrue(latch.await(WAIT, SECONDS));
-        } catch (InterruptedException e) {
+        } catch (InterruptedException _) {
             Thread.currentThread().interrupt();
         }
     }

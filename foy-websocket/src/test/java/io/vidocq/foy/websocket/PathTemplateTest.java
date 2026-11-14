@@ -20,13 +20,13 @@
 package io.vidocq.foy.websocket;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import jakarta.websocket.DeploymentException;
 
 import java.util.Map;
+import java.util.Optional;
 
 import org.junit.jupiter.api.Test;
 
@@ -35,37 +35,37 @@ class PathTemplateTest {
     @Test
     void vaadinPushMatchesTwoVariables() throws DeploymentException {
         PathTemplate template = PathTemplate.parse("/{path0}/{path1}");
-        assertEquals(Map.of("path0", "VAADIN", "path1", "push"), template.match("/VAADIN/push"));
+        assertEquals(Optional.of(Map.of("path0", "VAADIN", "path1", "push")), template.match("/VAADIN/push"));
     }
 
     @Test
     void fiveLevelsMatch() throws DeploymentException {
         PathTemplate template = PathTemplate.parse("/{path0}/{path1}/{path2}/{path3}/{path4}");
-        assertEquals(Map.of("path0", "a", "path1", "b", "path2", "c", "path3", "d", "path4", "e"),
+        assertEquals(Optional.of(Map.of("path0", "a", "path1", "b", "path2", "c", "path3", "d", "path4", "e")),
                 template.match("/a/b/c/d/e"));
     }
 
     @Test
     void segmentCountsMustBeEqual() throws DeploymentException {
-        assertNull(PathTemplate.parse("/{x}").match("/a/b"));
+        assertTrue(PathTemplate.parse("/{x}").match("/a/b").isEmpty());
     }
 
     @Test
     void anEmptySegmentMatchesNoVariable() throws DeploymentException {
-        assertNull(PathTemplate.parse("/{x}").match("/"));
-        assertNull(PathTemplate.parse("/a/{x}").match("/a/"));
+        assertTrue(PathTemplate.parse("/{x}").match("/").isEmpty());
+        assertTrue(PathTemplate.parse("/a/{x}").match("/a/").isEmpty());
     }
 
     @Test
     void theRootPathMatchesOnlyTheRoot() throws DeploymentException {
         PathTemplate root = PathTemplate.parse("/");
-        assertEquals(Map.of(), root.match("/"));
-        assertNull(root.match("/a"));
+        assertEquals(Optional.of(Map.of()), root.match("/"));
+        assertTrue(root.match("/a").isEmpty());
     }
 
     @Test
     void aLiteralMustBeEqual() throws DeploymentException {
-        assertNull(PathTemplate.parse("/a/{x}").match("/b/c"));
+        assertTrue(PathTemplate.parse("/a/{x}").match("/b/c").isEmpty());
     }
 
     @Test
@@ -95,14 +95,14 @@ class PathTemplateTest {
     @Test
     void aTemplateEndingInASlashMatchesOnlyAPathEndingInASlash() throws DeploymentException {
         PathTemplate template = PathTemplate.parse("/a/b/");
-        assertEquals(Map.of(), template.match("/a/b/"));
-        assertNull(template.match("/a/b"));
-        assertNull(template.match("/a/b/c"));
+        assertEquals(Optional.of(Map.of()), template.match("/a/b/"));
+        assertTrue(template.match("/a/b").isEmpty());
+        assertTrue(template.match("/a/b/c").isEmpty());
     }
 
     @Test
     void aTemplateWithoutTheSlashDoesNotMatchAPathEndingInOne() throws DeploymentException {
-        assertNull(PathTemplate.parse("/a/b").match("/a/b/"));
+        assertTrue(PathTemplate.parse("/a/b").match("/a/b/").isEmpty());
     }
 
     @Test
@@ -117,6 +117,6 @@ class PathTemplateTest {
         PathTemplate variable = PathTemplate.parse("/a/b/{x}");
         assertTrue(PathTemplate.PRECEDENCE.compare(literal, variable) < 0);
         assertTrue(PathTemplate.PRECEDENCE.compare(PathTemplate.parse("/a/b"), literal) < 0);
-        assertNull(variable.match("/a/b/"));
+        assertTrue(variable.match("/a/b/").isEmpty());
     }
 }
