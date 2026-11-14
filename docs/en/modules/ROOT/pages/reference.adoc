@@ -329,6 +329,9 @@ Lot 1 of Jakarta WebSocket 2.2: the programmatic server API. How to use it: xref
 | `ServerContainer`
 | `ServletContext` attribute `jakarta.websocket.server.ServerContainer`, one per context.
 
+| Endpoint instances
+| Foy's component factory, unless the endpoint's `Configurator` overrides `getEndpointInstance`. On the module path the endpoint's package needs `opens <package> to io.vidocq.foy.core`; an endpoint no tier can create makes the handshake answer `500`. See xref:usage.adoc#websocket[WebSocket].
+
 | Init parameter
 | `io.vidocq.foy.websocket.allowed-origins`: `*`, or a comma-separated list of `http(s)://host[:port]` origins, lower-cased, no path. A malformed value stops the deployment. Default: same origin only.
 
