@@ -23,5 +23,6 @@ module io.vidocq.foy.websocket {
     requires io.vidocq.foy.api;
     provides jakarta.servlet.ServletContainerInitializer with io.vidocq.foy.websocket.WebSocketInitializer;
     provides jakarta.websocket.server.ServerEndpointConfig.Configurator with io.vidocq.foy.websocket.DefaultConfigurator;
-    provides io.vidocq.foy.spi.gen.WebComponent with io.vidocq.foy.websocket.FoyUpgradeHandlerComponent;
+    provides io.vidocq.foy.spi.gen.WebComponent with io.vidocq.foy.websocket.FoyUpgradeHandlerComponent,
+            io.vidocq.foy.websocket.WebSocketInitializerComponent;
 }

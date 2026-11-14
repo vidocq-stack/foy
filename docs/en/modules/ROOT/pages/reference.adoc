@@ -123,7 +123,8 @@ module io.vidocq.foy.websocket {          // exports nothing
     provides jakarta.websocket.server.ServerEndpointConfig.Configurator
             with io.vidocq.foy.websocket.DefaultConfigurator;
     provides io.vidocq.foy.spi.gen.WebComponent
-            with io.vidocq.foy.websocket.FoyUpgradeHandlerComponent;
+            with io.vidocq.foy.websocket.FoyUpgradeHandlerComponent,
+                 io.vidocq.foy.websocket.WebSocketInitializerComponent;
 }
 ----
 
