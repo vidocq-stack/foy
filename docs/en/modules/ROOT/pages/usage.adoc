@@ -252,7 +252,7 @@ With `FoyChappeBoot`, set it with `Builder.initParameter("io.vidocq.foy.websocke
 * Partial sends (`sendText(String, boolean)`, `getSendStream()`, `getSendWriter()`) are buffered and sent whole on the last part.
 * The transport answers pings itself; applications see pongs through `PongMessage` handlers.
 * An exception thrown by a message handler reaches `onError`; the session stays open. An exception thrown by `onOpen` reaches `onError`, then the session closes with 1011. An `Error` thrown by `onOpen` (a failed static initializer) closes the session with 1011 and runs `onClose`, then propagates to the transport.
-* A `SendHandler` that throws, even an `Error`, never stops the session's later sends nor its timeouts.
+* A `SendHandler` that throws, even an `Error`, does not stall the sends queued behind it nor the session's timeouts: a send timeout still closes the session with 1001.
 
 === Limits and close codes
 

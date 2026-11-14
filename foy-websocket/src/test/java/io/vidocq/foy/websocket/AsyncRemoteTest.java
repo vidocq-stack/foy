@@ -169,6 +169,25 @@ class AsyncRemoteTest {
         assertEquals(CloseCodes.GOING_AWAY.getCode(), peer.closeCode());
     }
 
+    /** A send handler that throws an {@code Error} at its send timeout does not keep the session open. */
+    @Test
+    void anErrorFromASendHandlerAtItsTimeoutStillClosesTheSession() throws InterruptedException {
+        session = TestSessions.open(endpoint, peer);
+        RemoteEndpoint.Async async = session.getAsyncRemote();
+        async.setSendTimeout(100);
+        peer.blockWrites();
+        var timedOut = new CountDownLatch(1);
+
+        async.sendText("never written", result -> {
+            timedOut.countDown();
+            throw new AssertionError("a send handler that fails an assertion");
+        });
+
+        assertTrue(timedOut.await(WAIT, SECONDS));
+        assertTrue(peer.closed.await(WAIT, SECONDS), "the send timeout did not close the session");
+        assertEquals(CloseCodes.GOING_AWAY.getCode(), peer.closeCode());
+    }
+
     @Test
     void queuedSendsFailWhenThePeerVanishes() throws InterruptedException {
         session = TestSessions.open(endpoint, peer);

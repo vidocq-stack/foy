@@ -186,10 +186,18 @@ final class AsyncRemote extends FoySession.Remote implements RemoteEndpoint.Asyn
         send.complete(failure);
     }
 
-    /** On the timer's thread: the send still being written fails, and the session closes. */
+    /**
+     * On the timer's thread: the send still being written fails, and the session closes, also when its
+     * {@link SendHandler} throws an {@code Error}.
+     */
     private void expire(Send send) {
-        if (send.complete(new SocketTimeoutException("The send was not written within its timeout of "
-                + send.timeoutMillis + " ms"))) {
+        if (!send.claim()) {
+            return;
+        }
+        try {
+            send.deliver(new SocketTimeoutException("The send was not written within its timeout of "
+                    + send.timeoutMillis + " ms"));
+        } finally {
             session.closeQuietly(new CloseReason(CloseCodes.GOING_AWAY, "send timeout"));
         }
     }
@@ -224,19 +232,29 @@ final class AsyncRemote extends FoySession.Remote implements RemoteEndpoint.Asyn
          * Delivers the result, unless it was delivered already.
          *
          * @param failure the failure, {@code null} for a send written
-         * @return whether this call delivered it
          */
-        boolean complete(Exception failure) {
-            if (!done.compareAndSet(false, true)) {
-                return false;
+        void complete(Exception failure) {
+            if (claim()) {
+                deliver(failure);
             }
+        }
+
+        /** Whether this call is the one that delivers the result: true once only. */
+        boolean claim() {
+            return done.compareAndSet(false, true);
+        }
+
+        /**
+         * Hands the result to the handler, once {@link #claim()} returned {@code true}; an exception from
+         * the handler is logged, an {@code Error} propagates.
+         */
+        void deliver(Exception failure) {
             try {
                 handler.onResult(failure == null ? new SendResult(session) : new SendResult(session, failure));
             } catch (RuntimeException e) {
                 LOG.log(System.Logger.Level.WARNING, () -> "A SendHandler of the WebSocket session "
                         + session.getId() + " threw", e);
             }
-            return true;
         }
     }
 }
