@@ -54,6 +54,9 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class ServletListenerEndToEndTest {
 
+    /** The parent logger of chappe's HTTP/1.1 and HTTP/2 transports, which log a failed handler. */
+    private static final String CHAPPE_TRANSPORT_LOGGER = "io.vidocq.chappe.http";
+
     private Server server;
     private int port;
 
@@ -184,27 +187,22 @@ class ServletListenerEndToEndTest {
             @Override public void requestDestroyed(ServletRequestEvent e) { destroy.incrementAndGet(); }
         });
 
-        List<Throwable> uncaught = getDroppedExchange("/boom", init);
-        assertTrue(uncaught.stream().allMatch(StackOverflowError.class::isInstance), uncaught::toString);
-        // The JDK client retries an idempotent request once when the connection closes without a
-        // response: count per request served.
-        assertTrue(init.get() >= 1, "the request reached the servlet");
-        assertEquals(init.get(), destroy.get(),
-                "requestDestroyed fires exactly once per request when a servlet throws an Error");
+        List<Throwable> logged = getServerError("/boom");
+        assertTrue(logged.stream().anyMatch(StackOverflowError.class::isInstance), logged::toString);
+        assertEquals(1, init.get(), "the request reached the servlet once");
+        assertEquals(1, destroy.get(), "requestDestroyed fires exactly once when a servlet throws an Error");
     }
 
     @Test
     void aThrowingRequestDestroyedDoesNotMaskAnErrorThrownByAMappedServlet() throws Exception {
-        AtomicInteger init = new AtomicInteger();
         startErrorServer(new ServletRequestListener() {
-            @Override public void requestInitialized(ServletRequestEvent e) { init.incrementAndGet(); }
             @Override public void requestDestroyed(ServletRequestEvent e) { throw new IllegalArgumentException("listener"); }
         });
 
-        List<Throwable> uncaught = getDroppedExchange("/boom", init);
-        assertTrue(uncaught.stream().allMatch(t -> t instanceof StackOverflowError
+        List<Throwable> logged = getServerError("/boom");
+        assertTrue(logged.stream().anyMatch(t -> t instanceof StackOverflowError
                         && t.getSuppressed().length == 1 && "listener".equals(t.getSuppressed()[0].getMessage())),
-                () -> "the Error propagates, the listener failure suppressed in it: " + uncaught);
+                () -> "the Error propagates, the listener failure suppressed in it: " + logged);
     }
 
     // ---- helpers ----
@@ -236,28 +234,17 @@ class ServletListenerEndToEndTest {
     }
 
     /**
-     * GETs {@code path} on a servlet that throws an Error. Unchanged response behaviour: the Error
-     * propagates out of the bridge and chappe drops the exchange without a response. The Error ends the
-     * bridge's virtual thread: its uncaught trace is captured (kept off the console) and returned,
-     * waiting (bounded) until every request that reached the servlet has reported one.
+     * GETs {@code path} on a servlet that throws an Error. The Error propagates out of the bridge, and chappe
+     * answers it 500 and logs it (Vidocq/chappe CHAPPE-054) instead of dropping the exchange. Returns the
+     * throwables chappe's transport logged, kept off the console.
      */
-    private List<Throwable> getDroppedExchange(String path, AtomicInteger served) throws Exception {
-        var uncaught = new java.util.concurrent.CopyOnWriteArrayList<Throwable>();
-        var previousHandler = Thread.getDefaultUncaughtExceptionHandler();
-        Thread.setDefaultUncaughtExceptionHandler((t, e) -> uncaught.add(e));
-        try (var _ = LogCapture.of(ChappeServletBridge.class.getName())) {
-            assertThrows(IOException.class, () -> get("http://127.0.0.1:" + port + path),
-                    "an Error still propagates out of the bridge");
-            long deadline = System.nanoTime() + Duration.ofSeconds(5).toNanos();
-            while ((uncaught.isEmpty() || uncaught.size() < served.get()) && System.nanoTime() < deadline) {
-                Thread.sleep(10);
-            }
-        } finally {
-            Thread.setDefaultUncaughtExceptionHandler(previousHandler);
+    private List<Throwable> getServerError(String path) throws Exception {
+        try (var _ = LogCapture.of(ChappeServletBridge.class.getName());
+                var transport = LogCapture.of(CHAPPE_TRANSPORT_LOGGER)) {
+            assertEquals(500, get("http://127.0.0.1:" + port + path).statusCode(),
+                    "an Error out of the bridge is answered 500");
+            return transport.thrown();
         }
-        assertFalse(uncaught.isEmpty(), "the Error reached the uncaught exception handler");
-        assertEquals(served.get(), uncaught.size(), uncaught::toString);
-        return List.copyOf(uncaught);
     }
     private void startServer(String pattern, HttpServlet servlet, java.util.EventListener listener) {
         var ctx = new VidocqServletContext("/");
