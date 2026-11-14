@@ -1,5 +1,20 @@
 # BUG.md — foy
 
+## BUG-20261114-01 — Dynamic filter mappings ignore `isMatchAfter`
+
+- Date: 2026-11-14 (found while designing the WebSocket filter, which registers itself with
+  `addMappingForUrlPatterns(…, true, "/*")` and must run after the declared filters).
+- Symptom: `FilterRegistration.addMappingForUrlPatterns` and `addMappingForServletNames` ignore
+  `isMatchAfter`: every dynamic mapping comes after the declared ones, whatever the flag.
+- Repro: a descriptor filter `M`, a dynamic filter `A` (`isMatchAfter=true`) then `B` (`false`), all on
+  `/*`: a request runs `M,A,B`; the API says `B,M,A`. Same by servlet name.
+- Cause: `WebAppDeployer.buildFilterMappings` appended all dynamic mappings after the model's ones;
+  `DynamicFilterRegistration.Mapping.isMatchAfter` was recorded but never read.
+- Status: FIXED on `feat/websocket`. The order is now the dynamic mappings with `isMatchAfter=false` (call
+  order), the model mappings, then the dynamic mappings with `isMatchAfter=true` (call order).
+- Validation: `DynamicFilterOrderTest` (by URL pattern and by servlet name) failed with `M,A,B` before the
+  fix and passes after it.
+
 ## BUG-20261111-01 — In a jlink image, no static resource of a module is served
 
 - Date: 2026-11-11 (reported by Vaadin in mstahv/vaadin-jpms-examples, finding 7: in the jlink image of

@@ -158,7 +158,7 @@ public final class WebAppDeployer {
             registry.fireContextInitialized(ctx);
 
             // Materialise the dynamic registrations (SCI + listener-initialized) before init().
-            var dynamicMappings = new ArrayList<FilterMapping>();
+            var dynamicMappings = new DynamicMappings();
             materializeDynamic(model, ctx, factory, servlets, filters, dynamicMappings);
             List<FilterMapping> filterMappings = buildFilterMappings(model, filters, dynamicMappings);
 
@@ -433,7 +433,7 @@ public final class WebAppDeployer {
      */
     private static void materializeDynamic(WebAppModel model, VidocqServletContext ctx, ComponentFactory factory,
                                            List<ServletUnit> servlets, List<FilterUnit> filters,
-                                           List<FilterMapping> dynamicMappings) {
+                                           DynamicMappings dynamicMappings) {
         var staticServletNames = new HashSet<String>();
         for (ServletDecl d : model.servlets()) staticServletNames.add(d.name());
         for (var e : ctx.dynamicServletRegistrations().entrySet()) {
@@ -498,19 +498,20 @@ public final class WebAppDeployer {
      * when it must be skipped.
      */
     private static FilterUnit dynamicFilter(ComponentFactory factory, String name, DynamicFilterRegistration reg,
-                                            List<FilterMapping> dynamicMappings) {
+                                            DynamicMappings dynamicMappings) {
         Filter instance = instantiate("filter", name, reg.instance(), reg.klass(), reg.getClassName(),
                 Filter.class, factory);
         if (instance == null) return null;
         boolean async = reg.isAsyncSupported();
         for (var mapping : reg.allMappings()) {
             for (String pattern : mapping.urlPatterns()) {
-                dynamicMappings.add(filterMapping(pattern, instance, name, mapping.dispatchers(), async));
+                dynamicMappings.add(mapping.isMatchAfter(),
+                        filterMapping(pattern, instance, name, mapping.dispatchers(), async));
             }
             // Section 6.2.4: servlet-name mappings stay servlet-name mappings (never expanded).
             for (String servletName : mapping.servletNames()) {
-                dynamicMappings.add(FilterMapping.forServletName(servletName, instance, name,
-                        dispatcherTypes(mapping.dispatchers()), async));
+                dynamicMappings.add(mapping.isMatchAfter(), FilterMapping.forServletName(servletName, instance,
+                        name, dispatcherTypes(mapping.dispatchers()), async));
             }
         }
         // Like a declared filter, an unmapped dynamic filter is initialised (and destroyed) but
@@ -547,11 +548,25 @@ public final class WebAppDeployer {
         }
     }
 
-    /** Model mappings in declaration order, then the dynamic ones. */
+    /** Dynamic filter mappings, split by {@code isMatchAfter}, each part in call order. */
+    private record DynamicMappings(List<FilterMapping> before, List<FilterMapping> after) {
+        DynamicMappings() {
+            this(new ArrayList<>(), new ArrayList<>());
+        }
+
+        void add(boolean matchAfter, FilterMapping mapping) {
+            (matchAfter ? after : before).add(mapping);
+        }
+    }
+
+    /**
+     * Dynamic mappings with {@code isMatchAfter=false}, then the model mappings in declaration order, then
+     * the dynamic mappings with {@code isMatchAfter=true} (Servlet 6.1 {@code FilterRegistration}).
+     */
     private static List<FilterMapping> buildFilterMappings(WebAppModel model,
                                                            List<FilterUnit> filters,
-                                                           List<FilterMapping> dynamicMappings) {
-        var result = new ArrayList<FilterMapping>();
+                                                           DynamicMappings dynamicMappings) {
+        var result = new ArrayList<FilterMapping>(dynamicMappings.before());
         for (FilterMappingDecl m : model.filterMappings()) {
             FilterUnit f = filters.stream().filter(u -> u.name().equals(m.filterName())).findFirst().orElseThrow();
             result.add(m.urlPattern() != null
@@ -559,7 +574,7 @@ public final class WebAppDeployer {
                     : FilterMapping.forServletName(m.servletName(), f.instance(), f.name(),
                             dispatcherTypes(m.dispatcherTypes()), f.asyncSupported()));
         }
-        result.addAll(dynamicMappings);
+        result.addAll(dynamicMappings.after());
         return result;
     }
 
