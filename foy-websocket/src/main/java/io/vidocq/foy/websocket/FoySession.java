@@ -53,7 +53,8 @@ import java.util.concurrent.atomic.AtomicReference;
  * <p>Every frame in or out counts as activity for the idle timeout. A message larger than the
  * session's maximum closes it with 1009, unread; a message handler that throws is reported to
  * {@code Endpoint.onError} and the session stays open; an {@code Endpoint.onOpen} that throws is
- * reported, then the session closes with 1011. {@code Endpoint.onClose} runs once, with the reason of
+ * reported, then the session closes with 1011 (an {@code Error} is not reported: the session closes,
+ * then it propagates). {@code Endpoint.onClose} runs once, with the reason of
  * the side that closed first; then the session leaves the open sessions, its timer stops and its
  * queued asynchronous sends fail.
  */
@@ -68,6 +69,8 @@ final class FoySession implements Session, WebSocketListener {
 
     private static final String PROTOCOL_VERSION = "13";
     private static final int MAX_CONTROL_PAYLOAD = 125;
+    private static final CloseReason ON_OPEN_FAILED =
+            new CloseReason(CloseCodes.UNEXPECTED_CONDITION, "onOpen failed");
 
     private final FoyServerContainer container;
     /** This connection's config: the registered one with this connection's own user properties. */
@@ -132,7 +135,10 @@ final class FoySession implements Session, WebSocketListener {
 
     /**
      * Opens the session: the addresses join the user properties, then {@code Endpoint.onOpen} runs.
-     * When it throws, the endpoint hears the failure and the session closes with 1011.
+     * When it throws an exception, the endpoint hears it and the session closes with 1011. When it
+     * throws an {@code Error} (a failed static initializer), the session closes with 1011 and
+     * {@code onClose} runs before the {@code Error} propagates to the transport, which may end the
+     * connection without another event: neither the session, its timer nor its sends outlive it.
      */
     @Override
     public void onOpen(WebSocketPeer opened) {
@@ -150,11 +156,25 @@ final class FoySession implements Session, WebSocketListener {
         if (maxIdleTimeout > 0) {
             timer.idle(maxIdleTimeout);
         }
+        boolean returned = false;
+        try {
+            openEndpoint();
+            returned = true;
+        } finally {
+            if (!returned) {
+                closeQuietly(ON_OPEN_FAILED);
+                onClose(ON_OPEN_FAILED.getCloseCode().getCode(), ON_OPEN_FAILED.getReasonPhrase());
+            }
+        }
+    }
+
+    /** {@code Endpoint.onOpen}; an exception it throws is reported, then the session closes with 1011. */
+    private void openEndpoint() {
         try {
             endpoint.onOpen(this, config);
         } catch (RuntimeException e) {
             endpoint.onError(this, e);
-            closeQuietly(new CloseReason(CloseCodes.UNEXPECTED_CONDITION, "onOpen failed"));
+            closeQuietly(ON_OPEN_FAILED);
         }
     }
 

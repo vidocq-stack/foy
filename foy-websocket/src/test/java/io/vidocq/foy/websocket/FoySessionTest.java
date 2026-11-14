@@ -38,6 +38,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.ExecutionException;
 
 import static java.util.concurrent.TimeUnit.SECONDS;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
@@ -113,6 +114,32 @@ class FoySessionTest {
         assertEquals(CloseCodes.UNEXPECTED_CONDITION.getCode(), peer.closeCode());
         assertEquals(1, endpoint.closes.size());
         assertEquals(CloseCodes.UNEXPECTED_CONDITION, endpoint.closes.getFirst().getCloseCode());
+    }
+
+    /**
+     * An {@code Error} from {@code onOpen} (a failed static initializer) propagates to the transport, but
+     * only once the session closed with 1011: {@code onClose} ran, the session left the open sessions, its
+     * timer stopped and its sends fail.
+     */
+    @Test
+    void anOnOpenThatThrowsAnErrorClosesWith1011BeforeItPropagates() {
+        var container = new FoyServerContainer(OriginPolicy.parse(null), null);
+        container.setDefaultMaxSessionIdleTimeout(60_000);
+        var endpoint = new Recorder(session -> {
+            throw new ExceptionInInitializerError("static initializer failed");
+        });
+        FoySession session = TestSessions.session(container, endpoint);
+
+        assertThrows(ExceptionInInitializerError.class, () -> session.onOpen(peer));
+
+        assertEquals(CloseCodes.UNEXPECTED_CONDITION.getCode(), peer.closeCode());
+        assertEquals(1, endpoint.closes.size());
+        assertEquals(CloseCodes.UNEXPECTED_CONDITION, endpoint.closes.getFirst().getCloseCode());
+        assertEquals(Set.of(), session.getOpenSessions());
+        assertFalse(session.isOpen());
+        var send = session.getAsyncRemote().sendText("after");
+        assertInstanceOf(IOException.class,
+                assertThrows(ExecutionException.class, () -> send.get(WAIT, SECONDS)).getCause());
     }
 
     @Test

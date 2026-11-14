@@ -45,6 +45,7 @@ import java.net.http.WebSocket;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.util.Set;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.CompletionStage;
 import java.util.concurrent.CountDownLatch;
@@ -118,6 +119,15 @@ class SessionEndToEndTest {
         }
     }
 
+    /** Fails in {@code onOpen} with an {@code Error}, as an endpoint whose static initializer failed. */
+    public static final class BrokenEndpoint extends EchoEndpoint {
+        @Override
+        public void onOpen(Session session, EndpointConfig config) {
+            super.onOpen(session, config);
+            throw new ExceptionInInitializerError("static initializer failed");
+        }
+    }
+
     /** Answers a message with {@value #BURST} asynchronous sends, issued without waiting for one another. */
     public static final class BurstEndpoint extends EchoEndpoint {
         @Override
@@ -147,6 +157,23 @@ class SessionEndToEndTest {
         CloseReason reason = CLOSES.poll(WAIT, SECONDS);
         assertNotNull(reason, "Endpoint.onClose did not run");
         assertEquals(CloseCodes.GOING_AWAY, reason.getCloseCode());
+    }
+
+    @Test
+    void anErrorFromOnOpenClosesWith1011AndLeavesNoOpenSession() throws Exception {
+        server = WebSocketTestServer.start(endpoint(BrokenEndpoint.class));
+        var client = new Client();
+        client.connect();
+        Session session = SESSIONS.poll(WAIT, SECONDS);
+        assertNotNull(session, "the endpoint did not open");
+
+        assertTrue(client.closed.await(WAIT, SECONDS), "the client saw no close");
+        assertEquals(CloseCodes.UNEXPECTED_CONDITION.getCode(), client.closeCode);
+        CloseReason reason = CLOSES.poll(WAIT, SECONDS);
+        assertNotNull(reason, "Endpoint.onClose did not run");
+        assertEquals(CloseCodes.UNEXPECTED_CONDITION, reason.getCloseCode());
+        assertEquals(Set.of(), session.getOpenSessions());
+        assertTrue(CLOSES.isEmpty(), "Endpoint.onClose ran more than once");
     }
 
     @Test
