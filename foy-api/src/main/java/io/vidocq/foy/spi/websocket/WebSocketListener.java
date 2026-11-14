@@ -66,8 +66,9 @@ public interface WebSocketListener {
     }
 
     /**
-     * A ping control frame arrived. The transport does not answer it by itself on behalf of the
-     * listener's implementation: the listener decides whether to send a pong.
+     * A ping control frame arrived. The transport answers every ping itself, with a pong carrying
+     * the same application data, before this method runs (RFC 6455 section 5.5.2). This event is
+     * informational: a listener never needs to send a pong in reply.
      *
      * @param data the application data of the frame, valid for this call only
      * @throws Exception any failure; see {@link #onOpen(WebSocketPeer)}

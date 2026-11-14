@@ -59,7 +59,9 @@ public interface WebSocketPeer {
     void sendPing(ByteBuffer data) throws IOException;
 
     /**
-     * Sends a pong control frame.
+     * Sends an unsolicited pong control frame, for instance as a heartbeat (RFC 6455 section
+     * 5.5.3). Pings are answered by the transport itself: do not call this in reply to
+     * {@link WebSocketListener#onPing(ByteBuffer)}.
      *
      * @param data the application data, at most 125 bytes
      * @throws IOException when the frame cannot be written
