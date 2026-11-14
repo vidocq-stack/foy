@@ -177,11 +177,18 @@ final class WebSocketTakeover implements WebSocketHandler {
     }
 
     /**
-     * The undeploy hook: closes the socket with 1001. A close that throws (dead connection, interrupted
-     * thread) is logged; chappe's own teardown then ends the connection and calls {@code onClose}.
+     * The undeploy hook: closes the socket with 1001. Chappe takes its write lock interruptibly, so on
+     * an interrupted thread it would send no Close and arm no close deadline: the interrupt is cleared
+     * for the close and restored afterwards. A close that still throws (dead connection) is logged;
+     * chappe's own teardown then ends the connection and calls {@code onClose}.
      */
     private static void stopping(WebSocket ws) {
-        closeQuietly(ws, GOING_AWAY, STOPPING);
+        boolean interrupted = Thread.interrupted();
+        try {
+            closeQuietly(ws, GOING_AWAY, STOPPING);
+        } finally {
+            if (interrupted) Thread.currentThread().interrupt();
+        }
     }
 
     /** Sends the Close frame of {@code code}; a close that throws is logged, the transport ends the connection. */

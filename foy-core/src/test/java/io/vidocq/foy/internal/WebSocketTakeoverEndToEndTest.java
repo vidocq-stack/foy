@@ -159,6 +159,28 @@ class WebSocketTakeoverEndToEndTest {
         assertEquals(1, probe.destroyCalls.get());
     }
 
+    /**
+     * An undeploy on an interrupted thread still sends the 1001 Close (chappe takes its write lock
+     * interruptibly), and the thread keeps its interrupt.
+     */
+    @Test
+    void anInterruptedUndeployStillClosesWith1001() throws Exception {
+        start(new VidocqServletContext("/"));
+        var closedByServer = new CompletableFuture<Integer>();
+        connect(new TextListener(new CompletableFuture<>(), closedByServer));
+        boolean stillInterrupted;
+        Thread.currentThread().interrupt();
+        try {
+            context.closeUpgradedConnections();
+        } finally {
+            stillInterrupted = Thread.interrupted();
+        }
+        assertTrue(stillInterrupted, "the undeploy thread lost its interrupt");
+        assertEquals(1001, closedByServer.get(5, TimeUnit.SECONDS));
+        assertTrue(probe.destroyed.await(5, TimeUnit.SECONDS));
+        assertEquals(1, probe.destroyCalls.get());
+    }
+
     @Test
     void aPeerCloseCallsOnCloseThenDestroyOnce() throws Exception {
         start(new VidocqServletContext("/"));
