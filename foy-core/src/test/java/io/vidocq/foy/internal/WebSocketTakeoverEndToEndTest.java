@@ -71,6 +71,7 @@ class WebSocketTakeoverEndToEndTest {
         final AtomicInteger destroyCalls = new AtomicInteger();
         final AtomicInteger closeCode = new AtomicInteger(-1);
         volatile boolean failOpen;
+        volatile boolean failOpenWithError;
         volatile boolean failListener;
         final List<ClassLoader> loaders = new CopyOnWriteArrayList<>();
     }
@@ -181,6 +182,24 @@ class WebSocketTakeoverEndToEndTest {
         assertEquals(1011, closedByServer.get(5, TimeUnit.SECONDS));
         assertTrue(probe.destroyed.await(5, TimeUnit.SECONDS));
         assertEquals(List.of("error", "close", "destroy"), probe.events);
+        assertEquals(1011, probe.closeCode.get());
+        assertEquals(1, probe.destroyCalls.get());
+        assertEquals(0, registeredConnections());
+    }
+
+    /**
+     * An {@code Error} from {@code onOpen} ends chappe's connection with neither {@code onError} nor
+     * {@code onClose}: the takeover closes with 1011 and ends itself before the {@code Error} propagates.
+     */
+    @Test
+    void anErrorFromOnOpenEndsWithCloseDestroyAndUnregisters() throws Exception {
+        probe.failOpenWithError = true;
+        start(new VidocqServletContext("/"));
+        var closedByServer = new CompletableFuture<Integer>();
+        connectWithoutOpen(closedByServer);
+        assertEquals(1011, closedByServer.get(5, TimeUnit.SECONDS));
+        assertTrue(probe.destroyed.await(5, TimeUnit.SECONDS));
+        assertEquals(List.of("close", "destroy"), probe.events);
         assertEquals(1011, probe.closeCode.get());
         assertEquals(1, probe.destroyCalls.get());
         assertEquals(0, registeredConnections());
@@ -307,6 +326,7 @@ class WebSocketTakeoverEndToEndTest {
                 @Override
                 public void onOpen(WebSocketPeer p) {
                     if (probe.failOpen) throw new IllegalStateException("onOpen refused");
+                    if (probe.failOpenWithError) throw new ExceptionInInitializerError("static initializer failed");
                     peer.set(p);
                     probe.events.add("open");
                     probe.loaders.add(Thread.currentThread().getContextClassLoader());

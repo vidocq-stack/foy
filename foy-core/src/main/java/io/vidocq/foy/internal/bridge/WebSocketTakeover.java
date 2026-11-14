@@ -45,14 +45,18 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * <p>The transport answers every ping with a pong itself: {@code onPing} is only forwarded. The
  * connection is registered with the context at {@code onOpen} so that an undeploy closes it with
  * 1001; {@code onClose} calls the listener, then unregisters the connection and calls
- * {@link WebSocketUpgradeHandler#destroy()}, exactly once.</p>
+ * {@link WebSocketUpgradeHandler#destroy()}, exactly once. An {@code Error} from the listener's
+ * {@code onOpen}, after which chappe sends no event, closes with 1011 and ends the takeover the same way
+ * before it propagates.</p>
  */
 final class WebSocketTakeover implements WebSocketHandler {
 
     private static final System.Logger LOG = System.getLogger(WebSocketTakeover.class.getName());
 
     private static final int GOING_AWAY = 1001;
+    private static final int INTERNAL_ERROR = 1011;
     private static final String STOPPING = "the application is stopping";
+    private static final String ON_OPEN_FAILED = "onOpen failed";
 
     private final WebSocketUpgradeHandler handler;
     private final VidocqServletContext context;
@@ -90,14 +94,23 @@ final class WebSocketTakeover implements WebSocketHandler {
                 return;
             }
             registered = true;
+            boolean returned = false;
             try {
                 listener = handler.listener();
                 listener.onOpen(new Peer(ws));
+                returned = true;
             } catch (Exception e) {
                 // Chappe reports the failure through onError and closes with 1011, but never calls
                 // onClose: onError finishes the takeover (see there).
                 openFailed = true;
                 throw e;
+            } finally {
+                if (!returned && !openFailed) {
+                    // An Error: chappe lets it end the connection with neither onError nor onClose.
+                    // Close with 1011 and finish here, then the Error propagates.
+                    closeQuietly(ws, INTERNAL_ERROR, ON_OPEN_FAILED);
+                    finish(INTERNAL_ERROR, ON_OPEN_FAILED);
+                }
             }
         }
     }
@@ -137,7 +150,7 @@ final class WebSocketTakeover implements WebSocketHandler {
         } finally {
             // A failed onOpen is followed by no onClose from chappe: the listener hears the 1011 chappe
             // closes with, then the takeover is released, once.
-            if (openFailed) finish(1011, "onOpen failed");
+            if (openFailed) finish(INTERNAL_ERROR, ON_OPEN_FAILED);
         }
     }
 
@@ -168,10 +181,15 @@ final class WebSocketTakeover implements WebSocketHandler {
      * thread) is logged; chappe's own teardown then ends the connection and calls {@code onClose}.
      */
     private static void stopping(WebSocket ws) {
+        closeQuietly(ws, GOING_AWAY, STOPPING);
+    }
+
+    /** Sends the Close frame of {@code code}; a close that throws is logged, the transport ends the connection. */
+    private static void closeQuietly(WebSocket ws, int code, String reason) {
         try {
-            ws.close(GOING_AWAY, STOPPING);
+            ws.close(code, reason);
         } catch (IOException e) {
-            LOG.log(System.Logger.Level.DEBUG, "closing the WebSocket at undeploy failed", e);
+            LOG.log(System.Logger.Level.DEBUG, () -> "closing the WebSocket with " + code + " failed", e);
         }
     }
 
