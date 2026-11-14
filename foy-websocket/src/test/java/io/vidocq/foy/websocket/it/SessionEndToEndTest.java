@@ -159,6 +159,27 @@ class SessionEndToEndTest {
         assertEquals(CloseCodes.GOING_AWAY, reason.getCloseCode());
     }
 
+    /**
+     * The undeploy closed first, so {@code onClose} reports its 1001 even when the server stops before the
+     * peer answers the Close: the transport then sees a cut connection (1006), the endpoint does not
+     * (BUG-20261114-05). The raw client never answers, which makes deterministic what a slow JDK client
+     * does on a loaded machine.
+     */
+    @Test
+    void undeployReports1001WhenTheServerStopsBeforeThePeerAnswers() throws Exception {
+        server = WebSocketTestServer.start(endpoint(EchoEndpoint.class));
+        try (var _ = RawHandshake.connect(server.port(), "/echo")) {
+            assertNotNull(SESSIONS.poll(WAIT, SECONDS), "the endpoint did not open");
+
+            server.close();
+
+            CloseReason reason = CLOSES.poll(WAIT, SECONDS);
+            assertNotNull(reason, "Endpoint.onClose did not run");
+            assertEquals(CloseCodes.GOING_AWAY, reason.getCloseCode());
+            assertTrue(CLOSES.isEmpty(), "Endpoint.onClose ran more than once");
+        }
+    }
+
     @Test
     void anErrorFromOnOpenClosesWith1011AndLeavesNoOpenSession() throws Exception {
         server = WebSocketTestServer.start(endpoint(BrokenEndpoint.class));

@@ -92,8 +92,11 @@ public interface WebSocketListener {
      * The connection is closed. Always the last event, delivered exactly once.
      *
      * @param code   the close code of the peer; {@code 1005} when its close frame carried none,
-     *               {@code 1006} when the TCP connection was cut without a close frame
-     * @param reason the close reason, empty when there is none
+     *               {@code 1006} when the TCP connection was cut without a close frame. When the
+     *               undeploy of the application closed the connection first, {@code 1001}, whatever
+     *               the peer answers and even when the connection is cut before it does
+     * @param reason the close reason, empty when there is none; after an undeploy that closed the
+     *               connection first, the reason of that 1001: {@code "the application is stopping"}
      */
     default void onClose(int code, String reason) {
         // no-op by default

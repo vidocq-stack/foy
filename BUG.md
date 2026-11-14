@@ -1,5 +1,30 @@
 # BUG.md — foy
 
+## BUG-20261114-05 — An undeploy reports 1006 to `Endpoint.onClose` when the server stops before the peer answers
+
+- Date: 2026-11-14 (CI failure of `SessionEndToEndTest.undeployClosesSessionsWith1001` on a Linux runner,
+  `fix/websocket-origin-setting-name`: "expected: <GOING_AWAY> but was: <CLOSED_ABNORMALLY>").
+- Symptom: on undeploy, the client received the 1001 Close, but `Endpoint.onClose` got 1006. Even when it
+  got 1001, the reason was the peer's echo (empty phrase), not the undeploy's: a peer answering with another
+  code made the endpoint report that code. `usage.adoc` and `reference.adoc` promise that an undeploy reports
+  its own reason, even when TCP is cut afterwards.
+- Repro: intermittent in the original test (macOS, 18 cores: 1 run in 15 of the class, 63 undeploys in 1000
+  of a loop of the same scenario, with 18 busy processes and `-Djdk.virtualThreadScheduler.parallelism=1`;
+  1 in 300 without load). Deterministic: `SessionEndToEndTest.undeployReports1001WhenTheServerStopsBeforeThePeerAnswers`
+  and, for the transport hook, `WebSocketTakeoverEndToEndTest.anUndeployReports1001WhenTheServerStopsBeforeThePeerAnswers`
+  (a raw client that never answers, 1006) and `anUndeployReportsItsOwn1001WhateverThePeerAnswers` (a client
+  answering 4000).
+- Cause: the undeploy closes the connection beneath the Jakarta session. `WebSocketTakeover`'s undeploy hook
+  sends the 1001 Close on chappe's socket directly, so `FoySession` never records a local close and passes on
+  the code chappe reports when the connection ends: the peer's answer, or 1006 when `WebSocketTestServer.close()`
+  (undeploy, then `Server.stop()`) closes the socket before the read loop has read the answer
+  (`ClosedByInterruptException` in the read loop). Not test isolation: in 2,300 looped undeploys, `onClose`
+  always ran before `server.close()` returned, once.
+- Status: FIXED on `fix/websocket-origin-setting-name`. The hook marks a connection still open as closed by
+  the undeploy before its Close goes out, and the takeover then reports 1001 and its reason to the listener,
+  whatever chappe reports; a connection the peer or the listener closed first keeps their code. The SPI
+  `WebSocketListener.onClose` documents it.
+
 ## BUG-20261114-04 — The WebSocket origin messages name Foy's init parameter, not the setting the user configured
 
 - Date: 2026-11-14 (found while reviewing the Vidocq runtime wiring of `feat/websocket`).

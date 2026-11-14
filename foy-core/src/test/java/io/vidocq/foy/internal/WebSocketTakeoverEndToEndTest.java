@@ -181,6 +181,45 @@ class WebSocketTakeoverEndToEndTest {
         assertEquals(1, probe.destroyCalls.get());
     }
 
+    /**
+     * The side that closed first gives the code: the listener hears the undeploy's own 1001, not the code
+     * the peer answers its Close with (BUG-20261114-05).
+     */
+    @Test
+    void anUndeployReportsItsOwn1001WhateverThePeerAnswers() throws Exception {
+        start(new VidocqServletContext("/"));
+        var closedByServer = new CompletableFuture<Integer>();
+        connect(new WebSocket.Listener() {
+            @Override
+            public java.util.concurrent.CompletionStage<?> onClose(WebSocket ws, int code, String reason) {
+                closedByServer.complete(code);
+                return ws.sendClose(4000, "another code");
+            }
+        });
+        context.closeUpgradedConnections();
+        assertEquals(1001, closedByServer.get(5, TimeUnit.SECONDS));
+        assertTrue(probe.destroyed.await(5, TimeUnit.SECONDS));
+        assertEquals(1001, probe.closeCode.get());
+        assertEquals(List.of("open", "close", "destroy"), probe.events);
+    }
+
+    /**
+     * The server stops before the peer answers the undeploy's Close: chappe sees a cut connection (1006),
+     * the listener still hears the 1001 its side closed with (BUG-20261114-05).
+     */
+    @Test
+    void anUndeployReports1001WhenTheServerStopsBeforeThePeerAnswers() throws Exception {
+        start(new VidocqServletContext("/"));
+        try (var client = new RawClient(port)) {
+            client.send(handshake("/ws"));
+            assertTrue(probe.opened.await(5, TimeUnit.SECONDS), "onOpen");
+            context.closeUpgradedConnections();
+            server.stop();
+            assertTrue(probe.closed.await(5, TimeUnit.SECONDS));
+            assertEquals(1001, probe.closeCode.get());
+        }
+    }
+
     @Test
     void aPeerCloseCallsOnCloseThenDestroyOnce() throws Exception {
         start(new VidocqServletContext("/"));
