@@ -59,6 +59,7 @@ final class WebSocketTakeover implements WebSocketHandler {
     private final ClassLoader applicationLoader;
     private final AtomicBoolean closed = new AtomicBoolean();
     private volatile boolean registered;
+    private volatile boolean openFailed;
     private volatile WebSocketListener listener;
     private volatile AutoCloseable undeployHook;
 
@@ -89,8 +90,15 @@ final class WebSocketTakeover implements WebSocketHandler {
                 return;
             }
             registered = true;
-            listener = handler.listener();
-            listener.onOpen(new Peer(ws));
+            try {
+                listener = handler.listener();
+                listener.onOpen(new Peer(ws));
+            } catch (Exception e) {
+                // Chappe reports the failure through onError and closes with 1011, but never calls
+                // onClose: onError finishes the takeover (see there).
+                openFailed = true;
+                throw e;
+            }
         }
     }
 
@@ -126,12 +134,25 @@ final class WebSocketTakeover implements WebSocketHandler {
     public void onError(WebSocket ws, Throwable error) {
         try (var _ = ContextLoaderScope.enter(applicationLoader)) {
             if (listener != null) listener.onError(error);
+        } finally {
+            // A failed onOpen is followed by no onClose from chappe: the listener hears the 1011 chappe
+            // closes with, then the takeover is released, once.
+            if (openFailed) finish(1011, "onOpen failed");
         }
     }
 
     @Override
     public void onClose(WebSocket ws, int code, String reason) {
-        if (!closed.compareAndSet(false, true) || !registered) return;
+        finish(code, reason);
+    }
+
+    /**
+     * The end of the takeover, once (also when {@code onOpen} failed): {@code listener.onClose}, then the
+     * connection is unregistered and {@code destroy()} runs. A refused registration (undeployed
+     * meanwhile) never started the handler: no {@code onClose}, no {@code destroy()}.
+     */
+    private void finish(int code, String reason) {
+        if (!registered || !closed.compareAndSet(false, true)) return;
         try (var _ = ContextLoaderScope.enter(applicationLoader)) {
             try {
                 if (listener != null) listener.onClose(code, reason);

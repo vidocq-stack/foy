@@ -70,6 +70,8 @@ class WebSocketTakeoverEndToEndTest {
         final CountDownLatch destroyed = new CountDownLatch(1);
         final AtomicInteger destroyCalls = new AtomicInteger();
         final AtomicInteger closeCode = new AtomicInteger(-1);
+        volatile boolean failOpen;
+        volatile boolean failListener;
         final List<ClassLoader> loaders = new CopyOnWriteArrayList<>();
     }
 
@@ -170,7 +172,64 @@ class WebSocketTakeoverEndToEndTest {
         assertEquals(1, probe.destroyCalls.get());
     }
 
+    @Test
+    void aFailingOnOpenEndsWithErrorCloseDestroyAndUnregisters() throws Exception {
+        probe.failOpen = true;
+        start(new VidocqServletContext("/"));
+        var closedByServer = new CompletableFuture<Integer>();
+        connectWithoutOpen(closedByServer);
+        assertEquals(1011, closedByServer.get(5, TimeUnit.SECONDS));
+        assertTrue(probe.destroyed.await(5, TimeUnit.SECONDS));
+        assertEquals(List.of("error", "close", "destroy"), probe.events);
+        assertEquals(1011, probe.closeCode.get());
+        assertEquals(1, probe.destroyCalls.get());
+        assertEquals(0, registeredConnections());
+    }
+
+    @Test
+    void aFailingListenerFactoryEndsWithDestroyAndUnregisters() throws Exception {
+        probe.failListener = true;
+        start(new VidocqServletContext("/"));
+        var closedByServer = new CompletableFuture<Integer>();
+        connectWithoutOpen(closedByServer);
+        assertEquals(1011, closedByServer.get(5, TimeUnit.SECONDS));
+        assertTrue(probe.destroyed.await(5, TimeUnit.SECONDS));
+        assertEquals(List.of("destroy"), probe.events, "no listener: nobody hears the error or the close");
+        assertEquals(1, probe.destroyCalls.get());
+        assertEquals(0, registeredConnections());
+    }
+
+    /**
+     * A registration refused after undeploy: the client gets 1001, the handler never started, so its
+     * listener hears nothing and {@code destroy()} is not called (like {@code WebConnectionImpl}).
+     */
+    @Test
+    void aRegistrationRefusedAfterUndeployClosesWith1001WithoutDestroy() throws Exception {
+        start(new VidocqServletContext("/"));
+        context.closeUpgradedConnections();
+        var closedByServer = new CompletableFuture<Integer>();
+        connectWithoutOpen(closedByServer);
+        assertEquals(1001, closedByServer.get(5, TimeUnit.SECONDS));
+        assertEquals(0, probe.destroyCalls.get());
+        assertEquals(List.of(), probe.events);
+        assertEquals(0, registeredConnections());
+    }
+
     // ---- helpers ----
+
+    private void connectWithoutOpen(CompletableFuture<Integer> closedByServer) throws Exception {
+        HttpClient.newHttpClient().newWebSocketBuilder()
+                .buildAsync(URI.create("ws://127.0.0.1:" + port + "/ws"),
+                        new TextListener(new CompletableFuture<>(), closedByServer))
+                .get(5, TimeUnit.SECONDS);
+    }
+
+    /** The upgraded connections the context still tracks. */
+    private int registeredConnections() throws ReflectiveOperationException {
+        var field = VidocqServletContext.class.getDeclaredField("upgradedConnections");
+        field.setAccessible(true);
+        return ((java.util.Collection<?>) field.get(context)).size();
+    }
 
     private WebSocket connect(WebSocket.Listener listener) throws Exception {
         WebSocket ws = HttpClient.newHttpClient().newWebSocketBuilder()
@@ -243,9 +302,11 @@ class WebSocketTakeoverEndToEndTest {
 
         @Override
         public WebSocketListener listener() {
+            if (probe.failListener) throw new IllegalStateException("no listener");
             return new WebSocketListener() {
                 @Override
                 public void onOpen(WebSocketPeer p) {
+                    if (probe.failOpen) throw new IllegalStateException("onOpen refused");
                     peer.set(p);
                     probe.events.add("open");
                     probe.loaders.add(Thread.currentThread().getContextClassLoader());
@@ -257,6 +318,11 @@ class WebSocketTakeoverEndToEndTest {
                     probe.events.add("text:" + text);
                     probe.loaders.add(Thread.currentThread().getContextClassLoader());
                     peer.get().sendText(text);
+                }
+
+                @Override
+                public void onError(Throwable error) {
+                    probe.events.add("error");
                 }
 
                 @Override
