@@ -86,7 +86,7 @@ class OriginPolicyTest {
 
     @ParameterizedTest
     @ValueSource(strings = {"ftp://x", "https://x/p", "x.example", "https://u@x"})
-    void aMalformedEntryNamesItAndTheParameter(String entry) {
+    void aMalformedEntryNamesItAndTheDefaultSetting(String entry) {
         var list = "http://localhost:5173, " + entry;
 
         var e = assertThrows(IllegalArgumentException.class, () -> OriginPolicy.parse(list));
@@ -101,6 +101,15 @@ class OriginPolicyTest {
                 () -> OriginPolicy.parse("ftp://x", "vidocq.websocket.allowed-origins"));
 
         assertTrue(e.getMessage().endsWith("(in vidocq.websocket.allowed-origins)"), e.getMessage());
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"app.ws\norigins", "app.ws\torigins", "app.ws\rorigins", "app.ws\u007Forigins"})
+    void aSettingNameWithAControlCharacterIsRefused(String name) {
+        var e = assertThrows(IllegalArgumentException.class, () -> OriginPolicy.parse("http://a", name));
+
+        assertTrue(e.getMessage().contains(OriginPolicy.SETTING_NAME_PARAMETER), e.getMessage());
+        assertFalse(e.getMessage().contains(name), e.getMessage());
     }
 
     @ParameterizedTest

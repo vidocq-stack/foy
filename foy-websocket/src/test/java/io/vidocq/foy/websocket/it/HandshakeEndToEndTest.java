@@ -416,7 +416,7 @@ class HandshakeEndToEndTest {
 
             assertTrue(head.startsWith("HTTP/1.1 403 "), head);
             assertTrue(warnings.messages().stream()
-                    .anyMatch(m -> m.contains("http://evil.example") && m.contains("app.ws.origins")
+                    .anyMatch(m -> m.contains("http://evil.example") && m.contains("listed in app.ws.origins ")
                             && !m.contains(ALLOWED_ORIGINS)),
                     warnings.messages()::toString);
         }
@@ -431,6 +431,15 @@ class HandshakeEndToEndTest {
 
         assertTrue(messages(failure).contains("(in app.ws.origins)"), messages(failure));
         assertFalse(messages(failure).contains(ALLOWED_ORIGINS), messages(failure));
+    }
+
+    @Test
+    void aSettingNameWithAControlCharacterStopsTheDeployment() {
+        var builder = WebSocketTestServer.builder(endpoints()).initParameter(SETTING_NAME, "app.ws\norigins");
+
+        var failure = assertThrows(ServletException.class, builder::start);
+
+        assertTrue(messages(failure).contains(SETTING_NAME), messages(failure));
     }
 
     @Test

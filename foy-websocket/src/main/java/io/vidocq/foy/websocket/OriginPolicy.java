@@ -87,9 +87,14 @@ final class OriginPolicy {
      * when a runtime fills the init parameter from its own configuration.
      *
      * @param settingName the setting to name, stripped; {@code null} or blank gives {@link #INIT_PARAMETER}
+     * @throws IllegalArgumentException if the setting name has a control character, or an entry is invalid
      */
     static OriginPolicy parse(String initParameter, String settingName) {
         String name = settingName == null || settingName.isBlank() ? INIT_PARAMETER : settingName.strip();
+        if (name.chars().anyMatch(Character::isISOControl)) {
+            throw new IllegalArgumentException("Invalid value of the init parameter " + SETTING_NAME_PARAMETER
+                    + ": a setting name has no control character");
+        }
         if (initParameter == null || initParameter.isBlank()) {
             return new OriginPolicy(false, List.of(), name);
         }

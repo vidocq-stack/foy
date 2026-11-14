@@ -1,8 +1,8 @@
 # Jakarta WebSocket 2.2 in Foy — design
 
-Status: lot 1 delivered on 2026-11-14 in Vidocq/chappe#83, Vidocq/foy#100 and Vidocq/vidocq#567,
-accepted with Vaadin `@Push(transport = WEBSOCKET_XHR)` (10 min idle, pushes received, foreign origin
-refused with 403) (design approved 2026-11-14). Tracking issue:
+Status: lot 1 delivered on 2026-11-14 in Vidocq/chappe#83, Vidocq/foy#100 and Vidocq/vidocq#567.
+It was accepted with Vaadin `@Push(transport = WEBSOCKET_XHR)`: 10 minutes idle, pushes received, a foreign
+origin refused with 403. The design was approved on 2026-11-14. Tracking issue:
 [Vidocq/vidocq#65](https://codefloe.com/Vidocq/vidocq/issues/65). Web Profile plan:
 `vidocq/WEB-PROFILE.md` (WebSocket 2.2, target 1.1.0).
 

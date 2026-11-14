@@ -207,7 +207,7 @@ final class FoyServerContainer implements ServerContainer {
                         + "allowed. Foy allows the server origin and the origins listed in {2} "
                         + "(comma-separated, or * for any)",
                 OriginPolicy.printable(request.getRequestURI()),
-                origin == null ? "(none)" : OriginPolicy.printable(origin), OriginPolicy.printable(settingName));
+                origin == null ? "(none)" : OriginPolicy.printable(origin), settingName);
         response.setStatus(FORBIDDEN);
     }
 
