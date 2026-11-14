@@ -142,6 +142,25 @@ class FoySessionTest {
                 assertThrows(ExecutionException.class, () -> send.get(WAIT, SECONDS)).getCause());
     }
 
+    /**
+     * Once an {@code Error} from {@code onOpen} closed the session, a transport error that comes later
+     * (a transport that reports the failed {@code onOpen}) never reaches the endpoint: {@code onError}
+     * precedes {@code onClose}, never follows it.
+     */
+    @Test
+    void noOnErrorAfterTheSessionClosedOnAnErrorFromOnOpen() {
+        var endpoint = new Recorder(session -> {
+            throw new ExceptionInInitializerError("static initializer failed");
+        });
+        FoySession session = TestSessions.session(endpoint);
+        assertThrows(ExceptionInInitializerError.class, () -> session.onOpen(peer));
+
+        session.onError(new IOException("reported by the transport after the close"));
+
+        assertEquals(1, endpoint.closes.size());
+        assertEquals(List.of(), endpoint.errors);
+    }
+
     @Test
     void aLocalCloseReportsTheLocalReason() throws IOException {
         var endpoint = new Recorder();

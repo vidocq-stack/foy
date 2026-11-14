@@ -56,7 +56,7 @@ import java.util.concurrent.atomic.AtomicReference;
  * reported, then the session closes with 1011 (an {@code Error} is not reported: the session closes,
  * then it propagates). {@code Endpoint.onClose} runs once, with the reason of
  * the side that closed first; then the session leaves the open sessions, its timer stops and its
- * queued asynchronous sends fail.
+ * queued asynchronous sends fail. No {@code Endpoint.onError} follows it.
  */
 final class FoySession implements Session, WebSocketListener {
 
@@ -212,8 +212,18 @@ final class FoySession implements Session, WebSocketListener {
         deliver(() -> handlers.pong(data));
     }
 
+    /**
+     * Runs {@code Endpoint.onError}, unless {@code Endpoint.onClose} already ran: {@code onError} precedes
+     * {@code onClose}, never follows it (WEBSOCKET.md section 5.4), so a transport that reports an error
+     * after the session closed, an {@code Error} from {@code onOpen} for one, only has it logged.
+     */
     @Override
     public void onError(Throwable error) {
+        if (closed.get()) {
+            LOG.log(System.Logger.Level.DEBUG, () -> "The WebSocket session " + id
+                    + " is closed: its endpoint does not hear this error", error);
+            return;
+        }
         endpoint.onError(this, error);
     }
 
