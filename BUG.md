@@ -1,5 +1,33 @@
 # BUG.md — foy
 
+## BUG-20261114-08 — An undeploy runs a WebSocket's `onClose` and `destroy()` after `contextDestroyed`
+
+- Date: 2026-11-14 (found while fixing BUG-20261114-05: `Deployment` closes upgraded connections first so
+  that their handlers end "while the application is intact", which did not hold for WebSockets).
+- Symptom: on undeploy, `Endpoint.onClose` and the upgrade handler's `destroy()` ran after the application's
+  `ServletContextListener.contextDestroyed`. An `onClose` that uses what the application releases there (a
+  context attribute, a resource, in lot 2 a CDI bean of a context Vauban ends there) ran against a stopped
+  application.
+- Repro: deterministic with a peer that never answers: `SessionEndToEndTest.undeployRunsOnCloseBeforeContextDestroyed`
+  (`[contextDestroyed, onClose]`), and at the transport hook `WebSocketTakeoverEndToEndTest.anUndeployEndsTheTakeoverBeforeItReturns`
+  and `anUndeployWaitsForAClosingHandshakeUnderWay`: failed in 15 runs of 15 under load. With the JDK
+  client, which answers at once, `onClose` still ran after `contextDestroyed` in 988 undeploys of 1,000
+  (macOS, 18 cores, 18 busy processes, `-Djdk.virtualThreadScheduler.parallelism=1`).
+- Cause: the undeploy hook of `WebSocketTakeover` only sent the 1001 Close and returned. The takeover ended
+  (the listener's `onClose`, then `destroy()`) on chappe's connection thread when the closing handshake
+  ended: the peer's answer, chappe's close deadline (the read timeout, 30 s by default) or `Server.stop()`
+  cutting it. The undeploy meanwhile went on to the filters, the servlets, the sessions and
+  `contextDestroyed`. Neither Servlet 6.1 nor Jakarta WebSocket 2.2 orders the two; Jakarta WebSocket 2.2
+  section 2.1.5 only asks a local close to send its Close frame before `onClose`, so `onClose` need not
+  wait for the peer.
+- Status: FIXED on `fix/websocket-shutdown-order`. The undeploy hook sends the Close, then ends the takeover
+  on the undeploy's thread (`onClose(1001)`, then `destroy()`) under a lock that every event of the
+  transport takes too: the end waits for the event in progress (section 5.1: never two threads at once),
+  and no event follows it. A connection whose closing handshake had already begun keeps the code of the
+  side that closed first; the undeploy waits for its end. Both waits stop after 2 s, with a WARNING: the
+  takeover then ends on chappe's thread as before. After the fix, under the same load: 0 failing runs in
+  15, and `onClose(1001)` before `contextDestroyed` in 1,000 undeploys of 1,000.
+
 ## BUG-20261114-07 — A server stop right after an undeploy reports a spurious `onError` before `onClose(1001)`
 
 - Date: 2026-11-14 (found while fixing BUG-20261114-05: 47 undeploys in 1,000 under load).

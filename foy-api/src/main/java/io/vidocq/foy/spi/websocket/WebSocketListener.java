@@ -29,6 +29,10 @@ import java.nio.ByteBuffer;
  * given connection, on a virtual thread whose thread context class loader is the application
  * class loader. A listener therefore needs no synchronization between its callbacks. A
  * callback may block (for instance on {@link WebSocketPeer} sends); the next event waits.
+ * One exception to the thread: when the undeploy of the application closes an open connection,
+ * {@link #onClose(int, String)} runs on the undeploy's thread, still with the application class
+ * loader and still one event at a time (after the callback in progress returned), so that it runs
+ * before the application's {@code ServletContextListener.contextDestroyed}.
  *
  * <p>Every method is a no-op by default. A buffer passed to a callback is only valid for the
  * duration of that call: copy it to keep it.

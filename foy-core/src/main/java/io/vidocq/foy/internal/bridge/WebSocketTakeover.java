@@ -34,8 +34,12 @@ import io.vidocq.foy.spi.websocket.WebSocketUpgradeHandler;
 import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.nio.ByteBuffer;
+import java.time.Duration;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.locks.ReentrantLock;
 
 /**
  * The takeover of an upgraded request by a {@link WebSocketUpgradeHandler}: chappe speaks RFC 6455
@@ -46,16 +50,31 @@ import java.util.concurrent.atomic.AtomicReference;
  * <p>The transport answers every ping with a pong itself: {@code onPing} is only forwarded. The
  * connection is registered with the context at {@code onOpen} so that an undeploy closes it with
  * 1001; {@code onClose} calls the listener, then unregisters the connection and calls
- * {@link WebSocketUpgradeHandler#destroy()}, exactly once. When the undeploy closed an open
- * connection, the listener hears that 1001, not the code the peer answers with nor the 1006 of a
- * connection the server's stop cut before the answer came, and no I/O failure of that closing
- * handshake reaches its {@code onError}. An {@code Error} from the listener's
- * {@code onOpen}, after which chappe sends no event, closes with 1011 and ends the takeover the same way
- * before it propagates.</p>
+ * {@link WebSocketUpgradeHandler#destroy()}, exactly once, and no event follows it. An {@code Error}
+ * from the listener's {@code onOpen}, after which chappe sends no event, closes with 1011 and ends the
+ * takeover the same way before it propagates.</p>
+ *
+ * <p>An undeploy ends the takeover before it goes on, so {@code onClose} and {@code destroy()} run
+ * while the application is intact, before its {@code contextDestroyed} (BUG-20261114-08). A
+ * connection still open is closed with 1001 and ended on the undeploy's thread as soon as its Close
+ * is sent, without waiting for the peer's answer: the listener hears that 1001, not the code the peer
+ * answers with nor the 1006 of a connection the server's stop cut, and no I/O failure of that closing
+ * handshake reaches its {@code onError}. That end waits for the event in progress, so the listener
+ * never runs on two threads at once. A connection whose closing handshake had already begun keeps the
+ * code of the side that closed first: the undeploy waits for its end. Neither wait lasts longer than
+ * {@link #UNDEPLOY_GRACE}; past it, the takeover ends on the transport's thread.</p>
  */
 final class WebSocketTakeover implements WebSocketHandler {
 
     private static final System.Logger LOG = System.getLogger(WebSocketTakeover.class.getName());
+
+    /**
+     * How long an undeploy waits for a takeover: for the event in progress before it ends the takeover,
+     * or for the end of a closing handshake already under way. Bounded, as a servlet's {@code destroy()}
+     * waits for the requests in progress up to a server-defined limit (Servlet 6.1 section 2.3.4), so
+     * that a callback that never returns or a peer that never answers cannot hold the undeploy.
+     */
+    static final Duration UNDEPLOY_GRACE = Duration.ofSeconds(2);
 
     private static final int GOING_AWAY = 1001;
     private static final int INTERNAL_ERROR = 1011;
@@ -72,6 +91,10 @@ final class WebSocketTakeover implements WebSocketHandler {
     private volatile boolean closedByUndeploy;
     private final AtomicReference<WebSocketListener> listener = new AtomicReference<>();
     private final AtomicReference<AutoCloseable> undeployHook = new AtomicReference<>();
+    /** Held while the listener runs: the transport's events and the undeploy's end never overlap. */
+    private final ReentrantLock events = new ReentrantLock();
+    /** Opens once the takeover ended: {@code onClose} ran and {@code destroy()} returned. */
+    private final CountDownLatch ended = new CountDownLatch(1);
 
     WebSocketTakeover(WebSocketUpgradeHandler handler, VidocqServletContext context, ClassLoader applicationLoader) {
         this.handler = handler;
@@ -90,67 +113,80 @@ final class WebSocketTakeover implements WebSocketHandler {
     }
 
     @Override
-    public void onOpen(WebSocket ws, Request handshake) throws Exception {
+    public void onOpen(WebSocket ws, Request handshake) throws IOException {
+        events.lock();
         try (var _ = ContextLoaderScope.enter(applicationLoader)) {
-            AutoCloseable hook = () -> stopping(ws);
-            undeployHook.set(hook);
-            if (context != null && !context.registerUpgradedConnection(hook)) {
-                // Undeployed meanwhile: the handler never starts, so it is not destroyed either.
-                stopping(ws);
-                return;
+            open(ws);
+        } finally {
+            events.unlock();
+        }
+    }
+
+    /**
+     * Registers the connection with the context, then opens the listener. Runs under {@link #events}: an
+     * undeploy meanwhile ends the takeover only once {@code onOpen} returned.
+     */
+    private void open(WebSocket ws) throws IOException {
+        AutoCloseable hook = () -> undeploy(ws);
+        undeployHook.set(hook);
+        if (context != null && !context.registerUpgradedConnection(hook)) {
+            // Undeployed meanwhile: the handler never starts, so it is not destroyed either.
+            closeGoingAway(ws);
+            return;
+        }
+        registered = true;
+        boolean returned = false;
+        try {
+            var opened = handler.listener();
+            listener.set(opened);
+            opened.onOpen(new Peer(ws));
+            returned = true;
+        } catch (Exception e) {
+            // Chappe reports the failure through onError and closes with 1011, but never calls
+            // onClose: onError finishes the takeover (see there).
+            openFailed = true;
+            throw e;
+        } finally {
+            if (!returned && !openFailed) {
+                // An Error: chappe lets it end the connection with neither onError nor onClose.
+                // Close with 1011 and finish here, then the Error propagates.
+                closeQuietly(ws, INTERNAL_ERROR, ON_OPEN_FAILED);
+                finish(INTERNAL_ERROR, ON_OPEN_FAILED);
             }
-            registered = true;
-            boolean returned = false;
-            try {
-                var opened = handler.listener();
-                listener.set(opened);
-                opened.onOpen(new Peer(ws));
-                returned = true;
-            } catch (Exception e) {
-                // Chappe reports the failure through onError and closes with 1011, but never calls
-                // onClose: onError finishes the takeover (see there).
-                openFailed = true;
-                throw e;
-            } finally {
-                if (!returned && !openFailed) {
-                    // An Error: chappe lets it end the connection with neither onError nor onClose.
-                    // Close with 1011 and finish here, then the Error propagates.
-                    closeQuietly(ws, INTERNAL_ERROR, ON_OPEN_FAILED);
-                    finish(INTERNAL_ERROR, ON_OPEN_FAILED);
-                }
-            }
         }
     }
 
     @Override
-    public void onText(WebSocket ws, String message) throws Exception {
-        try (var _ = ContextLoaderScope.enter(applicationLoader)) {
-            var current = listener.get();
-            if (current != null) current.onText(message);
-        }
+    public void onText(WebSocket ws, String message) throws IOException {
+        deliver(current -> current.onText(message));
     }
 
     @Override
-    public void onBinary(WebSocket ws, ByteBuffer data) throws Exception {
-        try (var _ = ContextLoaderScope.enter(applicationLoader)) {
-            var current = listener.get();
-            if (current != null) current.onBinary(data);
-        }
+    public void onBinary(WebSocket ws, ByteBuffer data) throws IOException {
+        deliver(current -> current.onBinary(data));
     }
 
     @Override
-    public void onPing(WebSocket ws, ByteBuffer payload) throws Exception {
-        try (var _ = ContextLoaderScope.enter(applicationLoader)) {
-            var current = listener.get();
-            if (current != null) current.onPing(payload);
-        }
+    public void onPing(WebSocket ws, ByteBuffer payload) throws IOException {
+        deliver(current -> current.onPing(payload));
     }
 
     @Override
-    public void onPong(WebSocket ws, ByteBuffer payload) throws Exception {
+    public void onPong(WebSocket ws, ByteBuffer payload) throws IOException {
+        deliver(current -> current.onPong(payload));
+    }
+
+    /**
+     * Hands one event of the transport to the listener, under {@link #events} and with the application
+     * class loader; none once the takeover ended, which an undeploy can do before the transport does.
+     */
+    private void deliver(Event event) throws IOException {
+        events.lock();
         try (var _ = ContextLoaderScope.enter(applicationLoader)) {
             var current = listener.get();
-            if (current != null) current.onPong(payload);
+            if (current != null && !closed.get()) event.deliverTo(current);
+        } finally {
+            events.unlock();
         }
     }
 
@@ -162,31 +198,46 @@ final class WebSocketTakeover implements WebSocketHandler {
      */
     @Override
     public void onError(WebSocket ws, Throwable error) {
-        try (var _ = ContextLoaderScope.enter(applicationLoader)) {
-            var current = listener.get();
-            if (closedByUndeploy && error instanceof IOException) {
-                LOG.log(System.Logger.Level.DEBUG,
-                        "an I/O failure after the undeploy closed the WebSocket is not reported", error);
-            } else if (current != null) {
-                current.onError(error);
+        events.lock();
+        try {
+            try (var _ = ContextLoaderScope.enter(applicationLoader)) {
+                report(error);
+            } finally {
+                // A failed onOpen is followed by no onClose from chappe: the listener hears the 1011 chappe
+                // closes with, then the takeover is released, once.
+                if (openFailed) finish(INTERNAL_ERROR, ON_OPEN_FAILED);
             }
         } finally {
-            // A failed onOpen is followed by no onClose from chappe: the listener hears the 1011 chappe
-            // closes with, then the takeover is released, once.
-            if (openFailed) finish(INTERNAL_ERROR, ON_OPEN_FAILED);
+            events.unlock();
+        }
+    }
+
+    private void report(Throwable error) {
+        var current = listener.get();
+        if (closedByUndeploy && error instanceof IOException) {
+            LOG.log(System.Logger.Level.DEBUG,
+                    "an I/O failure after the undeploy closed the WebSocket is not reported", error);
+        } else if (current != null && !closed.get()) {
+            current.onError(error);
         }
     }
 
     /**
      * Ends the takeover with the code of the side that closed first: chappe reports the peer's code, or
-     * 1006 for a cut connection, so an undeploy that closed first reports its own 1001 instead.
+     * 1006 for a cut connection, so an undeploy that closed first reports its own 1001 instead. A no-op
+     * when the undeploy already ended it.
      */
     @Override
     public void onClose(WebSocket ws, int code, String reason) {
-        if (closedByUndeploy) {
-            finish(GOING_AWAY, STOPPING);
-        } else {
-            finish(code, reason);
+        events.lock();
+        try {
+            if (closedByUndeploy) {
+                finish(GOING_AWAY, STOPPING);
+            } else {
+                finish(code, reason);
+            }
+        } finally {
+            events.unlock();
         }
     }
 
@@ -205,23 +256,49 @@ final class WebSocketTakeover implements WebSocketHandler {
                 if (context != null) context.unregisterUpgradedConnection(undeployHook.get());
                 handler.destroy();
             }
+        } finally {
+            ended.countDown();
         }
     }
 
     /**
-     * The undeploy hook: closes the socket with 1001. Chappe takes its write lock interruptibly, so on
-     * an interrupted thread it would send no Close and arm no close deadline: the interrupt is cleared
-     * for the close and restored afterwards. A close that still throws (dead connection) is logged;
-     * chappe's own teardown then ends the connection and calls {@code onClose}. A connection still open
-     * is marked closed by the undeploy before its Close goes out, so the peer's answer cannot reach
-     * {@link #onClose} first; a connection the peer or the listener already closed keeps their code.
+     * The undeploy hook: ends the takeover before the undeploy goes on. A connection still open is
+     * closed with 1001 and ended at once ({@link #endNow}); one whose closing handshake already began is
+     * waited for ({@link #awaitEnd}). The interrupt of the undeploy's thread is cleared for the hook and
+     * restored afterwards (see {@link #closeGoingAway}); one that arrives during a wait ends the wait.
      */
-    private void stopping(WebSocket ws) {
+    private void undeploy(WebSocket ws) {
+        boolean interrupted = Thread.interrupted();
+        try {
+            if (closeGoingAway(ws)) {
+                endNow();
+            } else {
+                awaitEnd();
+            }
+        } catch (InterruptedException _) {
+            Thread.currentThread().interrupt();
+        } finally {
+            if (interrupted) Thread.currentThread().interrupt();
+        }
+    }
+
+    /**
+     * Sends the 1001 Close. Chappe takes its write lock interruptibly, so on an interrupted thread it
+     * would send no Close and arm no close deadline: the interrupt is cleared for the close and restored
+     * afterwards. A close that still throws (dead connection) is logged; chappe's own teardown then ends
+     * the connection. A connection still open is marked closed by the undeploy before its Close goes
+     * out, so the peer's answer cannot reach {@link #onClose} first; a connection the peer or the
+     * listener already closed keeps their code.
+     *
+     * @return whether the connection was still open: the undeploy closed it first
+     */
+    private boolean closeGoingAway(WebSocket ws) {
         // A window remains for a simultaneous close: a peer Close chappe has read but not yet marked
         // (closeReceived), or an EOF chappe has hit before notifyClose, still finds the socket open, so
         // the connection is reported as 1001 although no 1001 frame went out. Closing it needs chappe
         // to tell whether close() actually sent the frame.
-        if (ws.isOpen()) {
+        boolean open = ws.isOpen();
+        if (open) {
             closedByUndeploy = true;
         }
         boolean interrupted = Thread.interrupted();
@@ -229,6 +306,40 @@ final class WebSocketTakeover implements WebSocketHandler {
             closeQuietly(ws, GOING_AWAY, STOPPING);
         } finally {
             if (interrupted) Thread.currentThread().interrupt();
+        }
+        return open;
+    }
+
+    /**
+     * Ends the takeover on the undeploy's thread with its 1001, once the event in progress returned, and
+     * without waiting for the peer to answer: Jakarta WebSocket 2.2 section 2.1.5 only asks that the
+     * Close be sent before {@code onClose}, and section 5.1 that the listener never runs on two threads
+     * at once. An event still running after {@link #UNDEPLOY_GRACE} leaves the end to the transport's
+     * thread, once it returned.
+     */
+    private void endNow() throws InterruptedException {
+        if (!events.tryLock(UNDEPLOY_GRACE.toMillis(), TimeUnit.MILLISECONDS)) {
+            LOG.log(System.Logger.Level.WARNING, "a WebSocket event still ran {0} ms after the undeploy closed"
+                    + " its connection: onClose and destroy() run once it returns, after the application stopped",
+                    UNDEPLOY_GRACE.toMillis());
+            return;
+        }
+        try {
+            finish(GOING_AWAY, STOPPING);
+        } finally {
+            events.unlock();
+        }
+    }
+
+    /**
+     * Waits for the end of a closing handshake already under way (the listener or the peer closed first)
+     * at most {@link #UNDEPLOY_GRACE}: the transport ends it with the code of the side that closed first.
+     */
+    private void awaitEnd() throws InterruptedException {
+        if (!ended.await(UNDEPLOY_GRACE.toMillis(), TimeUnit.MILLISECONDS)) {
+            LOG.log(System.Logger.Level.WARNING, "a WebSocket closing handshake was still under way {0} ms into"
+                    + " the undeploy: onClose and destroy() run when it ends, after the application stopped",
+                    UNDEPLOY_GRACE.toMillis());
         }
     }
 
@@ -239,6 +350,12 @@ final class WebSocketTakeover implements WebSocketHandler {
         } catch (IOException e) {
             LOG.log(System.Logger.Level.DEBUG, () -> "closing the WebSocket with " + code + " failed", e);
         }
+    }
+
+    /** One event of the transport, for {@link #deliver}. */
+    @FunctionalInterface
+    private interface Event {
+        void deliverTo(WebSocketListener listener) throws IOException;
     }
 
     /** Chappe's socket seen as the SPI's peer. */

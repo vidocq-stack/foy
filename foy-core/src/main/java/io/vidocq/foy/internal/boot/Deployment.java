@@ -83,8 +83,8 @@ public final class Deployment implements AutoCloseable {
 
     /**
      * Undeploys: open upgraded connections close first (their {@code HttpUpgradeHandler.destroy()}
-     * runs), then Servlet 6.1 §2.3.4 — {@code destroy()} in reverse {@code init()} order
-     * (filters, then servlets), then the session reaper stops and every live session is
+     * runs, after a WebSocket's {@code onClose}), then Servlet 6.1 §2.3.4 — {@code destroy()} in
+     * reverse {@code init()} order (filters, then servlets), then the session reaper stops and every live session is
      * invalidated with its listeners ({@code sessionDestroyed}, {@code valueUnbound}; Foy does not
      * persist sessions across deployments), then {@code contextDestroyed}, then the context leaves
      * the cross-context registry and its temp dir is removed. A second call is a no-op.
@@ -115,7 +115,8 @@ public final class Deployment implements AutoCloseable {
     private static void undeployWithinScope(VidocqServletContext servletContext, ListenerRegistry contextListeners,
                                             List<Servlet> initializedServlets, List<Filter> initializedFilters,
                                             Path tempDir, SessionManager sessions) {
-        // Upgraded connections first: their handlers' destroy() runs while the application is intact.
+        // Upgraded connections first: their handlers' destroy(), and a WebSocket's onClose before it, run
+        // while the application is intact (BUG-20261114-08).
         try { servletContext.closeUpgradedConnections(); }
         catch (RuntimeException e) { warn("closing the upgraded connections failed", e); }
         for (int i = initializedFilters.size() - 1; i >= 0; i--) {

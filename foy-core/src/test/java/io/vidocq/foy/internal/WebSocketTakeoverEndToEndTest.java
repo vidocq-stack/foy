@@ -45,6 +45,7 @@ import java.net.URL;
 import java.net.URLClassLoader;
 import java.net.http.HttpClient;
 import java.net.http.WebSocket;
+import java.time.Duration;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CopyOnWriteArrayList;
@@ -73,8 +74,17 @@ class WebSocketTakeoverEndToEndTest {
         volatile boolean failOpen;
         volatile boolean failOpenWithError;
         volatile boolean failListener;
+        /** The listener closes the connection with 1000 at the end of its {@code onOpen}. */
+        volatile boolean closeOnOpen;
+        /** When set, {@code onText} waits for it to open before it echoes. */
+        volatile CountDownLatch textGate;
+        final CountDownLatch textEntered = new CountDownLatch(1);
         final List<ClassLoader> loaders = new CopyOnWriteArrayList<>();
     }
+
+    /** The text the listener holds in {@code onText}, and the event it records for it. */
+    private static final String HELD = "held";
+    private static final String HELD_EVENT = "text:" + HELD;
 
     private static volatile Probe current;
 
@@ -238,6 +248,75 @@ class WebSocketTakeoverEndToEndTest {
         }
     }
 
+    /**
+     * The undeploy ends the takeover before it returns, so the listener's {@code onClose} and the
+     * handler's {@code destroy()} run before {@code contextDestroyed}: it does not wait for the peer,
+     * which here never answers (BUG-20261114-08).
+     */
+    @Test
+    void anUndeployEndsTheTakeoverBeforeItReturns() throws Exception {
+        start(new VidocqServletContext("/"));
+        try (var client = new RawClient(port)) {
+            client.send(handshake("/ws"));
+            assertTrue(probe.opened.await(5, TimeUnit.SECONDS), "onOpen");
+            context.closeUpgradedConnections();
+            assertEquals(List.of("open", "close", "destroy"), probe.events);
+            assertEquals(1001, probe.closeCode.get());
+        }
+    }
+
+    /**
+     * A connection whose listener closed first keeps the peer's answer as its code: the undeploy waits for
+     * that closing handshake to end before it returns (BUG-20261114-08).
+     */
+    @Test
+    void anUndeployWaitsForAClosingHandshakeUnderWay() throws Exception {
+        probe.closeOnOpen = true;
+        start(new VidocqServletContext("/"));
+        try (var client = new RawClient(port)) {
+            client.send(handshake("/ws"));
+            client.readHead();
+            client.readUntil("done");
+            Thread undeploy = Thread.ofVirtual().start(context::closeUpgradedConnections);
+            assertFalse(undeploy.join(Duration.ofMillis(300)), "the undeploy did not wait for the closing handshake");
+            client.send(new byte[] {(byte) 0x88, (byte) 0x82, 0, 0, 0, 0, 0x03, (byte) 0xE8});
+            assertTrue(undeploy.join(Duration.ofSeconds(5)), "the undeploy did not return");
+            assertEquals(List.of("open", "close", "destroy"), probe.events);
+            assertEquals(1000, probe.closeCode.get());
+        }
+    }
+
+    /**
+     * The undeploy's {@code onClose} waits for the event in progress: the listener never runs on two
+     * threads at once (Jakarta WebSocket 2.2 section 5.1).
+     */
+    @Test
+    void anUndeployWaitsForTheEventInProgress() throws Exception {
+        holdATextInOnText();
+        Thread undeploy = Thread.ofVirtual().start(context::closeUpgradedConnections);
+        assertFalse(probe.closed.await(300, TimeUnit.MILLISECONDS), "onClose ran while onText was running");
+        probe.textGate.countDown();
+        assertTrue(undeploy.join(Duration.ofSeconds(5)), "the undeploy did not return");
+        assertEquals(List.of("open", HELD_EVENT, "close", "destroy"), probe.events);
+        assertEquals(1001, probe.closeCode.get());
+    }
+
+    /**
+     * An event that does not return within the undeploy's grace does not stop the undeploy: the takeover
+     * then ends on the transport's thread, once the event returned, still with the undeploy's 1001.
+     */
+    @Test
+    void anUndeployDoesNotWaitForAnEventPastItsGrace() throws Exception {
+        holdATextInOnText();
+        Thread undeploy = Thread.ofVirtual().start(context::closeUpgradedConnections);
+        assertTrue(undeploy.join(Duration.ofSeconds(10)), "the undeploy waited past its grace");
+        assertEquals(List.of("open", HELD_EVENT), probe.events);
+        probe.textGate.countDown();
+        assertTrue(probe.destroyed.await(5, TimeUnit.SECONDS));
+        assertEquals(List.of("open", HELD_EVENT, "close", "destroy"), probe.events);
+        assertEquals(1001, probe.closeCode.get());
+    }
+
     @Test
     void aPeerCloseCallsOnCloseThenDestroyOnce() throws Exception {
         start(new VidocqServletContext("/"));
@@ -314,6 +393,15 @@ class WebSocketTakeoverEndToEndTest {
     }
 
     // ---- helpers ----
+
+    /** Starts a takeover whose {@code onText} holds the message {@value #HELD} until the probe's gate opens. */
+    private void holdATextInOnText() throws Exception {
+        probe.textGate = new CountDownLatch(1);
+        start(new VidocqServletContext("/"));
+        WebSocket ws = connect(new TextListener(new CompletableFuture<>(), new CompletableFuture<>()));
+        ws.sendText(HELD, true).get(5, TimeUnit.SECONDS);
+        assertTrue(probe.textEntered.await(5, TimeUnit.SECONDS), "onText");
+    }
 
     private void connectWithoutOpen(CompletableFuture<Integer> closedByServer) throws Exception {
         HttpClient.newHttpClient().newWebSocketBuilder()
@@ -403,19 +491,25 @@ class WebSocketTakeoverEndToEndTest {
             if (probe.failListener) throw new IllegalStateException("no listener");
             return new WebSocketListener() {
                 @Override
-                public void onOpen(WebSocketPeer p) {
+                public void onOpen(WebSocketPeer p) throws IOException {
                     if (probe.failOpen) throw new IllegalStateException("onOpen refused");
                     if (probe.failOpenWithError) throw new ExceptionInInitializerError("static initializer failed");
                     peer.set(p);
                     probe.events.add("open");
                     probe.loaders.add(Thread.currentThread().getContextClassLoader());
                     probe.opened.countDown();
+                    if (probe.closeOnOpen) p.close(1000, "done");
                 }
 
                 @Override
                 public void onText(String text) throws IOException {
                     probe.events.add("text:" + text);
                     probe.loaders.add(Thread.currentThread().getContextClassLoader());
+                    var gate = probe.textGate;
+                    if (gate != null) {
+                        probe.textEntered.countDown();
+                        awaitGate(gate);
+                    }
                     peer.get().sendText(text);
                 }
 
@@ -439,6 +533,14 @@ class WebSocketTakeoverEndToEndTest {
             probe.events.add("destroy");
             probe.destroyCalls.incrementAndGet();
             probe.destroyed.countDown();
+        }
+
+        private static void awaitGate(CountDownLatch gate) {
+            try {
+                if (!gate.await(20, TimeUnit.SECONDS)) throw new IllegalStateException("the gate never opened");
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
         }
     }
 }

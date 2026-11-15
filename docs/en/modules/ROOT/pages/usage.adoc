@@ -250,6 +250,7 @@ A runtime that fills `io.vidocq.foy.websocket.allowed-origins` from its own conf
 === Sessions and threads
 
 * One event at a time per session: `onOpen`, the message handlers, `onClose` and `onError` run in order, each on a virtual thread, with the application class loader as context class loader.
+* An undeploy closes every open session with 1001 and runs its `onClose` before the application's `ServletContextListener.contextDestroyed`, on the undeploy's thread, without waiting for the peer to answer: `onClose` can still use what the application releases there. It waits for the event in progress first, at most 2 s; a session already closing is given the same 2 s to finish its closing handshake.
 * Asynchronous sends (`getAsyncRemote`) are drained by one virtual thread per session, started on demand. `getBasicRemote` blocks the caller.
 * Partial sends (`sendText(String, boolean)`, `getSendStream()`, `getSendWriter()`) are buffered and sent whole on the last part.
 * The transport answers pings itself; applications see pongs through `PongMessage` handlers.

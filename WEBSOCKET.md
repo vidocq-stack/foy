@@ -132,6 +132,8 @@ reads `jakarta.websocket` once that module is in the boot layer). Read from its 
   Everything before stays as it is: security constraints, filters, `requestDestroyed`.
   Foy tracks these connections per context, so an undeploy closes them with 1001 (Going
   Away) as it closes raw upgraded connections today, and calls `destroy()` on the handler.
+  Both happen before the application's `contextDestroyed`: the undeploy delivers `onClose`
+  itself once the Close is sent, without waiting for the peer (BUG-20261114-08).
 - **`foy-websocket`** (new, Java module `io.vidocq.foy.websocket`): the Jakarta WebSocket
   implementation. It requires `jakarta.websocket` (the API it implements, at `compile`
   scope per the ecosystem rule; `jakarta.websocket.client` comes transitively),
@@ -219,7 +221,9 @@ Decided by the maintainer: same-origin by default, opened by configuration only.
 
 - **Threads.** Chappe calls back on the connection's virtual thread, one event at a time;
   `Endpoint.onOpen`, the message handlers, `onClose` and `onError` run there, so an
-  endpoint instance never sees two threads at once. Every callback runs with the
+  endpoint instance never sees two threads at once. One exception: the `onClose` of a
+  session an undeploy closes runs on the undeploy's thread, after the event in progress
+  returned (at most 2 s), so that it precedes `contextDestroyed`; nothing follows it. Every callback runs with the
   application's class loader as context class loader, as raw upgrades do
   (`WebConnectionImpl`). No CDI request or session context is active in a callback in
   lot 1: the handshake request has ended (lot 2 decides). Vaadin with

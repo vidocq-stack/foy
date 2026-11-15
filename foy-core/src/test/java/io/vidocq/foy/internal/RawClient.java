@@ -45,7 +45,11 @@ final class RawClient implements AutoCloseable {
     }
 
     void send(String s) throws IOException {
-        out.write(s.getBytes(StandardCharsets.US_ASCII));
+        send(s.getBytes(StandardCharsets.US_ASCII));
+    }
+
+    void send(byte[] bytes) throws IOException {
+        out.write(bytes);
         out.flush();
     }
 

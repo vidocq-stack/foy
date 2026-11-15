@@ -45,9 +45,11 @@ import java.net.http.WebSocket;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.util.List;
 import java.util.Set;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.CompletionStage;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.LinkedBlockingQueue;
 
@@ -74,6 +76,8 @@ class SessionEndToEndTest {
     static final BlockingQueue<CloseReason> CLOSES = new LinkedBlockingQueue<>();
     /** The errors {@code Endpoint.onError} received, in order. */
     static final BlockingQueue<Throwable> ERRORS = new LinkedBlockingQueue<>();
+    /** {@code Endpoint.onClose} and the application's {@code contextDestroyed}, in the order they ran. */
+    static final List<String> LIFECYCLE = new CopyOnWriteArrayList<>();
     /** The sessions the endpoints opened, in order. */
     static final BlockingQueue<Session> SESSIONS = new LinkedBlockingQueue<>();
     /** The results of the asynchronous sends of {@link BurstEndpoint}. */
@@ -85,6 +89,7 @@ class SessionEndToEndTest {
     void reset() {
         CLOSES.clear();
         ERRORS.clear();
+        LIFECYCLE.clear();
         SESSIONS.clear();
         RESULTS.clear();
     }
@@ -115,6 +120,7 @@ class SessionEndToEndTest {
         @Override
         public void onClose(Session session, CloseReason closeReason) {
             CLOSES.add(closeReason);
+            LIFECYCLE.add("onClose");
         }
     }
 
@@ -203,6 +209,23 @@ class SessionEndToEndTest {
 
             assertNotNull(CLOSES.poll(WAIT, SECONDS), "Endpoint.onClose did not run");
             assertTrue(ERRORS.isEmpty(), () -> "Endpoint.onError ran: " + ERRORS);
+        }
+    }
+
+    /**
+     * An undeploy runs {@code onClose} before the application's {@code contextDestroyed}, without waiting for
+     * the peer to answer its Close: the endpoint can still use what the application tears down there
+     * (BUG-20261114-08). The raw client never answers.
+     */
+    @Test
+    void undeployRunsOnCloseBeforeContextDestroyed() throws Exception {
+        server = WebSocketTestServer.start(endpoint(EchoEndpoint.class));
+        try (var _ = RawHandshake.connect(server.port(), "/echo")) {
+            assertNotNull(SESSIONS.poll(WAIT, SECONDS), "the endpoint did not open");
+
+            server.close();
+
+            assertEquals(List.of("onClose", "contextDestroyed"), List.copyOf(LIFECYCLE));
         }
     }
 
@@ -309,6 +332,11 @@ class SessionEndToEndTest {
                 } catch (DeploymentException e) {
                     throw new IllegalStateException(e);
                 }
+            }
+
+            @Override
+            public void contextDestroyed(ServletContextEvent event) {
+                LIFECYCLE.add("contextDestroyed");
             }
         };
     }

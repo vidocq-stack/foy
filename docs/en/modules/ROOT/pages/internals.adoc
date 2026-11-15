@@ -145,6 +145,8 @@ sequenceDiagram
 
 A WebSocket handshake is an ordinary request until the end of the filter chain: the `foy-websocket` filter (on `/*`, after the application's filters) validates the handshake, negotiates the sub-protocol, runs `modifyHandshake` and `getEndpointInstance` on the request thread, then calls `HttpServletRequest.upgrade` with a `WebSocketUpgradeHandler` (`io.vidocq.foy.spi.websocket`). The bridge hands that handler to Chappe's WebSocket upgrade instead of a raw connection: Chappe writes the `101` and runs the frames, and delivers events to the handler's `WebSocketListener`. `foy-websocket` never touches `chappe-api`; the SPI is the only seam.
 
+An undeploy closes upgraded connections before anything else, so their handlers end while the application is intact. For a WebSocket, the bridge sends the 1001 Close, then delivers `onClose` and calls `destroy()` on the undeploy's thread without waiting for the peer's answer; a lock keeps that `onClose` from overlapping the event in progress. Neither the wait for that event nor the wait for a closing handshake already under way lasts longer than 2 s: past it, the connection ends on Chappe's thread, after `contextDestroyed`, with a WARNING.
+
 == Dispatch pipeline
 
 For one request, `ChappeServletBridge` runs these steps in order (Servlet 6.1 §3.5.2, §10.10, §12.2):
