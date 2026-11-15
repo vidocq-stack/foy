@@ -86,7 +86,8 @@ public final class Deployment implements AutoCloseable {
     public List<Filter> initializedFilters() { return initializedFilters; }
 
     /**
-     * Undeploys. From its start, a new request gets 503 and reaches no filter or servlet, and
+     * Undeploys. From its start, a new request gets 503 with {@code Retry-After} set to
+     * {@link VidocqServletContext#UNDEPLOY_RETRY_AFTER_SECONDS} and reaches no filter or servlet, and
      * {@code getContext} no longer finds the application; a cross-context dispatch into it gets a temporary
      * {@code UnavailableException}. Open upgraded
      * connections close first, all at once and for 3 s at most (their {@code HttpUpgradeHandler.destroy()}

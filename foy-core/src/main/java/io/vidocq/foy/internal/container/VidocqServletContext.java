@@ -478,6 +478,22 @@ public final class VidocqServletContext implements ServletContext {
      */
     static final java.time.Duration UPGRADED_CONNECTIONS_GRACE = java.time.Duration.ofSeconds(3);
 
+    /**
+     * The bound of an undeploy: it reaches {@code destroy()} this long after it began at most, since
+     * {@link #REQUESTS_GRACE} and {@link #UPGRADED_CONNECTIONS_GRACE} both count from its start; the later
+     * of the two (3 s). A request refused while the application goes away is told to retry after it.
+     */
+    public static final java.time.Duration UNDEPLOY_BOUND =
+            java.util.Collections.max(java.util.List.of(REQUESTS_GRACE, UPGRADED_CONNECTIONS_GRACE));
+
+    /**
+     * The {@code Retry-After} of a request refused during an undeploy (RFC 9110 section 10.2.3):
+     * {@link #UNDEPLOY_BOUND} in whole seconds, rounded up, so the client never comes back before the undeploy
+     * reached {@code destroy()}.
+     */
+    public static final long UNDEPLOY_RETRY_AFTER_SECONDS =
+            Math.ceilDiv(UNDEPLOY_BOUND.toMillis(), java.util.concurrent.TimeUnit.SECONDS.toMillis(1));
+
     /** The open upgraded connections of this context, closed at undeploy. */
     private final Set<AutoCloseable> upgradedConnections = java.util.concurrent.ConcurrentHashMap.newKeySet();
     private volatile boolean upgradedConnectionsClosed;

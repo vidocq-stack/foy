@@ -38,6 +38,7 @@ import java.net.http.HttpResponse;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
@@ -131,7 +132,7 @@ class UndeployRequestsEndToEndTest {
         deploy();
         assertEquals(200, get().statusCode());
         deployment.close();
-        assertEquals(503, get().statusCode());
+        assertRefusedUntilTheUndeploysBound(get());
         assertEquals(List.of(SERVICE, DESTROY), probe.events, "the servlet served a request after its undeploy");
     }
 
@@ -143,7 +144,7 @@ class UndeployRequestsEndToEndTest {
         Thread undeploy = Thread.ofVirtual().start(deployment::close);
         assertTrue(probe.destroyEntered.await(5, TimeUnit.SECONDS), DESTROY);
         try {
-            assertEquals(503, get().statusCode());
+            assertRefusedUntilTheUndeploysBound(get());
             assertEquals(List.of(DESTROY), probe.events, "the servlet served a request during its undeploy");
         } finally {
             probe.destroyGate.countDown();
@@ -223,6 +224,17 @@ class UndeployRequestsEndToEndTest {
         var started = io.vidocq.foy.internal.TestServerLauncherAccess.start(deployment.handler());
         server = started.server();
         port = started.port();
+    }
+
+    /**
+     * A request refused by an undeploy: 503 with the container's plain-text body, never an error page of the
+     * application, and {@code Retry-After} set to the undeploy's bound in whole seconds (BUG-20261115-06).
+     */
+    static void assertRefusedUntilTheUndeploysBound(HttpResponse<String> refused) {
+        assertEquals(503, refused.statusCode());
+        assertEquals("Service Unavailable", refused.body());
+        assertEquals(Optional.of(Long.toString(VidocqServletContext.UNDEPLOY_RETRY_AFTER_SECONDS)),
+                refused.headers().firstValue("Retry-After"), "Retry-After");
     }
 
     private HttpRequest request() {

@@ -1,5 +1,24 @@
 # BUG.md — foy
 
+## BUG-20261115-06 — A request refused during an undeploy is not told when to retry
+
+- Date: 2026-11-15 (left as is by the undeploy work of Vidocq/foy#104, BUG-20261115-02).
+- Symptom: the 503 the bridge answers once an undeploy began (`ChappeServletBridge.plainServiceUnavailable()`)
+  carried no `Retry-After` (RFC 9110 section 15.6.4: the server may send one to say how long the service is
+  expected to be unavailable), so a client had no hint of when to come back.
+- Repro: deterministic, `UndeployRequestsEndToEndTest.aRequestAfterTheUndeployGets503` and
+  `aRequestWhileTheUndeployRunsGets503` (`Retry-After` empty where `3` was expected), and
+  `WebSocketTakeoverEndToEndTest.aHandshakeOnceTheUndeployBeganGets503` (no `Retry-After` in the head of a
+  handshake refused during the undeploy).
+- Cause: the refusal was written as a bare 503.
+- Status: FIXED on `fix/websocket-parked-items`. Every refusal of an undeploy (a plain request, a WebSocket
+  handshake, both through the bridge's one gate) carries `Retry-After` with the undeploy's bound in whole
+  seconds, rounded up: `VidocqServletContext.UNDEPLOY_BOUND`, the later of `REQUESTS_GRACE` and
+  `UPGRADED_CONNECTIONS_GRACE` (3 s today), by which `destroy()` began. The body stays the container's plain
+  text: no error page of the application runs, since none of its filters or servlets may see a new request
+  once the undeploy began (Servlet 6.1 section 2.3.4). A cross-context dispatch refused with
+  `UnavailableException` (BUG-20261115-04) is unchanged: the caller's application answers it.
+
 ## BUG-20261115-05 — The test harness and the tests stop the server before they close the deployment
 
 - Date: 2026-11-15 (left as is by the undeploy work of Vidocq/foy#104, BUG-20261115-01 to -04).

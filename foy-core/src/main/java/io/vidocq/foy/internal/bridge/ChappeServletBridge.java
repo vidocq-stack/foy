@@ -98,6 +98,8 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
     private static final System.Logger LOG = System.getLogger(ChappeServletBridge.class.getName());
     private static final String CONTENT_TYPE = "Content-Type";
     private static final String TEXT_PLAIN = "text/plain";
+    /** The {@code Retry-After} of a request refused during an undeploy. */
+    private static final String RETRY_AFTER_UNDEPLOY = Long.toString(VidocqServletContext.UNDEPLOY_RETRY_AFTER_SECONDS);
     /** Request attribute set once the failure of a request was answered (error page or direct status). */
     private static final String ERROR_HANDLED = "jakarta.servlet.error.handled";
     private static final String COMMITTED_FAILURE =
@@ -335,9 +337,17 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
         return plainText(StatusCode.INTERNAL_SERVER_ERROR).body(asciiBody("Internal Server Error")).build();
     }
 
-    /** The answer to a request that arrives once the application's undeploy began. */
+    /**
+     * The answer to a request that arrives once the application's undeploy began, a WebSocket handshake
+     * included: 503 with a plain-text body, and {@code Retry-After} set to the undeploy's bound in whole seconds
+     * ({@link VidocqServletContext#UNDEPLOY_RETRY_AFTER_SECONDS}), by which the undeploy reached the filters' and
+     * servlets' {@code destroy()}. It is the container's own
+     * answer, never an error page of the application: once the undeploy began, no filter or servlet of the
+     * application may see a new request (Servlet 6.1 section 2.3.4, BUG-20261115-02, BUG-20261115-06).
+     */
     private static Response plainServiceUnavailable() {
-        return plainText(StatusCode.SERVICE_UNAVAILABLE).body(asciiBody("Service Unavailable")).build();
+        return plainText(StatusCode.SERVICE_UNAVAILABLE).header("Retry-After", RETRY_AFTER_UNDEPLOY)
+                .body(asciiBody("Service Unavailable")).build();
     }
 
     /** A response builder with {@code status} and a plain-text content type; the body comes next. */
