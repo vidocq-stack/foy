@@ -101,8 +101,8 @@
                          of the HttpSession bean: it runs here, so the processor marks this archive
                          processed (META-INF/vauban-bce-processed). Without the marker, every
                          deployment that holds this module would run its extensions again at start.
-                         The processor warns that FoyWebExtension, this module's own extension, does
-                         not run here: it runs at the build of the applications. -->
+                         FoyWebExtension, this module's own extension, is not on the processor path
+                         and does not run here: it runs at the build of the applications. -->
                     <annotationProcessorPaths>
                         <path>
                             <groupId>io.vidocq.vauban</groupId>
