@@ -21,6 +21,9 @@ package io.vidocq.foy.internal;
 
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.function.Consumer;
 import java.util.logging.Handler;
 import java.util.logging.Level;
 import java.util.logging.LogRecord;
@@ -37,8 +40,12 @@ public final class LogCapture implements AutoCloseable {
         private final List<LogRecord> records = new CopyOnWriteArrayList<>();
         private final Logger logger;
         private final boolean useParentHandlers;
+        private final Consumer<Throwable> onThrown;
         private final Handler handler = new Handler() {
-            @Override public void publish(LogRecord r) { records.add(r); }
+            @Override public void publish(LogRecord r) {
+                records.add(r);
+                if (r.getThrown() != null) onThrown.accept(r.getThrown());
+            }
             @Override public void flush() {
                 // nothing is buffered
             }
@@ -47,7 +54,8 @@ public final class LogCapture implements AutoCloseable {
             }
         };
 
-        Jul(String name) {
+        Jul(String name, Consumer<Throwable> onThrown) {
+            this.onThrown = onThrown;
             logger = Logger.getLogger(name);
             // Captured records are the test's to assert: keep them off the console.
             useParentHandlers = logger.getUseParentHandlers();
@@ -83,8 +91,30 @@ public final class LogCapture implements AutoCloseable {
      * patched into its module, so the read edge is added before any java.util.logging type is linked.
      */
     public static LogCapture of(String loggerName) {
+        return capture(loggerName, _ -> { });
+    }
+
+    /**
+     * Starts capturing {@code loggerName}, and holds the thread that logs a record whose throwable has the
+     * message {@code thrownMessage}: that thread counts {@code held} down, then waits for {@code release}
+     * (20 s at most) before its log call returns. A test stops a thread of the transport at that log call.
+     */
+    public static LogCapture holding(String loggerName, String thrownMessage, CountDownLatch held,
+            CountDownLatch release) {
+        return capture(loggerName, thrown -> {
+            if (!thrownMessage.equals(thrown.getMessage())) return;
+            held.countDown();
+            try {
+                if (!release.await(20, TimeUnit.SECONDS)) throw new IllegalStateException("never released");
+            } catch (InterruptedException _) {
+                Thread.currentThread().interrupt();
+            }
+        });
+    }
+
+    private static LogCapture capture(String loggerName, Consumer<Throwable> onThrown) {
         LogCapture.class.getModule().addReads(ModuleLayer.boot().findModule("java.logging").orElseThrow());
-        return new LogCapture(new Jul(loggerName));
+        return new LogCapture(new Jul(loggerName, onThrown));
     }
 
     /** Returns the formatted messages logged at WARNING. */

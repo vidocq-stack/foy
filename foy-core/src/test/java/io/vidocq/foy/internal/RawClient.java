@@ -123,5 +123,43 @@ final class RawClient implements AutoCloseable {
         return all.toByteArray();
     }
 
+    /**
+     * Reads everything up to the end of the connection, which must come within {@code bound}: the end of the
+     * stream, or a reset. Keeps only the last bytes read, up to {@code tailLength}.
+     *
+     * @return the last bytes read before the end, at most {@code tailLength}
+     */
+    byte[] readToEndWithin(java.time.Duration bound, int tailLength) throws IOException {
+        long deadline = System.nanoTime() + bound.toNanos();
+        byte[] buf = new byte[64 * 1024];
+        var tail = new java.io.ByteArrayOutputStream();
+        try {
+            int n = 0;
+            while (n != -1) {
+                long left = java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(deadline - System.nanoTime());
+                if (left <= 0) fail("the connection did not end within " + bound);
+                socket.setSoTimeout((int) Math.min(Integer.MAX_VALUE, left));
+                n = in.read(buf);
+                if (n > 0) tail = keepLast(tail, buf, n, tailLength);
+            }
+        } catch (java.net.SocketTimeoutException _) {
+            fail("the connection did not end within " + bound);
+        } catch (SocketException _) {
+            // a reset ends the connection too
+        }
+        return tail.toByteArray();
+    }
+
+    /** {@code tail} followed by the first {@code n} bytes of {@code buf}, cut to its last {@code length} bytes. */
+    private static java.io.ByteArrayOutputStream keepLast(java.io.ByteArrayOutputStream tail, byte[] buf, int n,
+            int length) {
+        tail.write(buf, 0, n);
+        if (tail.size() <= length) return tail;
+        byte[] all = tail.toByteArray();
+        var kept = new java.io.ByteArrayOutputStream();
+        kept.write(all, all.length - length, length);
+        return kept;
+    }
+
     @Override public void close() throws IOException { socket.close(); }
 }

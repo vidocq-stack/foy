@@ -52,11 +52,13 @@ import java.util.concurrent.CompletionStage;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static java.util.concurrent.TimeUnit.SECONDS;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -70,6 +72,8 @@ class SessionEndToEndTest {
 
     private static final long WAIT = 5;
     private static final int BURST = 500;
+    /** Far more than the socket buffers hold: to a peer that does not read, the send blocks. */
+    private static final int STALLED_SEND_BYTES = 32 * 1024 * 1024;
     private static final HttpClient HTTP = HttpClient.newHttpClient();
 
     /** The close reasons {@code Endpoint.onClose} received, in order. */
@@ -82,6 +86,10 @@ class SessionEndToEndTest {
     static final BlockingQueue<Session> SESSIONS = new LinkedBlockingQueue<>();
     /** The results of the asynchronous sends of {@link BurstEndpoint}. */
     static final BlockingQueue<SendResult> RESULTS = new LinkedBlockingQueue<>();
+    /** How the sends of {@link StalledSendsEndpoint} ended: a failure each, or an error if one was written. */
+    static final BlockingQueue<Throwable> SEND_OUTCOMES = new LinkedBlockingQueue<>();
+    /** The thread of the blocking send of {@link StalledSendsEndpoint}. */
+    static final AtomicReference<Thread> BLOCKING_SENDER = new AtomicReference<>();
 
     private WebSocketTestServer server;
 
@@ -92,6 +100,8 @@ class SessionEndToEndTest {
         LIFECYCLE.clear();
         SESSIONS.clear();
         RESULTS.clear();
+        SEND_OUTCOMES.clear();
+        BLOCKING_SENDER.set(null);
     }
 
     @AfterEach
@@ -152,6 +162,28 @@ class SessionEndToEndTest {
                     session.getAsyncRemote().sendText(Integer.toString(i), RESULTS::add);
                 }
             });
+        }
+    }
+
+    /**
+     * Starts an asynchronous send, then a blocking one on a thread of its own, each far larger than the socket
+     * buffers, to a peer that never reads: one holds the transport's write lock, the other waits behind it.
+     */
+    public static final class StalledSendsEndpoint extends EchoEndpoint {
+        @Override
+        public void onOpen(Session session, EndpointConfig config) {
+            SESSIONS.add(session);
+            session.getAsyncRemote().sendBinary(ByteBuffer.allocate(STALLED_SEND_BYTES), result ->
+                    SEND_OUTCOMES.add(result.isOK() ? new AssertionError("the asynchronous send was written")
+                            : result.getException()));
+            BLOCKING_SENDER.set(Thread.ofVirtual().start(() -> {
+                try {
+                    session.getBasicRemote().sendBinary(ByteBuffer.allocate(STALLED_SEND_BYTES));
+                    SEND_OUTCOMES.add(new AssertionError("the blocking send was written"));
+                } catch (IOException e) {
+                    SEND_OUTCOMES.add(e);
+                }
+            }));
         }
     }
 
@@ -227,6 +259,36 @@ class SessionEndToEndTest {
 
             server.close();
 
+            assertEquals(List.of("onClose", "contextDestroyed"), List.copyOf(LIFECYCLE));
+        }
+    }
+
+    /**
+     * Sends blocked on a peer that does not read hold the undeploy's Close back: past its grace the undeploy
+     * cuts the connection (BUG-20261115-01). The blocking send throws, and the asynchronous one reports, an
+     * {@code IOException} that says the connection was cut; the endpoint hears the undeploy's 1001, and no
+     * {@code onError}.
+     */
+    @Test
+    void anUndeployCutsTheSendsBlockedOnAPeerThatDoesNotRead() throws Exception {
+        server = WebSocketTestServer.start(endpoint(StalledSendsEndpoint.class));
+        try (var _ = RawHandshake.connect(server.port(), "/echo")) {
+            assertNotNull(SESSIONS.poll(WAIT, SECONDS), "the endpoint did not open");
+            awaitWaiting(BLOCKING_SENDER);
+
+            server.close();
+
+            for (String send : List.of("first", "second")) {
+                Throwable outcome = SEND_OUTCOMES.poll(WAIT, SECONDS);
+                assertNotNull(outcome, () -> "the " + send + " send stayed blocked");
+                assertInstanceOf(IOException.class, outcome);
+                assertTrue(String.valueOf(outcome.getMessage()).contains("was cut"), outcome::toString);
+            }
+            CloseReason reason = CLOSES.poll(WAIT, SECONDS);
+            assertNotNull(reason, "Endpoint.onClose did not run");
+            assertEquals(CloseCodes.GOING_AWAY, reason.getCloseCode());
+            assertTrue(ERRORS.isEmpty(), () -> "Endpoint.onError ran: " + ERRORS);
+            // The cut session ended before the undeploy went on.
             assertEquals(List.of("onClose", "contextDestroyed"), List.copyOf(LIFECYCLE));
         }
     }
@@ -341,6 +403,29 @@ class SessionEndToEndTest {
                 LIFECYCLE.add("contextDestroyed");
             }
         };
+    }
+
+    /**
+     * Waits until the thread is started and seen waiting: blocked on a peer that does not read, in the socket
+     * write or on the transport's write lock. One read of the state per check, and the assertion is on that
+     * read: the park of a send in the socket write ends whenever the kernel takes more bytes (BUG-20261114-09).
+     */
+    private static void awaitWaiting(AtomicReference<Thread> thread) {
+        long deadline = System.nanoTime() + SECONDS.toNanos(WAIT);
+        Thread current = thread.get();
+        Thread.State state = stateOf(current);
+        while (state != Thread.State.WAITING && System.nanoTime() < deadline) {
+            Thread.onSpinWait();
+            current = thread.get();
+            state = stateOf(current);
+        }
+        assertNotNull(current, "the send never started");
+        assertEquals(Thread.State.WAITING, state, current.getName());
+    }
+
+    /** The state of {@code thread}, read once, or {@code null} before it started. */
+    private static Thread.State stateOf(Thread thread) {
+        return thread == null ? null : thread.getState();
     }
 
     private static void sendText(Session session, String text) {

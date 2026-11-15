@@ -472,11 +472,12 @@ public final class VidocqServletContext implements ServletContext {
     /**
      * How long an undeploy waits for its upgraded connections, all of them together: each closes on a
      * virtual thread of its own and bounds its own waits to 2 s (a raw upgrade's last write, a WebSocket's
-     * Close, event in progress or closing handshake), and the last second is for the application's
-     * {@code onClose} and {@code destroy()}. Counted from the start of the undeploy. Past it the undeploy
+     * Close, event in progress or closing handshake), half a second more for a WebSocket whose Close a send
+     * blocked on its peer held, which it cuts, and the rest is for the application's {@code onClose} and
+     * {@code destroy()}. Counted from the start of the undeploy. Past it the undeploy
      * goes on, and the connections still closing end after the application stopped.
      */
-    static final java.time.Duration UPGRADED_CONNECTIONS_GRACE = java.time.Duration.ofSeconds(3);
+    public static final java.time.Duration UPGRADED_CONNECTIONS_GRACE = java.time.Duration.ofSeconds(3);
 
     /**
      * The bound of an undeploy: it reaches {@code destroy()} this long after it began at most, since

@@ -157,13 +157,37 @@
 - Cause: chappe sends every frame, the Close included, under the connection's write lock, which it takes with
   `lockInterruptibly` and no time limit; the blocked send holds it for as long as the peer does not read.
   The undeploy hook sent its Close on the undeploy's thread, so it waited for that lock before its grace.
-- Status: FIXED on `fix/websocket-shutdown-order`. The hook sends the Close on a virtual thread of its own and
-  waits for it against the same deadline as the rest of the hook (2 s in all); past it, the takeover ends
-  with 1001 all the same and the Close goes out once that send ends. Raw upgrades already bounded their close
-  the same way (`WebConnectionImpl.CLOSE_WRITE_GRACE`). The test now returns after the 2 s grace with
-  `[open, close, destroy]` and 1001. On that path the endpoint
-  gets `onClose(1001)` before the Close frame leaves, against Jakarta WebSocket 2.2 section 2.1.5 (the Close
-  before `onClose`): waiting for the frame would let a peer that does not read hold the undeploy without limit.
+- Status: FIXED on `fix/websocket-shutdown-order` (the Close on its own thread), then on
+  `fix/websocket-parked-items` (the cut: `WebSocket.abort()`, CHAPPE-060, Vidocq/chappe#85). The hook sends
+  the Close on a virtual thread of its own and waits for it against the same deadline as the rest of the hook
+  (2 s in all); past it, the connection is cut: it closes at once, with no Close frame and without the write
+  lock. The blocked send then fails with an `IOException` that says the
+  connection was cut (chappe's `AsynchronousCloseException` as its cause), the thread of the Close returns
+  without sending it, the peer reads the end of the connection, and the takeover still ends with 1001, once,
+  with no `onError`, within `WebSocketTakeover.CUT_GRACE` (500 ms) more; an `onOpen` that rethrows the
+  `IOException` of a send the cut ended reports the undeploy's 1001 too, with no `onError`, not 1011, while any
+  other failure of `onOpen` during the undeploy ends as outside one: `onError` then 1011, or 1011 alone for an
+  `IOException` once the undeploy closed the connection (BUG-20261114-07). The hook leaves a failed `onOpen` to
+  Chappe's `onError`, which always follows it, and waits for that end with no deadline of its own, within the
+  context's 3 s, whether that `onError` takes the lock of the listener's events before the hook or after it
+  (`anOnOpenThatFailsOnItsOwnDuringTheUndeployKeepsItsErrorAnd1011`,
+  `anOnOpenThatFailsOnItsOwnAfterTheCutKeepsItsErrorAnd1011`,
+  `anIoFailureOfOnOpenDuringTheUndeployIsNotReportedAndEndsWith1011`,
+  `theUndeployTakingTheLockFirstWaitsPastItsGraceForTheOnErrorOfAFailedOnOpen`,
+  `theUndeployWaitsPastItsGraceForAnOnErrorThatHoldsTheLockFirst`). The hook may now
+  last `UNDEPLOY_GRACE` plus `CUT_GRACE`, which `WebSocketTakeoverGraceTest` keeps below the context's
+  `UPGRADED_CONNECTIONS_GRACE`. Until then the Close went out once that send ended, and
+  nothing ended the connection while the peer did not read. Raw upgrades already bounded their close the
+  same way (`WebConnectionImpl.CLOSE_WRITE_GRACE`): past it `UpgradedConnection.close()` closes the socket
+  without the lock a blocked write holds (over TLS, `SslHandler.close()` skips close_notify after a bounded
+  wait), so no thread stays parked there. Tests: `anUndeployDoesNotWaitForASendBlockedOnThePeer` returns after
+  the 2 s grace with `[open, close, destroy]` and 1001; `anUndeployCutsAConnectionWhoseCloseASendHoldsBack`
+  and `aSendBlockedInOnOpenIsCutAndTheListenerHearsTheUndeploys1001` (foy-core), and
+  `SessionEndToEndTest.anUndeployCutsTheSendsBlockedOnAPeerThatDoesNotRead` (foy-websocket, a blocking and an
+  asynchronous send of a Jakarta endpoint), were red before the cut: the send stayed blocked. On that path the
+  endpoint gets `onClose(1001)` with no Close frame at all, against Jakarta WebSocket 2.2 section 2.1.5 (the
+  Close before `onClose`): waiting for the frame would let a peer that does not read hold the undeploy
+  without limit.
 
 ## BUG-20261114-09 — The stalled-peer upgrade test reads the writer's state twice and can see it running
 

@@ -65,11 +65,13 @@ import java.util.concurrent.locks.ReentrantLock;
  * its {@code onError}, and no frame read once the undeploy closed the connection reaches it either. A
  * connection whose closing handshake had already begun keeps the code of the side that closed first: the
  * undeploy waits for its end. The Close goes out on a thread of its own, since a send blocked on a peer
- * that does not read holds the lock it needs. The whole of it, the Close and the waits, lasts at most
- * {@link #UNDEPLOY_GRACE}, except an {@code onClose} already running on the connection's thread, which the
- * context's own grace bounds. Past it, the takeover still ends after the application stopped: once the
- * event in progress returns, or, after an {@code onOpen}, at the next frame or at the peer's answer to the
- * Close; and a Close still held goes out once that send ends.</p>
+ * that does not read holds the lock it needs; a Close that send still holds at the end of the grace never
+ * goes out: the connection is cut (CHAPPE-060), which fails that send, and the takeover ends with its 1001
+ * all the same. The whole of it, the Close and the waits, lasts at most {@link #UNDEPLOY_GRACE}, plus
+ * {@link #CUT_GRACE} for a connection it cut, except an end already under way on the connection's thread (an
+ * {@code onClose}, or the {@code onError} that follows a failed {@code onOpen}), which the context's own grace
+ * bounds. Past it, the takeover still ends after the application stopped: once the event in progress returns,
+ * or, after an {@code onOpen}, at the next frame or at the peer's answer to the Close.</p>
  *
  * <p>Nothing interrupts the hook: it runs on a virtual thread the context starts for this connection, and
  * its Close on another one. An interrupt of the undeploy's own thread only stops the undeploy's wait for
@@ -88,6 +90,13 @@ final class WebSocketTakeover implements WebSocketHandler {
      * to a peer that does not read or a peer that never answers cannot hold the undeploy.
      */
     static final Duration UNDEPLOY_GRACE = Duration.ofSeconds(2);
+
+    /**
+     * How long an undeploy waits, once it cut a connection whose Close a send blocked on the peer held past
+     * {@link #UNDEPLOY_GRACE}, for what the cut ends at once: the thread of that Close, and the event in
+     * progress whose send the cut failed, so that the takeover still ends before the undeploy goes on.
+     */
+    static final Duration CUT_GRACE = Duration.ofMillis(500);
 
     private static final int GOING_AWAY = 1001;
     private static final int INTERNAL_ERROR = 1011;
@@ -109,6 +118,13 @@ final class WebSocketTakeover implements WebSocketHandler {
      * 2.1.5).
      */
     private volatile boolean closeWaitOver;
+    /**
+     * The undeploy cut the connection, its 1001 Close held past the grace: a send that fails then fails with
+     * a {@link ConnectionCutException}, which says so.
+     */
+    private volatile boolean cut;
+    /** When the undeploy hook started, a {@link System#nanoTime()}: its WARNINGs say how long it waited. */
+    private long hookStarted;
     private final AtomicReference<WebSocketListener> listener = new AtomicReference<>();
     private final AtomicReference<AutoCloseable> undeployHook = new AtomicReference<>();
     /** Held while the listener runs: the transport's events and the undeploy's end never overlap. */
@@ -238,12 +254,27 @@ final class WebSocketTakeover implements WebSocketHandler {
             try (var _ = ContextLoaderScope.enter(applicationLoader)) {
                 report(error);
             } finally {
-                // A failed onOpen is followed by no onClose from chappe: the listener hears the 1011 chappe
-                // closes with, then the takeover is released, once.
-                if (openFailed) finish(INTERNAL_ERROR, ON_OPEN_FAILED);
+                // A failed onOpen is followed by no onClose from chappe: this ends the takeover, once.
+                if (openFailed) finishOpenFailed(error);
             }
         } finally {
             events.unlock();
+        }
+    }
+
+    /**
+     * Ends the takeover of an {@code onOpen} that failed with {@code error}. The undeploy's 1001 when
+     * {@code error} is the failure of a send the undeploy's cut ended, which {@link #report} does not report:
+     * the listener hears the undeploy's Close, as on any connection the undeploy cut. Otherwise the 1011
+     * chappe closes with, as outside an undeploy: after the listener's {@code onError}, or without it for
+     * another {@code IOException} once the undeploy closed the connection, which is not reported either
+     * (BUG-20261114-07).
+     */
+    private void finishOpenFailed(Throwable error) {
+        if (closedByUndeploy && error instanceof ConnectionCutException) {
+            finish(GOING_AWAY, STOPPING);
+        } else {
+            finish(INTERNAL_ERROR, ON_OPEN_FAILED);
         }
     }
 
@@ -298,36 +329,15 @@ final class WebSocketTakeover implements WebSocketHandler {
 
     /**
      * The undeploy hook: ends the takeover before the undeploy goes on, within {@link #UNDEPLOY_GRACE}
-     * for the whole hook. A connection still open is closed with 1001 ({@link #sendGoingAway}) and ended
+     * for the whole hook, plus {@link #CUT_GRACE} when it had to cut the connection ({@link #abortHeldClose}). A
+     * connection still open is marked closed by the undeploy, closed with 1001 ({@link #sendGoingAway}) and ended
      * at once ({@link #endNow}); one whose closing handshake already began is waited for
      * ({@link #awaitEnd}). It runs on the virtual thread the context starts for this connection, which
      * nothing interrupts; an {@code InterruptedException} would reach the context, which logs it.
      */
     private void undeploy(WebSocket ws) throws InterruptedException {
-        long deadline = System.nanoTime() + UNDEPLOY_GRACE.toNanos();
-        if (sendGoingAway(ws, deadline)) {
-            endNow(deadline);
-        } else {
-            awaitEnd(deadline);
-        }
-    }
-
-    /**
-     * Sends the 1001 Close, waiting for it until {@code deadline}. Chappe sends it under the write lock of
-     * the connection, which a send blocked on a peer that does not read holds for as long as the peer does
-     * not read, and takes that lock with no time limit: the Close therefore goes out on a virtual thread
-     * of its own (BUG-20261115-01). Past the deadline the undeploy goes on without it, and the Close goes
-     * out once that send ends (or fails with the connection). A close that throws (dead connection) is
-     * logged; chappe's own teardown then ends the connection.
-     *
-     * <p>A connection still open is marked closed by the undeploy before its Close goes out, so the
-     * peer's answer cannot reach {@link #onClose} first, and no frame reaches the listener from then on; a
-     * connection the peer or the listener already closed keeps their code. Once the wait is over, the
-     * takeover may end on the connection's thread ({@link #deliver}).</p>
-     *
-     * @return whether the connection was still open: the undeploy closed it first
-     */
-    private boolean sendGoingAway(WebSocket ws, long deadline) throws InterruptedException {
+        hookStarted = System.nanoTime();
+        long deadline = hookStarted + UNDEPLOY_GRACE.toNanos();
         // A window remains for a simultaneous close: a peer Close chappe has read but not yet marked
         // (closeReceived), or an EOF chappe has hit before notifyClose, still finds the socket open, so
         // the connection is reported as 1001 although no 1001 frame went out. Closing it needs chappe
@@ -336,18 +346,61 @@ final class WebSocketTakeover implements WebSocketHandler {
         if (open) {
             closedByUndeploy = true;
         }
+        long next = sendGoingAway(ws, deadline);
+        if (open) {
+            endNow(next);
+        } else {
+            awaitEnd(next);
+        }
+    }
+
+    /**
+     * Sends the 1001 Close, waiting for it until {@code deadline}. Chappe sends it under the write lock of
+     * the connection, which a send blocked on a peer that does not read holds for as long as the peer does
+     * not read, and takes that lock with no time limit: the Close therefore goes out on a virtual thread
+     * of its own (BUG-20261115-01). Past the deadline the connection is cut without it ({@link #abortHeldClose}). A
+     * close that throws (dead connection) is logged; chappe's own teardown then ends the connection.
+     *
+     * <p>A connection still open was marked closed by the undeploy before its Close goes out, so the
+     * peer's answer cannot reach {@link #onClose} first, and no frame reaches the listener from then on; a
+     * connection the peer or the listener already closed keeps their code. Once the wait is over, the
+     * takeover may end on the connection's thread ({@link #deliver}).</p>
+     *
+     * @return the deadline of the waits that follow: {@code deadline}, or {@link #CUT_GRACE} after the cut
+     */
+    private long sendGoingAway(WebSocket ws, long deadline) throws InterruptedException {
         Thread closing = Thread.ofVirtual().name("foy-websocket-close")
                 .start(() -> closeQuietly(ws, GOING_AWAY, STOPPING));
         try {
-            if (!closing.join(remaining(deadline))) {
-                LOG.log(System.Logger.Level.WARNING, "the 1001 Close of a WebSocket waited {0} ms into the"
-                        + " undeploy for a send blocked on its peer: the session ends without it, and the Close goes"
-                        + " out once that send ends", UNDEPLOY_GRACE.toMillis());
-            }
+            return closing.join(remaining(deadline)) ? deadline : abortHeldClose(ws, closing);
         } finally {
             closeWaitOver = true;
         }
-        return open;
+    }
+
+    /**
+     * Cuts the connection whose Close a send blocked on a peer that does not read held past the grace:
+     * chappe's {@link WebSocket#abort()} closes it at once, with no Close frame and without the write lock
+     * (CHAPPE-060). The blocked send then fails, with an {@code IOException} that says the connection was
+     * cut ({@link Peer}), and so does any later one; the thread of the Close returns without sending it; the
+     * peer reads the end of the connection. The read the cut ends reaches no {@code onError}, and the
+     * takeover still ends with the undeploy's 1001, once.
+     *
+     * @return the deadline, {@link #CUT_GRACE} from now, of the waits that follow
+     */
+    private long abortHeldClose(WebSocket ws, Thread closing) throws InterruptedException {
+        long deadline = System.nanoTime() + CUT_GRACE.toNanos();
+        LOG.log(System.Logger.Level.WARNING, "the 1001 Close of a WebSocket waited {0} ms into the undeploy for a"
+                + " send blocked on its peer, which does not read: the connection is cut without it", waitedMillis());
+        // No Close frame will go out: the event in progress may end the takeover as soon as it returns.
+        closeWaitOver = true;
+        cut = true;
+        ws.abort();
+        if (!closing.join(remaining(deadline))) {
+            LOG.log(System.Logger.Level.WARNING, "the 1001 Close of a cut WebSocket still ran {0} ms after the cut",
+                    CUT_GRACE.toMillis());
+        }
+        return deadline;
     }
 
     /**
@@ -358,52 +411,68 @@ final class WebSocketTakeover implements WebSocketHandler {
      * event in progress ends it on the connection's thread as soon as it returns ({@link #deliver}), and
      * this then finds it ended, or waits for its {@code onClose} and {@code destroy()} when they still run
      * at {@code deadline}. When a send blocked on a peer that does not read held the Close back past the
-     * deadline ({@link #sendGoingAway}), {@code onClose} runs before the frame leaves: section 2.1.5 is not
-     * kept on that path, because waiting for that frame would let a peer that does not read hold the
-     * undeploy without limit (BUG-20261115-01). An event still running at {@code deadline}: the undeploy
-     * stops waiting, and the takeover ends after the application stopped, once that event returns, or,
-     * after an {@code onOpen}, which does not go through {@link #deliver}, at the next frame or at the
+     * grace, the connection was cut without it ({@link #abortHeldClose}): no Close frame comes before {@code onClose}
+     * on that path (section 2.1.5), since waiting for one would let a peer that does not read hold the
+     * undeploy without limit (BUG-20261115-01); the cut fails that send, so an event in progress that made
+     * it returns within the {@code deadline} the cut set. An {@code onOpen} that failed keeps its own end:
+     * chappe's {@code onError}, which always follows it on the connection's thread, reports the failure to the
+     * listener and ends the takeover ({@link #finishOpenFailed}). This waits for that end with no deadline of
+     * its own, as for an end under way ({@link #awaitEndUnderWay}), whichever takes the lock first: this,
+     * which then releases it, or that {@code onError}, which this then outlasts the deadline for. The
+     * context's own deadline for its upgraded connections bounds the wait. An event still running at {@code deadline}: the
+     * undeploy stops waiting, and the takeover ends after the application stopped, once that event returns,
+     * or, after an {@code onOpen}, which does not go through {@link #deliver}, at the next frame or at the
      * peer's answer to the Close.
      */
     private void endNow(long deadline) throws InterruptedException {
         if (!events.tryLock(remaining(deadline).toNanos(), TimeUnit.NANOSECONDS)) {
             if (!awaitEndUnderWay()) {
-                LOG.log(System.Logger.Level.WARNING, "a WebSocket event still ran {0} ms after the undeploy closed"
-                        + " its connection: the takeover ends after the application stopped, once the event returns"
-                        + " (after an onOpen, at the next frame or at the answer of the peer), and no later frame"
-                        + " reaches the listener", UNDEPLOY_GRACE.toMillis());
+                LOG.log(System.Logger.Level.WARNING, "a WebSocket event still ran {0} ms into the undeploy, which"
+                        + " closed its connection: the takeover ends after the application stopped, once the event"
+                        + " returns (after an onOpen, at the next frame or at the answer of the peer), and no later"
+                        + " frame reaches the listener", waitedMillis());
             }
             return;
         }
+        boolean openFailedFirst = openFailed;
         try {
-            finish(GOING_AWAY, STOPPING);
+            if (!openFailedFirst) finish(GOING_AWAY, STOPPING);
         } finally {
             events.unlock();
         }
+        if (openFailedFirst) ended.await();
     }
 
     /**
-     * Waits until {@code deadline} for the end of a closing handshake already under way (the listener or
-     * the peer closed first): the transport ends it with the code of the side that closed first. An
-     * {@code onClose} of that end still running at {@code deadline} is waited for ({@link #awaitEndUnderWay}).
+     * Waits until {@code deadline} for the end of a closing handshake already under way (the listener or the
+     * peer closed first), which ends with the code of the side that closed first. An {@code onClose} of that
+     * end still running at {@code deadline} is waited for ({@link #awaitEndUnderWay}).
      */
     private void awaitEnd(long deadline) throws InterruptedException {
         if (!ended.await(remaining(deadline).toNanos(), TimeUnit.NANOSECONDS) && !awaitEndUnderWay()) {
-            LOG.log(System.Logger.Level.WARNING, "a WebSocket closing handshake was still under way {0} ms into"
-                    + " the undeploy: onClose and destroy() run when it ends, after the application stopped",
-                    UNDEPLOY_GRACE.toMillis());
+            LOG.log(System.Logger.Level.WARNING, "a WebSocket closing handshake was still under way {0} ms into the"
+                    + " undeploy: onClose and destroy() run when it ends, after the application stopped",
+                    waitedMillis());
         }
+    }
+
+    /** How long the undeploy hook has run, in milliseconds. */
+    private long waitedMillis() {
+        return TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - hookStarted);
     }
 
     /**
      * Past the hook's deadline: when the takeover already began to end on the connection's thread, waits
-     * for its {@code onClose} and {@code destroy()}, which run while the application is still intact. The
-     * context's own deadline for its upgraded connections bounds that wait.
+     * for its {@code onClose} and {@code destroy()}, which run while the application is still intact. An
+     * {@code onOpen} that failed is such an end too, though nothing has ended the takeover yet: chappe's
+     * {@code onError} always follows it and ends the takeover, even when it already held the lock of the
+     * listener's events at the deadline. The context's own deadline for its upgraded connections bounds that
+     * wait.
      *
      * @return whether the takeover was ending: {@code false} when nothing has ended it yet
      */
     private boolean awaitEndUnderWay() throws InterruptedException {
-        if (!closed.get()) return false;
+        if (!closed.get() && !openFailed) return false;
         ended.await();
         return true;
     }
@@ -428,15 +497,53 @@ final class WebSocketTakeover implements WebSocketHandler {
         void deliverTo(WebSocketListener listener) throws IOException;
     }
 
-    /** Chappe's socket seen as the SPI's peer. */
-    private record Peer(WebSocket ws) implements WebSocketPeer {
-        @Override public void sendText(String text) throws IOException { ws.sendText(text); }
-        @Override public void sendBinary(ByteBuffer data) throws IOException { ws.sendBinary(data); }
-        @Override public void sendPing(ByteBuffer data) throws IOException { ws.sendPing(data); }
-        @Override public void sendPong(ByteBuffer data) throws IOException { ws.sendPong(data); }
+    /** A send of the listener, for {@link Peer}. */
+    @FunctionalInterface
+    private interface Send {
+        void run() throws IOException;
+    }
+
+    /**
+     * Chappe's socket seen as the SPI's peer. A send that fails once the undeploy cut the connection fails
+     * with an {@code IOException} that says so, chappe's own failure as its cause: an
+     * {@code AsynchronousCloseException} for the send the cut ended, a {@code ClosedChannelException} for one
+     * that waited behind it for the write lock, an {@code IOException("WebSocket closed")} for one made after
+     * the cut; none of them tells the application why.
+     */
+    private final class Peer implements WebSocketPeer {
+        private final WebSocket ws;
+
+        Peer(WebSocket ws) {
+            this.ws = ws;
+        }
+
+        @Override public void sendText(String text) throws IOException { send(() -> ws.sendText(text)); }
+        @Override public void sendBinary(ByteBuffer data) throws IOException { send(() -> ws.sendBinary(data)); }
+        @Override public void sendPing(ByteBuffer data) throws IOException { send(() -> ws.sendPing(data)); }
+        @Override public void sendPong(ByteBuffer data) throws IOException { send(() -> ws.sendPong(data)); }
         @Override public void close(int code, String reason) throws IOException { ws.close(code, reason); }
         @Override public boolean isOpen() { return ws.isOpen(); }
         @Override public InetSocketAddress remoteAddress() { return ws.remoteAddress(); }
         @Override public boolean isSecure() { return ws.isSecure(); }
+
+        private void send(Send send) throws IOException {
+            try {
+                send.run();
+            } catch (IOException e) {
+                if (!cut) throw e;
+                throw new ConnectionCutException(e);
+            }
+        }
+    }
+
+    /** The failure of a send the undeploy's cut ended, chappe's own failure as its cause (see {@link Peer}). */
+    private static final class ConnectionCutException extends IOException {
+        @java.io.Serial
+        private static final long serialVersionUID = 1L;
+
+        ConnectionCutException(IOException cause) {
+            super("The WebSocket connection was cut: the application is stopping, and its peer did not read what"
+                    + " was sent to it", cause);
+        }
     }
 }
