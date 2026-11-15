@@ -31,6 +31,7 @@ import io.vidocq.chappe.api.Response;
 import io.vidocq.chappe.api.StatusCode;
 import io.vidocq.chappe.api.WebSocketUpgrade;
 import io.vidocq.foy.internal.container.ContextLoaderScope;
+import io.vidocq.foy.spi.security.CurrentRequest;
 import io.vidocq.foy.spi.websocket.WebSocketUpgradeHandler;
 import io.vidocq.foy.internal.container.DefaultServlet;
 import io.vidocq.foy.internal.container.ResourcePaths;
@@ -201,7 +202,8 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
         Response response = null;
         Throwable failure = null;
         try {
-            response = handle(request, requests, res);
+            response = CurrentRequest.callWhere(() -> requests.isEmpty() ? null : requests.getLast(),
+                    () -> handle(request, requests, res));
         } catch (Throwable t) {
             // The boundary of the application code on this thread: whatever it throws, an Error
             // included, still settles the head chappe's thread is parked on.

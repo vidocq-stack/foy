@@ -364,6 +364,12 @@ When one is installed (`SecuritySettings.withRequestAuthentication`), it replace
 * A caller left anonymous on a protected resource gets `403`: there is no container mechanism to challenge with. An excluded resource is `403` without asking. An exception from the hook fails closed.
 * `HttpServletRequest.authenticate` asks the hook with `mandatory` set; `login(user, password)` throws `ServletException`; `logout` calls `cleanSubject`.
 
+=== `CurrentRequest`
+
+`CurrentRequest.get()` returns the request being served by the current thread, for code that is not handed it: a security context that answers `getCallerPrincipal()`, a producer of a request-bound object. Foy binds it (a `ScopedValue`) around the whole processing of a request on the thread that serves it -- listeners, filters, servlet -- and inside a dispatch it answers the request of the dispatch, so `getUserPrincipal()` is the caller the `RequestAuthentication` hook established.
+
+It is empty outside a request and on a thread the application started itself (including an asynchronous context's own thread): pass the request on explicitly there. Nothing needs cleaning up and nothing leaks to the next request.
+
 === `IdentityStore` contract
 
 `IdentityStore.validate(username, password)` returns the caller's `Identity` (principal and application roles) or `Optional.empty()`. An implementation must:
