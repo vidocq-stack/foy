@@ -65,15 +65,10 @@ import java.util.Set;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
-import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.logging.Handler;
 import java.util.logging.Level;
-import java.util.logging.LogRecord;
-import java.util.logging.Logger;
-import java.util.logging.SimpleFormatter;
 
 import static java.util.concurrent.TimeUnit.SECONDS;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -393,7 +388,7 @@ class HandshakeEndToEndTest {
     void anotherOriginIs403AndLogged() throws Exception {
         server = WebSocketTestServer.start(endpoints(config(EchoEndpoint.class, "/ws")));
 
-        try (var warnings = new LogLines(Level.WARNING)) {
+        try (var warnings = new LogLines(LogLines.FOY_WEBSOCKET, Level.WARNING)) {
             String head = RawHandshake.send(server.port(), "/ws", "Origin: http://evil.example");
 
             assertTrue(head.startsWith("HTTP/1.1 403 "), head);
@@ -411,7 +406,7 @@ class HandshakeEndToEndTest {
                 .initParameter(ALLOWED_ORIGINS, "https://admin.example.com")
                 .initParameter(SETTING_NAME, "app.ws.origins").start();
 
-        try (var warnings = new LogLines(Level.WARNING)) {
+        try (var warnings = new LogLines(LogLines.FOY_WEBSOCKET, Level.WARNING)) {
             String head = RawHandshake.send(server.port(), "/ws", "Origin: http://evil.example");
 
             assertTrue(head.startsWith("HTTP/1.1 403 "), head);
@@ -459,7 +454,7 @@ class HandshakeEndToEndTest {
     void aHostThatIsNotAnAuthorityIs400() throws Exception {
         server = WebSocketTestServer.start(endpoints(config(EchoEndpoint.class, "/ws")));
 
-        try (var debug = new LogLines(Level.FINE)) {
+        try (var debug = new LogLines(LogLines.FOY_WEBSOCKET, Level.FINE)) {
             String head = RawHandshake.sendWithHost(server.port(), "x/admin?", "/ws?v-pushId=secret");
 
             assertTrue(head.startsWith("HTTP/1.1 400 "), head);
@@ -487,7 +482,7 @@ class HandshakeEndToEndTest {
     void aRequestTargetThatIsNotAUriIs400() throws Exception {
         server = WebSocketTestServer.start(endpoints(config(EchoEndpoint.class, "/ws")));
 
-        try (var debug = new LogLines(Level.FINE)) {
+        try (var debug = new LogLines(LogLines.FOY_WEBSOCKET, Level.FINE)) {
             String head = RawHandshake.send(server.port(), "/ws?v-pushId=se|cret");
 
             assertTrue(head.startsWith("HTTP/1.1 400 "), head);
@@ -775,45 +770,6 @@ class HandshakeEndToEndTest {
             String text = texts.poll(WAIT, SECONDS);
             assertNotNull(text, "no message within " + WAIT + " s");
             return text;
-        }
-    }
-
-    /**
-     * Collects the records of one level of the {@code io.vidocq.foy.websocket} loggers, the logger
-     * opened to that level meanwhile ({@code DEBUG} is {@code FINE}).
-     */
-    private static final class LogLines extends Handler implements AutoCloseable {
-        private final Logger logger = Logger.getLogger("io.vidocq.foy.websocket");
-        private final Level previous = logger.getLevel();
-        private final Level level;
-        private final List<String> messages = new CopyOnWriteArrayList<>();
-
-        LogLines(Level level) {
-            this.level = level;
-            logger.setLevel(level);
-            logger.addHandler(this);
-        }
-
-        List<String> messages() {
-            return messages;
-        }
-
-        @Override
-        public void publish(LogRecord logRecord) {
-            if (level.equals(logRecord.getLevel())) {
-                messages.add(new SimpleFormatter().formatMessage(logRecord));
-            }
-        }
-
-        @Override
-        public void flush() {
-            // nothing buffered
-        }
-
-        @Override
-        public void close() {
-            logger.removeHandler(this);
-            logger.setLevel(previous);
         }
     }
 }

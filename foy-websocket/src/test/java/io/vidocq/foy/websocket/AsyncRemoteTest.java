@@ -161,6 +161,11 @@ class AsyncRemoteTest {
         assertEquals(expected.size(), peer.messages.size(), "and once");
     }
 
+    /**
+     * A send past its timeout fails and closes the session: the peer reads 1001, the endpoint hears 1006, the
+     * container having closed the session (Jakarta WebSocket 2.2 section 2.1.5), even once the peer answers
+     * with its own 1001 (BUG-20261115-08).
+     */
     @Test
     void aSendPastItsTimeoutFailsAndClosesTheSession() throws InterruptedException {
         session = TestSessions.open(endpoint, peer);
@@ -178,22 +183,6 @@ class AsyncRemoteTest {
         assertTrue(peer.closed.await(WAIT, SECONDS));
         assertEquals(CloseCodes.GOING_AWAY.getCode(), peer.closeCode());
         assertEquals(SEND_TIMEOUT, peer.closeReason());
-    }
-
-    /**
-     * The peer reads the 1001 of a send timeout, the endpoint hears 1006: the container closed the session
-     * (Jakarta WebSocket 2.2 section 2.1.5), even once the peer answers with its own 1001 (BUG-20261115-08).
-     */
-    @Test
-    void aSendTimeoutReports1006ToTheEndpoint() throws InterruptedException {
-        session = TestSessions.open(endpoint, peer);
-        RemoteEndpoint.Async async = session.getAsyncRemote();
-        async.setSendTimeout(100);
-        peer.blockWrites();
-
-        async.sendText("never written", new CompletableResult());
-
-        assertTrue(peer.closed.await(WAIT, SECONDS));
         session.onClose(CloseCodes.GOING_AWAY.getCode(), "");
         TestSessions.assertClosedByTheContainer(endpoint, SEND_TIMEOUT);
     }

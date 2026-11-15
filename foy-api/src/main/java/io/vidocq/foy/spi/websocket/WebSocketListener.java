@@ -112,9 +112,11 @@ public interface WebSocketListener {
      *               (1002, 1007 or 1009) or another callback that threw (1011), reported to
      *               {@link #onError(Throwable)} first
      * @param reason the close reason, empty when there is none, at most 123 bytes in UTF-8. With a
-     *               {@code 1006} of the container, its cause: {@code "the application is stopping"},
-     *               {@code "onOpen failed"}, {@code "protocol error: "} followed by the violation, or
-     *               {@code "callback failed: "} followed by the throwable; empty for a cut connection
+     *               {@code 1006} of the container, the cause of the Close frame that went out:
+     *               {@code "the application is stopping"} (also for an {@code onOpen} that fails once the
+     *               undeploy closed the connection), {@code "onOpen failed"}, {@code "protocol error: "}
+     *               followed by the violation, or {@code "callback failed: "} followed by the throwable;
+     *               empty for a cut connection
      */
     default void onClose(int code, String reason) {
         // no-op by default

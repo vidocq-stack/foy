@@ -52,6 +52,20 @@ class WebSocketTakeoverCloseReasonTest {
         assertEquals(122, cut.getBytes(StandardCharsets.UTF_8).length);
     }
 
+    /**
+     * A character outside the Basic Multilingual Plane is 4 bytes in UTF-8 and 2 {@code char}s: after 120
+     * bytes it ends at byte 124, so it goes whole, and no lone surrogate is left at the end.
+     */
+    @Test
+    void theCutNeverSplitsACharacterOfFourBytes() {
+        String grinning = new String(Character.toChars(0x1F600));
+
+        String cut = WebSocketTakeover.boundedReason("a".repeat(120) + grinning);
+
+        assertEquals("a".repeat(120), cut);
+        assertEquals(120, cut.getBytes(StandardCharsets.UTF_8).length);
+    }
+
     @Test
     void aProtocolErrorIsNamedByItsMessageOrItsClass() {
         assertEquals("protocol error: Invalid UTF-8 in TEXT frame",

@@ -41,10 +41,9 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * server: {@link #close()} the deployment first, then stop the server. The undeploy closes the
  * application's upgraded connections while the server can still write, so a WebSocket peer gets its
  * 1001 Close frame and the endpoint its {@code onClose}, with 1006 and the reason
- * {@code "the application is stopping"}: the container closed it (Jakarta WebSocket 2.2 section 2.1.5).
- * The other way round, the server's stop
- * cuts those connections first: their peers get no Close frame, and an endpoint may get
- * {@code onError} for the cut connection before an {@code onClose(1006)}.
+ * {@code "the application is stopping"}: the container closed it (Jakarta WebSocket 2.2 section 2.1.5). The
+ * other way round, the server's stop cuts those connections first: their peers get no Close frame, and an
+ * endpoint may get {@code onError} for the cut connection before an {@code onClose(1006)} with no reason.
  */
 public final class Deployment implements AutoCloseable {
 

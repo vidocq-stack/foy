@@ -286,7 +286,11 @@ Decided by the maintainer: same-origin by default, opened by configuration only.
     The session applies the rule to the closes it initiates (timeouts, size, `onOpen`); the
     takeover to the undeploy, and to the closes Chappe initiates after the `onError` of a
     failure, which Chappe reports with 1005 (no code of the peer's). Every reason fits the
-    123 bytes of a Close reason;
+    123 bytes of a Close reason. `onClose` hears the reason of the Close frame that went out:
+    an `onOpen` that fails once the undeploy closed the connection (its 1001 sent, or the
+    connection cut) hears `the application is stopping`, whether it threw an exception or an
+    `Error`, and the 1011 never goes out. When `onOpen` failed first, the undeploy sends that
+    1011 instead of its 1001: the first of the two to decide gives the frame and the reason;
   - the application closed first with `Session.close(...)`: the application's own code and
     reason, 1001 included. The rule of §2.1.5 names the container, not the application;
   - TCP cut with no Close first (a vanished peer, the server's stop before the undeploy):
@@ -295,6 +299,15 @@ Decided by the maintainer: same-origin by default, opened by configuration only.
   The side that closed first keeps its reason even when the peer then answers with another
   code or vanishes. Atmosphere handles the 1006 as it handled the 1001: its
   `DefaultWebSocketProcessor.allowedCloseCode` accepts a code up to 1001 or above 1005.
+
+  Known window: a close of this side checks that the connection is open, then sends its Close
+  frame. A Close of the peer that Chappe reads between the two is echoed instead, and this
+  side's frame never goes out, yet `onClose` reports this side's reason (1006 for a close of
+  the container) where §2.1.5 asks for the peer's. The session's closes (timeouts, size,
+  `onOpen`, `Session.close(...)`) and the undeploy share it, and so does an undeploy's Close
+  that goes out between a session's check and its send. Closing it needs `WebSocketPeer.close`
+  to say whether the call sent the frame, hence Chappe's `WebSocket.close`, which returns
+  nothing today although its `sendCloseFrame` knows; Foy leaves Chappe unchanged here.
 
   `onError` precedes `onClose` when a transport failure closes the session, except once an undeploy closed it: the
   server's stop cutting that closing handshake is not an error of the session; an exception from a message
@@ -390,7 +403,13 @@ Decided by the maintainer: same-origin by default, opened by configuration only.
   `WebSocketListener.onClose` contract for the undeploy, a failed `onOpen` and the closes Chappe
   initiates on a failure (an `onError`, then a code other than 1006). Only the takeover knows
   the undeploy closed first, and its listener is the Jakarta session; the reason names the
-  cause and is the Close frame's own when there is one (BUG-20261115-08).
+  cause and is the Close frame's own when there is one (BUG-20261115-08). When the undeploy
+  and a failed `onOpen` both close a connection, the reason of the Close frame that went out
+  wins over the cause of the failure: the first of the two to decide claims the close
+  (`WebSocketTakeover.firstClose`), and every later Close of the takeover repeats it, so the
+  peer and the listener agree whichever thread sends first. The session sends no Close and
+  leaves `onClose` to the transport when the transport's Close went out before an `Error`
+  from `onOpen`.
 
 ## 7. Open for lots 2 and 3
 

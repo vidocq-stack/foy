@@ -43,7 +43,6 @@ import java.net.Socket;
 import java.net.http.HttpClient;
 import java.net.http.WebSocket;
 import java.nio.ByteBuffer;
-import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.List;
 import java.util.Set;
@@ -53,6 +52,7 @@ import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.logging.Level;
 
 import static java.util.concurrent.TimeUnit.SECONDS;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
@@ -94,6 +94,8 @@ class SessionEndToEndTest {
     static final BlockingQueue<Throwable> SEND_OUTCOMES = new LinkedBlockingQueue<>();
     /** The thread of the blocking send of {@link StalledSendsEndpoint}. */
     static final AtomicReference<Thread> BLOCKING_SENDER = new AtomicReference<>();
+    /** What the {@code onOpen} of the held endpoints waits for before it fails. */
+    static final AtomicReference<CountDownLatch> OPEN_GATE = new AtomicReference<>(new CountDownLatch(1));
 
     private WebSocketTestServer server;
 
@@ -106,10 +108,12 @@ class SessionEndToEndTest {
         RESULTS.clear();
         SEND_OUTCOMES.clear();
         BLOCKING_SENDER.set(null);
+        OPEN_GATE.set(new CountDownLatch(1));
     }
 
     @AfterEach
     void stop() {
+        OPEN_GATE.get().countDown();
         if (server != null) {
             server.close();
         }
@@ -161,6 +165,26 @@ class SessionEndToEndTest {
         @Override
         public void onOpen(Session session, EndpointConfig config) {
             super.onOpen(session, config);
+            throw new IllegalStateException("refused");
+        }
+    }
+
+    /** As {@link BrokenEndpoint}, once {@link #OPEN_GATE} opened. */
+    public static final class HeldBrokenEndpoint extends EchoEndpoint {
+        @Override
+        public void onOpen(Session session, EndpointConfig config) {
+            super.onOpen(session, config);
+            awaitOpenGate();
+            throw new ExceptionInInitializerError("static initializer failed");
+        }
+    }
+
+    /** As {@link RefusingEndpoint}, once {@link #OPEN_GATE} opened. */
+    public static final class HeldRefusingEndpoint extends EchoEndpoint {
+        @Override
+        public void onOpen(Session session, EndpointConfig config) {
+            super.onOpen(session, config);
+            awaitOpenGate();
             throw new IllegalStateException("refused");
         }
     }
@@ -367,6 +391,24 @@ class SessionEndToEndTest {
         assertInstanceOf(IllegalStateException.class, ERRORS.poll(WAIT, SECONDS));
     }
 
+    /**
+     * An {@code onOpen} that throws an {@code Error} once the undeploy's 1001 went out: the 1011 of a failed
+     * {@code onOpen} never goes out, and the endpoint hears the undeploy's close, the one the peer read
+     * (BUG-20261115-08).
+     */
+    @Test
+    void anErrorFromOnOpenDuringTheUndeployReportsTheUndeploysClose() throws Exception {
+        assertAFailedOnOpenHearsTheUndeploysClose(HeldBrokenEndpoint.class);
+        assertTrue(ERRORS.isEmpty(), () -> "Endpoint.onError ran: " + ERRORS);
+    }
+
+    /** As {@link #anErrorFromOnOpenDuringTheUndeployReportsTheUndeploysClose}, with an exception it hears first. */
+    @Test
+    void anExceptionFromOnOpenDuringTheUndeployReportsTheUndeploysClose() throws Exception {
+        assertAFailedOnOpenHearsTheUndeploysClose(HeldRefusingEndpoint.class);
+        assertInstanceOf(IllegalStateException.class, ERRORS.poll(WAIT, SECONDS));
+    }
+
     /** The peer reads 1009, the endpoint hears 1006 with the reason the peer read (BUG-20261115-08). */
     @Test
     void aMessageOverTheLimitClosesWith1009AndReports1006() throws Exception {
@@ -393,18 +435,21 @@ class SessionEndToEndTest {
         try (Socket socket = RawHandshake.connect(server.port(), "/echo")) {
             assertNotNull(SESSIONS.poll(WAIT, SECONDS), "the endpoint did not open");
 
-            socket.getOutputStream().write(maskedText(new byte[] {(byte) 0xC3, 0x28}));
+            // A final text frame of 2 bytes, masked with a zero key (RFC 6455 section 5.3): 0xC3 0x28 as sent.
+            socket.getOutputStream().write(new byte[] {(byte) 0x81, (byte) 0x82, 0, 0, 0, 0, (byte) 0xC3, 0x28});
             socket.getOutputStream().flush();
 
-            assertEquals(CloseCodes.NOT_CONSISTENT.getCode(), closeFrameCode(socket.getInputStream().readAllBytes()));
+            assertEquals(CloseCodes.NOT_CONSISTENT.getCode(),
+                    RawHandshake.closeCodeAfterTheHead(socket.getInputStream().readAllBytes()));
             assertClosedByTheContainer(CLOSES.poll(WAIT, SECONDS), "protocol error: Invalid UTF-8 in TEXT frame");
             assertNotNull(ERRORS.poll(WAIT, SECONDS), "Endpoint.onError did not run");
         }
     }
 
     /**
-     * An {@code Error} from a message handler: the endpoint hears it in {@code onError}, the transport closes
-     * with 1011, and {@code onClose} hears 1006 with a reason naming the {@code Error} (BUG-20261115-08).
+     * An {@code Error} from a message handler: the transport logs it, the endpoint hears it in {@code onError},
+     * the transport closes with 1011, and {@code onClose} hears 1006 with a reason naming the {@code Error}
+     * (BUG-20261115-08).
      */
     @Test
     void anErrorFromAMessageHandlerClosesWith1011AndReports1006() throws Exception {
@@ -412,9 +457,12 @@ class SessionEndToEndTest {
         var client = new Client();
         WebSocket ws = client.connect();
 
-        ws.sendText("fail", true).get(WAIT, SECONDS);
+        try (var warnings = new LogLines(LogLines.CHAPPE_CONNECTION, Level.WARNING)) {
+            ws.sendText("fail", true).get(WAIT, SECONDS);
 
-        assertTrue(client.closed.await(WAIT, SECONDS), "the client saw no close");
+            assertTrue(client.closed.await(WAIT, SECONDS), "the client saw no close");
+            assertEquals(List.of("WebSocket handler error"), warnings.messages());
+        }
         assertEquals(CloseCodes.UNEXPECTED_CONDITION.getCode(), client.closeCode);
         assertClosedByTheContainer(CLOSES.poll(WAIT, SECONDS),
                 "callback failed: java.lang.ExceptionInInitializerError: handler failed");
@@ -483,7 +531,8 @@ class SessionEndToEndTest {
             assertClosedByTheContainer(CLOSES.poll(WAIT, SECONDS), "idle timeout");
             assertFalse(session.isOpen());
 
-            assertEquals(CloseCodes.GOING_AWAY.getCode(), closeFrameCode(socket.getInputStream().readAllBytes()));
+            assertEquals(CloseCodes.GOING_AWAY.getCode(),
+                    RawHandshake.closeCodeAfterTheHead(socket.getInputStream().readAllBytes()));
             assertTrue(CLOSES.isEmpty(), "Endpoint.onClose ran more than once");
         }
     }
@@ -536,29 +585,35 @@ class SessionEndToEndTest {
     }
 
     /**
-     * The code of the frame that follows the 101 response head in {@code received}, everything a raw client
-     * read: that frame must be a Close.
+     * Opens an {@code endpointClass} held in {@code onOpen}, undeploys it, and lets that {@code onOpen} fail once
+     * the peer read the undeploy's 1001: the endpoint hears the undeploy's close, once.
      */
-    private static int closeFrameCode(byte[] received) {
-        String text = new String(received, StandardCharsets.ISO_8859_1);
-        int frameAt = text.indexOf("\r\n\r\n") + 4;
-        assertTrue(frameAt > 4 && text.startsWith("HTTP/1.1 101"), text);
-        assertTrue(received.length >= frameAt + 4, "no close frame with a code followed the 101");
-        assertEquals(0x88, received[frameAt] & 0xFF, "the server sent a close frame");
-        return ((received[frameAt + 2] & 0xFF) << 8) | (received[frameAt + 3] & 0xFF);
+    private void assertAFailedOnOpenHearsTheUndeploysClose(Class<?> endpointClass) throws Exception {
+        server = WebSocketTestServer.start(endpoint(endpointClass));
+        var client = new Client();
+        client.connect();
+        assertNotNull(SESSIONS.poll(WAIT, SECONDS), "the endpoint did not open");
+        Thread undeploy = Thread.ofVirtual().start(server::close);
+
+        assertTrue(client.closed.await(WAIT, SECONDS), "the undeploy's Close did not go out");
+        assertEquals(CloseCodes.GOING_AWAY.getCode(), client.closeCode);
+        OPEN_GATE.get().countDown();
+
+        assertTrue(undeploy.join(Duration.ofSeconds(WAIT)), "the undeploy did not return");
+        assertClosedByTheContainer(CLOSES.poll(WAIT, SECONDS), STOPPING);
+        assertTrue(CLOSES.isEmpty(), "Endpoint.onClose ran more than once");
     }
 
-    /** A masked client text frame (RFC 6455 section 5.2) of fewer than 126 bytes, carrying {@code payload}. */
-    private static byte[] maskedText(byte[] payload) {
-        byte[] mask = {0x11, 0x22, 0x33, 0x44};
-        byte[] frame = new byte[2 + mask.length + payload.length];
-        frame[0] = (byte) 0x81;
-        frame[1] = (byte) (0x80 | payload.length);
-        System.arraycopy(mask, 0, frame, 2, mask.length);
-        for (int i = 0; i < payload.length; i++) {
-            frame[2 + mask.length + i] = (byte) (payload[i] ^ mask[i % mask.length]);
+    /** Waits for {@link #OPEN_GATE}, twice the tests' wait at most. */
+    private static void awaitOpenGate() {
+        try {
+            if (!OPEN_GATE.get().await(2 * WAIT, SECONDS)) {
+                throw new IllegalStateException("the gate never opened");
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException(e);
         }
-        return frame;
     }
 
     private static ServletContextListener endpoint(Class<?> endpointClass) {

@@ -52,6 +52,8 @@ class FoySessionTest {
 
     private static final long WAIT = 5;
     private static final String ON_OPEN_FAILED = "onOpen failed";
+    /** The reason of the undeploy's close, which the transport sends. */
+    private static final String STOPPING = "the application is stopping";
 
     private final FakePeer peer = new FakePeer();
     private final List<String> received = new CopyOnWriteArrayList<>();
@@ -171,6 +173,57 @@ class FoySessionTest {
 
         assertEquals(1, endpoint.closes.size());
         assertEquals(List.of(), endpoint.errors);
+    }
+
+    /**
+     * The transport's Close went out while {@code onOpen} ran (the undeploy's), then {@code onOpen} threw an
+     * {@code Error}: the session sends no Close of its own, and the endpoint hears the transport's close, the
+     * one the peer read, as for an exception (BUG-20261115-08).
+     */
+    @Test
+    void anErrorFromOnOpenAfterTheTransportClosedReportsTheTransportsClose() {
+        var endpoint = openFailingAfterTheTransportClosed(() -> {
+            throw new ExceptionInInitializerError("static initializer failed");
+        });
+
+        assertEquals(List.of(), endpoint.errors);
+        TestSessions.assertClosedByTheContainer(endpoint, STOPPING);
+    }
+
+    /** As {@link #anErrorFromOnOpenAfterTheTransportClosedReportsTheTransportsClose}, with an exception. */
+    @Test
+    void anExceptionFromOnOpenAfterTheTransportClosedReportsTheTransportsClose() {
+        var failure = new IllegalStateException("cannot open");
+        var endpoint = openFailingAfterTheTransportClosed(() -> {
+            throw failure;
+        });
+
+        assertEquals(List.of(failure), endpoint.errors);
+        TestSessions.assertClosedByTheContainer(endpoint, STOPPING);
+    }
+
+    /**
+     * Opens a session whose {@code Endpoint.onOpen} runs {@code failure} once the transport sent its 1001
+     * Close, then delivers the transport's {@code onClose}, 1006 {@value #STOPPING}, as the takeover does once
+     * the {@code onOpen} of its listener returned or threw.
+     */
+    private Recorder openFailingAfterTheTransportClosed(Runnable failure) {
+        var endpoint = new Recorder(session -> {
+            peer.close(CloseCodes.GOING_AWAY.getCode(), STOPPING);
+            failure.run();
+        });
+        FoySession session = TestSessions.session(endpoint);
+
+        try {
+            session.onOpen(peer);
+        } catch (ExceptionInInitializerError _) {
+            // an Error propagates to the transport, which then reports its close
+        }
+        session.onClose(CloseCodes.CLOSED_ABNORMALLY.getCode(), STOPPING);
+
+        assertEquals(CloseCodes.GOING_AWAY.getCode(), peer.closeCode(), "the session sent a Close of its own");
+        assertEquals(1, endpoint.closes.size());
+        return endpoint;
     }
 
     /**

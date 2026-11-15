@@ -56,6 +56,22 @@ final class RawHandshake {
         return open(port, "127.0.0.1:" + port, path);
     }
 
+    /**
+     * The code of the Close frame that follows the 101 response head in {@code received}, everything a socket of
+     * {@link #connect} read: the first frame after the head must be a Close with a code.
+     */
+    static int closeCodeAfterTheHead(byte[] received) {
+        String text = new String(received, StandardCharsets.ISO_8859_1);
+        int frameAt = text.indexOf("\r\n\r\n") + 4;
+        if (frameAt <= 4 || !text.startsWith("HTTP/1.1 101")) {
+            throw new AssertionError("no 101 response head: " + text);
+        }
+        if (received.length < frameAt + 4 || (received[frameAt] & 0xFF) != 0x88) {
+            throw new AssertionError("no Close frame with a code followed the 101: " + text.substring(frameAt));
+        }
+        return ((received[frameAt + 2] & 0xFF) << 8) | (received[frameAt + 3] & 0xFF);
+    }
+
     private static Socket open(int port, String host, String path, String... extraHeaderLines) throws IOException {
         var request = new StringBuilder()
                 .append("GET ").append(path).append(" HTTP/1.1\r\n")

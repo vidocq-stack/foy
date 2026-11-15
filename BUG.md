@@ -15,7 +15,7 @@
 - Repro: deterministic. In `foy-websocket`: `FoySessionTest` (`aMessageOverTheLimitClosesWith1009AndReports1006`,
   the binary one, `anOnOpenThatThrowsReportsThenClosesWith1011AndReports1006`,
   `anOnOpenThatThrowsAnErrorClosesWith1011BeforeItPropagates`), `SessionTimerTest`
-  (`theIdleTimeoutClosesWith1001AndReports1006`), `AsyncRemoteTest` (`aSendTimeoutReports1006ToTheEndpoint`) and
+  (`theIdleTimeoutClosesWith1001AndReports1006`), `AsyncRemoteTest` (`aSendPastItsTimeoutFailsAndClosesTheSession`) and
   `SessionEndToEndTest` (the undeploy, the undeploy's cut, the idle timeout, a message too big, `onOpen`
   failures, `aProtocolErrorOfThePeerClosesWith1007AndReports1006`, which got `CloseReason[1005]`). In
   `foy-core`, `WebSocketTakeoverEndToEndTest`: 23 tests, among them `aProtocolErrorOfThePeerClosesWith1007AndReports1006`
@@ -33,7 +33,17 @@
   than 1006 (`protocol error: ` and Chappe's message, or `callback failed: ` and the throwable), every reason
   cut to 123 bytes on a character boundary. Unchanged: a close of the peer gives the peer's code, a
   `Session.close(...)` of the application its own code (the rule names the container), a TCP cut with no close
-  first 1006 with no reason, and the side that closed first keeps its reason. Consumers: Vidocq's
+  first 1006 with no reason, and the side that closed first keeps its reason. Review follow-up, same branch:
+  an `onOpen` that failed once the undeploy closed the connection heard `onOpen failed` (an `Error` on the
+  Jakarta side, any failure at the SPI level) although the peer read the undeploy's 1001 and the 1011 never
+  went out; it now hears the reason of the Close that went out. The undeploy and a failed `onOpen` claim the
+  close once (`WebSocketTakeover.firstClose`), every later Close of the takeover repeats the first, and the
+  session leaves `onClose` to the transport when the transport's Close went out before an `Error` from
+  `onOpen` (`FoySessionTest.anErrorFromOnOpenAfterTheTransportClosedReportsTheTransportsClose`,
+  `SessionEndToEndTest.anErrorFromOnOpenDuringTheUndeployReportsTheUndeploysClose`, and in
+  `WebSocketTakeoverEndToEndTest` the six tests of a failed `onOpen` during the undeploy). Still open: a Close
+  of the peer read between a local close's check and its send leaves the local reason in `onClose`; closing it
+  needs Chappe's `WebSocket.close` to tell whether it sent the frame (`WEBSOCKET.md` section 5.4). Consumers: Vidocq's
   `FoyWebSocketModulePathTest.anApplicationStopClosesTheConnectionWith1001BeforeTheServerStops` asserts
   `onClose` codes `[1001]` and must expect `[1006]`; Atmosphere (Vaadin push) treats 1006 as it treated 1001.
 

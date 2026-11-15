@@ -149,7 +149,9 @@ final class FoySession implements Session, WebSocketListener {
      * When it throws an exception, the endpoint hears it and the session closes with 1011. When it
      * throws an {@code Error} (a failed static initializer), the session closes with 1011 and
      * {@code onClose} runs, with 1006, before the {@code Error} propagates to the transport, which may end
-     * the connection without another event: neither the session, its timer nor its sends outlive it.
+     * the connection without another event: neither the session, its timer nor its sends outlive it. Either
+     * way, when the transport's Close went out first (the undeploy's), the session sends none and the
+     * transport's {@code onClose}, which the SPI delivers once, reports that close, the one the peer read.
      */
     @Override
     public void onOpen(WebSocketPeer opened) {
@@ -174,7 +176,10 @@ final class FoySession implements Session, WebSocketListener {
         } finally {
             if (!returned) {
                 closeByContainer(ON_OPEN_FAILED);
-                onClose(CloseCodes.CLOSED_ABNORMALLY.getCode(), ON_OPEN_FAILED.getReasonPhrase());
+                // Only a close of this side is reported here: the transport reports its own.
+                if (localClose.get() != null) {
+                    onClose(CloseCodes.CLOSED_ABNORMALLY.getCode(), ON_OPEN_FAILED.getReasonPhrase());
+                }
             }
         }
     }
@@ -405,7 +410,11 @@ final class FoySession implements Session, WebSocketListener {
 
     /**
      * Sends {@code wire} to the peer and records {@code reported} for {@code Endpoint.onClose}, unless the
-     * session is closing or closed: the side that closed first gives the reason.
+     * session is closing or closed: the side that closed first gives the reason. A window remains: a Close of
+     * the peer, or the undeploy's, that goes out between the check of {@link WebSocketPeer#isOpen()} and the
+     * send leaves this Close unsent, yet {@code reported} stays the reason. Closing it needs
+     * {@link WebSocketPeer#close(int, String)}, and so chappe's {@code WebSocket.close}, to tell whether the call
+     * sent the frame (WEBSOCKET.md section 5.4).
      */
     private void close(CloseReason wire, CloseReason reported) throws IOException {
         WebSocketPeer current = peer.get();
