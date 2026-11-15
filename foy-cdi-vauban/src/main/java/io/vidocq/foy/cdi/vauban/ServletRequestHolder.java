@@ -27,15 +27,15 @@ import jakarta.servlet.http.HttpServletRequest;
  * activated the context for a request, and {@link ServletBuiltInBeans} produces the {@code HttpServletRequest} bean
  * from it. Request scoped, it lives exactly as long as the request context, with no thread-bound state of its own:
  * where the request context is active for a servlet request (the filters and servlets, a forward, an include, an
- * error dispatch, an {@code AsyncListener}, an {@code AsyncContext.start} task), it holds that request.
+ * {@code AsyncListener}, an {@code AsyncContext.start} task), it holds that request.
  */
 @RequestScoped
 class ServletRequestHolder {
 
     /** Why there is no request where the request context is active without one. */
-    static final String NO_REQUEST = "No servlet request in this request context: HttpServletRequest and HttpSession "
-            + "are injectable while Foy serves a request (a request listener, a filter, a servlet, an AsyncListener, "
-            + "an AsyncContext.start task), not where the CDI request context was activated another way";
+    static final String NO_REQUEST = "No servlet request in this request context: the HttpServletRequest bean is "
+            + "injectable while Foy serves a request (a request listener, a filter, a servlet, an AsyncListener, an "
+            + "AsyncContext.start task), not where the CDI request context was activated another way";
 
     private HttpServletRequest request;
 

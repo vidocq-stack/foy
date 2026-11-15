@@ -32,6 +32,7 @@ import java.io.File;
 import java.io.IOException;
 import java.lang.module.ModuleFinder;
 import java.net.URI;
+import java.net.URISyntaxException;
 import java.net.URL;
 import java.net.URLClassLoader;
 import java.nio.charset.StandardCharsets;
@@ -61,7 +62,9 @@ final class TestApps {
     /** One application loader over several compiled archives. */
     static URLClassLoader loaderOver(Path... archives) throws IOException {
         var urls = new URL[archives.length];
-        for (int i = 0; i < archives.length; i++) urls[i] = archives[i].toUri().toURL();
+        for (int i = 0; i < archives.length; i++) {
+            urls[i] = archives[i].toUri().toURL();
+        }
         return new URLClassLoader(urls, TestApps.class.getClassLoader());
     }
 
@@ -88,14 +91,14 @@ final class TestApps {
     static Deployed deploy(VaubanContainer container, ClassLoader loader, String contextPath) throws Exception {
         var mounted = withTccl(loader, () -> FoyChappeBoot.builder().beanManager(container.getBeanManager())
                 .classLoader(loader).contextPath(contextPath).build().orElseThrow());
-        Server server = Server.builder().host("127.0.0.1").port(0).handler(mounted.handler()).build();
         try {
+            Server server = Server.builder().host("127.0.0.1").port(0).handler(mounted.handler()).build();
             server.start();
+            return new Deployed(mounted, server);
         } catch (RuntimeException e) {
             mounted.close();
             throw e;
         }
-        return new Deployed(mounted, server);
     }
 
     /** A deployed application and its server; closing it undeploys the application, then stops the server. */
@@ -144,10 +147,14 @@ final class TestApps {
             fm.setLocation(StandardLocation.CLASS_OUTPUT, List.of(classes.toFile()));
             fm.setLocation(StandardLocation.SOURCE_OUTPUT, List.of(generated.toFile()));
             var classPath = new ArrayList<>(path);
-            for (var library : libraries) classPath.add(library.toFile());
+            for (var library : libraries) {
+                classPath.add(library.toFile());
+            }
             fm.setLocation(StandardLocation.CLASS_PATH, classPath);
             var task = compiler.getTask(null, fm, diagnostics, options, null, fm.getJavaFileObjectsFromFiles(files));
-            if (processorLoader != null) task.setProcessors(processorsOf(processorLoader));
+            if (processorLoader != null) {
+                task.setProcessors(processorsOf(processorLoader));
+            }
             boolean ok = task.call();
             var messages = new StringBuilder();
             for (var d : diagnostics.getDiagnostics()) {
@@ -171,7 +178,9 @@ final class TestApps {
      */
     private static URLClassLoader isolatedLoader(List<File> path) throws IOException {
         var urls = new ArrayList<URL>();
-        for (var entry : path) urls.add(entry.toURI().toURL());
+        for (var entry : path) {
+            urls.add(entry.toURI().toURL());
+        }
         return new URLClassLoader(urls.toArray(URL[]::new), new JdkOnlyLoader());
     }
 
@@ -204,9 +213,9 @@ final class TestApps {
         var resources = loader.getResources("META-INF/services/" + Processor.class.getName());
         while (resources.hasMoreElements()) {
             try (var in = resources.nextElement().openStream()) {
-                for (var line : new String(in.readAllBytes(), StandardCharsets.UTF_8).lines().toList()) {
-                    var name = line.replaceFirst("#.*", "").strip();
-                    if (name.isEmpty()) continue;
+                var names = new String(in.readAllBytes(), StandardCharsets.UTF_8).lines()
+                        .map(line -> line.replaceFirst("#.*", "").strip()).filter(name -> !name.isEmpty()).toList();
+                for (var name : names) {
                     processors.add((Processor) loader.loadClass(name).getConstructor().newInstance());
                 }
             }
@@ -215,8 +224,7 @@ final class TestApps {
     }
 
     private static boolean isModule(File entry) {
-        if (entry.isDirectory()) return new File(entry, "module-info.class").isFile();
-        return entry.getName().endsWith(".jar");
+        return entry.isDirectory() ? new File(entry, "module-info.class").isFile() : entry.getName().endsWith(".jar");
     }
 
     private static String join(List<File> entries) {
@@ -225,14 +233,16 @@ final class TestApps {
 
     private static String match(String source, String regex) {
         var m = Pattern.compile(regex).matcher(source);
-        if (!m.find()) throw new IllegalArgumentException("no match for " + regex);
+        if (!m.find()) {
+            throw new IllegalArgumentException("no match for " + regex);
+        }
         return m.group(1);
     }
 
     static Path classesOf(Class<?> type) {
         try {
             return Path.of(type.getProtectionDomain().getCodeSource().getLocation().toURI());
-        } catch (Exception e) {
+        } catch (URISyntaxException e) {
             throw new IllegalStateException(e);
         }
     }
@@ -245,11 +255,15 @@ final class TestApps {
         Set<File> path = new LinkedHashSet<>();
         for (var property : List.of("jdk.module.path", "java.class.path")) {
             for (var e : System.getProperty(property, "").split(File.pathSeparator, -1)) {
-                if (!e.isBlank()) path.add(new File(e));
+                if (!e.isBlank()) {
+                    path.add(new File(e));
+                }
             }
         }
         ModuleLayer.boot().configuration().modules().forEach(rm -> rm.reference().location().ifPresent(uri -> {
-            if ("file".equals(uri.getScheme())) path.add(new File(uri));
+            if ("file".equals(uri.getScheme())) {
+                path.add(new File(uri));
+            }
         }));
         path.add(classesOf(FoyWebExtension.class).toFile());
         return List.copyOf(path);
@@ -259,7 +273,9 @@ final class TestApps {
     record Result(boolean success, Path classes, String messages) {
         List<String> beansList() throws IOException {
             var path = classes.resolve("META-INF/vauban-beans.list");
-            if (!Files.exists(path)) return List.of();
+            if (!Files.exists(path)) {
+                return List.of();
+            }
             return Files.readAllLines(path).stream().map(String::strip)
                     .filter(l -> !l.isEmpty() && !l.startsWith("#")).toList();
         }

@@ -155,13 +155,17 @@ public final class WebAppDeployer {
             if (engine != null) registerJspServlet(ctx);
             ListenerRegistry registry = listenerRegistry(ctx, model, engine != null);
             // The container's own listeners (the CDI contexts) ahead of the application's, before any initializer
-            // or contextInitialized: a container ServletContextListener sees the context first and leaves last.
+            // or contextInitialized.
             options.containerListeners().accept(registry);
             // The component factory must be there before the initializers run (foy-websocket's reads it),
             // and set before the listener registry: the application's attribute listeners never hear
             // this container attribute.
             ctx.setAttribute(ComponentInstantiator.ATTRIBUTE, new ContextComponentInstantiator(ctx));
             ctx.setListenerRegistry(registry);
+            // A container ServletContextListener hears the context before the initializers, so what it sets up
+            // (the ServletContext bean of foy-cdi-vauban) is there for onStartup; it is told last that it ended.
+            rollback.containerInitializedListeners = registry;
+            registry.fireContainerContextInitialized(ctx);
             runInitializers(model, options, ctx);
             rollback.contextInitializedListeners = registry;
             registry.fireContextInitialized(ctx);
@@ -198,7 +202,8 @@ public final class WebAppDeployer {
     /**
      * What a deployment set up so far, torn down by {@link #close} unless the deployment
      * completed ({@link #deployed}): destroy in reverse init order, {@code contextDestroyed} if
-     * {@code contextInitialized} was fired, temp dir removed. As the resource of a
+     * {@code contextInitialized} was fired (to the container's context listeners alone if only they
+     * heard it), temp dir removed. As the resource of a
      * try-with-resources statement, whatever escapes the deployment (a listener, an initializer,
      * a component factory) propagates once that is done, with a cleanup failure suppressed.
      */
@@ -208,6 +213,7 @@ public final class WebAppDeployer {
         private final List<Filter> initializedFilters = new ArrayList<>();
         private Path tempDir;
         private ListenerRegistry contextInitializedListeners;
+        private ListenerRegistry containerInitializedListeners;
         private SessionManager sessions;
         private boolean complete;
 
@@ -223,9 +229,13 @@ public final class WebAppDeployer {
 
         @Override
         public void close() {
-            if (!complete) {
-                Deployment.undeploy(ctx, contextInitializedListeners, initializedServlets, initializedFilters,
-                        tempDir, sessions);
+            if (complete) {
+                return;
+            }
+            Deployment.undeploy(ctx, contextInitializedListeners, initializedServlets, initializedFilters,
+                    tempDir, sessions);
+            if (contextInitializedListeners == null && containerInitializedListeners != null) {
+                containerInitializedListeners.fireContainerContextDestroyed(ctx);
             }
         }
     }

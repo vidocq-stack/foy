@@ -29,9 +29,10 @@ import jakarta.servlet.ServletContextListener;
 import java.util.Optional;
 
 /**
- * Attaches the deployment's {@link ServletContext} to the {@link ServletContextHolder}. Foy registers it ahead of
- * the application's listeners, before {@code contextInitialized} fires: an application listener can use the
- * injected context in {@code contextInitialized}, and still in {@code contextDestroyed}, which runs in reverse order.
+ * Attaches the deployment's {@link ServletContext} to the {@link ServletContextHolder}. A container context listener,
+ * it hears the context before the deployment's {@code ServletContainerInitializer}s run and is told last that it
+ * ended: an initializer can use the injected context in {@code onStartup}, an application listener in
+ * {@code contextInitialized}, and still in {@code contextDestroyed}.
  */
 final class ServletContextBinding implements ServletContextListener {
 

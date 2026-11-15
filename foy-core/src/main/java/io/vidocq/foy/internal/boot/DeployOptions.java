@@ -70,7 +70,9 @@ public record DeployOptions(SecuritySettings security,
     public DeployOptions {
         if (security == null) security = SecuritySettings.DEFAULTS;
         if (requestLimits == null) requestLimits = RequestLimits.DEFAULTS;
-        if (containerListeners == null) containerListeners = _ -> { };
+        if (containerListeners == null) {
+            containerListeners = _ -> { };
+        }
         reservedServletNames = Set.copyOf(reservedServletNames);
         reservedFilterNames = Set.copyOf(reservedFilterNames);
         reservedUrlPatterns = Set.copyOf(reservedUrlPatterns);

@@ -21,6 +21,8 @@ module io.vidocq.foy.cdi.vauban {
     requires transitive io.vidocq.foy.api;
     requires jakarta.cdi;
     requires io.vidocq.vauban.core;
+    // The provider and the client proxies vauban-processor generates for the Servlet built-in beans name its types.
+    requires io.vidocq.vauban.api;
     // The session context (foy#21), driven from the servlet container's request and session events.
     requires io.vidocq.vauban.webcontexts;
 

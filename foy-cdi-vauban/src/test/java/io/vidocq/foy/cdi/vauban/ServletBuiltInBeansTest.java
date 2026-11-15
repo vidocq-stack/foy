@@ -24,6 +24,8 @@ import io.vidocq.foy.cdi.vauban.TestApps.Result;
 import io.vidocq.vauban.core.container.VaubanContainer;
 import jakarta.enterprise.context.control.RequestContextController;
 import jakarta.enterprise.inject.spi.DeploymentException;
+import jakarta.servlet.ServletContainerInitializer;
+import jakarta.servlet.http.HttpServletRequest;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -39,6 +41,7 @@ import java.net.http.HttpResponse;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Locale;
 import java.util.concurrent.Callable;
 import java.util.function.Function;
 
@@ -69,6 +72,17 @@ class ServletBuiltInBeansTest {
     private static final String NO_REQUEST = "No servlet request";
     private static final String NO_CONTEXT = "No ServletContext";
     private static final String NPE = "NullPointerException";
+    private static final String NOT_ACTIVE = "ContextNotActiveException";
+
+    /** The context path the tests deploy the application at. */
+    private static final String APP = "/app";
+    private static final String FIRST = "/first";
+
+    /** What the tests ask the application's {@code Probe}. */
+    private static final String REQUEST = "request";
+    private static final String SESSION = "session";
+    private static final String CONTEXT = "context";
+    private static final String EVENTS = "events";
 
     private static final String PROBE = """
             package beans.app;
@@ -242,6 +256,21 @@ class ServletBuiltInBeansTest {
             }
             """;
 
+    private static final String INCLUDE_SERVLET = """
+            package beans.app;
+
+            @jakarta.servlet.annotation.WebServlet("/include")
+            public class IncludeServlet extends jakarta.servlet.http.HttpServlet {
+                @Override
+                protected void doGet(jakarta.servlet.http.HttpServletRequest q,
+                        jakarta.servlet.http.HttpServletResponse r)
+                        throws jakarta.servlet.ServletException, java.io.IOException {
+                    q.setAttribute("via", "include");
+                    q.getRequestDispatcher("/target").include(q, r);
+                }
+            }
+            """;
+
     private static final String TARGET_SERVLET = """
             package beans.app;
 
@@ -384,12 +413,59 @@ class ServletBuiltInBeansTest {
             }
             """;
 
+    /** An application whose initializer reaches the ServletContext bean through a bean of its own. */
+    private static final String CONTEXT_USER = """
+            package sci.app;
+
+            @jakarta.enterprise.context.ApplicationScoped
+            public class ContextUser {
+                @jakarta.inject.Inject
+                jakarta.servlet.ServletContext context;
+
+                public String contextPath() {
+                    return context.getContextPath();
+                }
+            }
+            """;
+
+    private static final String INITIALIZER = """
+            package sci.app;
+
+            public class Starter implements jakarta.servlet.ServletContainerInitializer {
+                @Override
+                public void onStartup(java.util.Set<Class<?>> classes, jakarta.servlet.ServletContext ctx) {
+                    String seen;
+                    try {
+                        seen = jakarta.enterprise.inject.spi.CDI.current().select(ContextUser.class).get()
+                                .contextPath();
+                    } catch (RuntimeException e) {
+                        seen = e.toString();
+                    }
+                    ctx.setAttribute("seen", seen);
+                }
+            }
+            """;
+
+    private static final String SEEN_SERVLET = """
+            package sci.app;
+
+            @jakarta.servlet.annotation.WebServlet("/seen")
+            public class SeenServlet extends jakarta.servlet.http.HttpServlet {
+                @Override
+                protected void doGet(jakarta.servlet.http.HttpServletRequest q,
+                        jakarta.servlet.http.HttpServletResponse r) throws java.io.IOException {
+                    r.getWriter().write(String.valueOf(getServletContext().getAttribute("seen")));
+                }
+            }
+            """;
+
     private Result app;
 
     @BeforeAll
     void compileTheApplication(@TempDir Path tempDir) throws Exception {
         app = TestApps.compile(tempDir, ProcessorPath.CLASS_PATH, List.of(), PROBE, TOKEN, CONTEXT_LISTENER,
-                BEANS_SERVLET, PROXIES_SERVLET, FORWARD_SERVLET, TARGET_SERVLET, ASYNC_SERVLET, READ_SERVLET);
+                BEANS_SERVLET, PROXIES_SERVLET, FORWARD_SERVLET, INCLUDE_SERVLET, TARGET_SERVLET, ASYNC_SERVLET,
+                READ_SERVLET);
         assertTrue(app.success(), app::messages);
     }
 
@@ -415,8 +491,9 @@ class ServletBuiltInBeansTest {
         try (var loader = own.loader()) {
             Callable<VaubanContainer> start = () -> boot(loader);
             var failure = assertThrows(DeploymentException.class, () -> withTccl(loader, start));
-            assertTrue(failure.getMessage().contains("mbiguous") && failure.getMessage().contains("HttpServletRequest"),
-                    failure::getMessage);
+            var message = failure.getMessage();
+            assertTrue(message.toLowerCase(Locale.ROOT).contains("ambiguous")
+                    && message.contains(HttpServletRequest.class.getName()), message);
         }
     }
 
@@ -425,11 +502,11 @@ class ServletBuiltInBeansTest {
     void noRequestContextInAReadListener() throws Exception {
         try (var loader = app.loader();
              var container = withTccl(loader, () -> boot(loader));
-             var served = deploy(container, loader, "/app")) {
+             var served = deploy(container, loader, APP)) {
             var response = HttpClient.newHttpClient().send(HttpRequest.newBuilder(served.uri("/app/read"))
                     .POST(HttpRequest.BodyPublishers.ofString("some body")).build(), HttpResponse.BodyHandlers.ofString());
             assertEquals(200, response.statusCode(), response::body);
-            assertTrue(response.body().contains("ContextNotActiveException"), response::body);
+            assertTrue(response.body().contains(NOT_ACTIVE), response::body);
         }
     }
 
@@ -451,7 +528,7 @@ class ServletBuiltInBeansTest {
     void aServletInjectsTheThreeBeans() throws Exception {
         try (var loader = app.loader();
              var container = withTccl(loader, () -> boot(loader));
-             var served = deploy(container, loader, "/app")) {
+             var served = deploy(container, loader, APP)) {
             var uri = served.uri("/app/beans");
             var alice = HttpClient.newBuilder().cookieHandler(new CookieManager()).build();
             var bob = HttpClient.newBuilder().cookieHandler(new CookieManager()).build();
@@ -467,7 +544,7 @@ class ServletBuiltInBeansTest {
         try (var generation = LogRecords.of(RUNTIME_GENERATION_LOGGER);
              var loader = app.loader();
              var container = withTccl(loader, () -> boot(loader));
-             var served = deploy(container, loader, "/app")) {
+             var served = deploy(container, loader, APP)) {
             var kinds = get(HttpClient.newHttpClient(), served.uri("/app/proxies"), null).lines().toList();
             assertEquals(3, kinds.size(), kinds::toString);
             for (var kind : kinds) {
@@ -480,12 +557,14 @@ class ServletBuiltInBeansTest {
     }
 
     @Test
-    @DisplayName("the forwarded servlet gets the request the container serves, with what the first servlet set on it")
-    void theRequestOnAForward() throws Exception {
+    @DisplayName("the forwarded and the included servlet get the request the container serves, with what the first servlet set on it")
+    void theRequestOnAForwardAndAnInclude() throws Exception {
         try (var loader = app.loader();
              var container = withTccl(loader, () -> boot(loader));
-             var served = deploy(container, loader, "/app")) {
-            assertEquals("forward|/app/forward", get(HttpClient.newHttpClient(), served.uri("/app/forward"), null));
+             var served = deploy(container, loader, APP)) {
+            var client = HttpClient.newHttpClient();
+            assertEquals("forward|/app/forward", get(client, served.uri("/app/forward"), null));
+            assertEquals("include|/app/include", get(client, served.uri("/app/include"), null));
         }
     }
 
@@ -494,7 +573,7 @@ class ServletBuiltInBeansTest {
     void theRequestInAnAsyncStartThread() throws Exception {
         try (var loader = app.loader();
              var container = withTccl(loader, () -> boot(loader));
-             var served = deploy(container, loader, "/app")) {
+             var served = deploy(container, loader, APP)) {
             var body = get(HttpClient.newHttpClient(), served.uri("/app/async?mode=start"), null);
             assertTrue(body.startsWith("/app/async|"), body);
             assertFalse(body.contains("Exception"), body);
@@ -506,12 +585,12 @@ class ServletBuiltInBeansTest {
     void theRequestInAnAsyncListener() throws Exception {
         try (var loader = app.loader();
              var container = withTccl(loader, () -> boot(loader));
-             var served = deploy(container, loader, "/app")) {
+             var served = deploy(container, loader, APP)) {
             var client = HttpClient.newHttpClient();
             for (var mode : List.of("complete", "timeout", "error", "restart")) {
                 send(client, served.uri("/app/async?mode=" + mode));
             }
-            var events = probe(container, loader).apply("events").lines().toList();
+            var events = probe(container, loader).apply(EVENTS).lines().toList();
             for (var expected : List.of("complete onComplete", "timeout onTimeout", "timeout onComplete",
                     "error onError", "error onComplete", "restart onStartAsync")) {
                 var mode = expected.substring(0, expected.indexOf(' '));
@@ -529,26 +608,29 @@ class ServletBuiltInBeansTest {
              var container = withTccl(loader, () -> boot(loader))) {
             var probe = probe(container, loader);
 
-            var noContext = probe.apply("request");
-            assertTrue(noContext.contains("ContextNotActiveException"), noContext);
+            var noContext = probe.apply(REQUEST);
+            assertTrue(noContext.contains(NOT_ACTIVE), noContext);
 
             var controller = container.getBeanManager().createInstance().select(RequestContextController.class).get();
             controller.activate();
             String request;
+            String session;
             try {
-                request = probe.apply("request");
+                request = probe.apply(REQUEST);
+                session = probe.apply(SESSION);
             } finally {
                 controller.deactivate();
             }
             assertTrue(request.contains(IllegalStateException.class.getName() + ": " + NO_REQUEST), request);
             assertFalse(request.contains(NPE), request);
+            assertTrue(session.contains(NOT_ACTIVE), "no session context without a servlet request: " + session);
 
-            var context = probe.apply("context");
+            var context = probe.apply(CONTEXT);
             assertTrue(context.contains(IllegalStateException.class.getName() + ": " + NO_CONTEXT), context);
 
-            var startup = probe.apply("events");
-            assertTrue(startup.lines().anyMatch(l -> l.startsWith("startup request ")
-                    && l.contains("ContextNotActiveException")), startup);
+            var startup = probe.apply(EVENTS);
+            assertTrue(startup.lines().anyMatch(l -> l.startsWith("startup request ") && l.contains(NOT_ACTIVE)),
+                    startup);
             assertTrue(startup.contains("startup context " + IllegalStateException.class.getName()), startup);
             assertTrue(startup.contains(NO_CONTEXT), startup);
             assertFalse(startup.contains(NPE), startup);
@@ -561,13 +643,13 @@ class ServletBuiltInBeansTest {
         try (var loader = app.loader();
              var container = withTccl(loader, () -> boot(loader))) {
             var probe = probe(container, loader);
-            try (var served = deploy(container, loader, "/app")) {
-                assertEquals(served.mounted().servletContext().getContextPath(), probe.apply("context"));
+            try (var served = deploy(container, loader, APP)) {
+                assertEquals(served.mounted().servletContext().getContextPath(), probe.apply(CONTEXT));
             }
-            var events = probe.apply("events").lines().toList();
+            var events = probe.apply(EVENTS).lines().toList();
             assertTrue(events.contains("initialized /app sees /app set through the bean"), events::toString);
             assertTrue(events.contains("destroyed /app sees /app"), events::toString);
-            assertTrue(probe.apply("context").contains(NO_CONTEXT), "emptied after the undeploy");
+            assertTrue(probe.apply(CONTEXT).contains(NO_CONTEXT), "emptied after the undeploy");
         }
     }
 
@@ -578,21 +660,36 @@ class ServletBuiltInBeansTest {
              var loader = app.loader();
              var container = withTccl(loader, () -> boot(loader))) {
             var probe = probe(container, loader);
-            try (var first = deploy(container, loader, "/first")) {
-                try (var second = deploy(container, loader, "/second")) {
-                    assertEquals("/first", probe.apply("context"));
+            try (var _ = deploy(container, loader, FIRST)) {
+                try (var _ = deploy(container, loader, "/second")) {
+                    assertEquals(FIRST, probe.apply(CONTEXT));
                     var logged = warnings.warnings();
                     assertEquals(1, logged.size(), logged::toString);
-                    assertTrue(logged.getFirst().contains("/first") && logged.getFirst().contains("/second"),
+                    assertTrue(logged.getFirst().contains(FIRST) && logged.getFirst().contains("/second"),
                             logged::toString);
                 }
-                assertEquals("/first", probe.apply("context"), "the second undeploy leaves the first one's context");
+                assertEquals(FIRST, probe.apply(CONTEXT), "the second undeploy leaves the first one's context");
             }
-            assertTrue(probe.apply("context").contains(NO_CONTEXT), "emptied once the first is undeployed");
-            try (var reloaded = deploy(container, loader, "/reloaded")) {
-                assertEquals("/reloaded", probe.apply("context"), "a dev-mode reload gives the new context");
+            assertTrue(probe.apply(CONTEXT).contains(NO_CONTEXT), "emptied once the first is undeployed");
+            try (var _ = deploy(container, loader, "/reloaded")) {
+                assertEquals("/reloaded", probe.apply(CONTEXT), "a dev-mode reload gives the new context");
             }
             assertEquals(1, warnings.warnings().size(), "a redeploy after an undeploy warns of nothing");
+        }
+    }
+
+    @Test
+    @DisplayName("a ServletContainerInitializer reaches the injected context through a bean in onStartup")
+    void theContextInAnInitializer(@TempDir Path tempDir) throws Exception {
+        var initialized = TestApps.compile(tempDir, ProcessorPath.CLASS_PATH, List.of(), CONTEXT_USER, INITIALIZER,
+                SEEN_SERVLET);
+        assertTrue(initialized.success(), initialized::messages);
+        var services = Files.createDirectories(initialized.classes().resolve("META-INF/services"));
+        Files.writeString(services.resolve(ServletContainerInitializer.class.getName()), "sci.app.Starter\n");
+        try (var loader = initialized.loader();
+             var container = withTccl(loader, () -> boot(loader));
+             var served = deploy(container, loader, "/sci")) {
+            assertEquals("/sci", get(HttpClient.newHttpClient(), served.uri("/sci/seen"), null));
         }
     }
 
@@ -611,7 +708,9 @@ class ServletBuiltInBeansTest {
 
     private static String get(HttpClient client, URI uri, String probeHeader) throws IOException, InterruptedException {
         var request = HttpRequest.newBuilder(uri);
-        if (probeHeader != null) request.header("X-Probe", probeHeader);
+        if (probeHeader != null) {
+            request.header("X-Probe", probeHeader);
+        }
         var response = client.send(request.build(), HttpResponse.BodyHandlers.ofString());
         assertEquals(200, response.statusCode(), response::body);
         return response.body();

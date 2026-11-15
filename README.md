@@ -33,7 +33,7 @@ module to become an independent project usable outside the Vidocq Runtime ecosys
 | `foy-api` | Public SPI interfaces: `SessionStore`, `IdentityStore`, `Identity`, and the WebSocket takeover SPI (`io.vidocq.foy.spi.websocket`) a WebSocket implementation runs on. Zero dependencies beyond `jakarta.servlet-api`. |
 | `foy-core` | Servlet 6.1 engine — dispatcher, filter chain, session, error pages, listeners, security, web.xml, multipart. |
 | `foy-processor` | Build-time annotation processor generating `X$$FoyComponent` companions and indexes. Zero dependency (`java.compiler` only); never shipped in the application. |
-| `foy-cdi-vauban` | Bridge to the [Vauban](https://codefloe.com/Vidocq/vauban) CDI container (`FoyVaubanBootstrap.beanManager()`). |
+| `foy-cdi-vauban` | Bridge to the [Vauban](https://codefloe.com/Vidocq/vauban) CDI container (`FoyVaubanBootstrap.beanManager()`). Drives Vauban's session context for each request, and provides the `HttpServletRequest`, `HttpSession` and `ServletContext` beans an application injects, with no declaration on its side. |
 | `foy-chappe` | [Chappe](https://codefloe.com/Vidocq/chappe) HTTP adapter (`FoyChappeBoot.builder().beanManager(bm).build()`). |
 | `foy-websocket` | Optional Jakarta WebSocket 2.2 server, lot 1 (programmatic API: `ServerContainer`, handshake, sessions) on the Servlet engine; depends on `foy-api`, the Servlet API and the WebSocket API only. |
 | `foy-architecture-tests` | The architecture rules (ArchUnit, test scope only) applied to the classes of every shipped module. Never released. |

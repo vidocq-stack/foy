@@ -176,4 +176,42 @@ class ListenerRegistryTest {
         assertEquals("b-cleanup", thrown.getSuppressed()[0].getMessage());
         assertEquals(List.of("a-initialized", "b-initialized", "b-destroyed", "a-destroyed"), trace);
     }
+
+    @Test
+    void aContainerContextListenerHearsTheContextFirstAndIsToldLastThatItEnded() {
+        List<String> trace = new ArrayList<>();
+        var reg = new ListenerRegistry();
+        reg.register(contextTracing("application", trace));
+        reg.registerFirst(contextTracing("container", trace));
+        var ctx = new VidocqServletContext("/");
+
+        reg.fireContainerContextInitialized(ctx);
+        reg.fireContextInitialized(ctx);
+        reg.fireContextDestroyed(ctx);
+
+        assertEquals(List.of("container-initialized", "application-initialized", "application-destroyed",
+                "container-destroyed"), trace);
+        assertEquals(1, reg.contextListeners().size(), "the application's context listeners only");
+    }
+
+    @Test
+    void aDeploymentThatFailsBeforeContextInitializedTellsTheContainerListenersAlone() {
+        List<String> trace = new ArrayList<>();
+        var reg = new ListenerRegistry();
+        reg.register(contextTracing("application", trace));
+        reg.registerFirst(contextTracing("container", trace));
+        var ctx = new VidocqServletContext("/");
+
+        reg.fireContainerContextInitialized(ctx);
+        reg.fireContainerContextDestroyed(ctx);
+
+        assertEquals(List.of("container-initialized", "container-destroyed"), trace);
+    }
+
+    private static ServletContextListener contextTracing(String name, List<String> trace) {
+        return new ServletContextListener() {
+            @Override public void contextInitialized(ServletContextEvent e) { trace.add(name + "-initialized"); }
+            @Override public void contextDestroyed(ServletContextEvent e) { trace.add(name + "-destroyed"); }
+        };
+    }
 }

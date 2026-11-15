@@ -53,6 +53,8 @@ public final class ListenerRegistry {
     private static final System.Logger LOG = System.getLogger(ListenerRegistry.class.getName());
 
     private final List<ServletContextListener> contextListeners = new ArrayList<>();
+    /** The container's own context listeners ({@link #registerFirst}), apart from the application's. */
+    private final List<ServletContextListener> containerContextListeners = new ArrayList<>();
     private final List<ServletContextAttributeListener> contextAttrListeners = new ArrayList<>();
     private final List<ServletRequestListener> requestListeners = new ArrayList<>();
     private final List<ServletRequestAttributeListener> requestAttrListeners = new ArrayList<>();
@@ -105,13 +107,16 @@ public final class ListenerRegistry {
 
     /**
      * Registers a context, request and session listener of the container itself, ahead of the
-     * application's: it sees the context, a request or a new session first and is told last that it
-     * ended ({@code contextDestroyed} runs in reverse order). Used for the listeners that drive CDI
-     * contexts ({@code CdiContextListeners}). Call it before {@code contextInitialized} fires.
+     * application's: it sees a request or a new session first and is told last that it ended. A
+     * context listener hears {@link #fireContainerContextInitialized} (before the initializers run) and
+     * is told last that the context ended. Used for the listeners that drive CDI contexts
+     * ({@code CdiContextListeners}). Call it before the initializers run.
      */
     public void registerFirst(EventListener listener) {
         all.add(0, listener);
-        if (listener instanceof ServletContextListener l) contextListeners.add(0, l);
+        if (listener instanceof ServletContextListener l) {
+            containerContextListeners.add(0, l);
+        }
         if (listener instanceof ServletRequestListener l) {
             requestListeners.add(0, l);
             containerRequestListeners.add(0, l);
@@ -176,6 +181,28 @@ public final class ListenerRegistry {
 
     // ---- Context lifecycle ----
 
+    /**
+     * Tells the container's context listeners ({@link #registerFirst}) that the context starts, before
+     * the deployment's {@code ServletContainerInitializer}s run: what they set up is there for
+     * {@code onStartup} and for the application's listeners.
+     */
+    public void fireContainerContextInitialized(ServletContext ctx) {
+        var evt = new ServletContextEvent(ctx);
+        for (var l : List.copyOf(containerContextListeners)) {
+            l.contextInitialized(evt);
+        }
+    }
+
+    /**
+     * Tells the container's context listeners alone that the context ended: for a deployment that
+     * failed before the application's {@code contextInitialized}. Same rules as
+     * {@link #fireContextDestroyed}.
+     */
+    public void fireContainerContextDestroyed(ServletContext ctx) {
+        destroyInReverse(containerContextListeners, new ServletContextEvent(ctx));
+    }
+
+    /** The application's context listeners, in declaration order (Servlet 6.1 chapter 11). */
     public void fireContextInitialized(ServletContext ctx) {
         if (contextListeners.isEmpty()) return;
         var evt = new ServletContextEvent(ctx);
@@ -200,15 +227,20 @@ public final class ListenerRegistry {
     }
 
     /**
-     * Notifies the context listeners in reverse declaration order (Servlet 6.1 chapter 11). A failing
-     * listener is logged and does not keep the others from being notified: each one releases its
-     * own resources at undeploy. A {@link VirtualMachineError} is rethrown at once.
+     * Notifies the application's context listeners in reverse declaration order (Servlet 6.1 chapter
+     * 11), then the container's. A failing listener is logged and does not keep the others from being
+     * notified: each one releases its own resources at undeploy. A {@link VirtualMachineError} is
+     * rethrown at once.
      */
     public void fireContextDestroyed(ServletContext ctx) {
-        if (contextListeners.isEmpty()) return;
         var evt = new ServletContextEvent(ctx);
-        for (int i = contextListeners.size() - 1; i >= 0; i--) {
-            ServletContextListener l = contextListeners.get(i);
+        destroyInReverse(contextListeners, evt);
+        destroyInReverse(containerContextListeners, evt);
+    }
+
+    private static void destroyInReverse(List<ServletContextListener> listeners, ServletContextEvent evt) {
+        for (int i = listeners.size() - 1; i >= 0; i--) {
+            ServletContextListener l = listeners.get(i);
             try {
                 l.contextDestroyed(evt);
             } catch (VirtualMachineError e) {

@@ -29,8 +29,8 @@ import java.util.List;
  * CDI Lite leaves the session context to the container that implements Servlet (CDI 4.1 §6.7.2), and
  * each CDI implementation drives it its own way: an adapter such as {@code foy-cdi-vauban} provides
  * them, and Foy registers them when it is given a {@code BeanManager}, ahead of the application's
- * listeners and before the deployment's {@code contextInitialized}, so they see the context, a
- * request or a session first and are told last that it ended.
+ * listeners and before the deployment's {@code ServletContainerInitializer}s run, so they see the
+ * context, a request or a session first and are told last that it ended.
  *
  * <p>Discovered with {@link java.util.ServiceLoader}. Unlike a {@code ServletContainerInitializer},
  * a provider does not make Foy start an application that has no web component.</p>
@@ -40,8 +40,10 @@ public interface CdiContextListeners {
     /**
      * The listeners for the CDI container that owns {@code beanManager}, among
      * {@code ServletContextListener}, {@code ServletRequestListener} and {@code HttpSessionListener};
-     * empty when this provider does not serve that container. They run before the CDI request context
-     * is active for a request, and after it ended.
+     * empty when this provider does not serve that container. A {@code ServletContextListener} hears
+     * {@code contextInitialized} before the deployment's {@code ServletContainerInitializer}s run, and
+     * {@code contextDestroyed} after the application's listeners. The request listeners run before the
+     * CDI request context is active for a request, and after it ended.
      */
     List<EventListener> listeners(BeanManager beanManager);
 

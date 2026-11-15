@@ -26,8 +26,9 @@ import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * The {@link ServletContext} of the application deployed on this CDI container: {@link ServletContextBinding}
- * attaches it before the application's {@code contextInitialized} and detaches it after its
- * {@code contextDestroyed}, and {@link ServletBuiltInBeans} produces the {@code ServletContext} bean from it.
+ * attaches it before the deployment's {@code ServletContainerInitializer}s run and detaches it after the
+ * application's last {@code contextDestroyed}, and {@link ServletBuiltInBeans} produces the {@code ServletContext}
+ * bean from it.
  *
  * <p>One deployment per CDI container, as Vidocq runs it: a second deployment on the same container while the
  * first is up does not take the bean over, and gets one warning naming both context paths. Once the first is
@@ -40,8 +41,8 @@ class ServletContextHolder {
 
     /** Why there is no context before the deployment or after the undeploy. */
     static final String NO_CONTEXT = "No ServletContext: Foy has not deployed the application on this CDI container "
-            + "yet, or has undeployed it; the ServletContext bean is there from the first contextInitialized of the "
-            + "deployment to its last contextDestroyed";
+            + "yet, or has undeployed it; the ServletContext bean is there from the deployment's "
+            + "ServletContainerInitializers to its last contextDestroyed";
 
     private final AtomicReference<ServletContext> attached = new AtomicReference<>();
 

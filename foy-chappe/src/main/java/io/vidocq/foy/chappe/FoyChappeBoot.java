@@ -639,9 +639,11 @@ public final class FoyChappeBoot {
 
         /**
          * The container's CDI listeners, ahead of the application's and registered before the deployment's
-         * {@code contextInitialized}. Each registration goes first, so the last one runs first: for a request,
-         * the adapters' listeners (session context), then {@link CdiRequestScopeListener} (request context), then
-         * the adapters' listeners that need the request context; the reverse when the request ends.
+         * initializers run; a context listener among them hears the context before the initializers (the
+         * ServletContext bean of foy-cdi-vauban). Each registration goes first, so the last one runs first: for a
+         * request, the adapters' listeners (session context), then {@link CdiRequestScopeListener} (request
+         * context), then the adapters' listeners that need the request context; the reverse when the request
+         * ends.
          */
         private void registerCdiListeners(ListenerRegistry listeners, ClassLoader loader) {
             // An adapter module in both the boot and the application layer registers once.
