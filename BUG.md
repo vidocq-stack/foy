@@ -64,7 +64,13 @@
   and no event follows it. A connection whose closing handshake had already begun keeps the code of the
   side that closed first; the undeploy waits for its end. Both waits stop after 2 s, with a WARNING: the
   takeover then ends on chappe's thread as before. After the fix, under the same load: 0 failing runs in
-  15, and `onClose(1001)` before `contextDestroyed` in 1,000 undeploys of 1,000.
+  15, and `onClose(1001)` before `contextDestroyed` in 1,000 undeploys of 1,000. Review, 2026-11-15: the
+  undeploy closed its connections one after another, so N stuck ones cost N × 2 s, and an `Error` from
+  `onClose` (now on the undeploy's side) stopped the whole undeploy. The connections now close all at once,
+  each on a virtual thread of its own, within one 3 s deadline (`VidocqServletContext.UPGRADED_CONNECTIONS_GRACE`),
+  and a failure of one, `Error` included, is logged without stopping the rest
+  (`UpgradedConnectionsUndeployTest`, `WebSocketTakeoverEndToEndTest.anUndeployWaitsForStuckConnectionsTogether`:
+  four stuck connections took 8.0 s before, about 2 s after).
 
 ## BUG-20261114-07 — A server stop right after an undeploy reports a spurious `onError` before `onClose(1001)`
 

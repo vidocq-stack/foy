@@ -51,6 +51,7 @@ import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
@@ -80,7 +81,12 @@ class WebSocketTakeoverEndToEndTest {
         /** {@code onText} waits for {@link #textGate} to open before it echoes. */
         volatile boolean holdText;
         final CountDownLatch textGate = new CountDownLatch(1);
-        final CountDownLatch textEntered = new CountDownLatch(1);
+        /** One permit per {@code onText} that started holding its message. */
+        final Semaphore textEntered = new Semaphore(0);
+        /** One permit per {@code destroy()}. */
+        final Semaphore destroys = new Semaphore(0);
+        /** The listener's {@code onClose} throws an {@code Error} once it recorded the close. */
+        volatile boolean failCloseWithError;
         /** The listener's {@code onOpen} starts, on a thread of its own, a send the peer never reads. */
         volatile boolean blockASend;
         final AtomicReference<Thread> sender = new AtomicReference<>();
@@ -401,6 +407,40 @@ class WebSocketTakeoverEndToEndTest {
         }
     }
 
+    /**
+     * The undeploy closes its connections all at once: several held by an event in progress cost it about
+     * one grace, not one each; each takeover ends once its event returns.
+     */
+    @Test
+    void anUndeployWaitsForStuckConnectionsTogether() throws Exception {
+        int connections = 4;
+        holdATextInOnText(connections);
+        long start = System.nanoTime();
+        context.closeUpgradedConnections();
+        Duration took = Duration.ofNanos(System.nanoTime() - start);
+        // A grace is 2 s: one connection after another, four of them would take 8 s.
+        assertTrue(took.compareTo(Duration.ofSeconds(4)) < 0, "the undeploy took " + took);
+        probe.textGate.countDown();
+        assertTrue(probe.destroys.tryAcquire(connections, 5, TimeUnit.SECONDS), "a takeover never ended");
+    }
+
+    /**
+     * An {@code Error} from the listener's {@code onClose} at undeploy is logged and stops neither
+     * {@code destroy()} nor the undeploy, whose servlets and {@code contextDestroyed} come next.
+     */
+    @Test
+    void anErrorFromOnCloseDoesNotStopTheUndeploy() throws Exception {
+        probe.failCloseWithError = true;
+        start(new VidocqServletContext("/"));
+        connect(new TextListener(new CompletableFuture<>(), new CompletableFuture<>()));
+        try (var log = LogCapture.of(VidocqServletContext.class.getName())) {
+            assertDoesNotThrow(context::closeUpgradedConnections);
+            assertEquals(List.of("open", "close", "destroy"), probe.events);
+            assertTrue(log.thrown().stream().anyMatch(ExceptionInInitializerError.class::isInstance),
+                    log.thrown().toString());
+        }
+    }
+
     @Test
     void aPeerCloseCallsOnCloseThenDestroyOnce() throws Exception {
         start(new VidocqServletContext("/"));
@@ -480,11 +520,18 @@ class WebSocketTakeoverEndToEndTest {
 
     /** Starts a takeover whose {@code onText} holds the message {@value #HELD} until the probe's gate opens. */
     private void holdATextInOnText() throws Exception {
+        holdATextInOnText(1);
+    }
+
+    /** Starts {@code connections} takeovers, each holding the message {@value #HELD} in {@code onText}. */
+    private void holdATextInOnText(int connections) throws Exception {
         probe.holdText = true;
         start(new VidocqServletContext("/"));
-        WebSocket ws = connect(new TextListener(new CompletableFuture<>(), new CompletableFuture<>()));
-        ws.sendText(HELD, true).get(5, TimeUnit.SECONDS);
-        assertTrue(probe.textEntered.await(5, TimeUnit.SECONDS), "onText");
+        for (int i = 0; i < connections; i++) {
+            WebSocket ws = connect(new TextListener(new CompletableFuture<>(), new CompletableFuture<>()));
+            ws.sendText(HELD, true).get(5, TimeUnit.SECONDS);
+        }
+        assertTrue(probe.textEntered.tryAcquire(connections, 5, TimeUnit.SECONDS), "onText");
     }
 
     /**
@@ -612,7 +659,7 @@ class WebSocketTakeoverEndToEndTest {
                     probe.events.add("text:" + text);
                     probe.loaders.add(Thread.currentThread().getContextClassLoader());
                     if (probe.holdText) {
-                        probe.textEntered.countDown();
+                        probe.textEntered.release();
                         awaitGate(probe.textGate);
                     }
                     peer.get().sendText(text);
@@ -629,6 +676,7 @@ class WebSocketTakeoverEndToEndTest {
                     probe.loaders.add(Thread.currentThread().getContextClassLoader());
                     probe.closeCode.set(code);
                     probe.closed.countDown();
+                    if (probe.failCloseWithError) throw new ExceptionInInitializerError("onClose failed");
                 }
             };
         }
@@ -638,6 +686,7 @@ class WebSocketTakeoverEndToEndTest {
             probe.events.add("destroy");
             probe.destroyCalls.incrementAndGet();
             probe.destroyed.countDown();
+            probe.destroys.release();
         }
 
         /** Holds chappe's write lock for as long as the peer does not read. */

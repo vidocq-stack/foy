@@ -363,6 +363,15 @@ public final class VidocqServletContext implements ServletContext {
 
     // ---- Upgraded connections (Servlet 6.1 section 2.3.3.5) ----
 
+    /**
+     * How long an undeploy waits for its upgraded connections, all of them together: each closes on a
+     * virtual thread of its own and bounds its own waits to 2 s (a raw upgrade's last write, a WebSocket's
+     * Close, event in progress or closing handshake), and the last second is for the application's
+     * {@code onClose} and {@code destroy()}. Past it the undeploy goes on, and the connections still
+     * closing end after the application stopped.
+     */
+    static final java.time.Duration UPGRADED_CONNECTIONS_GRACE = java.time.Duration.ofSeconds(3);
+
     /** The open upgraded connections of this context, closed at undeploy. */
     private final Set<AutoCloseable> upgradedConnections = java.util.concurrent.ConcurrentHashMap.newKeySet();
     private volatile boolean upgradedConnectionsClosed;
@@ -388,18 +397,58 @@ public final class VidocqServletContext implements ServletContext {
 
     /**
      * Undeploy: closes every open upgraded connection (its handler's {@code destroy()} runs) and
-     * refuses later ones. A failing close is logged and the others are still closed.
+     * refuses later ones. The connections close all at once, each on a virtual thread of its own, and
+     * the undeploy waits for them until one deadline, {@link #UPGRADED_CONNECTIONS_GRACE}: connections
+     * that each wait for their peer or for a callback cost it that much in all, not that much each. A
+     * close that fails, even with an {@code Error} from the application's {@code onClose} or
+     * {@code destroy()}, is logged and stops neither the others nor the rest of the undeploy. The
+     * interrupt of the undeploy's thread is cleared for the wait and restored afterwards; one that
+     * arrives during the wait ends it.
      */
     public void closeUpgradedConnections() {
         upgradedConnectionsClosed = true;
+        Thread.Builder closers = Thread.ofVirtual().name("foy-upgrade-close-", 1)
+                .uncaughtExceptionHandler((thread, failure) -> closeFailed(failure));
+        java.util.List<Thread> closing = new java.util.ArrayList<>();
         for (AutoCloseable c : java.util.List.copyOf(upgradedConnections)) {
             upgradedConnections.remove(c);
-            try {
-                c.close();
-            } catch (Exception e) {
-                System.getLogger(VidocqServletContext.class.getName())
-                        .log(System.Logger.Level.WARNING, "closing an upgraded connection failed", e);
+            closing.add(closers.start(() -> close(c)));
+        }
+        awaitClosed(closing);
+    }
+
+    private static void close(AutoCloseable connection) {
+        try {
+            connection.close();
+        } catch (Exception e) {
+            closeFailed(e);
+        }
+    }
+
+    private static void closeFailed(Throwable failure) {
+        System.getLogger(VidocqServletContext.class.getName())
+                .log(System.Logger.Level.WARNING, "closing an upgraded connection failed", failure);
+    }
+
+    /** Waits for the closing threads until {@link #UPGRADED_CONNECTIONS_GRACE} from now; logs the late ones. */
+    private static void awaitClosed(java.util.List<Thread> closing) {
+        long deadline = System.nanoTime() + UPGRADED_CONNECTIONS_GRACE.toNanos();
+        boolean interrupted = Thread.interrupted();
+        try {
+            for (Thread thread : closing) {
+                thread.join(java.time.Duration.ofNanos(Math.max(0, deadline - System.nanoTime())));
             }
+        } catch (InterruptedException _) {
+            interrupted = true;
+        } finally {
+            if (interrupted) Thread.currentThread().interrupt();
+        }
+        long late = closing.stream().filter(Thread::isAlive).count();
+        if (late > 0) {
+            System.getLogger(VidocqServletContext.class.getName()).log(System.Logger.Level.WARNING,
+                    "{0} upgraded connections were still closing when the undeploy stopped waiting for them"
+                            + " (after {1} ms at most): their handlers end after the application stopped",
+                    late, UPGRADED_CONNECTIONS_GRACE.toMillis());
         }
     }
 

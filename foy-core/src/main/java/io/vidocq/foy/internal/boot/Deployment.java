@@ -82,8 +82,8 @@ public final class Deployment implements AutoCloseable {
     public List<Filter> initializedFilters() { return initializedFilters; }
 
     /**
-     * Undeploys: open upgraded connections close first (their {@code HttpUpgradeHandler.destroy()}
-     * runs, after a WebSocket's {@code onClose}), then Servlet 6.1 §2.3.4 — {@code destroy()} in
+     * Undeploys: open upgraded connections close first, all at once and for 3 s at most (their
+     * {@code HttpUpgradeHandler.destroy()} runs, after a WebSocket's {@code onClose}), then Servlet 6.1 §2.3.4 — {@code destroy()} in
      * reverse {@code init()} order (filters, then servlets), then the session reaper stops and every live session is
      * invalidated with its listeners ({@code sessionDestroyed}, {@code valueUnbound}; Foy does not
      * persist sessions across deployments), then {@code contextDestroyed}, then the context leaves

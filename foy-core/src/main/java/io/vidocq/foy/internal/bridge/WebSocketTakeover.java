@@ -56,7 +56,8 @@ import java.util.concurrent.locks.ReentrantLock;
  *
  * <p>An undeploy ends the takeover before it goes on, so {@code onClose} and {@code destroy()} run
  * while the application is intact, before its {@code contextDestroyed} (BUG-20261114-08). A
- * connection still open is closed with 1001 and ended on the undeploy's thread as soon as its Close
+ * connection still open is closed with 1001 and ended on the undeploy hook's thread (a virtual thread
+ * of its own for each connection) as soon as its Close
  * is sent, without waiting for the peer's answer: the listener hears that 1001, not the code the peer
  * answers with nor the 1006 of a connection the server's stop cut, and no I/O failure of that closing
  * handshake reaches its {@code onError}. That end waits for the event in progress, so the listener
@@ -269,7 +270,7 @@ final class WebSocketTakeover implements WebSocketHandler {
      * The undeploy hook: ends the takeover before the undeploy goes on, within {@link #UNDEPLOY_GRACE}
      * for the whole hook. A connection still open is closed with 1001 ({@link #sendGoingAway}) and ended
      * at once ({@link #endNow}); one whose closing handshake already began is waited for
-     * ({@link #awaitEnd}). The interrupt of the undeploy's thread is cleared for the hook and restored
+     * ({@link #awaitEnd}). The interrupt of the hook's thread is cleared for the hook and restored
      * afterwards; one that arrives during a wait ends the wait ({@link #endInterrupted}).
      */
     private void undeploy(WebSocket ws) {
@@ -345,7 +346,7 @@ final class WebSocketTakeover implements WebSocketHandler {
     }
 
     /**
-     * Ends the takeover on the undeploy's thread with its 1001, once the event in progress returned, and
+     * Ends the takeover on the undeploy hook's thread with its 1001, once the event in progress returned, and
      * without waiting for the peer to answer: Jakarta WebSocket 2.2 section 2.1.5 only asks that the
      * Close be sent before {@code onClose}, and section 5.1 that the listener never runs on two threads
      * at once. An event still running at {@code deadline} leaves the end to the transport's thread, once
