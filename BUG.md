@@ -1,5 +1,25 @@
 # BUG.md — foy
 
+## BUG-20261115-05 — The test harness and the tests stop the server before they close the deployment
+
+- Date: 2026-11-15 (left as is by the undeploy work of Vidocq/foy#104, BUG-20261115-01 to -04).
+- Symptom: Foy documents the order "close the deployment, then stop the server" (`Deployment`,
+  `FoyChappeBoot.Mounted`, getting-started, reference), but `foy-tck`'s `ServletTestHarness.close()` unmounted
+  the application, stopped the server it owned, then closed the deployment; so did the tests closing with
+  `try (mounted; server)` (the last resource closes first) and the `tearDown`s that stopped the server, then
+  closed the deployment. In that order a WebSocket peer gets no Close frame: the server's stop cuts the
+  connection before the undeploy sends its 1001.
+- Repro: deterministic, `ServletTestHarnessTest.closeSendsAWebSocketPeerItsCloseFrameBeforeTheServerStops`: a
+  raw WebSocket through the harness, then `close()`; the peer read the end of the stream (-1) where a Close
+  frame (`0x88`) was expected.
+- Cause: the harness and the tests were written before the order was documented and kept the old one.
+- Status: FIXED on `fix/websocket-parked-items`. `ServletTestHarness.close()` closes the deployment first,
+  while the server still serves, then unmounts the application and stops the server it owns; the peer now
+  reads the 1001 Close. The tests close the deployment first too: `try (server; mounted)` in
+  `FoyChappeBootTest`, `FoyChappeBootResourcesTest`, `FoyChappeBootFragmentsTest` and `FoyWebExtensionTest`, and
+  the `tearDown` of the `foy-core` end-to-end tests that deploy an application; the three
+  `foy-it-other-containers` tests, which never closed theirs, now close it before the server stops.
+
 ## BUG-20261115-04 — A cross-context dispatch reaches an application being undeployed
 
 - Date: 2026-11-15 (found in review of BUG-20261115-02 and -03).

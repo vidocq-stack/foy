@@ -213,8 +213,8 @@ class DefaultServletTest {
 
     @AfterEach
     void tearDown() {
-        if (server != null) server.stop();
         if (deployment != null) deployment.close();
+        if (server != null) server.stop();
     }
 
     private static ServletDecl servlet(String name, Class<? extends HttpServlet> type,

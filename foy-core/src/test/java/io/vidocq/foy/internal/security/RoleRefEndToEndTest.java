@@ -49,8 +49,8 @@ class RoleRefEndToEndTest {
 
     @AfterEach
     void tearDown() {
-        if (server != null) server.stop();
         if (deployment != null) deployment.close();
+        if (server != null) server.stop();
     }
 
     /** Logs in as alice (role admin), prints MGR, includes /plain, prints MGR again. */

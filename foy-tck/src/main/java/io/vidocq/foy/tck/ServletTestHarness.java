@@ -50,6 +50,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Function;
 
 /**
@@ -85,6 +86,7 @@ public final class ServletTestHarness implements AutoCloseable {
     private final String contextPath;
     private final Deployment deployment;
     private final WebAppModel model;
+    private final AtomicBoolean closed = new AtomicBoolean();
 
     private ServletTestHarness(ServletTestHost host, boolean ownsHost, int port, String contextPath,
                                Deployment deployment, WebAppModel model) {
@@ -117,10 +119,21 @@ public final class ServletTestHarness implements AutoCloseable {
                 .timeout(Duration.ofSeconds(5));
     }
 
+    /**
+     * Undeploys the application, then unmounts it and stops the server when the harness started it. The
+     * undeploy comes first, while the server still serves, as Foy documents it: it closes the application's
+     * upgraded connections, so a WebSocket peer gets its 1001 Close frame; a server stopped first cuts them
+     * with none (BUG-20261115-05). A request in between gets 503 from the undeployed application. A second
+     * call does nothing.
+     */
     @Override public void close() {
-        host.unmount(contextPath);
-        if (ownsHost) host.close();
-        deployment.close();
+        if (!closed.compareAndSet(false, true)) return;
+        try {
+            deployment.close();
+        } finally {
+            host.unmount(contextPath);
+            if (ownsHost) host.close();
+        }
     }
 
     public static Builder builder() { return new Builder(); }
@@ -320,8 +333,12 @@ public final class ServletTestHarness implements AutoCloseable {
             try {
                 mountHost.mount(built.contextPath(), d.handler());
             } catch (RuntimeException e) {
-                if (owned) mountHost.close();
-                d.close();
+                // The deployment first, then the server, as close() does.
+                try {
+                    d.close();
+                } finally {
+                    if (owned) mountHost.close();
+                }
                 throw e;
             }
             return new ServletTestHarness(mountHost, owned, mountHost.port(), built.contextPath(), d, built);

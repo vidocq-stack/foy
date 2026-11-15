@@ -113,8 +113,8 @@ class AsyncContainerContextsTest {
 
     @AfterEach
     void tearDown() {
-        if (server != null) server.stop();
         if (deployment != null) deployment.close();
+        if (server != null) server.stop();
     }
 
     @Test

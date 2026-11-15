@@ -286,7 +286,7 @@ class FoyWebExtensionTest {
             Server server = Server.builder().host("127.0.0.1").port(0).handler(mounted.handler()).build();
             server.start();
             int port = server.port();
-            try (mounted; server) {
+            try (server; mounted) { // closes mounted, then server
                 var response = HttpClient.newHttpClient().send(
                         HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port + "/hello")).build(),
                         HttpResponse.BodyHandlers.ofString());
@@ -336,7 +336,7 @@ class FoyWebExtensionTest {
             Server server = Server.builder().host("127.0.0.1").port(0).handler(mounted.handler()).build();
             server.start();
             int port = server.port();
-            try (mounted; server) {
+            try (server; mounted) { // closes mounted, then server
                 var client = HttpClient.newHttpClient();
                 for (var path : List.of("app", "lib")) {
                     var response = client.send(
@@ -401,7 +401,7 @@ class FoyWebExtensionTest {
             Server server = Server.builder().host("127.0.0.1").port(0).handler(mounted.handler()).build();
             server.start();
             int port = server.port();
-            try (mounted; server) {
+            try (server; mounted) { // closes mounted, then server
                 var client = HttpClient.newHttpClient();
                 var request = HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port + "/token")).build();
                 var futures = new ArrayList<java.util.concurrent.CompletableFuture<HttpResponse<String>>>();
@@ -459,7 +459,7 @@ class FoyWebExtensionTest {
             Server server = Server.builder().host("127.0.0.1").port(0).handler(mounted.handler()).build();
             server.start();
             int port = server.port();
-            try (mounted; server) {
+            try (server; mounted) { // closes mounted, then server
                 var uri = URI.create("http://127.0.0.1:" + port + "/count");
                 var alice = HttpClient.newBuilder().cookieHandler(new java.net.CookieManager()).build();
                 var bob = HttpClient.newBuilder().cookieHandler(new java.net.CookieManager()).build();

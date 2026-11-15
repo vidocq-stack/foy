@@ -121,7 +121,9 @@ Supported features:
   `securityProvider`, `sessionTimeoutMinutes`, `localeEncodingMappings`,
   `contextInitParams`, `servletContainerInitializer`
 - Binds port 0 and reads the port the server got, so no other process can take it first
-- `AutoCloseable`: `close()` stops the server and fires `destroy()`
+- `AutoCloseable`: `close()` undeploys the application first (`destroy()`, `contextDestroyed`), while the
+  server still serves, so a WebSocket peer gets its 1001 Close frame; then it unmounts the application and
+  stops the server it started
 
 ## Jakarta Servlet 6.1 TCK Conformance Status
 

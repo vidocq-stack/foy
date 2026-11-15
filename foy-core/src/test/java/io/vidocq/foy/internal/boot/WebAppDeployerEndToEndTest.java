@@ -59,8 +59,9 @@ class WebAppDeployerEndToEndTest {
 
     @AfterEach
     void tearDown() {
-        if (server != null) server.stop();
+        // The deployment first, while the server still serves, as Foy documents it.
         if (deployment != null) deployment.close();
+        if (server != null) server.stop();
         EVENTS.clear();
     }
 
@@ -480,8 +481,8 @@ class WebAppDeployerEndToEndTest {
     void virtualServerNameDefaultsToVidocqAndIsConfigurable() {
         deploy(WebAppModel.builder("/").build());
         assertEquals("vidocq", deployment.servletContext().getVirtualServerName());
-        server.stop();
         deployment.close();
+        server.stop();
         deploy(WebAppModel.builder("/").build(),
                 DeployOptions.defaults(getClass().getClassLoader()).withVirtualServerName("example.org"));
         assertEquals("example.org", deployment.servletContext().getVirtualServerName());

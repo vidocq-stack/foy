@@ -30,12 +30,13 @@ import org.junit.jupiter.api.BeforeAll;
  */
 class WeldServletSessionTest extends SessionScopeScenarios {
 
+    private static FoyChappeBoot.Mounted mounted;
     private static Server server;
     private static String base;
 
     @BeforeAll
     static void start() throws Exception {
-        var mounted = FoyChappeBoot.builder()
+        mounted = FoyChappeBoot.builder()
                 .classLoader(WeldServletSessionTest.class.getClassLoader())
                 .build()
                 .orElseThrow();
@@ -47,6 +48,10 @@ class WeldServletSessionTest extends SessionScopeScenarios {
 
     @AfterAll
     static void stop() {
+        // The application first, while the server still serves, as Foy documents it.
+        if (mounted != null) {
+            mounted.close();
+        }
         if (server != null) {
             server.stop();
         }

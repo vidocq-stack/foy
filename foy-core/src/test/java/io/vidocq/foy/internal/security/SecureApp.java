@@ -178,7 +178,7 @@ final class SecureApp implements AutoCloseable {
 
     @Override
     public void close() {
-        server.stop();
         deployment.close();
+        server.stop();
     }
 }

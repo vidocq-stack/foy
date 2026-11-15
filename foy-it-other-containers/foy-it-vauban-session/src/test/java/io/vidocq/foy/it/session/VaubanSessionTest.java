@@ -33,6 +33,7 @@ import org.junit.jupiter.api.BeforeAll;
 class VaubanSessionTest extends SessionScopeScenarios {
 
     private static VaubanContainer container;
+    private static FoyChappeBoot.Mounted mounted;
     private static Server server;
     private static String base;
 
@@ -46,7 +47,7 @@ class VaubanSessionTest extends SessionScopeScenarios {
                 .addBeanClass(Cart.class)
                 .addBeanClass(SessionEvents.class)
                 .build();
-        var mounted = FoyChappeBoot.builder()
+        mounted = FoyChappeBoot.builder()
                 .beanManager(container.getBeanManager())
                 .classLoader(VaubanSessionTest.class.getClassLoader())
                 .build()
@@ -59,6 +60,10 @@ class VaubanSessionTest extends SessionScopeScenarios {
 
     @AfterAll
     static void stop() {
+        // The application first, while the server still serves, as Foy documents it.
+        if (mounted != null) {
+            mounted.close();
+        }
         if (server != null) {
             server.stop();
         }

@@ -19,6 +19,9 @@
  */
 package io.vidocq.foy.tck;
 
+import io.vidocq.foy.spi.websocket.WebSocketListener;
+import io.vidocq.foy.spi.websocket.WebSocketPeer;
+import io.vidocq.foy.spi.websocket.WebSocketUpgradeHandler;
 import io.vidocq.foy.tck.arquillian.VidocqContainerConfiguration;
 import io.vidocq.foy.tck.arquillian.VidocqDeployableContainer;
 import jakarta.servlet.Filter;
@@ -42,6 +45,7 @@ import org.junit.jupiter.api.Test;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.net.Socket;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -49,10 +53,14 @@ import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ServletTestHarnessTest {
 
@@ -228,6 +236,80 @@ class ServletTestHarnessTest {
                 r.getWriter().write(body);
             }
         };
+    }
+
+    /**
+     * {@code close()} undeploys the application while the server it owns still serves, then stops that
+     * server (BUG-20261115-05): a WebSocket peer reads the undeploy's 1001 Close before the end of the
+     * stream. The other way round, the server's stop cut the connection with no Close frame.
+     */
+    @Test
+    void closeSendsAWebSocketPeerItsCloseFrameBeforeTheServerStops() throws Exception {
+        var opened = new CountDownLatch(1);
+        OpenedTakeover.OPENED.set(opened);
+        // The harness closes in the test, and again, as a no-op, when the test failed before.
+        try (var harness = ServletTestHarness.builder().servlet("/ws", new UpgradingServlet()).start();
+             var socket = new Socket("127.0.0.1", harness.port())) {
+            socket.setSoTimeout(10_000);
+            socket.getOutputStream().write(("GET /ws HTTP/1.1\r\nHost: localhost\r\nUpgrade: websocket\r\n"
+                    + "Connection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n"
+                    + "Sec-WebSocket-Version: 13\r\n\r\n").getBytes(StandardCharsets.US_ASCII));
+            InputStream in = socket.getInputStream();
+            String head = readHead(in);
+            assertTrue(head.startsWith("HTTP/1.1 101 "), head);
+            assertTrue(opened.await(5, TimeUnit.SECONDS), "onOpen");
+            harness.close();
+            assertEquals(0x88, firstByte(in), "no Close frame before the end of the stream");
+            byte[] payload = in.readNBytes(in.read() & 0x7F);
+            assertEquals(1001, ((payload[0] & 0xFF) << 8) | (payload[1] & 0xFF));
+        }
+    }
+
+    /** The response head, up to its blank line. */
+    private static String readHead(InputStream in) throws IOException {
+        var head = new StringBuilder();
+        while (!head.toString().endsWith("\r\n\r\n")) {
+            int b = in.read();
+            if (b < 0) break;
+            head.append((char) b);
+        }
+        return head.toString();
+    }
+
+    /** The first byte of what the server sends next, or -1 when the stream ends (or is reset) first. */
+    private static int firstByte(InputStream in) {
+        try {
+            return in.read();
+        } catch (IOException _) {
+            return -1;
+        }
+    }
+
+    /** Hands the request over to a WebSocket that the transport runs (Foy's WebSocket SPI). */
+    public static class UpgradingServlet extends HttpServlet {
+        @Override protected void doGet(HttpServletRequest q, HttpServletResponse r) throws IOException, ServletException {
+            q.upgrade(OpenedTakeover.class);
+        }
+    }
+
+    /** A WebSocket that says when it opened, and does nothing else. */
+    public static class OpenedTakeover implements WebSocketUpgradeHandler {
+        /** The latch of the running test: each handler counts down the one set when it was created. */
+        static final AtomicReference<CountDownLatch> OPENED = new AtomicReference<>(new CountDownLatch(1));
+
+        private final CountDownLatch opened = OPENED.get();
+
+        @Override public String subprotocol() { return null; }
+
+        @Override public WebSocketListener listener() {
+            return new WebSocketListener() {
+                @Override public void onOpen(WebSocketPeer peer) { opened.countDown(); }
+            };
+        }
+
+        @Override public void destroy() {
+            // nothing to release
+        }
     }
 
     @Test

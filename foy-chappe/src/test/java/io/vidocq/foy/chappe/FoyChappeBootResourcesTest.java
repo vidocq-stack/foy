@@ -102,7 +102,7 @@ class FoyChappeBootResourcesTest {
         Server server = Server.builder().host("127.0.0.1").port(0).handler(mounted.handler()).build();
         server.start();
         int port = server.port();
-        try (mounted; server) {
+        try (server; mounted) { // closes mounted, then server
             var client = HttpClient.newHttpClient();
             String[] out = new String[paths.length];
             for (int i = 0; i < paths.length; i++) {

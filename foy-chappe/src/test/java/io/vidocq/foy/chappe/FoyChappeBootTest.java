@@ -90,7 +90,7 @@ class FoyChappeBootTest {
         Server server = Server.builder().host("127.0.0.1").port(0).handler(mounted.handler()).build();
         server.start();
         int port = server.port();
-        try (mounted; server) {
+        try (server; mounted) { // closes mounted, then server
             var resp = HttpClient.newHttpClient().send(
                     HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port + "/hello")).build(),
                     HttpResponse.BodyHandlers.ofString());
@@ -422,7 +422,7 @@ class FoyChappeBootTest {
         Server server = Server.builder().host("127.0.0.1").port(0).handler(mounted.handler()).build();
         server.start();
         int port = server.port();
-        try (mounted; server) {
+        try (server; mounted) { // closes mounted, then server
             var client = HttpClient.newHttpClient();
             assertEquals("hello still", client.send(
                     HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port + "/hello")).build(),
@@ -611,7 +611,7 @@ class FoyChappeBootTest {
         Server server = Server.builder().host("127.0.0.1").port(0).handler(mounted.handler()).build();
         server.start();
         int port = server.port();
-        try (mounted; server) {
+        try (server; mounted) { // closes mounted, then server
             assertEquals(0, mounted.activeSessions());
             var client = HttpClient.newBuilder().cookieHandler(new java.net.CookieManager()).build();
             client.send(HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port + "/open")).build(),

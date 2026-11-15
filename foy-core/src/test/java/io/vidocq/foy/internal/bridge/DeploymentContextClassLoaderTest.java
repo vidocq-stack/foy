@@ -325,8 +325,8 @@ class DeploymentContextClassLoaderTest {
 
     @AfterEach
     void tearDown() {
-        if (server != null) server.stop();
         for (Deployment d : deployments) d.close();
+        if (server != null) server.stop();
     }
 
     /** Runs {@code action} on the current thread with {@link #DEPLOYER} as its context loader. */

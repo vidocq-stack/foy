@@ -46,13 +46,14 @@ class WeldPortabilityTest {
 
     private static final HttpClient HTTP = HttpClient.newHttpClient();
     private static WeldContainer container;
+    private static FoyChappeBoot.Mounted mounted;
     private static Server server;
     private static String base;
 
     @BeforeAll
     static void start() throws Exception {
         container = new Weld().initialize();
-        var mounted = FoyChappeBoot.builder()
+        mounted = FoyChappeBoot.builder()
                 .beanManager(container.getBeanManager())
                 .classLoader(WeldPortabilityTest.class.getClassLoader())
                 .build()
@@ -65,6 +66,10 @@ class WeldPortabilityTest {
 
     @AfterAll
     static void stop() {
+        // The application first, while the server still serves, as Foy documents it.
+        if (mounted != null) {
+            mounted.close();
+        }
         if (server != null) {
             server.stop();
         }

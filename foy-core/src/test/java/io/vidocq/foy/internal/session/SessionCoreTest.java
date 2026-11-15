@@ -166,8 +166,8 @@ class SessionCoreTest {
 
     @AfterEach
     void tearDown() {
-        if (server != null) server.stop();
         if (deployment != null) deployment.close();
+        if (server != null) server.stop();
         if (manager != null) manager.close();
     }
 
@@ -419,10 +419,10 @@ class SessionCoreTest {
         String id = get("/ctx/s/create", null).value("ID");
         SessionManager sessions = deployment.sessionManager();
         assertTrue(sessions.isReaperRunning());
-        server.stop();
-        server = null;
         deployment.close();
         deployment = null;
+        server.stop();
+        server = null;
         assertFalse(sessions.isReaperRunning());
         assertEquals(List.of("destroyed:" + id), recorder.events, "live sessions are invalidated on undeploy");
     }
