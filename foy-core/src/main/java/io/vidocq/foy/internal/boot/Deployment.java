@@ -90,7 +90,9 @@ public final class Deployment implements AutoCloseable {
      * {@code getContext} no longer finds the application; a cross-context dispatch into it gets a temporary
      * {@code UnavailableException}. Open upgraded
      * connections close first, all at once and for 3 s at most (their {@code HttpUpgradeHandler.destroy()}
-     * runs, after a WebSocket's {@code onClose}); the requests in service get up to 2 s to finish; then
+     * runs, after a WebSocket's {@code onClose}); the requests in service get up to 2 s to finish; both
+     * graces count from the start of the undeploy, so it reaches {@code destroy()} 3 s after it began at
+     * most; then
      * Servlet 6.1 §2.3.4 — {@code destroy()} in
      * reverse {@code init()} order (filters, then servlets), then the session reaper stops and every live session is
      * invalidated with its listeners ({@code sessionDestroyed}, {@code valueUnbound}; Foy does not
@@ -123,6 +125,9 @@ public final class Deployment implements AutoCloseable {
     private static void undeployWithinScope(VidocqServletContext servletContext, ListenerRegistry contextListeners,
                                             List<Servlet> initializedServlets, List<Filter> initializedFilters,
                                             Path tempDir, SessionManager sessions) {
+        // The graces of the upgraded connections and of the requests in service both count from here: the
+        // requests keep running while the connections close, so the two waits overlap.
+        long started = System.nanoTime();
         // From now on a new request gets 503 and reaches no filter or servlet (BUG-20261115-02).
         servletContext.refuseRequests();
         // Nor does a new cross-context dispatcher reach it; one obtained earlier passes the same gate in the
@@ -130,10 +135,10 @@ public final class Deployment implements AutoCloseable {
         CrossContextRegistry.unregister(servletContext);
         // Upgraded connections next: their handlers' destroy(), and a WebSocket's onClose before it, run
         // while the application is intact (BUG-20261114-08).
-        try { servletContext.closeUpgradedConnections(); }
+        try { servletContext.closeUpgradedConnectionsFrom(started); }
         catch (RuntimeException e) { warn("closing the upgraded connections failed", e); }
         // Servlet 6.1 section 2.3.4: the requests in service finish first, for a bounded time (BUG-20261115-03).
-        servletContext.awaitRequestsInService();
+        servletContext.awaitRequestsInService(started);
         for (int i = initializedFilters.size() - 1; i >= 0; i--) {
             Filter f = initializedFilters.get(i);
             try { f.destroy(); } catch (RuntimeException e) { warn("destroy failed for filter " + f, e); }

@@ -366,7 +366,10 @@ public final class VidocqServletContext implements ServletContext {
     /**
      * How long an undeploy waits for the requests in service before it destroys the filters and servlets:
      * Servlet 6.1 section 2.3.4 lets the container stop waiting at "a server-defined time limit". 2 s, as
-     * Tomcat's default {@code unloadDelay}; past it, {@code destroy()} runs while they still run.
+     * Tomcat's default {@code unloadDelay}, counted from the start of the undeploy, like
+     * {@link #UPGRADED_CONNECTIONS_GRACE}: the requests keep running while the upgraded connections close, so
+     * the two waits overlap and the undeploy reaches {@code destroy()} 3 s after it began at most, not 5 s.
+     * Past it, {@code destroy()} runs while they still run.
      */
     static final java.time.Duration REQUESTS_GRACE = java.time.Duration.ofSeconds(2);
 
@@ -425,16 +428,18 @@ public final class VidocqServletContext implements ServletContext {
 
     /**
      * Undeploy, before the filters and servlets are destroyed: lets the requests still in service finish,
-     * for {@link #REQUESTS_GRACE} at most (Servlet 6.1 section 2.3.4, BUG-20261115-03), and logs those it
-     * stops waiting for. The interrupt of the undeploy's thread is cleared for the wait and restored
-     * afterwards; one that arrives during the wait ends it.
+     * until {@link #REQUESTS_GRACE} after {@code undeployStart} (Servlet 6.1 section 2.3.4, BUG-20261115-03),
+     * and logs those it stops waiting for. The interrupt of the undeploy's thread is cleared for the wait and
+     * restored afterwards; one that arrives during the wait ends it.
+     *
+     * @param undeployStart the {@link System#nanoTime()} at which the undeploy began
      */
-    public void awaitRequestsInService() {
+    public void awaitRequestsInService(long undeployStart) {
         boolean interrupted = Thread.interrupted();
         int left;
         requestsDrain.lock();
         try {
-            awaitNoRequestInService();
+            awaitNoRequestInService(undeployStart + REQUESTS_GRACE.toNanos());
             left = requestsInService.get();
         } finally {
             requestsDrain.unlock();
@@ -442,15 +447,15 @@ public final class VidocqServletContext implements ServletContext {
         if (interrupted) Thread.currentThread().interrupt();
         if (left > 0) {
             System.getLogger(VidocqServletContext.class.getName()).log(System.Logger.Level.WARNING,
-                    "The undeploy stopped waiting for the requests still in service ({0}) after {1} ms:"
+                    "The undeploy stopped waiting for the requests still in service ({0}), {1} ms after it began:"
                             + " the filters and servlets are destroyed while they run",
-                    left, REQUESTS_GRACE.toMillis());
+                    left, java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - undeployStart));
         }
     }
 
-    /** Holding {@link #requestsDrain}: waits for no request in service, {@link #REQUESTS_GRACE} at most. */
-    private void awaitNoRequestInService() {
-        long nanos = REQUESTS_GRACE.toNanos();
+    /** Holding {@link #requestsDrain}: waits for no request in service, until {@code deadline} at most. */
+    private void awaitNoRequestInService(long deadline) {
+        long nanos = deadline - System.nanoTime();
         try {
             while (requestsInService.get() > 0 && nanos > 0) {
                 nanos = noRequestInService.awaitNanos(nanos);
@@ -466,8 +471,8 @@ public final class VidocqServletContext implements ServletContext {
      * How long an undeploy waits for its upgraded connections, all of them together: each closes on a
      * virtual thread of its own and bounds its own waits to 2 s (a raw upgrade's last write, a WebSocket's
      * Close, event in progress or closing handshake), and the last second is for the application's
-     * {@code onClose} and {@code destroy()}. Past it the undeploy goes on, and the connections still
-     * closing end after the application stopped.
+     * {@code onClose} and {@code destroy()}. Counted from the start of the undeploy. Past it the undeploy
+     * goes on, and the connections still closing end after the application stopped.
      */
     static final java.time.Duration UPGRADED_CONNECTIONS_GRACE = java.time.Duration.ofSeconds(3);
 
@@ -502,9 +507,17 @@ public final class VidocqServletContext implements ServletContext {
      * close that fails, even with an {@code Error} from the application's {@code onClose} or
      * {@code destroy()}, is logged and stops neither the others nor the rest of the undeploy. The
      * interrupt of the undeploy's thread is cleared for the wait and restored afterwards; one that
-     * arrives during the wait ends it.
+     * arrives during the wait ends it. The deadline counts from now.
      */
     public void closeUpgradedConnections() {
+        closeUpgradedConnectionsFrom(System.nanoTime());
+    }
+
+    /**
+     * {@link #closeUpgradedConnections()}, with the deadline counted from {@code undeployStart}, the
+     * {@link System#nanoTime()} at which the undeploy began.
+     */
+    public void closeUpgradedConnectionsFrom(long undeployStart) {
         upgradedConnectionsClosed = true;
         Thread.Builder closers = Thread.ofVirtual().name("foy-upgrade-close-", 1)
                 .uncaughtExceptionHandler((thread, failure) -> closeFailed(failure));
@@ -513,7 +526,7 @@ public final class VidocqServletContext implements ServletContext {
             upgradedConnections.remove(c);
             closing.add(closers.start(() -> close(c)));
         }
-        awaitClosed(closing);
+        awaitClosed(closing, undeployStart + UPGRADED_CONNECTIONS_GRACE.toNanos());
     }
 
     private static void close(AutoCloseable connection) {
@@ -529,24 +542,22 @@ public final class VidocqServletContext implements ServletContext {
                 .log(System.Logger.Level.WARNING, "closing an upgraded connection failed", failure);
     }
 
-    /** Waits for the closing threads until {@link #UPGRADED_CONNECTIONS_GRACE} from now; logs the late ones. */
-    private static void awaitClosed(java.util.List<Thread> closing) {
-        long deadline = System.nanoTime() + UPGRADED_CONNECTIONS_GRACE.toNanos();
+    /** Waits for the closing threads until {@code deadline}; logs the late ones. */
+    private static void awaitClosed(java.util.List<Thread> closing, long deadline) {
         boolean interrupted = Thread.interrupted();
         try {
             for (Thread thread : closing) {
                 thread.join(java.time.Duration.ofNanos(Math.max(0, deadline - System.nanoTime())));
             }
         } catch (InterruptedException _) {
-            interrupted = true;
-        } finally {
-            if (interrupted) Thread.currentThread().interrupt();
+            Thread.currentThread().interrupt();
         }
+        if (interrupted) Thread.currentThread().interrupt();
         long late = closing.stream().filter(Thread::isAlive).count();
         if (late > 0) {
             System.getLogger(VidocqServletContext.class.getName()).log(System.Logger.Level.WARNING,
                     "{0} upgraded connections were still closing when the undeploy stopped waiting for them"
-                            + " (after {1} ms at most): their handlers end after the application stopped",
+                            + " ({1} ms after it began, at most): their handlers end after the application stopped",
                     late, UPGRADED_CONNECTIONS_GRACE.toMillis());
         }
     }

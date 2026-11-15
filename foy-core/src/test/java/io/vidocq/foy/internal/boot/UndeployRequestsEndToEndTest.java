@@ -108,6 +108,8 @@ class UndeployRequestsEndToEndTest {
     }
 
     private final Probe probe = new Probe();
+    /** Holds the close of an upgraded connection a test registers. */
+    private final CountDownLatch stuckConnection = new CountDownLatch(1);
     private final HttpClient client = HttpClient.newHttpClient();
     private Deployment deployment;
     private Server server;
@@ -117,6 +119,7 @@ class UndeployRequestsEndToEndTest {
     void tearDown() {
         probe.serviceGate.countDown();
         probe.destroyGate.countDown();
+        stuckConnection.countDown();
         if (deployment != null) deployment.close();
         if (server != null) server.stop();
         client.close();
@@ -177,6 +180,36 @@ class UndeployRequestsEndToEndTest {
             assertTrue(log.warnings().stream().anyMatch(w -> w.contains("requests still in service (1)")),
                     log.warnings().toString());
         } finally {
+            probe.serviceGate.countDown();
+        }
+        assertEquals(200, response.get(5, TimeUnit.SECONDS).statusCode());
+    }
+
+    /**
+     * The grace of the upgraded connections (3 s) and that of the requests in service (2 s) both count from
+     * the start of the undeploy: a stuck connection and a stuck request together hold it about 3 s before
+     * {@code destroy()}, not 3 s and then 2 s more.
+     */
+    @Test
+    void aStuckConnectionAndAStuckRequestShareTheUndeploysStart() throws Exception {
+        probe.holdService = true;
+        deploy();
+        CompletableFuture<HttpResponse<String>> response = getAsync();
+        assertTrue(probe.serviceEntered.await(5, TimeUnit.SECONDS), SERVICE);
+        assertTrue(deployment.servletContext().registerUpgradedConnection(() -> {
+            if (!stuckConnection.await(20, TimeUnit.SECONDS)) throw new IllegalStateException("never released");
+        }));
+        try (var log = LogCapture.of(VidocqServletContext.class.getName())) {
+            long start = System.nanoTime();
+            Thread undeploy = Thread.ofVirtual().start(deployment::close);
+            assertTrue(undeploy.join(Duration.ofSeconds(10)), "the undeploy did not return");
+            Duration took = Duration.ofNanos(System.nanoTime() - start);
+            assertTrue(took.compareTo(Duration.ofMillis(4_500)) < 0, "the undeploy took " + took);
+            assertEquals(List.of(SERVICE, DESTROY), probe.events);
+            assertTrue(log.warnings().stream().anyMatch(w -> w.contains("requests still in service (1)")),
+                    log.warnings().toString());
+        } finally {
+            stuckConnection.countDown();
             probe.serviceGate.countDown();
         }
         assertEquals(200, response.get(5, TimeUnit.SECONDS).statusCode());

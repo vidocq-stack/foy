@@ -85,7 +85,7 @@ class RequestsInServiceRaceTest {
         Thread undeploy = Thread.ofVirtual().start(() -> {
             awaitQuietly(go);
             context.refuseRequests();
-            context.awaitRequestsInService();
+            context.awaitRequestsInService(System.nanoTime());
             pastTheWait.set(true);
             if (inService.get()) neither.set(true);
         });

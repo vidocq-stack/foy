@@ -50,6 +50,11 @@
   and its condition serve only the undeploy's wait and the last request's signal once the undeploy began.
   `RequestsInServiceRaceTest` pins the order: 20,000 rounds of a request against an undeploy; with the
   flag read before the increment it saw 48, 72 and 98 requests neither refused nor waited for in 3 runs.
+- Review note (round 3): the requests' 2 s and the upgraded connections' 3 s were consecutive, 5 s before
+  `destroy()` in the worst case. Both now count from the start of the undeploy, since the requests keep
+  running while the connections close: 3 s at most.
+  `UndeployRequestsEndToEndTest.aStuckConnectionAndAStuckRequestShareTheUndeploysStart` took 5.006 s
+  before, 3.016 s after.
 
 ## BUG-20261115-02 — Requests reach the application while and after it is undeployed
 
