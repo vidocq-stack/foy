@@ -46,7 +46,7 @@ public class StartupHook implements ServletContextListener {
 }
 ----
 
-`contextInitialized` fires when `FoyChappeBoot.Builder.build()` deploys the web application; `contextDestroyed` fires when the returned `FoyChappeBoot.Mounted` is closed (`Mounted` is `AutoCloseable`). From the moment `close()` starts, a new request, a WebSocket handshake included, gets `503 Service Unavailable` and reaches no listener, filter or servlet; the requests already in service get up to 2 s to finish before the filters' and servlets' `destroy()` (Servlet 6.1 §2.3.4).
+`contextInitialized` fires when `FoyChappeBoot.Builder.build()` deploys the web application; `contextDestroyed` fires when the returned `FoyChappeBoot.Mounted` is closed (`Mounted` is `AutoCloseable`). From the moment `close()` starts, a new request, a WebSocket handshake included, gets `503 Service Unavailable` and reaches no listener, filter or servlet; the requests already in service get up to 2 s to finish before the filters' and servlets' `destroy()` (Servlet 6.1 §2.3.4). From that moment too, `getContext` in another application no longer finds it, and a cross-context `forward`, `include` or `AsyncContext.dispatch` into it through a dispatcher obtained earlier throws a temporary `UnavailableException`, answered with 503 when the caller does not catch it; a dispatch already running in it counts as a request in service.
 
 == Async (`AsyncContext`)
 

@@ -1237,12 +1237,30 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
         // learns the context of the dispatch: the async cycles, I/O listeners and upgrade the target
         // opens belong to the target application and keep its loader after the dispatch returned.
         HttpServletRequestImpl impl = unwrapImpl(req);
+        // A dispatch from another application enters this one as a request does: refused once this
+        // application's undeploy began, counted in service while it runs (BUG-20261115-04).
+        boolean fromAnotherContext = impl != null && impl.currentContext() != servletContext;
+        if (fromAnotherContext && !servletContext.enterRequest()) throw beingUndeployed();
         ServletContext previousContext = impl == null ? null : impl.enterContext(servletContext);
         try (var _ = ContextLoaderScope.enter(servletContext.applicationClassLoader())) {
             invoke(target, req, res, type, filterRegistry.chain(filterPath, type, target.servletName()));
         } finally {
             if (impl != null) impl.leaveContext(previousContext);
+            if (fromAnotherContext) servletContext.exitRequest();
         }
+    }
+
+    /**
+     * The failure of a cross-context dispatch into this application once its undeploy began: a temporary
+     * {@code UnavailableException} (Servlet 6.1 section 2.3.3.2). The caller of {@code forward},
+     * {@code include} or {@code AsyncContext.dispatch} can catch it, as it would the exception of a
+     * target that threw it (section 9.5); left uncaught, the container answers it with 503, the status of
+     * a request refused at this application's door. A {@code sendError(503)}, as for a servlet whose
+     * {@code init()} failed, would be lost in an include (section 9.3).
+     */
+    private UnavailableException beingUndeployed() {
+        return new UnavailableException("the application at '" + servletContext.getContextPath()
+                + "' is being undeployed", 0);
     }
 
     private void invoke(DispatchTarget target, ServletRequest req, ServletResponse res,

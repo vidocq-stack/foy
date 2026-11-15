@@ -216,6 +216,8 @@ These changes may need attention:
 
 * **Requests during an undeploy get `503`, and the undeploy waits for those in service** (BUG-20261115-02, BUG-20261115-03). From the moment `Mounted.close()` starts, a new request, a WebSocket handshake included, is answered `503 Service Unavailable` without reaching a listener, filter or servlet; it used to reach the application while, or after, its servlets were destroyed. The undeploy then waits up to 2 s for the requests already in service before `destroy()`, where it used to destroy them under running requests.
 
+* **A cross-context dispatch into an application being undeployed is refused** (BUG-20261115-04). From the moment its undeploy starts, `getContext` no longer finds the application, and a dispatcher obtained earlier throws a temporary `UnavailableException` from `forward`, `include` or `AsyncContext.dispatch` (503 when uncaught); it used to reach the destroyed servlets. A dispatch already running in it is waited for like a request in service.
+
 * **Close `Mounted` before you stop the server.** The getting-started example used to stop the server first. In that order the stop cuts WebSocket connections without a Close frame, and endpoints may get `onError` before `onClose(1006)`; closing `Mounted` first sends every peer its 1001 Close and runs `onClose(1001)` before `contextDestroyed`.
 
 * **Wrappers: every application wrapper, HTTP or not, now reaches the forward/include target.** The dispatch wrapper sits under the application's, so a wrapper's overrides win. A framework wrapper that caches the request URI at construction time shows the original URI to the target, as on Tomcat.

@@ -86,14 +86,16 @@ public final class Deployment implements AutoCloseable {
     public List<Filter> initializedFilters() { return initializedFilters; }
 
     /**
-     * Undeploys. From its start, a new request gets 503 and reaches no filter or servlet. Open upgraded
+     * Undeploys. From its start, a new request gets 503 and reaches no filter or servlet, and
+     * {@code getContext} no longer finds the application; a cross-context dispatch into it gets a temporary
+     * {@code UnavailableException}. Open upgraded
      * connections close first, all at once and for 3 s at most (their {@code HttpUpgradeHandler.destroy()}
      * runs, after a WebSocket's {@code onClose}); the requests in service get up to 2 s to finish; then
      * Servlet 6.1 §2.3.4 — {@code destroy()} in
      * reverse {@code init()} order (filters, then servlets), then the session reaper stops and every live session is
      * invalidated with its listeners ({@code sessionDestroyed}, {@code valueUnbound}; Foy does not
-     * persist sessions across deployments), then {@code contextDestroyed}, then the context leaves
-     * the cross-context registry and its temp dir is removed. A second call is a no-op.
+     * persist sessions across deployments), then {@code contextDestroyed}, then its temp dir is removed.
+     * A second call is a no-op.
      */
     @Override
     public void close() {
@@ -123,6 +125,9 @@ public final class Deployment implements AutoCloseable {
                                             Path tempDir, SessionManager sessions) {
         // From now on a new request gets 503 and reaches no filter or servlet (BUG-20261115-02).
         servletContext.refuseRequests();
+        // Nor does a new cross-context dispatcher reach it; one obtained earlier passes the same gate in the
+        // bridge (BUG-20261115-04).
+        CrossContextRegistry.unregister(servletContext);
         // Upgraded connections next: their handlers' destroy(), and a WebSocket's onClose before it, run
         // while the application is intact (BUG-20261114-08).
         try { servletContext.closeUpgradedConnections(); }
@@ -145,7 +150,6 @@ public final class Deployment implements AutoCloseable {
             try { contextListeners.fireContextDestroyed(servletContext); }
             catch (RuntimeException e) { warn("contextDestroyed failed", e); }
         }
-        CrossContextRegistry.unregister(servletContext);
         try { servletContext.closeJspEngineApplication(); }
         catch (RuntimeException failure) { warn("JSP application cleanup failed", failure); }
         if (tempDir != null) deleteRecursively(tempDir);

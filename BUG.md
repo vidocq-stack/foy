@@ -1,5 +1,33 @@
 # BUG.md — foy
 
+## BUG-20261115-04 — A cross-context dispatch reaches an application being undeployed
+
+- Date: 2026-11-15 (found in review of BUG-20261115-02 and -03).
+- Symptom: a `forward`, `include` or `AsyncContext.dispatch` from another application into one being
+  undeployed skipped both the 503 gate and the count of requests in service. It reached servlets the
+  undeploy was destroying, or had destroyed, and the undeploy did not wait for it.
+- Repro: deterministic, `UndeployCrossContextEndToEndTest`, two applications with only the caller served:
+  - `getContextNoLongerFindsAnApplicationOnceItsUndeployBegan`: `getContext` still found the target while
+    its `destroy()` ran (`found`);
+  - `aDispatcherObtainedBeforeTheUndeployIsRefused`: a dispatcher obtained before the undeploy forwarded
+    to the destroyed servlet after it (events `[service, destroy, service]`, 200);
+  - `theUndeployWaitsForACrossContextDispatchInService`: the undeploy returned within 500 ms while a
+    forward was held in the target's servlet.
+- Cause: the gate and the count sat in the bridge's request pipeline only, which a cross-context dispatch
+  does not go through (it enters the target bridge's `invoke`); and the context left the cross-context
+  registry at the end of the undeploy, so `getContext` kept finding it until then.
+- Status: FIXED on `fix/websocket-shutdown-order`.
+  - The undeploy takes the context out of the registry right after `refuseRequests()`: no new
+    cross-context dispatcher reaches it.
+  - `ChappeServletBridge.invoke` treats a dispatch from another application (the request's current
+    context is not the bridge's) as a request: `enterRequest()` before, `exitRequest()` after.
+  - A refused dispatch throws a temporary `UnavailableException` (Servlet 6.1 section 2.3.3.2). The caller
+    can catch it, as it would the exception of a target that threw it (section 9.5); uncaught, Foy answers
+    it with 503, the status of a request refused at the door. Foy's stand-in for a servlet whose `init()`
+    failed answers with `sendError(503)` instead, but an include ignores `sendError` (section 9.3).
+  - Not covered: an async cycle the target starts in a cross-context dispatch outlives the dispatch, and
+    is counted in the caller's application, not the target's.
+
 ## BUG-20261115-03 — The undeploy destroys filters and servlets under the requests still in service
 
 - Date: 2026-11-15 (found while fixing BUG-20261115-02, checking the other half of Servlet 6.1 section 2.3.4).
