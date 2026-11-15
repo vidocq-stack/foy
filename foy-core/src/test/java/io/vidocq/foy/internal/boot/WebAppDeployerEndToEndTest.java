@@ -431,7 +431,7 @@ class WebAppDeployerEndToEndTest {
         assertEquals("listener boom", ex.getMessage());
         // contextDestroyed fired because contextInitialized was; no servlet was ever initialised.
         assertEquals(List.of("ctxInit:first", "ctxDestroyed:first"), events());
-        assertNull(io.vidocq.foy.internal.container.CrossContextRegistry.lookup("/failing-listener"));
+        assertNotRegistered("/failing-listener");
         assertNotNull(tempDir.get());
         assertFalse(tempDir.get().exists(), "temp dir must be removed");
     }
@@ -448,7 +448,7 @@ class WebAppDeployerEndToEndTest {
         var options = DeployOptions.defaults(getClass().getClassLoader()).withTempDirRoot(tempRoot);
         assertThrows(IllegalStateException.class, () -> WebAppDeployer.deploy(model, options));
         assertEquals(List.of(), events(), "nothing initialised, nothing destroyed");
-        assertNull(io.vidocq.foy.internal.container.CrossContextRegistry.lookup("/failing-supplier"));
+        assertNotRegistered("/failing-supplier");
         try (var entries = Files.list(tempRoot)) {
             assertEquals(List.of(), entries.toList(), "no temp dir leaked");
         }
@@ -734,5 +734,12 @@ class WebAppDeployerEndToEndTest {
         }
         assertEquals(200, get("/good").statusCode());
         assertEquals(404, get("/bad").statusCode());
+    }
+
+    /** No application stays registered under {@code contextPath}; another test may have left the root one. */
+    private static void assertNotRegistered(String contextPath) {
+        var found = io.vidocq.foy.internal.container.CrossContextRegistry.lookup(contextPath);
+        assertTrue(found == null || !contextPath.equals(found.getContextPath()),
+                () -> contextPath + " stayed in the cross-context registry");
     }
 }

@@ -1,5 +1,36 @@
 # BUG.md — foy
 
+## BUG-20261115-07 — During its undeploy, an application's `getContext` no longer finds its own path
+
+- Date: 2026-11-15 (left as is by the undeploy work of Vidocq/foy#104, BUG-20261115-04).
+- Symptom: the undeploy takes the context out of `CrossContextRegistry` at its start (BUG-20261115-04), and
+  `VidocqServletContext.getContext` only asked the registry, so a request the undeploy waits for got `null`
+  from `getServletContext().getContext("/own")` for its own application. And at any time, `getContext` of a URI
+  below an application's own path (`/own/page`) was `null`: the registry matched exact context paths only.
+  Checked: with a root application deployed, the undeploying application's path gave `null`, not the root's
+  context, since the registry does not match on prefixes. The same exact match made every other application
+  findable by its exact context path only (`getContext("/b/x")` in `/a` was `null`), while Servlet 6.1
+  section 4.8 matches the URI against the context roots of the container.
+- Repro: deterministic, `OwnPathLookupEndToEndTest`, a request held in `/own` while it is undeployed:
+  `duringItsUndeployAnApplicationResolvesItsOwnPathToItself` (`none,none,none` for `/own`, `/own/`,
+  `/own/page`), `duringItsUndeployItsOwnPathIsNotTheRootApplications` (`none,none` with `/` deployed),
+  `aContextDeployedUnderALongerPathStillAnswersForItsUris` (`/own/sub,none,none` for `/own/sub`,
+  `/own/sub/page`, `/own/subway` with `/own/sub` deployed). And `GetContextTest`, a table over (root
+  deployed, application undeploying, caller, URI) with `/`, `/a`, `/a/sub`, `/b`: 10 of its first 27 rows
+  failed, every one a URI under another application's root or under the root application's (`none` where
+  `/b`, `/a/sub`, `/a` or `/` was expected).
+- Cause: the registry matched exact context paths, and `getContext` made no difference between the
+  application's own path and another application's.
+- Status: FIXED on `fix/websocket-parked-items`. `getContext` follows one rule whoever asks:
+  `CrossContextRegistry.lookup` returns the context whose path is the longest one the URI lies under, on a
+  segment boundary, and the root context holds every URI no other context does (section 4.8, as in Tomcat and
+  Jetty). The one exception is the undeploy: the application has left the registry, so the other applications
+  no longer find it (BUG-20261115-04) and get what remains, the root application or `null`; it still counts as
+  deployed for its own lookups, so a URI under its own path resolves to itself unless an application deployed
+  under a longer path holds it. Behaviour changes, in the migration notes: another application is found by a
+  URI below its path, and with a root application deployed a URI no other application holds returns the root
+  application from every caller, where both returned `null`.
+
 ## BUG-20261115-06 — A request refused during an undeploy is not told when to retry
 
 - Date: 2026-11-15 (left as is by the undeploy work of Vidocq/foy#104, BUG-20261115-02).
@@ -57,7 +88,8 @@
   registry at the end of the undeploy, so `getContext` kept finding it until then.
 - Status: FIXED on `fix/websocket-shutdown-order`.
   - The undeploy takes the context out of the registry right after `refuseRequests()`: no new
-    cross-context dispatcher reaches it.
+    cross-context dispatcher reaches it. The application's own `getContext` of its path still finds it
+    since BUG-20261115-07.
   - `ChappeServletBridge.invoke` treats a dispatch from another application (the request's current
     context is not the bridge's) as a request: `enterRequest()` before, `exitRequest()` after.
   - A refused dispatch throws a temporary `UnavailableException` (Servlet 6.1 section 2.3.3.2). The caller

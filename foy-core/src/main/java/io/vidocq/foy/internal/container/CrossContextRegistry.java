@@ -43,13 +43,33 @@ public final class CrossContextRegistry {
     }
 
     /**
-     * Resolves a {@code uripath} (starting with {@code /}) to a ServletContext.
-     * Strict match on contextPath (no prefix) — the TCK Servlet
-     * 6.1 always passes the exact contextPath.
+     * The registered context whose path is the longest one {@code uripath} lies {@linkplain #isUnder under}, on
+     * a segment boundary (Servlet 6.1 section 4.8): the root context holds every URI no other context does.
+     *
+     * @return the context, or {@code null} when {@code uripath} does not start with {@code /} or lies under no
+     *         registered context
      */
     public static VidocqServletContext lookup(String uripath) {
-        if (uripath == null) return null;
-        return CONTEXTS.get(normalize(uripath));
+        if (uripath == null || !uripath.startsWith("/")) return null;
+        VidocqServletContext enclosing = null;
+        int longest = -1;
+        for (var entry : CONTEXTS.entrySet()) {
+            String path = entry.getKey();
+            if (path.length() > longest && isUnder(uripath, path)) {
+                enclosing = entry.getValue();
+                longest = path.length();
+            }
+        }
+        return enclosing;
+    }
+
+    /**
+     * Whether {@code uripath} (starting with {@code /}) lies under {@code contextPath} on a segment boundary:
+     * it is the path, or the path followed by {@code /}; every URI lies under the root context's path.
+     */
+    static boolean isUnder(String uripath, String contextPath) {
+        String path = normalize(contextPath);
+        return "/".equals(path) || uripath.equals(path) || uripath.startsWith(path + "/");
     }
 
     private static String normalize(String path) {

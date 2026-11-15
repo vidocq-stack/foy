@@ -576,11 +576,22 @@ public final class VidocqServletContext implements ServletContext {
     }
 
     @Override public String getContextPath() { return contextPath; }
+    /**
+     * The context of a URI (Servlet 6.1 section 4.8), among the applications deployed in this JVM, by one rule
+     * whoever asks: the application whose context path is the longest one the URI lies under, on a segment
+     * boundary; the root application holds every URI no other application does. An application being
+     * undeployed has left the registry, so the other applications no longer find it (BUG-20261115-04), yet it
+     * still counts as deployed for its own lookups (BUG-20261115-07).
+     *
+     * @return the context, or {@code null} when none holds the URI or {@code uripath} does not start with
+     *         {@code /}
+     */
     @Override public ServletContext getContext(String uripath) {
-        // Servlet 6.1 §4.8 : le conteneur peut retourner null si cross-context non supporté.
-        // Ici, on résout via le registre des contextes déployés dans le même JVM.
-        if (uripath == null || uripath.isEmpty() || !uripath.startsWith("/")) return null;
-        return CrossContextRegistry.lookup(uripath);
+        if (uripath == null || !uripath.startsWith("/")) return null;
+        VidocqServletContext found = CrossContextRegistry.lookup(uripath);
+        if (!CrossContextRegistry.isUnder(uripath, contextPath)) return found;
+        // Under this application's path: only an application deployed under a longer path takes the URI from it.
+        return found != null && found.getContextPath().length() > contextPath.length() ? found : this;
     }
     @Override public int getMajorVersion() { return 6; }
     @Override public int getMinorVersion() { return 1; }

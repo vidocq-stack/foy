@@ -106,7 +106,7 @@ No real-world migration has been documented yet — the Tomcat and Jetty tables 
 * **JSP** — not supported by Foy itself; a page engine such as xref:ibarra::index.adoc[Ibarra] (Jakarta Pages 4.0) plugs into the xref:reference.adoc#jsp-engine[JSP-engine service]. For dynamic pages use xref:cassini::index.adoc[Cassini] (REST) or HTML-emitting Servlets.
 * **DIGEST not supported** — it fails closed (`403`). CLIENT-CERT is supported: see xref:usage.adoc#client-cert[Client certificates].
 
-Cross-context dispatch (`ServletContext.getContext`) **is implemented** via `CrossContextRegistry` — strict contextPath match on the contexts deployed in the same JVM.
+Cross-context dispatch (`ServletContext.getContext`) **is implemented** via `CrossContextRegistry`, on the contexts deployed in the same JVM, by one rule whoever asks: the context whose path is the longest one the URI lies under, on a segment boundary, the root context holding every URI no other context does (section 4.8, as in Tomcat and Jetty).
 
 == Behaviour changes for `FoyChappeBoot` embedders
 
@@ -217,6 +217,12 @@ These changes may need attention:
 * **Requests during an undeploy get `503`, and the undeploy waits for those in service** (BUG-20261115-02, BUG-20261115-03, BUG-20261115-06). From the moment `Mounted.close()` starts, a new request, a WebSocket handshake included, is answered `503 Service Unavailable` with `Retry-After: 3` (the undeploy's bound) and a plain-text body, without reaching a listener, filter or servlet, the application's error pages included; it used to reach the application while, or after, its servlets were destroyed. The undeploy then waits for the requests already in service, until 2 s after it began, before `destroy()`, where it used to destroy them under running requests.
 
 * **A cross-context dispatch into an application being undeployed is refused** (BUG-20261115-04). From the moment its undeploy starts, `getContext` no longer finds the application, and a dispatcher obtained earlier throws a temporary `UnavailableException` from `forward`, `include` or `AsyncContext.dispatch` (503 when uncaught); it used to reach the destroyed servlets. A dispatch already running in it is waited for like a request in service.
+
+* **`getContext` follows one rule for every caller** (BUG-20261115-07): the URI is matched against the context paths of the applications deployed in the JVM, on segment boundaries, and the longest path it lies under wins; the root application holds every URI no other application does (Servlet 6.1 section 4.8, as Tomcat and Jetty do). It used to find another application by its exact context path only. What changes:
+** another application is found by a URI below its path: `getContext("/b/x")` in `/a` returns `/b`, where it returned `null`;
+** an application finds itself by a URI below its own path: `getContext("/a/page")` in `/a` returns `/a`, where it returned `null`; an application deployed under a longer path still answers for the URIs under it (`/a/sub/page` resolves to `/a/sub`, `/a/subway` to `/a`);
+** with a root application deployed, a URI no other application holds (`getContext("/nothing")`) returns the root application, from every application, where it returned `null`;
+** during its undeploy, an application still resolves the URIs under its own path to itself, where a request the undeploy waits for got `null`; the other applications no longer find it (BUG-20261115-04), so `getContext("/b")` in `/a` during the undeploy of `/b` returns the root application when one is deployed, `null` otherwise. A dispatcher `/a` gets from that root context then reaches the root application's servlets, not `/b`'s, as it does for a `/b` that is not deployed, where `getContext` used to return `null`: check `getContextPath()` of the context you get before you dispatch into it.
 
 * **Close `Mounted` before you stop the server.** The getting-started example used to stop the server first. In that order the stop cuts WebSocket connections without a Close frame, and endpoints may get `onError` before `onClose(1006)`; closing `Mounted` first sends every peer its 1001 Close and runs `onClose(1001)` before `contextDestroyed`.
 
