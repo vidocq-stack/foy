@@ -41,6 +41,7 @@ import io.vidocq.foy.internal.webxml.FragmentOrderer;
 import io.vidocq.foy.internal.webxml.WebAppDescriptor;
 import io.vidocq.foy.internal.webxml.WebXmlParser;
 import io.vidocq.foy.internal.listener.CdiRequestScopeListener;
+import io.vidocq.foy.internal.listener.ListenerRegistry;
 import io.vidocq.foy.internal.security.InMemoryIdentityStore;
 import io.vidocq.foy.internal.security.SecuritySettings;
 import io.vidocq.foy.spi.cdi.CdiContextListeners;
@@ -61,6 +62,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.ServiceConfigurationError;
+import java.util.ServiceLoader;
 import java.util.Set;
 import java.util.function.Function;
 
@@ -503,7 +505,6 @@ public final class FoyChappeBoot {
             WebAppModel model = buildModel(path, effective, sources, sourceOf, factory);
             Deployment deployment = deploy(model, new DeployContext(loader, registry, factory), sources, security,
                     engine);
-            if (beanManager != null) registerCdiListeners(deployment, loader);
             logDeployment(sources, model);
             String mountPrefix = "/".equals(path) ? "" : path;
             return Optional.of(new Mounted(deployment.handler(), mountPrefix, deployment));
@@ -627,21 +628,36 @@ public final class FoyChappeBoot {
                                 Set.copyOf(sources.excluded()))
                         .withComponentFactory(context.factory()).withResourceProvider(resources)
                         .withVirtualServerName(virtualServerName).withSecurity(security)
-                        .withRequestLimits(requestLimits), applicationLayer, engine);
+                        .withRequestLimits(requestLimits)
+                        .withContainerListeners(beanManager == null ? null
+                                : listeners -> registerCdiListeners(listeners, context.loader())),
+                        applicationLayer, engine);
             } catch (RuntimeException e) {
                 throw deploymentFailed(e);
             }
         }
 
-        private void registerCdiListeners(Deployment deployment, ClassLoader loader) {
+        /**
+         * The container's CDI listeners, ahead of the application's and registered before the deployment's
+         * {@code contextInitialized}. Each registration goes first, so the last one runs first: for a request,
+         * the adapters' listeners (session context), then {@link CdiRequestScopeListener} (request context), then
+         * the adapters' listeners that need the request context; the reverse when the request ends.
+         */
+        private void registerCdiListeners(ListenerRegistry listeners, ClassLoader loader) {
+            // An adapter module in both the boot and the application layer registers once.
+            List<CdiContextListeners> adapters = ApplicationSources.providers(CdiContextListeners.class, loader)
+                    .stream().map(ServiceLoader.Provider::get).toList();
+            // Right behind the request context, once it is active: the request the built-in beans serve.
+            for (CdiContextListeners adapter : adapters) {
+                adapter.requestContextListeners(beanManager).reversed().forEach(listeners::registerFirst);
+            }
             // The CDI request context, active for each request under any container (foy#18).
-            deployment.listeners().addFirst(new CdiRequestScopeListener(beanManager));
+            listeners.addFirst(new CdiRequestScopeListener(beanManager));
             // The contexts CDI Lite leaves to the servlet container, the session context first,
-            // driven by the adapter of the CDI implementation in use (foy#21). An adapter
-            // module in both the boot and the application layer registers once.
-            for (var provider : ApplicationSources.providers(CdiContextListeners.class, loader)) {
-                for (EventListener listener : provider.get().listeners(beanManager)) {
-                    deployment.listeners().registerFirst(listener);
+            // driven by the adapter of the CDI implementation in use (foy#21).
+            for (CdiContextListeners adapter : adapters) {
+                for (EventListener listener : adapter.listeners(beanManager)) {
+                    listeners.registerFirst(listener);
                 }
             }
         }

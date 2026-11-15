@@ -19,8 +19,8 @@
  */
 package io.vidocq.foy.cdi.vauban;
 
-import io.vidocq.chappe.api.Server;
-import io.vidocq.foy.chappe.FoyChappeBoot;
+import io.vidocq.foy.cdi.vauban.TestApps.ProcessorPath;
+import io.vidocq.foy.cdi.vauban.TestApps.Result;
 import io.vidocq.foy.spi.cdi.CdiWebComponents;
 import io.vidocq.vauban.core.container.VaubanContainer;
 import jakarta.enterprise.context.Dependent;
@@ -30,32 +30,19 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-import javax.annotation.processing.Processor;
-import javax.tools.DiagnosticCollector;
-import javax.tools.JavaFileObject;
-import javax.tools.StandardLocation;
-import javax.tools.ToolProvider;
-import java.io.File;
-import java.lang.module.ModuleFinder;
-import java.io.IOException;
-import java.net.URI;
-import java.net.URL;
-import java.net.URLClassLoader;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
-import java.util.LinkedHashSet;
 import java.util.List;
-import java.util.Locale;
-import java.util.Set;
-import java.util.concurrent.Callable;
-import java.util.regex.Pattern;
-import java.util.stream.Collectors;
 
+import static io.vidocq.foy.cdi.vauban.TestApps.boot;
+import static io.vidocq.foy.cdi.vauban.TestApps.classesOf;
+import static io.vidocq.foy.cdi.vauban.TestApps.deploy;
+import static io.vidocq.foy.cdi.vauban.TestApps.loaderOver;
+import static io.vidocq.foy.cdi.vauban.TestApps.withTccl;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -281,15 +268,9 @@ class FoyWebExtensionTest {
             var components = withTccl(loader, () -> bm.createInstance().select(CdiWebComponents.class).get());
             assertEquals(List.of(loader.loadClass("e2e.app.HelloServlet")), components.componentClasses());
 
-            var mounted = withTccl(loader, () -> FoyChappeBoot.builder()
-                    .beanManager(bm).classLoader(loader).contextPath("/").build().orElseThrow());
-            Server server = Server.builder().host("127.0.0.1").port(0).handler(mounted.handler()).build();
-            server.start();
-            int port = server.port();
-            try (server; mounted) { // closes mounted, then server
+            try (var app = deploy(container, loader, "/")) {
                 var response = HttpClient.newHttpClient().send(
-                        HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port + "/hello")).build(),
-                        HttpResponse.BodyHandlers.ofString());
+                        HttpRequest.newBuilder(app.uri("/hello")).build(), HttpResponse.BodyHandlers.ofString());
                 assertEquals(200, response.statusCode(), response::body);
                 assertEquals("hello from an injected greeter", response.body());
             }
@@ -331,17 +312,11 @@ class FoyWebExtensionTest {
             var bm = container.getBeanManager();
             assertEquals(2, bm.getBeans(CdiWebComponents.class).size(), "one index per archive");
 
-            var mounted = withTccl(loader, () -> FoyChappeBoot.builder()
-                    .beanManager(bm).classLoader(loader).contextPath("/").build().orElseThrow());
-            Server server = Server.builder().host("127.0.0.1").port(0).handler(mounted.handler()).build();
-            server.start();
-            int port = server.port();
-            try (server; mounted) { // closes mounted, then server
+            try (var served = deploy(container, loader, "/")) {
                 var client = HttpClient.newHttpClient();
                 for (var path : List.of("app", "lib")) {
                     var response = client.send(
-                            HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port + "/" + path)).build(),
-                            HttpResponse.BodyHandlers.ofString());
+                            HttpRequest.newBuilder(served.uri("/" + path)).build(), HttpResponse.BodyHandlers.ofString());
                     assertEquals(200, response.statusCode(), path + ": " + response.body());
                     assertEquals(path, response.body());
                 }
@@ -349,11 +324,6 @@ class FoyWebExtensionTest {
         }
     }
 
-    // ---- harness ----
-
-    private enum ProcessorPath { CLASS_PATH, MODULE_PATH }
-
-    /** One application loader over several compiled archives. */
     @Test
     @DisplayName("@RequestScoped: an application compiled with vauban's processor gets one instance per request, concurrent requests apart (vauban#147)")
     void requestScopedThroughFoyChappeBoot() throws Exception {
@@ -395,29 +365,23 @@ class FoyWebExtensionTest {
         assertTrue(result.success(), result::messages);
 
         try (var loader = result.loader();
-             var container = withTccl(loader, () -> boot(loader))) {
-            var mounted = withTccl(loader, () -> FoyChappeBoot.builder()
-                    .beanManager(container.getBeanManager()).classLoader(loader).contextPath("/").build().orElseThrow());
-            Server server = Server.builder().host("127.0.0.1").port(0).handler(mounted.handler()).build();
-            server.start();
-            int port = server.port();
-            try (server; mounted) { // closes mounted, then server
-                var client = HttpClient.newHttpClient();
-                var request = HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port + "/token")).build();
-                var futures = new ArrayList<java.util.concurrent.CompletableFuture<HttpResponse<String>>>();
-                for (int i = 0; i < 8; i++) {
-                    futures.add(client.sendAsync(request, HttpResponse.BodyHandlers.ofString()));
-                }
-                var ids = new java.util.HashSet<String>();
-                for (var future : futures) {
-                    var response = future.get();
-                    assertEquals(200, response.statusCode(), response::body);
-                    var parts = response.body().split("\\|", -1);
-                    assertEquals(parts[0], parts[1], "one instance within a request: " + response.body());
-                    ids.add(parts[0]);
-                }
-                assertEquals(8, ids.size(), "one instance per request, concurrent requests apart: " + ids);
+             var container = withTccl(loader, () -> boot(loader));
+             var app = deploy(container, loader, "/")) {
+            var client = HttpClient.newHttpClient();
+            var request = HttpRequest.newBuilder(app.uri("/token")).build();
+            var futures = new ArrayList<java.util.concurrent.CompletableFuture<HttpResponse<String>>>();
+            for (int i = 0; i < 8; i++) {
+                futures.add(client.sendAsync(request, HttpResponse.BodyHandlers.ofString()));
             }
+            var ids = new java.util.HashSet<String>();
+            for (var future : futures) {
+                var response = future.get();
+                assertEquals(200, response.statusCode(), response::body);
+                var parts = response.body().split("\\|", -1);
+                assertEquals(parts[0], parts[1], "one instance within a request: " + response.body());
+                ids.add(parts[0]);
+            }
+            assertEquals(8, ids.size(), "one instance per request, concurrent requests apart: " + ids);
         }
     }
 
@@ -453,29 +417,17 @@ class FoyWebExtensionTest {
         assertTrue(result.success(), result::messages);
 
         try (var loader = result.loader();
-             var container = withTccl(loader, () -> boot(loader))) {
-            var mounted = withTccl(loader, () -> FoyChappeBoot.builder()
-                    .beanManager(container.getBeanManager()).classLoader(loader).contextPath("/").build().orElseThrow());
-            Server server = Server.builder().host("127.0.0.1").port(0).handler(mounted.handler()).build();
-            server.start();
-            int port = server.port();
-            try (server; mounted) { // closes mounted, then server
-                var uri = URI.create("http://127.0.0.1:" + port + "/count");
-                var alice = HttpClient.newBuilder().cookieHandler(new java.net.CookieManager()).build();
-                var bob = HttpClient.newBuilder().cookieHandler(new java.net.CookieManager()).build();
-                assertEquals("1", alice.send(HttpRequest.newBuilder(uri).build(), HttpResponse.BodyHandlers.ofString()).body());
-                assertEquals("2", alice.send(HttpRequest.newBuilder(uri).build(), HttpResponse.BodyHandlers.ofString()).body(),
-                        "the same instance for the same session");
-                assertEquals("1", bob.send(HttpRequest.newBuilder(uri).build(), HttpResponse.BodyHandlers.ofString()).body(),
-                        "another session, another instance");
-            }
+             var container = withTccl(loader, () -> boot(loader));
+             var app = deploy(container, loader, "/")) {
+            var uri = app.uri("/count");
+            var alice = HttpClient.newBuilder().cookieHandler(new java.net.CookieManager()).build();
+            var bob = HttpClient.newBuilder().cookieHandler(new java.net.CookieManager()).build();
+            assertEquals("1", alice.send(HttpRequest.newBuilder(uri).build(), HttpResponse.BodyHandlers.ofString()).body());
+            assertEquals("2", alice.send(HttpRequest.newBuilder(uri).build(), HttpResponse.BodyHandlers.ofString()).body(),
+                    "the same instance for the same session");
+            assertEquals("1", bob.send(HttpRequest.newBuilder(uri).build(), HttpResponse.BodyHandlers.ofString()).body(),
+                    "another session, another instance");
         }
-    }
-
-    private static URLClassLoader loaderOver(Path... archives) throws IOException {
-        var urls = new URL[archives.length];
-        for (int i = 0; i < archives.length; i++) urls[i] = archives[i].toUri().toURL();
-        return new URLClassLoader(urls, FoyWebExtensionTest.class.getClassLoader());
     }
 
     private static Class<?> scopeOf(jakarta.enterprise.inject.spi.BeanManager bm, Class<?> type) {
@@ -484,180 +436,11 @@ class FoyWebExtensionTest {
         return beans.iterator().next().getScope();
     }
 
-    private static VaubanContainer boot(ClassLoader loader) {
-        return VaubanContainer.builder().classLoader(loader).scanClasspath().build();
-    }
-
-    private static <T> T withTccl(ClassLoader loader, Callable<T> action) throws Exception {
-        var thread = Thread.currentThread();
-        var previous = thread.getContextClassLoader();
-        thread.setContextClassLoader(loader);
-        try {
-            return action.call();
-        } finally {
-            thread.setContextClassLoader(previous);
-        }
-    }
-
     private Result compile(ProcessorPath processorPath, String... sources) throws Exception {
         return compile(processorPath, List.of(), sources);
     }
 
-    /** Compiles {@code sources} with {@code libraries} (earlier outputs) on the class path. */
     private Result compile(ProcessorPath processorPath, List<Path> libraries, String... sources) throws Exception {
-        var compiler = ToolProvider.getSystemJavaCompiler();
-        var diagnostics = new DiagnosticCollector<JavaFileObject>();
-        var root = Files.createTempDirectory(tempDir, "app");
-        var src = Files.createDirectories(root.resolve("src"));
-        var classes = Files.createDirectories(root.resolve("classes"));
-        var generated = Files.createDirectories(root.resolve("generated"));
-        var files = new ArrayList<File>();
-        for (var source : sources) {
-            var pkg = match(source, "package\\s+([\\w.]+)\\s*;");
-            var name = match(source, "public\\s+@?(?:class|interface|enum|record)\\s+(\\w+)");
-            var file = src.resolve(pkg.replace('.', '/')).resolve(name + ".java");
-            Files.createDirectories(file.getParent());
-            Files.writeString(file, source);
-            files.add(file.toFile());
-        }
-        var path = testPath();
-        var options = new ArrayList<>(List.of("--release", "25", "-proc:full"));
-        if (processorPath == ProcessorPath.MODULE_PATH) {
-            // javac resolves the processor modules itself; vauban-processor `uses` the BCE service.
-            options.add("--processor-module-path");
-            options.add(join(path.stream().filter(FoyWebExtensionTest::isModule).toList()));
-        }
-        try (var processorLoader = processorPath == ProcessorPath.CLASS_PATH ? isolatedLoader(path) : null;
-             var fm = compiler.getStandardFileManager(diagnostics, Locale.ROOT, StandardCharsets.UTF_8)) {
-            fm.setLocation(StandardLocation.CLASS_OUTPUT, List.of(classes.toFile()));
-            fm.setLocation(StandardLocation.SOURCE_OUTPUT, List.of(generated.toFile()));
-            var classPath = new ArrayList<>(path);
-            for (var library : libraries) classPath.add(library.toFile());
-            fm.setLocation(StandardLocation.CLASS_PATH, classPath);
-            var task = compiler.getTask(null, fm, diagnostics, options, null, fm.getJavaFileObjectsFromFiles(files));
-            if (processorLoader != null) task.setProcessors(processorsOf(processorLoader));
-            boolean ok = task.call();
-            var messages = new StringBuilder();
-            for (var d : diagnostics.getDiagnostics()) {
-                messages.append(d.getKind()).append(": ").append(d.getMessage(Locale.ROOT)).append('\n');
-            }
-            return new Result(ok, classes, messages.toString());
-        }
-    }
-
-    /**
-     * The class-path flavour of a processor path: one loader over every entry that sees nothing of
-     * the test's own loaders but the JDK, so vauban-processor, vauban-core, the Jakarta APIs and
-     * FoyWebExtension all live in its unnamed module and FoyWebExtension can only be found through
-     * its {@code META-INF/services} file, as with {@code -processorpath} in a Maven build.
-     *
-     * <p>Neither javac's in-process processor loader (parent: the application loader) nor a plain
-     * platform-loader parent isolates enough: the built-in loaders resolve any package of a
-     * boot-layer module, so in a module-path test run vauban-core and foy-cdi-vauban would come
-     * from their named modules (qualified exports fail, and {@code ServiceLoader} skips class-path
-     * providers that resolve to a named module).</p>
-     */
-    private static URLClassLoader isolatedLoader(List<File> path) throws IOException {
-        var urls = new ArrayList<URL>();
-        for (var entry : path) urls.add(entry.toURI().toURL());
-        return new URLClassLoader(urls.toArray(URL[]::new), new JdkOnlyLoader());
-    }
-
-    /** Delegates the JDK's own packages to the platform loader, and nothing else. */
-    private static final class JdkOnlyLoader extends ClassLoader {
-        private static final Set<String> JDK_PACKAGES = ModuleFinder.ofSystem().findAll().stream()
-                .flatMap(m -> m.descriptor().packages().stream()).collect(Collectors.toSet());
-
-        JdkOnlyLoader() {
-            super(null);
-        }
-
-        @Override
-        protected Class<?> loadClass(String name, boolean resolve) throws ClassNotFoundException {
-            int dot = name.lastIndexOf('.');
-            if (dot > 0 && JDK_PACKAGES.contains(name.substring(0, dot))) {
-                return ClassLoader.getPlatformClassLoader().loadClass(name);
-            }
-            throw new ClassNotFoundException(name);
-        }
-    }
-
-    /**
-     * The processors javac would find on that path, from the {@code Processor} service files (read
-     * by hand: the test module declares no {@code uses}). Vauban then loads its build compatible
-     * extensions with its own {@code ServiceLoader} over the same loader: that is the path under test.
-     */
-    private static List<Processor> processorsOf(ClassLoader loader) throws Exception {
-        var processors = new ArrayList<Processor>();
-        var resources = loader.getResources("META-INF/services/" + Processor.class.getName());
-        while (resources.hasMoreElements()) {
-            try (var in = resources.nextElement().openStream()) {
-                for (var line : new String(in.readAllBytes(), StandardCharsets.UTF_8).lines().toList()) {
-                    var name = line.replaceFirst("#.*", "").strip();
-                    if (name.isEmpty()) continue;
-                    processors.add((Processor) loader.loadClass(name).getConstructor().newInstance());
-                }
-            }
-        }
-        return processors;
-    }
-
-    private static boolean isModule(File entry) {
-        if (entry.isDirectory()) return new File(entry, "module-info.class").isFile();
-        return entry.getName().endsWith(".jar");
-    }
-
-    private static String join(List<File> entries) {
-        return entries.stream().map(File::getPath).collect(Collectors.joining(File.pathSeparator));
-    }
-
-    private static String match(String source, String regex) {
-        var m = Pattern.compile(regex).matcher(source);
-        if (!m.find()) throw new IllegalArgumentException("no match for " + regex);
-        return m.group(1);
-    }
-
-    private static Path classesOf(Class<?> type) {
-        try {
-            return Path.of(type.getProtectionDomain().getCodeSource().getLocation().toURI());
-        } catch (Exception e) {
-            throw new IllegalStateException(e);
-        }
-    }
-
-    /**
-     * The test's own runtime path (class path and module path), which holds foy-cdi-vauban's
-     * classes with its service file, vauban-processor and their dependencies.
-     */
-    private static List<File> testPath() {
-        Set<File> path = new LinkedHashSet<>();
-        for (var property : List.of("jdk.module.path", "java.class.path")) {
-            for (var e : System.getProperty(property, "").split(File.pathSeparator, -1)) {
-                if (!e.isBlank()) path.add(new File(e));
-            }
-        }
-        ModuleLayer.boot().configuration().modules().forEach(rm -> rm.reference().location().ifPresent(uri -> {
-            if ("file".equals(uri.getScheme())) path.add(new File(uri));
-        }));
-        path.add(classesOf(FoyWebExtension.class).toFile());
-        return List.copyOf(path);
-    }
-
-    private record Result(boolean success, Path classes, String messages) {
-        List<String> beansList() throws IOException {
-            var path = classes.resolve("META-INF/vauban-beans.list");
-            if (!Files.exists(path)) return List.of();
-            return Files.readAllLines(path).stream().map(String::strip)
-                    .filter(l -> !l.isEmpty() && !l.startsWith("#")).toList();
-        }
-
-        String errorLine(String marker) {
-            return messages.lines().filter(l -> l.startsWith("ERROR") && l.contains(marker))
-                    .findFirst().orElseThrow(() -> new AssertionError("no ERROR with " + marker + ":\n" + messages));
-        }
-
-        URLClassLoader loader() throws IOException {
-            return loaderOver(classes);
-        }
+        return TestApps.compile(tempDir, processorPath, libraries, sources);
     }
 }

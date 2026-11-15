@@ -19,13 +19,21 @@
  */
 package io.vidocq.foy.cdi.vauban;
 
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.vidocq.foy.spi.cdi.CdiContextListeners;
 import io.vidocq.vauban.core.container.VaubanContainer;
+import jakarta.enterprise.context.ContextNotActiveException;
+import jakarta.enterprise.context.RequestScoped;
 import jakarta.enterprise.inject.spi.BeanManager;
+import jakarta.servlet.ServletContext;
+import jakarta.servlet.ServletRequest;
+import jakarta.servlet.ServletRequestEvent;
 import jakarta.servlet.ServletRequestListener;
+import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpSessionListener;
 import java.lang.reflect.Proxy;
 import org.junit.jupiter.api.Test;
@@ -55,9 +63,39 @@ class VaubanCdiContextListenersTest {
 
     @Test
     void leavesAnotherContainerAlone() {
-        BeanManager other = (BeanManager) Proxy.newProxyInstance(getClass().getClassLoader(),
-                new Class<?>[] {BeanManager.class}, (proxy, method, args) -> null);
+        BeanManager other = stub(BeanManager.class);
 
         assertTrue(new VaubanCdiContextListeners().listeners(other).isEmpty());
+        assertTrue(new VaubanCdiContextListeners().requestContextListeners(other).isEmpty());
+    }
+
+    @Test
+    void bindsNoRequestWhenTheServletBuiltInBeansAreNotDeployed() {
+        try (VaubanContainer container = VaubanContainer.builder().build()) {
+            assertTrue(new VaubanCdiContextListeners().requestContextListeners(container.getBeanManager()).isEmpty());
+        }
+    }
+
+    @Test
+    void aRequestWithoutRequestContextIsLeftUnbound() {
+        try (VaubanContainer container = VaubanContainer.builder().scanClasspath().build()) {
+            BeanManager beanManager = container.getBeanManager();
+            var bindings = new VaubanCdiContextListeners().requestContextListeners(beanManager);
+            assertEquals(1, bindings.size());
+            assertThrows(ContextNotActiveException.class, () -> beanManager.getContext(RequestScoped.class));
+            ServletRequestListener binding = bindings.getFirst();
+            ServletContext context = stub(ServletContext.class);
+
+            assertDoesNotThrow(() -> binding.requestInitialized(
+                    new ServletRequestEvent(context, stub(HttpServletRequest.class))));
+            assertDoesNotThrow(() -> binding.requestInitialized(
+                    new ServletRequestEvent(context, stub(ServletRequest.class))));
+        }
+    }
+
+    /** An implementation of {@code type} whose every method returns {@code null}. */
+    private static <T> T stub(Class<T> type) {
+        return type.cast(Proxy.newProxyInstance(VaubanCdiContextListenersTest.class.getClassLoader(),
+                new Class<?>[] {type}, (proxy, method, args) -> null));
     }
 }

@@ -22,20 +22,37 @@ package io.vidocq.foy.cdi.vauban;
 import io.vidocq.foy.spi.cdi.CdiContextListeners;
 import io.vidocq.vauban.core.container.VaubanBeanManager;
 import jakarta.enterprise.inject.spi.BeanManager;
+import jakarta.servlet.ServletRequestListener;
+import java.util.ArrayList;
 import java.util.EventListener;
 import java.util.List;
 
 /**
- * The session scope when Foy runs on Vauban (foy#21): a {@link VaubanWebContextsListener} that
- * binds each request's {@code HttpSession} to Vauban's session context ({@code vauban-webcontexts})
- * and ends the context with the session. Nothing for another CDI container.
+ * The servlet container's side of CDI when Foy runs on Vauban: a {@link VaubanWebContextsListener} that binds
+ * each request's {@code HttpSession} to Vauban's session context ({@code vauban-webcontexts}) and ends the context
+ * with the session (foy#21), and the bindings behind the {@code HttpServletRequest}, {@code HttpSession} and
+ * {@code ServletContext} beans ({@link ServletBuiltInBeans}): {@link ServletContextBinding} for the deployment's
+ * context, {@link ServletRequestBinding} for each request, once its request context is active. Nothing for another
+ * CDI container.
  */
 public final class VaubanCdiContextListeners implements CdiContextListeners {
 
     @Override
     public List<EventListener> listeners(BeanManager beanManager) {
-        return beanManager instanceof VaubanBeanManager
-                ? List.of(new VaubanWebContextsListener(beanManager))
-                : List.of();
+        if (!(beanManager instanceof VaubanBeanManager)) {
+            return List.of();
+        }
+        List<EventListener> listeners = new ArrayList<>();
+        listeners.add(new VaubanWebContextsListener(beanManager));
+        ServletContextBinding.of(beanManager).ifPresent(listeners::add);
+        return List.copyOf(listeners);
+    }
+
+    @Override
+    public List<ServletRequestListener> requestContextListeners(BeanManager beanManager) {
+        if (!(beanManager instanceof VaubanBeanManager)) {
+            return List.of();
+        }
+        return ServletRequestBinding.of(beanManager).<List<ServletRequestListener>>map(List::of).orElseGet(List::of);
     }
 }

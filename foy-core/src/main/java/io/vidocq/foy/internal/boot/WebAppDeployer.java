@@ -154,6 +154,9 @@ public final class WebAppDeployer {
             // <context-param> init params (web.xml) — must be set before markInitialized.
             if (engine != null) registerJspServlet(ctx);
             ListenerRegistry registry = listenerRegistry(ctx, model, engine != null);
+            // The container's own listeners (the CDI contexts) ahead of the application's, before any initializer
+            // or contextInitialized: a container ServletContextListener sees the context first and leaves last.
+            options.containerListeners().accept(registry);
             // The component factory must be there before the initializers run (foy-websocket's reads it),
             // and set before the listener registry: the application's attribute listeners never hear
             // this container attribute.

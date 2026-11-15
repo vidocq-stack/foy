@@ -92,29 +92,43 @@
                 <artifactId>maven-compiler-plugin</artifactId>
                 <configuration>
                     <!-- Same set-up as cassini-cdi-vauban: vauban's annotation processor runs over
-                         this module's own beans (none today; the build compatible extension and
-                         the synthetic bean creator are not beans). -->
+                         this module's own beans, the producers of HttpServletRequest, HttpSession
+                         and ServletContext (ServletBuiltInBeans) and their holders. It generates
+                         their client proxies, the _VaubanComponents provider and the
+                         META-INF/vauban-beans.list a deployment's scanClasspath reads. The build
+                         compatible extension and the synthetic bean creator are not beans.
+                         vauban-webcontexts brings the extension that registers the session context
+                         of the HttpSession bean: it runs here, so the processor marks this archive
+                         processed (META-INF/vauban-bce-processed). Without the marker, every
+                         deployment that holds this module would run its extensions again at start.
+                         The processor warns that FoyWebExtension, this module's own extension, does
+                         not run here: it runs at the build of the applications. -->
                     <annotationProcessorPaths>
                         <path>
                             <groupId>io.vidocq.vauban</groupId>
                             <artifactId>vauban-processor</artifactId>
                             <version>${vauban.version}</version>
                         </path>
+                        <path>
+                            <groupId>io.vidocq.vauban</groupId>
+                            <artifactId>vauban-webcontexts</artifactId>
+                            <version>${vauban.version}</version>
+                        </path>
                     </annotationProcessorPaths>
                 </configuration>
                 <executions>
-                    <!-- Test fixtures are not application beans; FoyWebExtensionTest drives javac
-                         in-process (javax.tools) and an HTTP client, which the main module does
-                         not read. -->
+                    <!-- Test fixtures are not application beans; the tests drive javac in-process
+                         (javax.tools), an HTTP client and java.util.logging (the backend of the
+                         System.Logger records they read), which the main module does not read. -->
                     <execution>
                         <id>default-testCompile</id>
                         <configuration>
                             <proc>none</proc>
                             <compilerArgs>
                                 <arg>--add-modules</arg>
-                                <arg>java.compiler,java.net.http</arg>
+                                <arg>java.compiler,java.net.http,java.logging</arg>
                                 <arg>--add-reads</arg>
-                                <arg>io.vidocq.foy.cdi.vauban=java.compiler,java.net.http</arg>
+                                <arg>io.vidocq.foy.cdi.vauban=java.compiler,java.net.http,java.logging</arg>
                             </compilerArgs>
                         </configuration>
                     </execution>
@@ -126,7 +140,7 @@
                 <configuration>
                     <!-- Keep the module path; only add the JDK modules the test reads. -->
                     <!-- @{argLine} keeps the JaCoCo agent of the quality profile (vidocq-parent). -->
-                    <argLine>@{argLine} --add-modules java.compiler,java.net.http --add-reads io.vidocq.foy.cdi.vauban=java.compiler,java.net.http</argLine>
+                    <argLine>@{argLine} --add-modules java.compiler,java.net.http,java.logging --add-reads io.vidocq.foy.cdi.vauban=java.compiler,java.net.http,java.logging</argLine>
                 </configuration>
             </plugin>
         </plugins>

@@ -21,12 +21,14 @@ package io.vidocq.foy.internal.boot;
 
 import io.vidocq.foy.internal.container.VidocqServletContext;
 import io.vidocq.foy.internal.http.RequestLimits;
+import io.vidocq.foy.internal.listener.ListenerRegistry;
 import io.vidocq.foy.internal.security.SecuritySettings;
 import io.vidocq.foy.spi.security.IdentityStore;
 
 import java.nio.file.Path;
 import java.util.Objects;
 import java.util.Set;
+import java.util.function.Consumer;
 
 /**
  * Container-side settings of a deployment, everything {@link WebAppDeployer} needs
@@ -47,6 +49,9 @@ import java.util.Set;
  * @param applicationLoader    the application's class loader: {@code ServletContext.getClassLoader()} and the
  *                             thread context class loader while Foy runs application code (BUG-20261022-06);
  *                             {@code null} leaves the context class loader untouched
+ * @param containerListeners   registers the container's own listeners (those that drive the CDI contexts) in the
+ *                             deployment's registry, before the initializers run and {@code contextInitialized}
+ *                             fires; {@code null} registers none
  */
 public record DeployOptions(SecuritySettings security,
                             VidocqServletContext.ResourceProvider resourceProvider,
@@ -59,11 +64,13 @@ public record DeployOptions(SecuritySettings security,
                             String virtualServerName,
                             Path tempDirRoot,
                             RequestLimits requestLimits,
-                            ClassLoader applicationLoader) {
+                            ClassLoader applicationLoader,
+                            Consumer<ListenerRegistry> containerListeners) {
 
     public DeployOptions {
         if (security == null) security = SecuritySettings.DEFAULTS;
         if (requestLimits == null) requestLimits = RequestLimits.DEFAULTS;
+        if (containerListeners == null) containerListeners = _ -> { };
         reservedServletNames = Set.copyOf(reservedServletNames);
         reservedFilterNames = Set.copyOf(reservedFilterNames);
         reservedUrlPatterns = Set.copyOf(reservedUrlPatterns);
@@ -71,7 +78,10 @@ public record DeployOptions(SecuritySettings security,
         Objects.requireNonNull(handlesTypes, "handlesTypes");
     }
 
-    /** Without virtual server name, temp-dir root, request limits (their defaults apply) and application class loader. */
+    /**
+     * Without virtual server name, temp-dir root, request limits (their defaults apply), application class loader
+     * and container listeners.
+     */
     public DeployOptions(SecuritySettings security,
                          VidocqServletContext.ResourceProvider resourceProvider,
                          String servletContextName,
@@ -81,7 +91,7 @@ public record DeployOptions(SecuritySettings security,
                          ComponentFactory componentFactory,
                          HandlesTypesResolver handlesTypes) {
         this(security, resourceProvider, servletContextName, reservedServletNames, reservedFilterNames,
-                reservedUrlPatterns, componentFactory, handlesTypes, null, null, null, null);
+                reservedUrlPatterns, componentFactory, handlesTypes, null, null, null, null, null);
     }
 
     /**
@@ -99,7 +109,7 @@ public record DeployOptions(SecuritySettings security,
         return new DeployOptions(null, null, null, Set.of(), Set.of(), Set.of(),
                 new io.vidocq.foy.internal.gen.RegistryComponentFactory(registry, loader),
                 new io.vidocq.foy.internal.gen.IndexedHandlesTypesResolver(registry, loader),
-                null, null, null, loader);
+                null, null, null, loader, null);
     }
 
     /**
@@ -128,25 +138,25 @@ public record DeployOptions(SecuritySettings security,
                 new io.vidocq.foy.internal.gen.RegistryComponentFactory(registry, loader),
                 new io.vidocq.foy.internal.gen.IndexedHandlesTypesResolver(registry, loader,
                         java.util.List.copyOf(handlesTypesRoots), excludedRoots),
-                null, null, null, loader);
+                null, null, null, loader, null);
     }
 
     public DeployOptions withComponentFactory(ComponentFactory f) {
         return new DeployOptions(security, resourceProvider, servletContextName, reservedServletNames,
                 reservedFilterNames, reservedUrlPatterns, f, handlesTypes, virtualServerName, tempDirRoot, requestLimits,
-                applicationLoader);
+                applicationLoader, containerListeners);
     }
 
     public DeployOptions withHandlesTypes(HandlesTypesResolver r) {
         return new DeployOptions(security, resourceProvider, servletContextName, reservedServletNames,
                 reservedFilterNames, reservedUrlPatterns, componentFactory, r, virtualServerName, tempDirRoot,
-                requestLimits, applicationLoader);
+                requestLimits, applicationLoader, containerListeners);
     }
 
     public DeployOptions withSecurity(SecuritySettings s) {
         return new DeployOptions(s, resourceProvider, servletContextName, reservedServletNames,
                 reservedFilterNames, reservedUrlPatterns, componentFactory, handlesTypes, virtualServerName,
-                tempDirRoot, requestLimits, applicationLoader);
+                tempDirRoot, requestLimits, applicationLoader, containerListeners);
     }
 
     public DeployOptions withIdentityStore(IdentityStore store) {
@@ -156,43 +166,55 @@ public record DeployOptions(SecuritySettings security,
     public DeployOptions withResourceProvider(VidocqServletContext.ResourceProvider p) {
         return new DeployOptions(security, p, servletContextName, reservedServletNames, reservedFilterNames,
                 reservedUrlPatterns, componentFactory, handlesTypes, virtualServerName, tempDirRoot, requestLimits,
-                applicationLoader);
+                applicationLoader, containerListeners);
     }
 
     public DeployOptions withServletContextName(String n) {
         return new DeployOptions(security, resourceProvider, n, reservedServletNames, reservedFilterNames,
                 reservedUrlPatterns, componentFactory, handlesTypes, virtualServerName, tempDirRoot, requestLimits,
-                applicationLoader);
+                applicationLoader, containerListeners);
     }
 
     public DeployOptions withReserved(Set<String> servletNames, Set<String> filterNames, Set<String> urlPatterns) {
         return new DeployOptions(security, resourceProvider, servletContextName, servletNames, filterNames,
                 urlPatterns, componentFactory, handlesTypes, virtualServerName, tempDirRoot, requestLimits,
-                applicationLoader);
+                applicationLoader, containerListeners);
     }
 
     public DeployOptions withVirtualServerName(String name) {
         return new DeployOptions(security, resourceProvider, servletContextName, reservedServletNames,
                 reservedFilterNames, reservedUrlPatterns, componentFactory, handlesTypes, name, tempDirRoot,
-                requestLimits, applicationLoader);
+                requestLimits, applicationLoader, containerListeners);
     }
 
     public DeployOptions withTempDirRoot(Path root) {
         return new DeployOptions(security, resourceProvider, servletContextName, reservedServletNames,
                 reservedFilterNames, reservedUrlPatterns, componentFactory, handlesTypes, virtualServerName, root,
-                requestLimits, applicationLoader);
+                requestLimits, applicationLoader, containerListeners);
     }
 
     public DeployOptions withRequestLimits(RequestLimits limits) {
         return new DeployOptions(security, resourceProvider, servletContextName, reservedServletNames,
                 reservedFilterNames, reservedUrlPatterns, componentFactory, handlesTypes, virtualServerName,
-                tempDirRoot, limits, applicationLoader);
+                tempDirRoot, limits, applicationLoader, containerListeners);
     }
 
     /** The application's class loader ({@code null}: the context class loader is left untouched). */
     public DeployOptions withApplicationLoader(ClassLoader loader) {
         return new DeployOptions(security, resourceProvider, servletContextName, reservedServletNames,
                 reservedFilterNames, reservedUrlPatterns, componentFactory, handlesTypes, virtualServerName,
-                tempDirRoot, requestLimits, loader);
+                tempDirRoot, requestLimits, loader, containerListeners);
+    }
+
+    /**
+     * Registers the container's own listeners in the deployment's registry ({@code ListenerRegistry.addFirst},
+     * {@code registerFirst}) before the initializers run and {@code contextInitialized} fires, so that a
+     * container {@code ServletContextListener} is told first that the context is initialized and last that it is
+     * destroyed. {@code null} registers none.
+     */
+    public DeployOptions withContainerListeners(Consumer<ListenerRegistry> registration) {
+        return new DeployOptions(security, resourceProvider, servletContextName, reservedServletNames,
+                reservedFilterNames, reservedUrlPatterns, componentFactory, handlesTypes, virtualServerName,
+                tempDirRoot, requestLimits, applicationLoader, registration);
     }
 }

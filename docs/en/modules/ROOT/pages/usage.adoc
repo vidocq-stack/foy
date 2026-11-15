@@ -138,6 +138,7 @@ public class UploadServlet extends HttpServlet {
 
 Limits:
 
+* No CDI request context is active in `ReadListener` and `WriteListener` callbacks (CDI does not require one there): a `@RequestScoped` bean, an injected `HttpServletRequest` or `HttpSession` included, fails there with `ContextNotActiveException`. Keep what the callbacks need in the listener, as `UploadServlet` keeps `resp` and `ac` above. xref:#servlet-built-in-beans[Injecting the request, the session and the context].
 * A `WriteListener` is not resumed after an `AsyncContext.dispatch(...)`: the dispatched target runs with a blocking stream (the listener stays set, but `onWritePossible` is not called again). Set the listener in the cycle that writes.
 * When a cycle ends with bytes still waiting for the client, the container sends them in blocking mode at the end of the request, in order. Foy sets no bound of its own on that wait: a client that never reads keeps the request thread until chappe's write timeout (30 s per blocked write by default) closes the connection (BUG-20261010-03).
 * If a `ReadListener` is still waiting for upload bytes when the request ends (the client went silent mid-body), the response is sent first and the connection is then closed instead of being kept alive: the unread part of the body cannot be skipped safely. An unread body that the client keeps sending is drained by Chappe as before.
@@ -601,14 +602,52 @@ Add `foy-processor` to the compiler's annotation processor path. It generates, a
 
 == CDI integration through Vauban
 
-`foy-cdi-vauban` is a thin bridge: its single class, `FoyVaubanBootstrap`, hands the current Vauban `BeanManager` to `FoyChappeBoot`.
+`foy-cdi-vauban` is a thin bridge: `FoyVaubanBootstrap` hands the current Vauban `BeanManager` to `FoyChappeBoot`.
 
-[IMPORTANT]
-====
-Foy does **not** (yet) expose `ServletContext`, `HttpServletRequest` or `HttpSession` as injectable CDI beans — there are no `@ApplicationScoped` / `@RequestScoped` / `@SessionScoped` producers for the Servlet API objects. Use the request/response parameters passed to `service()`/`doGet()`.
+Your own `@RequestScoped` beans work: Foy activates the CDI request context for each request, under Vauban or any other CDI container. On Vauban, `@SessionScoped` beans work too (xref:reference.adoc#other-containers[Other CDI containers]).
 
-Your own `@RequestScoped` beans do work: Foy activates the CDI request context for each request, under Vauban or any other CDI container. `@SessionScoped` beans do not: the session context is not activated (xref:reference.adoc#other-containers[Other CDI containers]).
-====
+[#servlet-built-in-beans]
+=== Injecting the request, the session and the context [.tag-new]#NEW#
+
+On Vauban, a bean injects the `HttpServletRequest` being served, its `HttpSession` and the application's `ServletContext`, as CDI requires of a Servlet container. The application declares nothing: `foy-cdi-vauban` on its path is enough.
+
+[source,java]
+----
+import jakarta.inject.Inject;
+import jakarta.servlet.ServletContext;
+import jakarta.servlet.annotation.WebServlet;
+import jakarta.servlet.http.*;
+import java.io.IOException;
+
+@WebServlet("/whoami")
+public class WhoAmIServlet extends HttpServlet {
+    @Inject HttpServletRequest request;   // @RequestScoped: the request being served
+    @Inject HttpSession session;          // @SessionScoped: created at first use
+    @Inject ServletContext context;       // @ApplicationScoped: this application's context
+
+    @Override
+    protected void doGet(HttpServletRequest req, HttpServletResponse resp) throws IOException {
+        Integer visits = (Integer) session.getAttribute("visits");
+        session.setAttribute("visits", visits == null ? 1 : visits + 1);
+        resp.getWriter().write(request.getRequestURI() + " in " + context.getContextPath()
+                + " from " + request.getHeader("User-Agent"));
+    }
+}
+----
+
+The injected objects are client proxies: a bean of any scope can hold them, each call reaches the request, session or context current where it runs. Where they work:
+
+* *The request and the session* — wherever a `@RequestScoped` bean works: filters, servlets, request listeners, forward and include dispatches, `AsyncListener` callbacks, and `AsyncContext.start` tasks (where the request is the task's own request wrapper). On a forward or an include, the injected request is the container's: `getRequestURI()` is the original URI, and the dispatched view is the request parameter of `service()`.
+* *The context* — from the first `contextInitialized` of the deployment, so an application `ServletContextListener` can use it, to its last `contextDestroyed`.
+* *Outside a request* — a call fails with a clear exception, never `null`: Vauban's `ContextNotActiveException` where no request context is active (a `@Startup` observer, another thread), an `IllegalStateException` that says there is no servlet request where an application activated the request context itself (`RequestContextController`). The `ServletContext` fails with an `IllegalStateException` before the deployment and after the undeploy.
+
+Limits:
+
+* No request context is active in `ReadListener` and `WriteListener` callbacks: no `@RequestScoped` bean works there, the injected request and session included. Keep what the callbacks need in the listener when the servlet creates it.
+* One deployment per CDI container, as Vidocq runs it. A second deployment on the same container while the first is up keeps the first one's `ServletContext` bean, with one `WARNING` naming both context paths; once the first is undeployed, the next deployment gets its own (a dev-mode reload).
+* An application that declares its own producer of `HttpServletRequest`, `HttpSession` or `ServletContext` now gets an ambiguous dependency at start: remove it (xref:migration.adoc#servlet-built-in-beans[Migration]).
+
+=== Injecting application beans
 
 Servlet, Filter and Listener instances **are** resolved through the `BeanManager`, so they can `@Inject` your application beans:
 

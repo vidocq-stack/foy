@@ -81,7 +81,9 @@ final class ArchitectureRules {
 
     /**
      * README, Modules: foy-cdi-vauban is the bridge to Vauban, the one module that uses it. Its module descriptor
-     * reads foy-api, the CDI API, vauban-core and vauban-webcontexts, not foy-core.
+     * reads foy-api, the CDI API, vauban-core and vauban-webcontexts, not foy-core. vauban-api comes with
+     * vauban-core: the provider and the client proxies vauban-processor generates for the Servlet built-in beans
+     * (internals.adoc, Servlet built-in beans) use it.
      */
     static final ArchRule CDI_VAUBAN_DEPENDENCIES = VidocqArchRules.dependOnlyOn(
             new String[] {"io.vidocq.foy.cdi.vauban.."},
@@ -90,6 +92,7 @@ final class ArchitectureRules {
                     "jakarta.servlet..",
                     "jakarta.enterprise..",
                     "jakarta.inject..",
+                    "io.vidocq.vauban.api..",
                     "io.vidocq.vauban.core..",
                     "io.vidocq.vauban.webcontexts..",
                     "io.vidocq.foy.spi..",

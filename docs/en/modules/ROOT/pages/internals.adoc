@@ -246,12 +246,37 @@ The `async-supported` flag of the chain is recomputed on forward, include, async
 
 == CDI integration through Vauban
 
-`foy-cdi-vauban` is deliberately minimal: its single class, `FoyVaubanBootstrap`, returns the current `VaubanContainer`'s `BeanManager`, which the caller passes to `FoyChappeBoot`. `WebAppDiscovery` then resolves the Servlet/Filter/Listener instances through that `BeanManager`, so they can `@Inject` application beans (build-time resolution through Vauban). The component classes come first from the `CdiWebComponents` index beans that `FoyWebExtension` registers, one per archive built with `foy-cdi-vauban` on the processor path; the `Servlet`, `Filter` and `EventListener` beans are walked as well, and a web-annotated bean missing from every index (an archive built without `foy-cdi-vauban`) is still discovered, after the indexed classes, with one `WARNING` naming the class. Without any index (a CDI container other than Vauban), the walk is the only source and one `INFO` line says so.
+`foy-cdi-vauban` is deliberately small: `FoyVaubanBootstrap` returns the current `VaubanContainer`'s `BeanManager`, which the caller passes to `FoyChappeBoot`. `WebAppDiscovery` then resolves the Servlet/Filter/Listener instances through that `BeanManager`, so they can `@Inject` application beans (build-time resolution through Vauban). The component classes come first from the `CdiWebComponents` index beans that `FoyWebExtension` registers, one per archive built with `foy-cdi-vauban` on the processor path; the `Servlet`, `Filter` and `EventListener` beans are walked as well, and a web-annotated bean missing from every index (an archive built without `foy-cdi-vauban`) is still discovered, after the indexed classes, with one `WARNING` naming the class. Without any index (a CDI container other than Vauban), the walk is the only source and one `INFO` line says so.
 
-[IMPORTANT]
-====
-There are **no CDI producers** for `ServletContext`, `HttpServletRequest` or `HttpSession` yet — `@Inject HttpServletRequest` does **not** work. Scoped Servlet-object beans are a later milestone.
-====
+[#servlet-built-in-beans]
+=== Servlet built-in beans [.tag-new]#NEW#
+
+CDI 4.1 requires a container that implements Servlet to offer beans of the types `HttpServletRequest`, `HttpSession` and `ServletContext`, with the qualifier `@Default` (CDI 4.1 §3.11, Jakarta EE integration). On Vauban, `foy-cdi-vauban` declares them as the producer methods of one bean class, `ServletBuiltInBeans`, with the scopes Weld gives them:
+
+[cols="1,1,3",options="header"]
+|===
+| Bean type | Scope | Instance
+
+| `HttpServletRequest` (its only bean type, `@Typed`)
+| `@RequestScoped`
+| The request of the current request context: the container's request on the thread that serves it, the one its request listeners see. A forward or include target sees it as the container serves it (`getRequestURI()` is the original URI); the dispatched view is the `service()` parameter. In an `AsyncContext.start` task, that thread's request wrapper.
+
+| `HttpSession`
+| `@SessionScoped`
+| `request.getSession()` at first use: the first use creates the session, as a `@SessionScoped` bean does.
+
+| `ServletContext`
+| `@ApplicationScoped`
+| The context of the application deployed on the CDI container.
+|===
+
+* *Client proxies generated at build.* `foy-cdi-vauban` runs `vauban-processor` at its own build. The processor generates the client proxies of the three interfaces (classes in `io.vidocq.foy.cdi.vauban` that implement the interface and forward each call to the contextual instance), the `_VaubanComponents` provider that creates them, the producers and their holders in-module (`provides io.vidocq.vauban.api.VaubanComponentProvider` in the module descriptor), and the module's `META-INF/vauban-beans.list`. No `java.lang.reflect.Proxy`, nothing generated at run time: Vauban prints no `RUNTIME CODE GENERATION FALLBACK` warning for these beans.
+* *Discovery.* A container that reads the bean indexes of its path (`VaubanContainer.builder().scanClasspath()`, as Vidocq builds it) finds the index of `foy-cdi-vauban` and registers the three beans with the application's. The application declares nothing.
+* *The request comes from the request context.* `ServletRequestHolder` is a `@RequestScoped` bean; `ServletRequestBinding`, a container `ServletRequestListener`, puts the request in it once `CdiRequestScopeListener` has activated the request context. Foy registers the binding right behind that listener (`CdiContextListeners.requestContextListeners`), so the holder lives exactly as long as the request context, and the injected request works where `@RequestScoped` beans do, with no state bound to a thread of its own: the filters and servlets, forward and include dispatches, the request listeners, the `AsyncListener` callbacks. On an `AsyncContext.start` thread, Foy fires the container listeners again with the thread's request wrapper, so the holder of that thread's request context holds the wrapper.
+* *The context comes from the deployment.* `ServletContextBinding`, a container `ServletContextListener`, is registered ahead of the application's listeners before `contextInitialized` fires (`DeployOptions.withContainerListeners`): it attaches the context to the `@ApplicationScoped` `ServletContextHolder` before any application listener runs, and detaches it after the application's last `contextDestroyed`. It then destroys the instance of the `ServletContext` bean, so the next deployment on the same container (a dev-mode reload) gets its own context. One deployment per CDI container, as Vidocq runs it: a second deployment on the same container while the first is up keeps the first one's context, and Foy logs one `WARNING` naming both context paths.
+* *Outside a servlet request.* Where the request context is active without a servlet request (an application's `RequestContextController`), the request and the session fail with an `IllegalStateException` that says so; where no request context is active (a `@Startup` observer, a plain call from another thread), with Vauban's `ContextNotActiveException`. Before the deployment and after the undeploy, the `ServletContext` fails with an `IllegalStateException` too. Never `null`, never a `NullPointerException`.
+* *`AsyncListener`.* CDI requires the request context while the container calls an `AsyncListener`. Foy calls `onStartAsync`, `onTimeout`, `onError` and `onComplete` on the thread that serves the request, inside its request listeners: the injected request and the request's `@RequestScoped` beans are there (`ServletBuiltInBeansTest`).
+* *Limit.* No request context is active in `ReadListener` and `WriteListener` callbacks, which CDI does not require: no `@RequestScoped` bean works there, the injected request included. Keep what the callbacks need from the request in the listener when the servlet creates it.
 
 == Component resolution tiers
 

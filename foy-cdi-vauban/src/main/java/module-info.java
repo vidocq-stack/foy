@@ -31,4 +31,10 @@ module io.vidocq.foy.cdi.vauban {
 
     provides io.vidocq.foy.spi.cdi.CdiContextListeners
             with io.vidocq.foy.cdi.vauban.VaubanCdiContextListeners;
+
+    // The HttpServletRequest, HttpSession and ServletContext beans (ServletBuiltInBeans): vauban-processor generates
+    // at this module's build their client proxies and the provider that creates them, the producers and their
+    // holders in-module, without reflection and without `opens … to io.vidocq.vauban.core`.
+    provides io.vidocq.vauban.api.VaubanComponentProvider
+            with io.vidocq.foy.cdi.vauban._VaubanComponents;
 }
