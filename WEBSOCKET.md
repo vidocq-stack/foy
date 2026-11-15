@@ -264,7 +264,7 @@ Decided by the maintainer: same-origin by default, opened by configuration only.
 - **Limits.** `getDefaultMaxTextMessageBufferSize()` and the binary one default to 64 KiB
   (Atmosphere sets its own when configured). Chappe still re-assembles up to its 64 MiB
   cap before Foy can check; lot 3 decides whether `chappe-api` gets a per-connection limit.
-- **Close.** `close(CloseReason)` maps to Chappe's close; `onClose(Session, CloseReason)`
+- **Close.** `close(CloseReason)` maps to Chappe's `sendClose`; `onClose(Session, CloseReason)`
   carries the reason of the side that closed first, as Jakarta WebSocket 2.2 §2.1.5 asks
   (decided by the maintainer on 2026-11-15, "respecte la spec", BUG-20261115-08; Foy used to
   report the code of its own Close frame):
@@ -300,14 +300,15 @@ Decided by the maintainer: same-origin by default, opened by configuration only.
   code or vanishes. Atmosphere handles the 1006 as it handled the 1001: its
   `DefaultWebSocketProcessor.allowedCloseCode` accepts a code up to 1001 or above 1005.
 
-  Known window: a close of this side checks that the connection is open, then sends its Close
-  frame. A Close of the peer that Chappe reads between the two is echoed instead, and this
-  side's frame never goes out, yet `onClose` reports this side's reason (1006 for a close of
-  the container) where §2.1.5 asks for the peer's. The session's closes (timeouts, size,
-  `onOpen`, `Session.close(...)`) and the undeploy share it, and so does an undeploy's Close
-  that goes out between a session's check and its send. Closing it needs `WebSocketPeer.close`
-  to say whether the call sent the frame, hence Chappe's `WebSocket.close`, which returns
-  nothing today although its `sendCloseFrame` knows; Foy leaves Chappe unchanged here.
+  The rule holds also when a Close of the peer, or the undeploy's, goes out between a local
+  close's check that the connection is open and its send: `WebSocketPeer.close` (Chappe's
+  `WebSocket.sendClose`) answers whether the call sent the Close frame, and the session and the
+  undeploy give up their own reason when it answers that another Close came first. A close of
+  the session under way or whose write failed keeps its reason against a bare cut; it yields to
+  a Close of the peer read first, and to the undeploy when the undeploy's Close went out first
+  or the undeploy cut the connection (the undeploy row: the stop is what ended the connection).
+  A close of the session interrupted before it wrote anything never started: it leaves no
+  reason behind, and a later close of the session still sends its frame.
 
   `onError` precedes `onClose` when a transport failure closes the session, except once an undeploy closed it: the
   server's stop cutting that closing handshake is not an error of the session; an exception from a message

@@ -33,16 +33,21 @@ import jakarta.websocket.WebSocketContainer;
 import jakarta.websocket.server.ServerEndpointConfig;
 
 import java.io.IOException;
+import java.io.InterruptedIOException;
 import java.net.InetSocketAddress;
+import java.net.SocketTimeoutException;
 import java.net.URI;
 import java.nio.ByteBuffer;
 import java.security.Principal;
+import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.locks.Condition;
+import java.util.concurrent.locks.ReentrantLock;
 
 /**
  * One WebSocket connection seen through the Jakarta API, and the listener of its transport events
@@ -54,8 +59,10 @@ import java.util.concurrent.atomic.AtomicReference;
  * session's maximum closes it with 1009, unread; a message handler that throws is reported to
  * {@code Endpoint.onError} and the session stays open; an {@code Endpoint.onOpen} that throws is
  * reported, then the session closes with 1011 (an {@code Error} is not reported: the session closes,
- * then it propagates). {@code Endpoint.onClose} runs once, with the reason of
- * the side that closed first; then the session leaves the open sessions, its timer stops and its
+ * then it propagates). {@code Endpoint.onClose} runs once, with the reason of the side that closed first,
+ * also when a Close of the peer or of the undeploy crosses this side's: this side's, unless the transport
+ * answers that another Close came first ({@link WebSocketPeer#close(int, String)}) or reports a Close of the
+ * peer before this side's close answered; then the session leaves the open sessions, its timer stops and its
  * queued asynchronous sends fail. No {@code Endpoint.onError} follows it.
  *
  * <p>A close the container initiates (the idle and send timeouts, a message too big, a failed
@@ -79,6 +86,13 @@ final class FoySession implements Session, WebSocketListener {
     /** The close of a failed {@code onOpen}, as the peer reads it. */
     private static final CloseReason ON_OPEN_FAILED =
             new CloseReason(CloseCodes.UNEXPECTED_CONDITION, "onOpen failed");
+    /**
+     * How long {@link #onClose} waits at most for the answer of a close in flight. The transport gives that answer
+     * once the close gets past the write in progress, if any; with chappe that write can be its automatic Pong of a
+     * Ping the peer sent before its Close, stalled on a peer that does not read for up to the write timeout, which
+     * this bound keeps {@code onClose}, and the undeploy that runs it, from waiting for.
+     */
+    static final Duration CLOSE_ANSWER_WAIT = Duration.ofMillis(250);
 
     private final FoyServerContainer container;
     /** This connection's config: the registered one with this connection's own user properties. */
@@ -98,10 +112,28 @@ final class FoySession implements Session, WebSocketListener {
     private final AsyncRemote asyncRemote;
     private final AtomicReference<WebSocketPeer> peer = new AtomicReference<>();
     /**
-     * The reason {@code Endpoint.onClose} reports when this side closed first: the application's own, or 1006
-     * for a close the container initiated.
+     * Guards the close of this side ({@link #closing}, {@link #localClose}, {@link #localCloseSent}) and the start of
+     * {@link #onClose}, which waits on {@link #closeAnswered} for a close in flight. Never held across I/O.
      */
-    private final AtomicReference<CloseReason> localClose = new AtomicReference<>();
+    private final ReentrantLock closeLock = new ReentrantLock();
+    /** How long {@link #onClose} waits at most for the answer of a close in flight ({@link #CLOSE_ANSWER_WAIT}). */
+    private final Duration closeAnswerWait;
+    /** Signalled when the transport answered a close of this side. */
+    private final Condition closeAnswered = closeLock.newCondition();
+    /** A close of this side is in flight: the transport has not answered yet whether it sent its Close frame. */
+    private boolean closing;
+    /**
+     * The reason {@code Endpoint.onClose} reports when this side closed first: the application's own, or 1006 for a
+     * close the container initiated. Set when a close of this side starts, and dropped when the transport answers
+     * that another Close came first, or when that close was interrupted before it wrote anything and so never
+     * started, which leaves a later close free to send: a close in flight, or one whose write failed, keeps it
+     * against a cut.
+     */
+    private CloseReason localClose;
+    /** The transport answered that this side's Close frame went out: {@link #localClose} holds, whatever follows. */
+    private boolean localCloseSent;
+    /** The write of this side's Close frame failed: no other Close came first, the connection broke under it. */
+    private boolean localCloseFailed;
     private final AtomicBoolean closed = new AtomicBoolean();
     /** The context class loader of the transport's callbacks: the application's. */
     private volatile ClassLoader applicationLoader;
@@ -118,6 +150,16 @@ final class FoySession implements Session, WebSocketListener {
      */
     FoySession(FoyServerContainer container, ConnectionConfig config, Endpoint endpoint,
                HandshakeRequestImpl request, Map<String, String> pathParameters, String subprotocol) {
+        this(container, config, endpoint, request, pathParameters, subprotocol, CLOSE_ANSWER_WAIT);
+    }
+
+    /**
+     * A session whose {@link #onClose} waits at most {@code closeAnswerWait} for the answer of a close in flight.
+     */
+    FoySession(FoyServerContainer container, ConnectionConfig config, Endpoint endpoint,
+               HandshakeRequestImpl request, Map<String, String> pathParameters, String subprotocol,
+               Duration closeAnswerWait) {
+        this.closeAnswerWait = closeAnswerWait;
         this.container = container;
         this.config = config;
         this.endpoint = endpoint;
@@ -177,7 +219,7 @@ final class FoySession implements Session, WebSocketListener {
             if (!returned) {
                 closeByContainer(ON_OPEN_FAILED);
                 // Only a close of this side is reported here: the transport reports its own.
-                if (localClose.get() != null) {
+                if (closedFirst()) {
                     onClose(CloseCodes.CLOSED_ABNORMALLY.getCode(), ON_OPEN_FAILED.getReasonPhrase());
                 }
             }
@@ -244,18 +286,38 @@ final class FoySession implements Session, WebSocketListener {
     }
 
     /**
-     * Runs {@code Endpoint.onClose} once, with the local reason when this side closed first (the
-     * application's, or 1006 for a close of the container), else the transport's: the peer's code, or 1006
-     * for a close the transport initiated or a cut connection; then the session leaves the open sessions,
-     * its timer stops and its queued sends fail.
+     * Runs {@code Endpoint.onClose} once, with the local reason when this side closed first (the application's,
+     * or 1006 for a close of the container), else the transport's: the peer's code, or 1006 for a close the
+     * transport initiated or a cut connection; then the session leaves the open sessions, its timer stops and its
+     * queued sends fail.
+     *
+     * <p>This side closed first when the transport answered that its Close frame went out ({@link #keepsLocalReason}).
+     * A close of this side whose write failed closed first too, unless the transport reports a Close of the peer (a
+     * code other than 1006). One the transport has not answered, still in flight on another thread, keeps its
+     * reason only against a bare cut (1006 with no reason), as Jakarta WebSocket 2.2 section 2.1.5 keeps the reason
+     * of the side that closed first when the peer then vanishes: a Close of the peer, or a close the transport names
+     * (the undeploy's, whose Close went out first or which cut the connection), wins. Once the peer no longer reads
+     * as open (a Close went out or came in, or the connection was cut), the close in flight writes nothing more and
+     * answers once the write in progress, if any, ends, so this waits for that answer, at most
+     * {@link #CLOSE_ANSWER_WAIT}; it waits as well, within the same bound, when the transport names the close it
+     * reports (1006 with a reason), since the answer then decides. While the peer still reads as open and the
+     * transport reports a bare cut, the close in flight may wait for a send the peer does not read: this does not
+     * wait for it, and that close keeps its reason.
      */
     @Override
     public void onClose(int code, String reason) {
-        if (!closed.compareAndSet(false, true)) {
-            return;
+        CloseReason local;
+        closeLock.lock();
+        try {
+            awaitCloseAnswer(code, reason);
+            if (!closed.compareAndSet(false, true)) {
+                return;
+            }
+            local = keepsLocalReason(code, reason) ? localClose : null;
+        } finally {
+            closeLock.unlock();
         }
         open = false;
-        CloseReason local = localClose.get();
         try {
             endpoint.onClose(this, local != null ? local : new CloseReason(closeCode(code), reason));
         } finally {
@@ -409,20 +471,132 @@ final class FoySession implements Session, WebSocketListener {
     }
 
     /**
-     * Sends {@code wire} to the peer and records {@code reported} for {@code Endpoint.onClose}, unless the
-     * session is closing or closed: the side that closed first gives the reason. A window remains: a Close of
-     * the peer, or the undeploy's, that goes out between the check of {@link WebSocketPeer#isOpen()} and the
-     * send leaves this Close unsent, yet {@code reported} stays the reason. Closing it needs
-     * {@link WebSocketPeer#close(int, String)}, and so chappe's {@code WebSocket.close}, to tell whether the call
-     * sent the frame (WEBSOCKET.md section 5.4).
+     * Sends {@code wire} to the peer, unless the session is closing or closed, and gives {@code reported} to
+     * {@code Endpoint.onClose} unless the transport answers that another Close came first: a Close of the peer, or
+     * the undeploy's, that comes between the check of {@link WebSocketPeer#isOpen()} and the send leaves this Close
+     * unsent, and {@code onClose} reports that Close (WEBSOCKET.md section 5.4). A write that fails keeps
+     * {@code reported} unless the transport reports a Close of the peer; a close still in flight keeps it only
+     * against a bare cut ({@link #keepsLocalReason}). A close interrupted before it wrote anything never started:
+     * it leaves no reason behind, so a later close still sends its frame, and the {@link InterruptedIOException}
+     * reaches the caller, its interrupt status set. {@link #onClose} waits for the answer when it comes meanwhile;
+     * no lock is held while the transport writes.
      */
     private void close(CloseReason wire, CloseReason reported) throws IOException {
         WebSocketPeer current = peer.get();
-        if (current == null || closed.get() || !current.isOpen() || !localClose.compareAndSet(null, reported)) {
+        if (current == null || !startClose(current, reported)) {
             return;
         }
-        current.close(wireCode(wire.getCloseCode().getCode()),
-                Objects.requireNonNullElse(wire.getReasonPhrase(), ""));
+        CloseOutcome outcome = CloseOutcome.FAILED;
+        try {
+            outcome = current.close(wireCode(wire.getCloseCode().getCode()),
+                    Objects.requireNonNullElse(wire.getReasonPhrase(), ""))
+                    ? CloseOutcome.SENT : CloseOutcome.ANOTHER_FIRST;
+        } catch (InterruptedIOException e) {
+            // Interrupted before it wrote anything (WebSocketPeer.close): that close never started. A
+            // SocketTimeoutException is a failed write like any other: the connection is gone.
+            if (!(e instanceof SocketTimeoutException)) {
+                outcome = CloseOutcome.NOT_STARTED;
+            }
+            throw e;
+        } finally {
+            settleClose(outcome);
+        }
+    }
+
+    /** How a close of this side ended, for {@link #settleClose}. */
+    private enum CloseOutcome {
+        /** The transport sent its Close frame: this side closed first. */
+        SENT,
+        /** Another Close went out or came in first: the transport's report gives the reason. */
+        ANOTHER_FIRST,
+        /** The write of its Close frame failed: this side closed first, and the connection broke under it. */
+        FAILED,
+        /** Interrupted before anything was written: as if it never started, so a later close may still. */
+        NOT_STARTED
+    }
+
+    /**
+     * Whether a close of this side may start: the session is neither closing nor closed, and no close of this side
+     * started before; marks it in flight with {@code reported}.
+     */
+    private boolean startClose(WebSocketPeer current, CloseReason reported) {
+        closeLock.lock();
+        try {
+            if (closed.get() || closing || localClose != null || !current.isOpen()) {
+                return false;
+            }
+            closing = true;
+            localClose = reported;
+            return true;
+        } finally {
+            closeLock.unlock();
+        }
+    }
+
+    /**
+     * The close in flight is over with {@code outcome}: a close whose frame went out, or whose write failed, keeps
+     * {@link #localClose}; one that another Close came before, or that never started, drops it.
+     */
+    private void settleClose(CloseOutcome outcome) {
+        closeLock.lock();
+        try {
+            closing = false;
+            switch (outcome) {
+                case SENT -> localCloseSent = true;
+                case FAILED -> localCloseFailed = true;
+                case ANOTHER_FIRST, NOT_STARTED -> localClose = null;
+            }
+            closeAnswered.signalAll();
+        } finally {
+            closeLock.unlock();
+        }
+    }
+
+    /**
+     * Under {@link #closeLock}: waits for the answer of a close in flight once it is decided ({@link #onClose}), or
+     * when the transport reports a close it names, which a close of this side that failed in its write came before,
+     * at most {@link #closeAnswerWait}; an interrupt ends the wait too, and stays set.
+     */
+    private void awaitCloseAnswer(int code, String reason) {
+        WebSocketPeer current = peer.get();
+        long left = closeAnswerWait.toNanos();
+        while (closing && (!current.isOpen() || namedByTheTransport(code, reason)) && left > 0) {
+            try {
+                left = closeAnswered.awaitNanos(left);
+            } catch (InterruptedException _) {
+                Thread.currentThread().interrupt();
+                return;
+            }
+        }
+    }
+
+    /**
+     * Under {@link #closeLock}: whether {@code Endpoint.onClose} hears {@link #localClose} rather than the end the
+     * transport reports with {@code code} and {@code reason}.
+     */
+    private boolean keepsLocalReason(int code, String reason) {
+        if (localClose == null || localCloseSent) {
+            return localClose != null;
+        }
+        if (code != CloseCodes.CLOSED_ABNORMALLY.getCode()) {
+            return false; // the transport read a Close of the peer before this side's answered
+        }
+        return localCloseFailed || !namedByTheTransport(code, reason);
+    }
+
+    /** Whether the transport reports a close it initiated and names (1006 with a reason), not a bare cut. */
+    private static boolean namedByTheTransport(int code, String reason) {
+        return code == CloseCodes.CLOSED_ABNORMALLY.getCode() && reason != null && !reason.isEmpty();
+    }
+
+    /** Whether the transport answered that this side's Close went out. */
+    private boolean closedFirst() {
+        closeLock.lock();
+        try {
+            return localCloseSent;
+        } finally {
+            closeLock.unlock();
+        }
     }
 
     /** The handshake's absolute request URI, context path and query string included. */

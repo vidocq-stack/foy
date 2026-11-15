@@ -209,7 +209,7 @@ class FoySessionTest {
      */
     private Recorder openFailingAfterTheTransportClosed(Runnable failure) {
         var endpoint = new Recorder(session -> {
-            peer.close(CloseCodes.GOING_AWAY.getCode(), STOPPING);
+            peer.closeNow(CloseCodes.GOING_AWAY.getCode(), STOPPING);
             failure.run();
         });
         FoySession session = TestSessions.session(endpoint);
@@ -267,7 +267,7 @@ class FoySessionTest {
         var endpoint = new Recorder();
         FoySession session = TestSessions.open(endpoint, peer);
         session.setMaxTextMessageBufferSize(1);
-        peer.close(CloseCodes.NORMAL_CLOSURE.getCode(), "the peer's Close, echoed");
+        peer.closeNow(CloseCodes.NORMAL_CLOSURE.getCode(), "the peer's Close, echoed");
 
         session.onText("too big");
         session.onClose(CloseCodes.NORMAL_CLOSURE.getCode(), "bye");

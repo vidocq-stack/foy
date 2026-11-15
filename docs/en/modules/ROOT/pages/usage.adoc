@@ -285,7 +285,7 @@ A runtime that fills `io.vidocq.foy.websocket.allowed-origins` from its own conf
 
 The side that closed first keeps its reason, even when the peer then answers with another code or vanishes. When two closes of the container meet, `onClose` hears the reason of the Close frame that went out: an `onOpen` that throws once the undeploy's 1001 went out hears `the application is stopping`, whether it threw an exception or an `Error`, and no 1011 follows.
 
-A Close of the peer that arrives just as the container closes can still give `onClose` the container's 1006 instead of the peer's code: Foy cannot yet tell whether its own Close frame went out first (xref:internals.adoc#websocket-takeover[Internals]).
+This holds also when a Close of the peer arrives just as the container or the application closes the session: `onClose` hears the peer's code unless this side's Close frame went out first, and an `onClose` the transport reports while that close is under way waits for it to tell whether its frame went out, at most 250 ms. A close of this side under way, or whose write failed, keeps its reason against a bare cut: a send timeout or an idle timeout that a send blocked on a peer that does not read holds back still reports `send timeout` or `idle timeout` when the connection is then cut. It yields to a Close of the peer read first, and to the undeploy when the undeploy's Close went out first or the undeploy cut the connection: the endpoint then hears `the application is stopping`, as in the table below (xref:internals.adoc#websocket-takeover[Internals]).
 
 [cols="2,1,3",options="header"]
 |===

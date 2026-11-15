@@ -41,9 +41,17 @@
   session leaves `onClose` to the transport when the transport's Close went out before an `Error` from
   `onOpen` (`FoySessionTest.anErrorFromOnOpenAfterTheTransportClosedReportsTheTransportsClose`,
   `SessionEndToEndTest.anErrorFromOnOpenDuringTheUndeployReportsTheUndeploysClose`, and in
-  `WebSocketTakeoverEndToEndTest` the six tests of a failed `onOpen` during the undeploy). Still open: a Close
-  of the peer read between a local close's check and its send leaves the local reason in `onClose`; closing it
-  needs Chappe's `WebSocket.close` to tell whether it sent the frame (`WEBSOCKET.md` section 5.4). Consumers: Vidocq's
+  `WebSocketTakeoverEndToEndTest` the six tests of a failed `onOpen` during the undeploy). The last window, a
+  Close of the peer, or the undeploy's, that goes out between a local close's check and its send, which left the
+  local reason in `onClose`, closed on `fix/websocket-close-known-window` with Chappe's companion branch of the
+  same name: Chappe's `WebSocket.sendClose` and `WebSocketPeer.close` answer whether the call sent the Close frame,
+  and `FoySession` and the undeploy give up their own reason in `onClose` when it answers that another Close
+  came first; a close whose write failed keeps its reason unless the peer's Close was read, and one still under
+  way keeps it only against a cut (a send or idle timeout held behind a send the peer does not read still
+  reports its cause), yielding to the peer's Close or to the undeploy's. `onClose` waits for a close in flight
+  to answer, at most 250 ms, and Chappe writes nothing of the application after its Close frame, only its
+  automatic Pong of a Ping read before the peer's Close (`FoySessionCloseRaceTest`,
+  `WebSocketTakeoverUndeployRaceTest`, Chappe's `WebSocketCloseRaceTest`). Consumers: Vidocq's
   `FoyWebSocketModulePathTest.anApplicationStopClosesTheConnectionWith1001BeforeTheServerStops` asserts
   `onClose` codes `[1001]` and must expect `[1006]`; Atmosphere (Vaadin push) treats 1006 as it treated 1001.
 

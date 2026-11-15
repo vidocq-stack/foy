@@ -37,6 +37,11 @@ import java.util.concurrent.atomic.AtomicInteger;
  * send returns once its frame is recorded, and a send after the close fails with
  * {@code IOException("WebSocket closed")}. A test can hold every write ({@link #blockWrites()}) or
  * make the peer vanish ({@link #vanish()}): the held writes and the later ones then fail.
+ *
+ * <p>A close answers whether it sent the Close frame. A test can have another Close come first
+ * ({@link #anotherCloseCameFirst()}), hold a close before its frame goes out ({@link #holdCloseFrames()})
+ * or before it answers ({@link #holdCloseAnswers()}), and have the write of the Close frame fail
+ * ({@link #failCloses()}).
  */
 final class FakePeer implements WebSocketPeer {
 
@@ -51,6 +56,8 @@ final class FakePeer implements WebSocketPeer {
     final CountDownLatch closed = new CountDownLatch(1);
     /** Counted down when a write starts, before it is held. */
     final CountDownLatch writing = new CountDownLatch(1);
+    /** Counted down when a close is held ({@link #holdCloseFrames()}, {@link #holdCloseAnswers()}). */
+    final CountDownLatch closeHeld = new CountDownLatch(1);
 
     private final AtomicInteger inFlight = new AtomicInteger();
     private volatile boolean overlapped;
@@ -59,6 +66,10 @@ final class FakePeer implements WebSocketPeer {
     private volatile CountDownLatch gate;
     private volatile int closeCode = -1;
     private volatile String closeReason;
+    private volatile boolean anotherCloseFirst;
+    private volatile CountDownLatch closeGate;
+    private volatile boolean holdBeforeTheFrame;
+    private volatile boolean closesFail;
 
     /** Holds every write until {@link #releaseWrites()} or {@link #vanish()}. */
     void blockWrites() {
@@ -77,6 +88,47 @@ final class FakePeer implements WebSocketPeer {
         vanished = true;
         open = false;
         releaseWrites();
+    }
+
+    /**
+     * The next close finds that another Close came first, which its check of {@link #isOpen()} could not see:
+     * the peer's, or the undeploy's. It sends nothing and answers {@code false}; the connection is closing.
+     */
+    void anotherCloseCameFirst() {
+        anotherCloseFirst = true;
+    }
+
+    /**
+     * Holds the next close before its frame goes out, as a send the peer does not read holds it, until
+     * {@link #releaseClose()}; the peer still reads as open meanwhile.
+     */
+    void holdCloseFrames() {
+        holdBeforeTheFrame = true;
+        closeGate = new CountDownLatch(1);
+    }
+
+    /**
+     * Holds the next close once it took effect, its frame sent or another Close found first, before it answers,
+     * until {@link #releaseClose()}; the peer no longer reads as open meanwhile.
+     */
+    void holdCloseAnswers() {
+        holdBeforeTheFrame = false;
+        closeGate = new CountDownLatch(1);
+    }
+
+    /**
+     * The write of the next Close frame fails, as on a connection that broke: the close throws an
+     * {@code IOException}, nothing went out, and the peer still reads as open until the transport notices.
+     */
+    void failCloses() {
+        closesFail = true;
+    }
+
+    void releaseClose() {
+        CountDownLatch held = closeGate;
+        if (held != null) {
+            held.countDown();
+        }
     }
 
     /** Whether two writes ever ran at once. */
@@ -119,15 +171,48 @@ final class FakePeer implements WebSocketPeer {
         control("pong", data);
     }
 
+    /**
+     * Sends the Close frame unless the closing handshake began: another Close went out or came in first. Like
+     * chappe, whose write lock is taken interruptibly, a call on an interrupted thread writes nothing and throws an
+     * {@link InterruptedIOException}, the interrupt still set.
+     */
     @Override
-    public void close(int code, String reason) {
+    public boolean close(int code, String reason) throws IOException {
+        if (Thread.currentThread().isInterrupted()) {
+            throw new InterruptedIOException("Interrupted while acquiring the write lock");
+        }
+        if (holdBeforeTheFrame) {
+            awaitCloseGate();
+        }
+        if (closesFail) {
+            throw new IOException("Broken pipe");
+        }
         if (!open) {
-            return;
+            return false;
+        }
+        boolean sent = closeNow(code, reason);
+        if (!holdBeforeTheFrame) {
+            awaitCloseGate();
+        }
+        return sent;
+    }
+
+    /**
+     * Sends the Close frame at once, never held nor failing: the transport's own Close, or the peer's as the
+     * transport echoes it, which a test makes come before the session's.
+     */
+    boolean closeNow(int code, String reason) {
+        if (!open) {
+            return false;
         }
         open = false;
-        closeCode = code;
-        closeReason = reason;
-        closed.countDown();
+        boolean sent = !anotherCloseFirst;
+        if (sent) {
+            closeCode = code;
+            closeReason = reason;
+            closed.countDown();
+        }
+        return sent;
     }
 
     @Override
@@ -176,6 +261,23 @@ final class FakePeer implements WebSocketPeer {
         } catch (InterruptedException _) {
             Thread.currentThread().interrupt();
             throw new InterruptedIOException("interrupted while the write was held");
+        }
+    }
+
+    /** Holds a close the test asked to hold; unchecked, so a test may close the peer from a lambda. */
+    private void awaitCloseGate() {
+        CountDownLatch held = closeGate;
+        if (held == null) {
+            return;
+        }
+        closeHeld.countDown();
+        try {
+            if (!held.await(WAIT_SECONDS, TimeUnit.SECONDS)) {
+                throw new IllegalStateException("the test never released the close");
+            }
+        } catch (InterruptedException _) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException("interrupted while the close was held");
         }
     }
 

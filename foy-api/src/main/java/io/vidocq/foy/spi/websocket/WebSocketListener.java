@@ -102,17 +102,20 @@ public interface WebSocketListener {
      * connection, {@code 1006} (a code never sent on the wire) when this side's container did, whatever
      * code its close frame carried, so a listener tells a close of the peer from a local one by the code.
      * A close the listener initiates through {@link WebSocketPeer#close(int, String)} reports the peer's
-     * answer: the listener knows its own code.
+     * answer: the listener knows its own code, and the answer of {@code close} tells whether its close frame
+     * went out first.
      *
      * @param code   the close code of the peer; {@code 1005} when its close frame carried none.
      *               {@code 1006} when the TCP connection was cut without a close frame, or when the
      *               container closed the connection first: the undeploy of the application (a 1001 on the
-     *               wire), whatever the peer answers and even when the connection is cut before it does;
+     *               wire) when its close frame went out before the peer's, or when it cut the connection,
+     *               whatever the peer answers and even when the connection is cut before it does;
      *               an {@link #onOpen(WebSocketPeer)} that failed (1011); a protocol violation of the peer
      *               (1002, 1007 or 1009) or another callback that threw (1011), reported to
      *               {@link #onError(Throwable)} first
      * @param reason the close reason, empty when there is none, at most 123 bytes in UTF-8. With a
-     *               {@code 1006} of the container, the cause of the Close frame that went out:
+     *               {@code 1006} of the container, the cause of the close it initiated, whether or not its
+     *               Close frame reached the wire (a broken connection can fail its write):
      *               {@code "the application is stopping"} (also for an {@code onOpen} that fails once the
      *               undeploy closed the connection), {@code "onOpen failed"}, {@code "protocol error: "}
      *               followed by the violation, or {@code "callback failed: "} followed by the throwable;

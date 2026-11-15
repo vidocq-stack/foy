@@ -28,6 +28,7 @@ import jakarta.websocket.Session;
 import jakarta.websocket.server.ServerEndpointConfig;
 
 import java.lang.reflect.Proxy;
+import java.time.Duration;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
@@ -54,14 +55,26 @@ final class TestSessions {
 
     /** A session of {@code endpoint} on {@code container}, not opened yet. */
     static FoySession session(FoyServerContainer container, Endpoint endpoint) {
+        return session(container, endpoint, FoySession.CLOSE_ANSWER_WAIT);
+    }
+
+    private static FoySession session(FoyServerContainer container, Endpoint endpoint, Duration closeAnswerWait) {
         ServerEndpointConfig registered = ServerEndpointConfig.Builder.create(endpoint.getClass(), "/chat").build();
         return new FoySession(container, new ConnectionConfig(registered), endpoint,
-                new HandshakeRequestImpl(request()), Map.of(), "");
+                new HandshakeRequestImpl(request()), Map.of(), "", closeAnswerWait);
     }
 
     /** A session of {@code endpoint} opened on {@code peer}. */
     static FoySession open(Endpoint endpoint, FakePeer peer) {
-        FoySession session = session(endpoint);
+        return open(endpoint, peer, FoySession.CLOSE_ANSWER_WAIT);
+    }
+
+    /**
+     * A session of {@code endpoint} opened on {@code peer}, whose {@code onClose} waits at most
+     * {@code closeAnswerWait} for the answer of a close in flight.
+     */
+    static FoySession open(Endpoint endpoint, FakePeer peer, Duration closeAnswerWait) {
+        FoySession session = session(new FoyServerContainer(OriginPolicy.parse(null), null), endpoint, closeAnswerWait);
         session.onOpen(peer);
         return session;
     }
