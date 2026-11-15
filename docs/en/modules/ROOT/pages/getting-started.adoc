@@ -91,8 +91,11 @@ void main() throws Exception {
         server.start(); // non-blocking
         // ... await your application's shutdown signal ...
     } finally {
-        mounted.close(); // first, while the server still runs: WebSocket peers get their 1001 Close
-        server.stop();
+        try {
+            mounted.close(); // first, while the server still runs: WebSocket peers get their 1001 Close
+        } finally {
+            server.stop(); // even when close() throws
+        }
     }
 }
 ----

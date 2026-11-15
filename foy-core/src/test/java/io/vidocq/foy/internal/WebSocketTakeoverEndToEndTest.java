@@ -249,9 +249,10 @@ class WebSocketTakeoverEndToEndTest {
     }
 
     /**
-     * The server stops right after the undeploy, before the peer answers its Close: the read the stop
-     * cuts is the transport going down, not an error of the connection, so the listener hears the 1001
-     * and no error (BUG-20261114-07).
+     * The server stops right after the undeploy, before the peer answers its Close: the listener hears the
+     * 1001 and no error. The undeploy ended the takeover before the stop (BUG-20261114-08), so the read the
+     * stop cuts finds it closed; {@link #aServerStopWhileTheUndeployWaitsForItsCloseReportsNoError} pins the
+     * case of BUG-20261114-07, a stop that reaches a takeover still open.
      */
     @Test
     void aServerStopAfterAnUndeployReportsNoError() throws Exception {
@@ -365,10 +366,9 @@ class WebSocketTakeoverEndToEndTest {
     }
 
     /**
-     * The undeploy's grace runs out on an event in progress, so the takeover is still open when the server
-     * stops: the I/O failure the stop causes (the held {@code onText} cannot echo any more) reaches the
-     * takeover's {@code onError}, which must not report it, the undeploy having closed the session
-     * (BUG-20261114-07).
+     * The undeploy's grace runs out on an event in progress, then the server stops: the held {@code onText}
+     * cannot echo any more, and the takeover ends with the undeploy's 1001 as soon as it returns, so the
+     * stop's I/O failure finds it closed and the listener hears no error.
      */
     @Test
     void aServerStopAfterTheUndeployGaveUpReportsNoError() throws Exception {
@@ -380,6 +380,30 @@ class WebSocketTakeoverEndToEndTest {
         assertTrue(probe.destroyed.await(5, TimeUnit.SECONDS));
         assertEquals(List.of("open", HELD_EVENT, "close", "destroy"), probe.events);
         assertEquals(1001, probe.closeCode.get());
+    }
+
+    /**
+     * The server stops while the undeploy hook still waits for its 1001 Close, which a send blocked on the
+     * peer holds back: the connection is marked closed by the undeploy but its takeover has not ended yet, so
+     * the read the stop cuts reaches the takeover's {@code onError}, which must not report it
+     * (BUG-20261114-07). The listener hears the undeploy's 1001 and no error.
+     */
+    @Test
+    void aServerStopWhileTheUndeployWaitsForItsCloseReportsNoError() throws Exception {
+        probe.blockASend = true;
+        start(new VidocqServletContext("/"));
+        try (var client = new RawClient(port)) {
+            client.send(handshake("/ws"));
+            assertTrue(probe.opened.await(5, TimeUnit.SECONDS), ON_OPEN);
+            awaitState(probe.sender.get(), Thread.State.WAITING);
+            Thread undeploy = Thread.ofVirtual().start(context::closeUpgradedConnections);
+            assertFalse(undeploy.join(Duration.ofMillis(500)), "the undeploy did not wait for its held Close");
+            server.stop();
+            assertTrue(probe.destroyed.await(5, TimeUnit.SECONDS));
+            assertTrue(undeploy.join(Duration.ofSeconds(5)), "the undeploy did not return");
+            assertEquals(List.of("open", "close", "destroy"), probe.events);
+            assertEquals(1001, probe.closeCode.get());
+        }
     }
 
     /**

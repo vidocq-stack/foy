@@ -195,9 +195,11 @@ class SessionEndToEndTest {
     }
 
     /**
-     * The server stops right after the undeploy, before the peer answers its Close: the stop cuts the
-     * transport's read, which is no error of the session, so the endpoint hears {@code onClose} alone
-     * (BUG-20261114-07).
+     * The server stops right after the undeploy, before the peer answers its Close: the endpoint hears
+     * {@code onClose} alone. The undeploy ended the session before the stop (BUG-20261114-08), so the read
+     * the stop cuts finds it closed; the case where the stop reaches a session still open, which
+     * BUG-20261114-07 fixed, is pinned in foy-core by
+     * {@code WebSocketTakeoverEndToEndTest.aServerStopWhileTheUndeployWaitsForItsCloseReportsNoError}.
      */
     @Test
     void aServerStopAfterAnUndeployIsNoErrorOfTheSession() throws Exception {

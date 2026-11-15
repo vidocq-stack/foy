@@ -71,8 +71,8 @@
   old documented order (stop the server, then close) hid it, since no request could arrive any more.
 - Status: FIXED on `fix/websocket-shutdown-order`. The undeploy's first step makes the context refuse
   requests (`VidocqServletContext.refuseRequests`); from then on the bridge answers `503 Service Unavailable`
-  before any listener, filter or servlet. Not covered: a cross-context dispatch from another application
-  into this one (`RequestDispatcherImpl.Invoker`) does not go through that gate.
+  before any listener, filter or servlet. A cross-context dispatch from another application into this one
+  does not go through that gate: found in review and fixed under BUG-20261115-04.
 
 ## BUG-20261115-01 — A send blocked on a peer that does not read holds an undeploy without limit
 
@@ -174,7 +174,15 @@
   and, at the transport hook, `WebSocketTakeoverEndToEndTest.aServerStopAfterAnUndeployReportsNoError`
   (undeploy, then `Server.stop()`): both failed in 15 runs of 15 under load. With the JDK client, which
   answers, only when the stop wins the race: 69 undeploys in 1,000 (macOS, 18 cores, 18 busy processes,
-  `-Djdk.virtualThreadScheduler.parallelism=1`).
+  `-Djdk.virtualThreadScheduler.parallelism=1`). Since BUG-20261114-08 the undeploy ends the session before
+  the stop, so both pass without this fix.
+  `WebSocketTakeoverEndToEndTest.aServerStopAfterTheUndeployGaveUpReportsNoError` (the undeploy's grace runs
+  out on an event in progress, then the server stops) reproduced it until the final review's frame cut-off
+  (BUG-20261114-08's last note), which ends that takeover as soon as the event returns, before the stop's
+  failure reaches `onError`. The test that reproduces it now is
+  `WebSocketTakeoverEndToEndTest.aServerStopWhileTheUndeployWaitsForItsCloseReportsNoError`: the server stops
+  while the undeploy hook waits for a Close that a blocked send holds back (`[open, error, close, destroy]`
+  without the fix).
 - Cause: `Server.stop()` closes the sockets (step 3: `AsynchronousCloseException` in the read loop) and
   interrupts the connection threads (step 4: `ClosedByInterruptException`). Chappe's read loop reports the
   `IOException` through `WebSocketHandler.onError`, and `WebSocketTakeover.onError` passed every error on to
