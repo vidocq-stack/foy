@@ -518,8 +518,14 @@ class ServletUpgradeEndToEndTest {
             assertTrue(probe.writing.await(5, TimeUnit.SECONDS), "the callback started writing");
             Thread writer = probe.callbackThread.get();
             long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
-            while (writer.getState() != Thread.State.WAITING && System.nanoTime() < deadline) Thread.onSpinWait();
-            assertEquals(Thread.State.WAITING, writer.getState(), "the callback never blocked on the write");
+            // One read per check: the writer's park in the socket write ends each time the kernel takes more
+            // bytes, so a second read can see it running between two blocks (BUG-20261114-09).
+            Thread.State state = writer.getState();
+            while (state != Thread.State.WAITING && System.nanoTime() < deadline) {
+                Thread.onSpinWait();
+                state = writer.getState();
+            }
+            assertEquals(Thread.State.WAITING, state, "the callback never blocked on the write");
             assertTimeoutPreemptively(java.time.Duration.ofSeconds(5), () -> probe.connection.get().close());
             assertTrue(probe.destroyed.await(5, TimeUnit.SECONDS));
         }

@@ -1,5 +1,25 @@
 # BUG.md — foy
 
+## BUG-20261114-09 — The stalled-peer upgrade test reads the writer's state twice and can see it running
+
+- Date: 2026-11-14 (found by the Error Prone check of `fix/websocket-shutdown-order`, a full `install` under
+  `-Pquality,errorprone`; the branch does not touch the test or the upgrade path).
+- Symptom: `ServletUpgradeEndToEndTest.closeReturnsWhileACallbackIsBlockedOnAStalledPeer` failed with
+  `the callback never blocked on the write ==> expected: <WAITING> but was: <RUNNABLE>` after 7 ms, far
+  from its 10 s deadline.
+- Repro: not deterministic. Repeated 3,000 times under load (macOS, 18 cores, 18 busy processes): 3 failures
+  (and 1 in 300). The test loops until the writer's state is `WAITING`, then asserts on a second
+  `getState()`.
+- Cause: the test, not Foy. A stack trace taken right after the loop saw `WAITING` showed the writer parked in
+  the socket write (`SocketChannelImpl.implWrite` → `Poller.poll`) in every case; with the stack walk
+  between the two reads, the second read saw `RUNNABLE` in 2,352 of 3,000. That park is not final: the
+  kernel still moves bytes to the peer's receive buffer, and the poller wakes the writer, which writes more
+  and parks again. The loop leaves on the first `WAITING`; the assertion's second read can land in one of
+  those wake-ups.
+- Status: FIXED on `fix/websocket-shutdown-order`. The loop reads the state once per check and the assertion
+  uses that value: the writer was seen blocked on the write, which is what the test needs before `close()`.
+  After the fix, under the same load: 0 failures in 3,000.
+
 ## BUG-20261114-08 — An undeploy runs a WebSocket's `onClose` and `destroy()` after `contextDestroyed`
 
 - Date: 2026-11-14 (found while fixing BUG-20261114-05: `Deployment` closes upgraded connections first so
