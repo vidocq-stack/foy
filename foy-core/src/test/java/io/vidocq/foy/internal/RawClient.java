@@ -82,6 +82,26 @@ final class RawClient implements AutoCloseable {
         }
     }
 
+    /**
+     * Reads up to and including {@code marker}, without keeping what it reads: for a long stream, such as
+     * what a send to a peer that did not read had queued.
+     */
+    void skipPast(byte[] marker) throws IOException {
+        byte[] buf = new byte[64 * 1024];
+        int matched = 0;
+        while (matched < marker.length) {
+            int n = in.read(buf);
+            if (n == -1) fail("connection closed before the marker");
+            for (int i = 0; i < n && matched < marker.length; i++) {
+                if (buf[i] == marker[matched]) {
+                    matched++;
+                } else {
+                    matched = buf[i] == marker[0] ? 1 : 0;
+                }
+            }
+        }
+    }
+
     /** What was received after the head so far. */
     String received() { return received.toString(StandardCharsets.US_ASCII); }
 

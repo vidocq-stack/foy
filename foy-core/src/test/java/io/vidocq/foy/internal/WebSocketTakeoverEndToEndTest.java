@@ -93,6 +93,13 @@ class WebSocketTakeoverEndToEndTest {
         volatile boolean blockASend;
         final AtomicReference<Thread> sender = new AtomicReference<>();
         final List<ClassLoader> loaders = new CopyOnWriteArrayList<>();
+        /** The listener's {@code onClose} waits for {@link #closeGate} to open once it recorded the close. */
+        volatile boolean holdClose;
+        final CountDownLatch closeGate = new CountDownLatch(1);
+        /** Whether the connection was still open when {@code onClose} began: no Close sent nor received. */
+        final AtomicReference<Boolean> openAtClose = new AtomicReference<>();
+        /** The name of the thread {@code onClose} ran on. */
+        final AtomicReference<String> closeThread = new AtomicReference<>();
     }
 
     /** Far more than the socket buffers hold: to a peer that does not read, the send blocks. */
@@ -102,6 +109,11 @@ class WebSocketTakeoverEndToEndTest {
     private static final String HELD = "held";
     private static final String HELD_EVENT = "text:" + HELD;
     private static final String ON_OPEN = "onOpen";
+    /** The reason of the undeploy's 1001 Close, the last bytes of its frame. */
+    private static final byte[] STOPPING = "the application is stopping".getBytes(java.nio.charset.StandardCharsets.US_ASCII);
+    private static final String TAKEOVER_LOGGER = "io.vidocq.foy.internal.bridge.WebSocketTakeover";
+    /** The prefix of the virtual threads the context runs its undeploy hooks on. */
+    private static final String HOOK_THREAD = "foy-upgrade-close-";
 
     private static volatile Probe current;
 
@@ -404,6 +416,103 @@ class WebSocketTakeoverEndToEndTest {
             assertEquals(List.of("open", "close", "destroy"), probe.events);
             assertEquals(1001, probe.closeCode.get());
         }
+    }
+
+    /**
+     * An event in progress that returns while a send of the endpoint still holds back the undeploy's 1001
+     * Close does not end the takeover: the listener hears {@code onClose} once that Close went out (Jakarta
+     * WebSocket 2.2 section 2.1.5), here once the peer read what the send had queued.
+     */
+    @Test
+    void onCloseFollowsTheUndeploysCloseFrame() throws Exception {
+        probe.blockASend = true;
+        probe.holdText = true;
+        probe.noEcho = true;
+        start(new VidocqServletContext("/"));
+        try (var client = new RawClient(port)) {
+            client.send(handshake("/ws"));
+            assertTrue(probe.opened.await(5, TimeUnit.SECONDS), ON_OPEN);
+            awaitState(probe.sender.get(), Thread.State.WAITING);
+            client.send(clientText(HELD));
+            assertTrue(probe.textEntered.tryAcquire(5, TimeUnit.SECONDS), "onText");
+            Thread undeploy = Thread.ofVirtual().start(this::closeConnections);
+            assertFalse(undeploy.join(Duration.ofMillis(300)), "the undeploy did not wait for its held Close");
+            probe.textGate.countDown();
+            client.skipPast(STOPPING);
+            assertTrue(undeploy.join(Duration.ofSeconds(5)), "the undeploy did not return");
+            assertTrue(probe.destroyed.await(5, TimeUnit.SECONDS));
+            assertEquals(List.of("open", HELD_EVENT, "close", "destroy"), probe.events);
+            assertEquals(Boolean.FALSE, probe.openAtClose.get(), "onClose ran before the 1001 Close went out");
+            assertEquals(1001, probe.closeCode.get());
+        }
+    }
+
+    /**
+     * The event in progress returns after the undeploy sent its Close, so the takeover ends on the
+     * connection's thread, and there its {@code onClose} outlives the undeploy hook's grace: the hook waits
+     * for it rather than report an event still running, and the undeploy goes on only at the context's own
+     * deadline, not while {@code onClose} runs.
+     */
+    @Test
+    void anUndeployWaitsForAnOnCloseRunningOnTheConnectionsThread() throws Exception {
+        probe.holdText = true;
+        probe.noEcho = true;
+        probe.holdClose = true;
+        start(new VidocqServletContext("/"));
+        try (var client = new RawClient(port);
+             var takeoverLog = LogCapture.of(TAKEOVER_LOGGER);
+             var contextLog = LogCapture.of(VidocqServletContext.class.getName())) {
+            client.send(handshake("/ws"));
+            assertTrue(probe.opened.await(5, TimeUnit.SECONDS), ON_OPEN);
+            client.send(clientText(HELD));
+            assertTrue(probe.textEntered.tryAcquire(5, TimeUnit.SECONDS), "onText");
+            Thread undeploy = Thread.ofVirtual().start(this::closeConnections);
+            client.skipPast(STOPPING);
+            assertFalse(undeploy.join(Duration.ofMillis(300)), "the undeploy did not wait for the event in progress");
+            probe.textGate.countDown();
+            assertTrue(probe.closed.await(5, TimeUnit.SECONDS), "onClose");
+            assertTrue(undeploy.join(Duration.ofSeconds(10)), "the undeploy did not return");
+            assertFalse(probe.closeThread.get().startsWith(HOOK_THREAD), probe.closeThread.get());
+            assertEquals(List.of(), takeoverLog.warnings());
+            assertEquals(1, contextLog.warnings().size(), contextLog.warnings().toString());
+        } finally {
+            probe.closeGate.countDown();
+        }
+        assertTrue(probe.destroyed.await(5, TimeUnit.SECONDS));
+        assertEquals(List.of("open", HELD_EVENT, "close", "destroy"), probe.events);
+        assertEquals(1001, probe.closeCode.get());
+    }
+
+    /**
+     * A closing handshake under way ends on the connection's thread when the peer answers, and there its
+     * {@code onClose} outlives the undeploy hook's grace: the hook waits for it rather than report the
+     * handshake as still under way.
+     */
+    @Test
+    void anUndeployWaitsForTheOnCloseOfAClosingHandshakeThatEndsLate() throws Exception {
+        probe.closeOnOpen = true;
+        probe.holdClose = true;
+        start(new VidocqServletContext("/"));
+        try (var client = new RawClient(port);
+             var takeoverLog = LogCapture.of(TAKEOVER_LOGGER);
+             var contextLog = LogCapture.of(VidocqServletContext.class.getName())) {
+            client.send(handshake("/ws"));
+            client.readHead();
+            client.readUntil("done");
+            Thread undeploy = Thread.ofVirtual().start(this::closeConnections);
+            assertFalse(undeploy.join(Duration.ofMillis(300)), "the undeploy did not wait for the closing handshake");
+            client.send(new byte[] {(byte) 0x88, (byte) 0x82, 0, 0, 0, 0, 0x03, (byte) 0xE8});
+            assertTrue(probe.closed.await(5, TimeUnit.SECONDS), "onClose");
+            assertTrue(undeploy.join(Duration.ofSeconds(10)), "the undeploy did not return");
+            assertFalse(probe.closeThread.get().startsWith(HOOK_THREAD), probe.closeThread.get());
+            assertEquals(List.of(), takeoverLog.warnings());
+            assertEquals(1, contextLog.warnings().size(), contextLog.warnings().toString());
+        } finally {
+            probe.closeGate.countDown();
+        }
+        assertTrue(probe.destroyed.await(5, TimeUnit.SECONDS));
+        assertEquals(List.of("open", "close", "destroy"), probe.events);
+        assertEquals(1000, probe.closeCode.get());
     }
 
     /**
@@ -729,10 +838,14 @@ class WebSocketTakeoverEndToEndTest {
 
                 @Override
                 public void onClose(int code, String reason) {
+                    var p = peer.get();
+                    probe.openAtClose.set(p != null && p.isOpen());
+                    probe.closeThread.set(Thread.currentThread().getName());
                     probe.events.add("close");
                     probe.loaders.add(Thread.currentThread().getContextClassLoader());
                     probe.closeCode.set(code);
                     probe.closed.countDown();
+                    if (probe.holdClose) awaitGate(probe.closeGate);
                     if (probe.failCloseWithError) throw new ExceptionInInitializerError("onClose failed");
                 }
             };

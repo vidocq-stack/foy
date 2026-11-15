@@ -161,7 +161,18 @@
   the undeploy closed a connection, `deliver` now hands no frame to the listener and ends the takeover
   with 1001, after the event in progress or instead of the next frame
   (`WebSocketTakeoverEndToEndTest.aFrameAfterTheUndeployGaveUpReachesNoListener`: `[open, text:held,
-  text:late]` before, `[open, text:held, close, destroy]` after).
+  text:late]` before, `[open, text:held, close, destroy]` after). Final re-review: that cut-off ended the
+  takeover as soon as an event returned or a frame arrived, even before the hook's 1001 Close went out, so
+  `onClose` could come before the Close frame on an ordinary path (a send of the endpoint holding the
+  Close back for a moment). The connection's thread now ends it only once the hook is past its wait for
+  the Close; before that, frames are still dropped and the hook ends it after the Close
+  (`onCloseFollowsTheUndeploysCloseFrame`: the connection still open in `onClose` before, closed after).
+  And an `onClose` that runs on the connection's thread when the hook's 2 s run out held the events lock:
+  the hook logged "a WebSocket event still ran" and the undeploy went on, `contextDestroyed` able to
+  overlap that `onClose`. The hook now waits for an end already under way, which the context's 3 s still
+  bound (`anUndeployWaitsForAnOnCloseRunningOnTheConnectionsThread`, and
+  `anUndeployWaitsForTheOnCloseOfAClosingHandshakeThatEndsLate` for a closing handshake the listener began:
+  the hook's WARNING and an undeploy back at 2 s before, no hook WARNING and the context's 3 s after).
 
 ## BUG-20261114-07 — A server stop right after an undeploy reports a spurious `onError` before `onClose(1001)`
 
