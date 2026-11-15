@@ -47,6 +47,7 @@ import io.vidocq.foy.internal.security.SecuritySettings;
 import io.vidocq.foy.spi.cdi.CdiContextListeners;
 import io.vidocq.foy.spi.jsp.JspEngine;
 import io.vidocq.foy.spi.security.IdentityStore;
+import io.vidocq.foy.spi.security.RequestAuthentication;
 import jakarta.enterprise.inject.spi.BeanManager;
 import jakarta.servlet.ServletContext;
 import jakarta.servlet.ServletException;
@@ -175,6 +176,7 @@ public final class FoyChappeBoot {
         private VidocqServletContext.ResourceProvider resourceProvider;
         private String virtualServerName = "vidocq";
         private IdentityStore identityStore;
+        private RequestAuthentication requestAuthentication;
         private InMemoryIdentityStore.Builder users;
         private int confidentialPort = -1;
         private boolean rotateSessionIdOnLogin = true;
@@ -337,6 +339,16 @@ public final class FoyChappeBoot {
         }
 
         /**
+         * Hands the authentication of every request to {@code hook}, as a Jakarta Authentication runtime does
+         * (Jakarta Security 4.0, section 2.5): it replaces the {@code login-config} mechanism of the container.
+         * Without it, the container's own mechanisms apply.
+         */
+        public Builder requestAuthentication(RequestAuthentication hook) {
+            this.requestAuthentication = Objects.requireNonNull(hook, "hook");
+            return this;
+        }
+
+        /**
          * Declares a user of Foy's in-memory identity store, with its application roles. The password is
          * digested at once (salted SHA-256) and not kept: the caller may wipe the array afterwards.
          */
@@ -446,7 +458,7 @@ public final class FoyChappeBoot {
             IdentityStore store;
             if (identityStore != null) store = identityStore;
             else store = users != null ? users.build() : IdentityStore.none();
-            return new SecuritySettings(store, confidentialPort, rotateSessionIdOnLogin);
+            return new SecuritySettings(store, confidentialPort, rotateSessionIdOnLogin, requestAuthentication);
         }
 
         /**

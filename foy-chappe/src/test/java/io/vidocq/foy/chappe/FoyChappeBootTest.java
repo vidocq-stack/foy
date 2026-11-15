@@ -654,6 +654,14 @@ class FoyChappeBootTest {
     }
 
     @Test
+    void requestAuthenticationHookIsKeptInTheSecuritySettings() {
+        io.vidocq.foy.spi.security.RequestAuthentication hook = (req, res, mandatory) ->
+                io.vidocq.foy.spi.security.RequestAuthentication.anonymous();
+        assertEquals(hook, FoyChappeBoot.builder().requestAuthentication(hook).securitySettings().requestAuthentication());
+        assertThrows(NullPointerException.class, () -> FoyChappeBoot.builder().requestAuthentication(null));
+    }
+
+    @Test
     void certificateUserIsMappedByTheInMemoryStore() throws Exception {
         X509Certificate alice;
         try (var in = FoyChappeBootTest.class.getResourceAsStream("/tls/alice.pem")) {

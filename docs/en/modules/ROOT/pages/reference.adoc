@@ -217,6 +217,9 @@ Each run writes a fresh `META-INF/services/io.vidocq.foy.spi.gen.WebComponent` a
 | `Builder.identityStore(IdentityStore store)`
 | The user base behind BASIC, FORM, CLIENT-CERT and `login()`. With neither this nor `user(...)`/`certificateUser(...)`, every login fails. Exclusive with `user` and `certificateUser`.
 
+| `Builder.requestAuthentication(RequestAuthentication hook)`
+| Hands the authentication of every request to `hook` (a Jakarta Authentication runtime, such as Kerckhoffs): it is asked before the constraint of the resource is applied and replaces the `login-config` mechanism. Without it the container's own mechanisms apply.
+
 | `Builder.confidentialPort(int port)`
 | HTTPS port a CONFIDENTIAL/INTEGRAL constraint redirects plain HTTP to (`302`). Default `-1`: such a request gets `403`. Any other value outside 1–65535 throws `IllegalArgumentException`.
 
