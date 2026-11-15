@@ -44,6 +44,7 @@ import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -65,7 +66,7 @@ class UndeployCrossContextEndToEndTest {
 
     /** What the caller application records: the dispatcher it keeps, and the failures it saw. */
     static final class Caller {
-        volatile RequestDispatcher kept;
+        final AtomicReference<RequestDispatcher> kept = new AtomicReference<>();
         final List<String> failures = new CopyOnWriteArrayList<>();
     }
 
@@ -85,9 +86,10 @@ class UndeployCrossContextEndToEndTest {
                 return;
             }
             // The first forward keeps its dispatcher; the later ones reuse it, as an application may.
-            if (caller.kept == null) caller.kept = target.getRequestDispatcher(PROBE_PATH);
+            RequestDispatcher dispatcher =
+                    caller.kept.updateAndGet(current -> current != null ? current : target.getRequestDispatcher(PROBE_PATH));
             try {
-                caller.kept.forward(req, resp);
+                dispatcher.forward(req, resp);
             } catch (ServletException e) {
                 caller.failures.add(e.getClass().getSimpleName());
                 throw e;
