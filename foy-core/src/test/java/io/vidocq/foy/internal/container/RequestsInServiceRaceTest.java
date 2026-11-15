@@ -22,6 +22,8 @@ package io.vidocq.foy.internal.container;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 
+import java.util.EnumMap;
+import java.util.Map;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -45,13 +47,12 @@ class RequestsInServiceRaceTest {
 
     @Test
     void aRequestEnteringAsTheUndeployStartsIsRefusedOrWaitedFor() throws InterruptedException {
-        int[] counts = new int[Outcome.values().length];
+        Map<Outcome, Integer> counts = new EnumMap<>(Outcome.class);
+        for (Outcome outcome : Outcome.values()) counts.put(outcome, 0);
         for (int i = 0; i < ROUNDS; i++) {
-            counts[round().ordinal()]++;
+            counts.merge(round(), 1, Integer::sum);
         }
-        String seen = "refused " + counts[Outcome.REFUSED.ordinal()] + ", waited for "
-                + counts[Outcome.WAITED_FOR.ordinal()] + ", neither " + counts[Outcome.NEITHER.ordinal()];
-        assertEquals(0, counts[Outcome.NEITHER.ordinal()], seen);
+        assertEquals(0, counts.get(Outcome.NEITHER), counts.toString());
     }
 
     /**
