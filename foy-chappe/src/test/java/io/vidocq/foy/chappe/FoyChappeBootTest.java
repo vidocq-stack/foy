@@ -657,8 +657,9 @@ class FoyChappeBootTest {
     void requestAuthenticationHookIsKeptInTheSecuritySettings() {
         io.vidocq.foy.spi.security.RequestAuthentication hook = (req, res, mandatory) ->
                 io.vidocq.foy.spi.security.RequestAuthentication.anonymous();
-        assertEquals(hook, FoyChappeBoot.builder().requestAuthentication(hook).securitySettings().requestAuthentication());
-        assertThrows(NullPointerException.class, () -> FoyChappeBoot.builder().requestAuthentication(null));
+        var builder = FoyChappeBoot.builder();
+        assertEquals(hook, builder.requestAuthentication(hook).securitySettings().requestAuthentication());
+        assertThrows(NullPointerException.class, () -> builder.requestAuthentication(null));
     }
 
     @Test
