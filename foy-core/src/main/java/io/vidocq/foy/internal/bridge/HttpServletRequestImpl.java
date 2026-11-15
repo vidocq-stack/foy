@@ -1039,8 +1039,8 @@ public final class HttpServletRequestImpl implements HttpServletRequest {
         if (hook != null) {
             // The runtime that took over authentication decides; whoever stays anonymous is not authenticated.
             if (hook.validateRequest(this, response, true) instanceof
-                    io.vidocq.foy.spi.security.RequestAuthentication.Outcome.Authenticated found) {
-                bindIdentity(found.identity(), found.authType());
+                    io.vidocq.foy.spi.security.RequestAuthentication.Outcome.Authenticated(var who, var type)) {
+                bindIdentity(who, type);
             }
             return identity != null;
         }

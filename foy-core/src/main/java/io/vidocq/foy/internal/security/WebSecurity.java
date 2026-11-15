@@ -180,8 +180,10 @@ public final class WebSecurity {
         boolean mandatory = decision.access() == Decision.Access.ROLES;
         switch (hook.validateRequest(req, res, mandatory)) {
             case RequestAuthentication.Outcome.ResponseSent _ -> { return false; }
-            case RequestAuthentication.Outcome.Authenticated found -> req.bindIdentity(found.identity(), found.authType());
-            case RequestAuthentication.Outcome.Anonymous _ -> { }
+            case RequestAuthentication.Outcome.Authenticated(var who, var type) -> req.bindIdentity(who, type);
+            case RequestAuthentication.Outcome.Anonymous _ -> {
+                // Nobody was identified: a protected resource refuses the request below.
+            }
         }
         if (mandatory && (req.identity() == null || !decision.permits(req.identity()))) {
             res.sendError(HttpServletResponse.SC_FORBIDDEN);

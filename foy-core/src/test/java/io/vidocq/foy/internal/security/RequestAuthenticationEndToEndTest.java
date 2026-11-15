@@ -24,7 +24,6 @@ import io.vidocq.foy.internal.boot.WebAppModel.ServletDecl;
 import io.vidocq.foy.internal.webxml.SecurityDefs.LoginConfigDef;
 import io.vidocq.foy.spi.security.Identity;
 import io.vidocq.foy.spi.security.RequestAuthentication;
-import io.vidocq.foy.spi.security.RequestAuthentication.Outcome;
 import jakarta.servlet.http.HttpServlet;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
