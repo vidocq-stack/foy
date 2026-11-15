@@ -368,6 +368,7 @@ class WebSocketTakeoverEndToEndTest {
             awaitState(probe.sender.get(), Thread.State.WAITING);
             Thread undeploy = Thread.ofVirtual().start(context::closeUpgradedConnections);
             assertTrue(undeploy.join(Duration.ofSeconds(5)), "the undeploy waited for the blocked send");
+            assertTrue(probe.destroyed.await(5, TimeUnit.SECONDS));
             assertEquals(List.of("open", "close", "destroy"), probe.events);
             assertEquals(1001, probe.closeCode.get());
             assertEquals(1, probe.destroyCalls.get());

@@ -40,6 +40,7 @@ class UpgradedConnectionsUndeployTest {
 
     private static final String CONTEXT_LOGGER = VidocqServletContext.class.getName();
     private static final int CONNECTIONS = 3;
+    private static final String OTHER = "the other";
 
     private final VidocqServletContext context = new VidocqServletContext("/");
 
@@ -93,10 +94,10 @@ class UpgradedConnectionsUndeployTest {
         assertTrue(context.registerUpgradedConnection(() -> {
             throw failure;
         }));
-        assertTrue(context.registerUpgradedConnection(() -> ended.add("the other")));
+        assertTrue(context.registerUpgradedConnection(() -> ended.add(OTHER)));
         try (var log = LogCapture.of(CONTEXT_LOGGER)) {
             assertDoesNotThrow(context::closeUpgradedConnections);
-            assertEquals(List.of("the other"), ended);
+            assertEquals(List.of(OTHER), ended);
             assertEquals(List.of(failure), log.thrown());
         }
     }
@@ -109,10 +110,10 @@ class UpgradedConnectionsUndeployTest {
         assertTrue(context.registerUpgradedConnection(() -> {
             throw failure;
         }));
-        assertTrue(context.registerUpgradedConnection(() -> ended.add("the other")));
+        assertTrue(context.registerUpgradedConnection(() -> ended.add(OTHER)));
         try (var log = LogCapture.of(CONTEXT_LOGGER)) {
             context.closeUpgradedConnections();
-            assertEquals(List.of("the other"), ended);
+            assertEquals(List.of(OTHER), ended);
             assertEquals(List.of(failure), log.thrown());
         }
     }

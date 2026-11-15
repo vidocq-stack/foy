@@ -16,7 +16,9 @@
   waits for it against the same deadline as the rest of the hook (2 s in all); past it, the takeover ends
   with 1001 all the same and the Close goes out once that send ends. Raw upgrades already bounded their close
   the same way (`WebConnectionImpl.CLOSE_WRITE_GRACE`). The test now returns after the 2 s grace with
-  `[open, close, destroy]` and 1001.
+  `[open, close, destroy]` and 1001. On that path, and when the undeploy hook is interrupted, the endpoint
+  gets `onClose(1001)` before the Close frame leaves, against Jakarta WebSocket 2.2 section 2.1.5 (the Close
+  before `onClose`): waiting for the frame would let a peer that does not read hold the undeploy without limit.
 
 ## BUG-20261114-09 — The stalled-peer upgrade test reads the writer's state twice and can see it running
 
@@ -70,7 +72,11 @@
   each on a virtual thread of its own, within one 3 s deadline (`VidocqServletContext.UPGRADED_CONNECTIONS_GRACE`),
   and a failure of one, `Error` included, is logged without stopping the rest
   (`UpgradedConnectionsUndeployTest`, `WebSocketTakeoverEndToEndTest.anUndeployWaitsForStuckConnectionsTogether`:
-  four stuck connections took 8.0 s before, about 2 s after).
+  four stuck connections took 8.0 s before, about 2 s after). Also in review: an interrupt that reached the
+  undeploy hook while it waited ended the hook with nothing ending the takeover and nothing logged, the
+  connection left marked as closed by the undeploy (`[open]` only). The takeover of a connection the undeploy
+  closed now ends at once unless an event runs, with a WARNING, and the thread keeps its interrupt
+  (`WebSocketTakeoverEndToEndTest.anInterruptedUndeployHookStillEndsTheTakeover`).
 
 ## BUG-20261114-07 — A server stop right after an undeploy reports a spurious `onError` before `onClose(1001)`
 

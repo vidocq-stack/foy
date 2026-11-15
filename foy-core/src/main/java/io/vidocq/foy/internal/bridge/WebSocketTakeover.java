@@ -293,8 +293,9 @@ final class WebSocketTakeover implements WebSocketHandler {
     /**
      * The undeploy was interrupted while it waited for its Close, for the event in progress or for a
      * closing handshake under way. The takeover of a connection it closed ends now, unless an event runs:
-     * the undeploy closed the session, and its Close still goes out on its own thread. Otherwise the
-     * transport ends it, after the application stopped. A WARNING says which.
+     * the undeploy closed the session, and its Close still goes out on its own thread, possibly after
+     * {@code onClose} (as on the deadline path of {@link #endNow}). Otherwise the transport ends it, after
+     * the application stopped. A WARNING says which.
      */
     private void endInterrupted() {
         if (closedByUndeploy && events.tryLock()) {
@@ -346,11 +347,14 @@ final class WebSocketTakeover implements WebSocketHandler {
     }
 
     /**
-     * Ends the takeover on the undeploy hook's thread with its 1001, once the event in progress returned, and
-     * without waiting for the peer to answer: Jakarta WebSocket 2.2 section 2.1.5 only asks that the
-     * Close be sent before {@code onClose}, and section 5.1 that the listener never runs on two threads
-     * at once. An event still running at {@code deadline} leaves the end to the transport's thread, once
-     * it returned.
+     * Ends the takeover on the undeploy hook's thread with its 1001, once the event in progress returned,
+     * and without waiting for the peer to answer: Jakarta WebSocket 2.2 section 5.1 asks that the listener
+     * never run on two threads at once, and section 2.1.5 that the Close be sent before {@code onClose},
+     * which needs no answer from the peer. The Close has usually gone out by then. When a send blocked on
+     * a peer that does not read held it back past the deadline ({@link #sendGoingAway}), {@code onClose}
+     * runs before the frame leaves: section 2.1.5 is not kept on that path, because waiting for that frame
+     * would let a peer that does not read hold the undeploy without limit (BUG-20261115-01). An event
+     * still running at {@code deadline} leaves the end to the transport's thread, once it returned.
      */
     private void endNow(long deadline) throws InterruptedException {
         if (!events.tryLock(remaining(deadline).toNanos(), TimeUnit.NANOSECONDS)) {
