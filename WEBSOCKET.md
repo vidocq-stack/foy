@@ -223,8 +223,10 @@ Decided by the maintainer: same-origin by default, opened by configuration only.
   `Endpoint.onOpen`, the message handlers, `onClose` and `onError` run there, so an
   endpoint instance never sees two threads at once. One exception: the `onClose` of a
   session an undeploy closes runs on the virtual thread the undeploy closes that session on
-  (all sessions at once), after the event in progress returned (at most 2 s), so that it
-  precedes `contextDestroyed`; nothing follows it. Every callback runs with the
+  (all sessions at once), or, when a callback is in progress, on the connection's thread as
+  soon as that callback returns. It precedes `contextDestroyed` unless that callback outlives
+  the undeploy's 2 s, and nothing follows it: no message read once the undeploy sent its
+  Close is delivered. Every callback runs with the
   application's class loader as context class loader, as raw upgrades do
   (`WebConnectionImpl`). No CDI request or session context is active in a callback in
   lot 1: the handshake request has ended (lot 2 decides). Vaadin with

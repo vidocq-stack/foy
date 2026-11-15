@@ -156,6 +156,12 @@
   nothing interrupts either, so the path only ran in that test, which reached the hook by reflection. An
   interrupt of the undeploy's own thread now only stops the undeploy's wait for its connections: those still
   closing finish on their own virtual threads, and their `onClose` may then come after `contextDestroyed`.
+  Also in the final review: on that grace-out path, frames read after an event that outlived the 2 s grace
+  still reached the listener after `contextDestroyed`, the takeover ending only on Chappe's `onClose`. Once
+  the undeploy closed a connection, `deliver` now hands no frame to the listener and ends the takeover
+  with 1001, after the event in progress or instead of the next frame
+  (`WebSocketTakeoverEndToEndTest.aFrameAfterTheUndeployGaveUpReachesNoListener`: `[open, text:held,
+  text:late]` before, `[open, text:held, close, destroy]` after).
 
 ## BUG-20261114-07 — A server stop right after an undeploy reports a spurious `onError` before `onClose(1001)`
 

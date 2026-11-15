@@ -56,16 +56,17 @@ import java.util.concurrent.locks.ReentrantLock;
  *
  * <p>An undeploy ends the takeover before it goes on, so {@code onClose} and {@code destroy()} run
  * while the application is intact, before its {@code contextDestroyed} (BUG-20261114-08). A
- * connection still open is closed with 1001 and ended on the undeploy hook's thread (a virtual thread
- * of its own for each connection) as soon as its Close
- * is sent, without waiting for the peer's answer: the listener hears that 1001, not the code the peer
- * answers with nor the 1006 of a connection the server's stop cut, and no I/O failure of that closing
- * handshake reaches its {@code onError}. That end waits for the event in progress, so the listener
- * never runs on two threads at once. A connection whose closing handshake had already begun keeps the
- * code of the side that closed first: the undeploy waits for its end. The Close goes out on a thread of
- * its own, since a send blocked on a peer that does not read holds the lock it needs. The whole of it,
- * the Close and the wait, lasts at most {@link #UNDEPLOY_GRACE}; past it, the takeover ends on the
- * transport's thread, and a Close still held goes out once that send ends.</p>
+ * connection still open is closed with 1001 and ended as soon as its Close is sent, without waiting for
+ * the peer's answer: on the undeploy hook's thread (a virtual thread of its own for each connection), or,
+ * when an event is in progress, on the connection's thread as soon as that event returns, so the listener
+ * never runs on two threads at once. The listener hears that 1001, not the code the peer answers with nor
+ * the 1006 of a connection the server's stop cut; no I/O failure of that closing handshake reaches its
+ * {@code onError}, and no frame read once the Close was sent reaches it either. A connection whose
+ * closing handshake had already begun keeps the code of the side that closed first: the undeploy waits
+ * for its end. The Close goes out on a thread of its own, since a send blocked on a peer that does not
+ * read holds the lock it needs. The whole of it, the Close and the wait, lasts at most
+ * {@link #UNDEPLOY_GRACE}; past it, the takeover still ends once the event in progress returns, after the
+ * application stopped, and a Close still held goes out once that send ends.</p>
  *
  * <p>Nothing interrupts the hook: it runs on a virtual thread the context starts for this connection, and
  * its Close on another one. An interrupt of the undeploy's own thread only stops the undeploy's wait for
@@ -188,15 +189,27 @@ final class WebSocketTakeover implements WebSocketHandler {
 
     /**
      * Hands one event of the transport to the listener, under {@link #events} and with the application
-     * class loader; none once the takeover ended, which an undeploy can do before the transport does.
+     * class loader; none once the takeover ended, which an undeploy can do before the transport does, and
+     * none once the undeploy closed the connection. Then, still under the lock, the takeover of a
+     * connection the undeploy closed ends with its 1001: after the event that was in progress when the
+     * undeploy came, or instead of a frame read since. So no frame reaches the listener after the undeploy
+     * sent its Close, even when the undeploy stopped waiting for an event that outlived its grace.
      */
     private void deliver(Event event) throws IOException {
         events.lock();
-        try (var _ = ContextLoaderScope.enter(applicationLoader)) {
-            var current = listener.get();
-            if (current != null && !closed.get()) event.deliverTo(current);
+        try {
+            if (!closedByUndeploy) {
+                try (var _ = ContextLoaderScope.enter(applicationLoader)) {
+                    var current = listener.get();
+                    if (current != null && !closed.get()) event.deliverTo(current);
+                }
+            }
         } finally {
-            events.unlock();
+            try {
+                if (closedByUndeploy) finish(GOING_AWAY, STOPPING);
+            } finally {
+                events.unlock();
+            }
         }
     }
 
@@ -321,20 +334,22 @@ final class WebSocketTakeover implements WebSocketHandler {
     }
 
     /**
-     * Ends the takeover on the undeploy hook's thread with its 1001, once the event in progress returned,
-     * and without waiting for the peer to answer: Jakarta WebSocket 2.2 section 5.1 asks that the listener
-     * never run on two threads at once, and section 2.1.5 that the Close be sent before {@code onClose},
-     * which needs no answer from the peer. The Close has usually gone out by then. When a send blocked on
-     * a peer that does not read held it back past the deadline ({@link #sendGoingAway}), {@code onClose}
-     * runs before the frame leaves: section 2.1.5 is not kept on that path, because waiting for that frame
-     * would let a peer that does not read hold the undeploy without limit (BUG-20261115-01). An event
-     * still running at {@code deadline} leaves the end to the transport's thread, once it returned.
+     * Ends the takeover with its 1001 without waiting for the peer to answer: Jakarta WebSocket 2.2
+     * section 5.1 asks that the listener never run on two threads at once, and section 2.1.5 that the
+     * Close be sent before {@code onClose}, which needs no answer from the peer. With no event running it
+     * ends here, on the undeploy hook's thread; an event in progress ends it on the connection's thread as
+     * soon as it returns ({@link #deliver}), and this then finds it ended. The Close has usually gone out
+     * by then. When a send blocked on a peer that does not read held it back past the deadline
+     * ({@link #sendGoingAway}), {@code onClose} runs before the frame leaves: section 2.1.5 is not kept on
+     * that path, because waiting for that frame would let a peer that does not read hold the undeploy
+     * without limit (BUG-20261115-01). An event still running at {@code deadline}: the undeploy stops
+     * waiting, and the takeover ends once that event returns, after the application stopped.
      */
     private void endNow(long deadline) throws InterruptedException {
         if (!events.tryLock(remaining(deadline).toNanos(), TimeUnit.NANOSECONDS)) {
             LOG.log(System.Logger.Level.WARNING, "a WebSocket event still ran {0} ms after the undeploy closed"
-                    + " its connection: onClose and destroy() run once it returns, after the application stopped",
-                    UNDEPLOY_GRACE.toMillis());
+                    + " its connection: onClose and destroy() run on the connection's thread once it returns, after"
+                    + " the application stopped, and no later frame reaches the listener", UNDEPLOY_GRACE.toMillis());
             return;
         }
         try {

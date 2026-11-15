@@ -80,6 +80,8 @@ class WebSocketTakeoverEndToEndTest {
         volatile boolean closeOnOpen;
         /** {@code onText} waits for {@link #textGate} to open before it echoes. */
         volatile boolean holdText;
+        /** {@code onText} records the message without echoing it. */
+        volatile boolean noEcho;
         final CountDownLatch textGate = new CountDownLatch(1);
         /** One permit per {@code onText} that started holding its message. */
         final Semaphore textEntered = new Semaphore(0);
@@ -336,6 +338,33 @@ class WebSocketTakeoverEndToEndTest {
     }
 
     /**
+     * Once the undeploy closed the connection, no frame reaches the listener: a frame the peer sends after the
+     * undeploy stopped waiting for an event in progress is not delivered after the application stopped, and
+     * the takeover ends with 1001 as soon as that event returns.
+     */
+    @Test
+    void aFrameAfterTheUndeployGaveUpReachesNoListener() throws Exception {
+        probe.holdText = true;
+        probe.noEcho = true;
+        start(new VidocqServletContext("/"));
+        try (var client = new RawClient(port)) {
+            client.send(handshake("/ws"));
+            assertTrue(probe.opened.await(5, TimeUnit.SECONDS), ON_OPEN);
+            client.send(clientText(HELD));
+            assertTrue(probe.textEntered.tryAcquire(5, TimeUnit.SECONDS), "onText");
+            Thread undeploy = Thread.ofVirtual().start(context::closeUpgradedConnections);
+            assertTrue(undeploy.join(Duration.ofSeconds(10)), "the undeploy waited past its grace");
+            client.send(clientText("late"));
+            probe.textGate.countDown();
+            boolean ended = probe.destroyed.await(5, TimeUnit.SECONDS);
+            assertEquals(List.of("open", HELD_EVENT, "close", "destroy"), probe.events,
+                    "a frame reached the listener after the undeploy closed the connection");
+            assertTrue(ended, "the takeover did not end once the event returned");
+            assertEquals(1001, probe.closeCode.get());
+        }
+    }
+
+    /**
      * The undeploy's grace runs out on an event in progress, so the takeover is still open when the server
      * stops: the I/O failure the stop causes (the held {@code onText} cannot echo any more) reaches the
      * takeover's {@code onError}, which must not report it, the undeploy having closed the session
@@ -535,6 +564,20 @@ class WebSocketTakeoverEndToEndTest {
         assertEquals(expected, state, thread.getName());
     }
 
+    /** A masked client text frame (RFC 6455 section 5.2) of fewer than 126 bytes. */
+    private static byte[] clientText(String text) {
+        byte[] payload = text.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        byte[] mask = {0x11, 0x22, 0x33, 0x44};
+        byte[] frame = new byte[2 + mask.length + payload.length];
+        frame[0] = (byte) 0x81;
+        frame[1] = (byte) (0x80 | payload.length);
+        System.arraycopy(mask, 0, frame, 2, mask.length);
+        for (int i = 0; i < payload.length; i++) {
+            frame[2 + mask.length + i] = (byte) (payload[i] ^ mask[i % mask.length]);
+        }
+        return frame;
+    }
+
     private void connectWithoutOpen(CompletableFuture<Integer> closedByServer) throws Exception {
         HttpClient.newHttpClient().newWebSocketBuilder()
                 .buildAsync(URI.create("ws://127.0.0.1:" + port + "/ws"),
@@ -647,7 +690,7 @@ class WebSocketTakeoverEndToEndTest {
                         probe.textEntered.release();
                         awaitGate(probe.textGate);
                     }
-                    peer.get().sendText(text);
+                    if (!probe.noEcho) peer.get().sendText(text);
                 }
 
                 @Override

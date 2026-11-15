@@ -31,9 +31,11 @@ import java.nio.ByteBuffer;
  * callback may block (for instance on {@link WebSocketPeer} sends); the next event waits.
  * One exception to the thread: when the undeploy of the application closes an open connection,
  * {@link #onClose(int, String)} runs on the virtual thread the undeploy closes that connection on,
- * still with the application class loader and still one event at a time (after the callback in
- * progress returned), so that it runs before the application's
- * {@code ServletContextListener.contextDestroyed}.
+ * or, when a callback is in progress, on the connection's thread as soon as that callback returns;
+ * still with the application class loader and still one event at a time, so that it runs before the
+ * application's {@code ServletContextListener.contextDestroyed} (unless that callback outlives the
+ * undeploy's wait). No event follows it: a frame read once the undeploy sent its Close is not
+ * delivered.
  *
  * <p>Every method is a no-op by default. A buffer passed to a callback is only valid for the
  * duration of that call: copy it to keep it.
