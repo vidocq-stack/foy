@@ -370,12 +370,24 @@ public final class VidocqServletContext implements ServletContext {
      */
     static final java.time.Duration REQUESTS_GRACE = java.time.Duration.ofSeconds(2);
 
-    private final java.util.concurrent.locks.ReentrantLock requests = new java.util.concurrent.locks.ReentrantLock();
-    private final java.util.concurrent.locks.Condition noRequestInService = requests.newCondition();
-    /** Guarded by {@link #requests}: the requests that entered the application and have not left it. */
-    private int requestsInService;
-    /** Guarded by {@link #requests}: the undeploy began, so requests are refused. */
-    private boolean requestsRefused;
+    /*
+     * A request takes no lock: it increments requestsInService, then reads requestsRefused. The undeploy
+     * writes requestsRefused, then reads requestsInService. These are volatile accesses, so they fall in
+     * one total order that keeps each thread's own order (JLS 17.4.4). Either the request reads the flag
+     * after the undeploy wrote it, and backs out with 503, or the undeploy reads the count after the
+     * request's increment, and waits for that request. A request is refused or waited for, never neither.
+     * Checking the flag before the increment would break this: the request reads false, the undeploy sets
+     * the flag and reads 0, and the request then runs under destroy(). The lock below is taken only once
+     * the undeploy began, to wait for the count to reach 0 and to signal it, never on a request's way in.
+     */
+
+    /** The requests that entered the application and have not left it (a refused one, for an instant). */
+    private final java.util.concurrent.atomic.AtomicInteger requestsInService =
+            new java.util.concurrent.atomic.AtomicInteger();
+    /** The undeploy began: requests are refused. */
+    private volatile boolean requestsRefused;
+    private final java.util.concurrent.locks.ReentrantLock requestsDrain = new java.util.concurrent.locks.ReentrantLock();
+    private final java.util.concurrent.locks.Condition noRequestInService = requestsDrain.newCondition();
 
     /**
      * A request enters the application. It is counted until {@link #exitRequest()}, unless the undeploy
@@ -385,35 +397,30 @@ public final class VidocqServletContext implements ServletContext {
      * @return {@code false} when the request is refused: the caller answers 503
      */
     public boolean enterRequest() {
-        requests.lock();
-        try {
-            if (requestsRefused) return false;
-            requestsInService++;
-            return true;
-        } finally {
-            requests.unlock();
-        }
+        requestsInService.incrementAndGet();
+        if (!requestsRefused) return true;
+        exitRequest();
+        return false;
     }
 
     /** A request {@link #enterRequest() entered} left the application, its asynchronous processing included. */
     public void exitRequest() {
-        requests.lock();
-        try {
-            requestsInService--;
-            if (requestsInService == 0) noRequestInService.signalAll();
-        } finally {
-            requests.unlock();
+        // The undeploy reads the count under the lock before it waits, and the flag was set before that
+        // read: the last request out sees the flag and signals after the undeploy waits, or the undeploy
+        // reads 0 and does not wait.
+        if (requestsInService.decrementAndGet() == 0 && requestsRefused) {
+            requestsDrain.lock();
+            try {
+                noRequestInService.signalAll();
+            } finally {
+                requestsDrain.unlock();
+            }
         }
     }
 
     /** Undeploy, its first step: every request from now on is refused (BUG-20261115-02). */
     public void refuseRequests() {
-        requests.lock();
-        try {
-            requestsRefused = true;
-        } finally {
-            requests.unlock();
-        }
+        requestsRefused = true;
     }
 
     /**
@@ -425,12 +432,12 @@ public final class VidocqServletContext implements ServletContext {
     public void awaitRequestsInService() {
         boolean interrupted = Thread.interrupted();
         int left;
-        requests.lock();
+        requestsDrain.lock();
         try {
             awaitNoRequestInService();
-            left = requestsInService;
+            left = requestsInService.get();
         } finally {
-            requests.unlock();
+            requestsDrain.unlock();
         }
         if (interrupted) Thread.currentThread().interrupt();
         if (left > 0) {
@@ -441,11 +448,11 @@ public final class VidocqServletContext implements ServletContext {
         }
     }
 
-    /** Holding {@link #requests}: waits for no request in service, {@link #REQUESTS_GRACE} at most. */
+    /** Holding {@link #requestsDrain}: waits for no request in service, {@link #REQUESTS_GRACE} at most. */
     private void awaitNoRequestInService() {
         long nanos = REQUESTS_GRACE.toNanos();
         try {
-            while (requestsInService > 0 && nanos > 0) {
+            while (requestsInService.get() > 0 && nanos > 0) {
                 nanos = noRequestInService.awaitNanos(nanos);
             }
         } catch (InterruptedException _) {

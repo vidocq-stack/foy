@@ -16,6 +16,12 @@
   processing included), and the undeploy waits for them after closing the upgraded connections, up to 2 s
   (`REQUESTS_GRACE`, as Tomcat's default `unloadDelay`), with a WARNING for those still running. An
   undeploy started from a request of the same application waits for that request too, up to the grace.
+- Review note (round 3): the first fix took the context's lock twice per request. A request now takes no
+  lock: an `AtomicInteger` count, incremented before the request reads a `volatile` refused flag, which the
+  undeploy sets before it reads the count, so a request is refused or waited for, never neither. The lock
+  and its condition serve only the undeploy's wait and the last request's signal once the undeploy began.
+  `RequestsInServiceRaceTest` pins the order: 20,000 rounds of a request against an undeploy; with the
+  flag read before the increment it saw 48, 72 and 98 requests neither refused nor waited for in 3 runs.
 
 ## BUG-20261115-02 — Requests reach the application while and after it is undeployed
 
