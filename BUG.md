@@ -1,5 +1,22 @@
 # BUG.md — foy
 
+## BUG-20261115-03 — The undeploy destroys filters and servlets under the requests still in service
+
+- Date: 2026-11-15 (found while fixing BUG-20261115-02, checking the other half of Servlet 6.1 section 2.3.4).
+- Symptom: `Deployment.close()` called `destroy()` on the filters and servlets at once, while requests were
+  still running in their `service` method; Servlet 6.1 section 2.3.4 asks the container to let those finish,
+  or to wait up to a server-defined time limit, before `destroy()`.
+- Repro: deterministic, `UndeployRequestsEndToEndTest.theUndeployLetsARequestInServiceFinishFirst`: a request
+  held in `doGet`, then an undeploy, which returned within 500 ms with `destroy` recorded before the request
+  ended; `theUndeployDoesNotWaitForARequestPastItsGrace` found no WARNING for the request it left running.
+- Cause: nothing counted the requests in service; the undeploy went straight from the upgraded connections
+  to `destroy()`.
+- Status: FIXED on `fix/websocket-shutdown-order`. The context counts the requests in service
+  (`VidocqServletContext.enterRequest`/`exitRequest`, around the bridge's whole pipeline, asynchronous
+  processing included), and the undeploy waits for them after closing the upgraded connections, up to 2 s
+  (`REQUESTS_GRACE`, as Tomcat's default `unloadDelay`), with a WARNING for those still running. An
+  undeploy started from a request of the same application waits for that request too, up to the grace.
+
 ## BUG-20261115-02 — Requests reach the application while and after it is undeployed
 
 - Date: 2026-11-15 (found in review: the documented order, close the deployment then stop the server, opens

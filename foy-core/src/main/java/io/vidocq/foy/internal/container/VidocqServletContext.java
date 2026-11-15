@@ -361,25 +361,96 @@ public final class VidocqServletContext implements ServletContext {
         return f;
     }
 
-    // ---- Requests (Servlet 6.1 section 2.3.4) ----
-
-    /** The undeploy began: requests are refused. */
-    private volatile boolean requestsRefused;
+    // ---- Requests in service (Servlet 6.1 section 2.3.4) ----
 
     /**
-     * A request enters the application, unless the undeploy began: then it is refused and must reach no
-     * filter and no servlet, since the container may not route a request to a servlet it destroys
-     * (Servlet 6.1 section 2.3.4, BUG-20261115-02).
+     * How long an undeploy waits for the requests in service before it destroys the filters and servlets:
+     * Servlet 6.1 section 2.3.4 lets the container stop waiting at "a server-defined time limit". 2 s, as
+     * Tomcat's default {@code unloadDelay}; past it, {@code destroy()} runs while they still run.
+     */
+    static final java.time.Duration REQUESTS_GRACE = java.time.Duration.ofSeconds(2);
+
+    private final java.util.concurrent.locks.ReentrantLock requests = new java.util.concurrent.locks.ReentrantLock();
+    private final java.util.concurrent.locks.Condition noRequestInService = requests.newCondition();
+    /** Guarded by {@link #requests}: the requests that entered the application and have not left it. */
+    private int requestsInService;
+    /** Guarded by {@link #requests}: the undeploy began, so requests are refused. */
+    private boolean requestsRefused;
+
+    /**
+     * A request enters the application. It is counted until {@link #exitRequest()}, unless the undeploy
+     * began: then it is refused and must reach no filter and no servlet, since the container may not
+     * route a request to a servlet it destroys (Servlet 6.1 section 2.3.4, BUG-20261115-02).
      *
      * @return {@code false} when the request is refused: the caller answers 503
      */
     public boolean enterRequest() {
-        return !requestsRefused;
+        requests.lock();
+        try {
+            if (requestsRefused) return false;
+            requestsInService++;
+            return true;
+        } finally {
+            requests.unlock();
+        }
+    }
+
+    /** A request {@link #enterRequest() entered} left the application, its asynchronous processing included. */
+    public void exitRequest() {
+        requests.lock();
+        try {
+            requestsInService--;
+            if (requestsInService == 0) noRequestInService.signalAll();
+        } finally {
+            requests.unlock();
+        }
     }
 
     /** Undeploy, its first step: every request from now on is refused (BUG-20261115-02). */
     public void refuseRequests() {
-        requestsRefused = true;
+        requests.lock();
+        try {
+            requestsRefused = true;
+        } finally {
+            requests.unlock();
+        }
+    }
+
+    /**
+     * Undeploy, before the filters and servlets are destroyed: lets the requests still in service finish,
+     * for {@link #REQUESTS_GRACE} at most (Servlet 6.1 section 2.3.4, BUG-20261115-03), and logs those it
+     * stops waiting for. The interrupt of the undeploy's thread is cleared for the wait and restored
+     * afterwards; one that arrives during the wait ends it.
+     */
+    public void awaitRequestsInService() {
+        boolean interrupted = Thread.interrupted();
+        int left;
+        requests.lock();
+        try {
+            awaitNoRequestInService();
+            left = requestsInService;
+        } finally {
+            requests.unlock();
+        }
+        if (interrupted) Thread.currentThread().interrupt();
+        if (left > 0) {
+            System.getLogger(VidocqServletContext.class.getName()).log(System.Logger.Level.WARNING,
+                    "The undeploy stopped waiting for the requests still in service ({0}) after {1} ms:"
+                            + " the filters and servlets are destroyed while they run",
+                    left, REQUESTS_GRACE.toMillis());
+        }
+    }
+
+    /** Holding {@link #requests}: waits for no request in service, {@link #REQUESTS_GRACE} at most. */
+    private void awaitNoRequestInService() {
+        long nanos = REQUESTS_GRACE.toNanos();
+        try {
+            while (requestsInService > 0 && nanos > 0) {
+                nanos = noRequestInService.awaitNanos(nanos);
+            }
+        } catch (InterruptedException _) {
+            Thread.currentThread().interrupt();
+        }
     }
 
     // ---- Upgraded connections (Servlet 6.1 section 2.3.3.5) ----

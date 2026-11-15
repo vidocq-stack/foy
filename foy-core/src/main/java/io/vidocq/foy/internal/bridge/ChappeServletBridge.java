@@ -187,9 +187,10 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
             new AtomicLong();
 
     /**
-     * The pipeline thread's body: every way out settles the head or ends the live body. Once the
-     * application's undeploy began, the request is refused with 503 before any listener, filter or
-     * servlet sees it (Servlet 6.1 section 2.3.4, BUG-20261115-02).
+     * The pipeline thread's body: every way out settles the head or ends the live body. The request is
+     * counted in service by the context while the application has it, so that an undeploy lets it
+     * finish before {@code destroy()}; once the undeploy began, it is refused with 503 before any
+     * listener, filter or servlet sees it (Servlet 6.1 section 2.3.4, BUG-20261115-02).
      */
     private void runPipeline(Request request, List<HttpServletRequestImpl> requests,
                              HttpServletResponseImpl res, ResponseHead head) {
@@ -206,7 +207,11 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
             // included, still settles the head chappe's thread is parked on.
             failure = t;
         } finally {
-            endRequests(requests);
+            try {
+                endRequests(requests);
+            } finally {
+                servletContext.exitRequest();
+            }
         }
         try {
             if (res.isStreaming()) endLiveBody(res, failure);

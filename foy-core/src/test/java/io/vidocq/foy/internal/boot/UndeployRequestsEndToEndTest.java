@@ -20,7 +20,9 @@
 package io.vidocq.foy.internal.boot;
 
 import io.vidocq.chappe.api.Server;
+import io.vidocq.foy.internal.LogCapture;
 import io.vidocq.foy.internal.boot.WebAppModel.ServletDecl;
+import io.vidocq.foy.internal.container.VidocqServletContext;
 import jakarta.servlet.http.HttpServlet;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
@@ -36,6 +38,7 @@ import java.net.http.HttpResponse;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
@@ -45,7 +48,9 @@ import static org.junit.jupiter.api.Assertions.*;
 /**
  * The requests around an undeploy (Servlet 6.1 section 2.3.4). The documented order closes the deployment
  * before the server stops, so requests still arrive while the application goes away: from the moment the
- * undeploy starts, a new request gets 503 and never reaches a filter or a servlet (BUG-20261115-02).
+ * undeploy starts, a new request gets 503 and never reaches a filter or a servlet (BUG-20261115-02), and
+ * the requests already in service may finish, for a bounded time, before {@code destroy()}
+ * (BUG-20261115-03).
  */
 @Timeout(30)
 class UndeployRequestsEndToEndTest {
@@ -57,12 +62,15 @@ class UndeployRequestsEndToEndTest {
     /** What the servlet of one test records, and where it can be held. */
     static final class Probe {
         final List<String> events = new CopyOnWriteArrayList<>();
+        final CountDownLatch serviceEntered = new CountDownLatch(1);
+        final CountDownLatch serviceGate = new CountDownLatch(1);
         final CountDownLatch destroyEntered = new CountDownLatch(1);
         final CountDownLatch destroyGate = new CountDownLatch(1);
+        volatile boolean holdService;
         volatile boolean holdDestroy;
     }
 
-    /** Records its requests and its {@code destroy()}, which can be held on a gate of the probe. */
+    /** Records its requests and its {@code destroy()}; either can be held on a gate of the probe. */
     public static final class ProbeServlet extends HttpServlet {
         private final transient Probe probe;
 
@@ -73,6 +81,11 @@ class UndeployRequestsEndToEndTest {
         @Override
         protected void doGet(HttpServletRequest req, HttpServletResponse resp) throws IOException {
             probe.events.add(SERVICE);
+            if (probe.holdService) {
+                probe.serviceEntered.countDown();
+                await(probe.serviceGate);
+                probe.events.add("service end");
+            }
             resp.getWriter().write("served");
         }
 
@@ -102,6 +115,7 @@ class UndeployRequestsEndToEndTest {
 
     @AfterEach
     void tearDown() {
+        probe.serviceGate.countDown();
         probe.destroyGate.countDown();
         if (deployment != null) deployment.close();
         if (server != null) server.stop();
@@ -134,6 +148,40 @@ class UndeployRequestsEndToEndTest {
         assertTrue(undeploy.join(Duration.ofSeconds(5)), "the undeploy did not return");
     }
 
+    /** The undeploy lets a request in service finish before it destroys the servlet. */
+    @Test
+    void theUndeployLetsARequestInServiceFinishFirst() throws Exception {
+        probe.holdService = true;
+        deploy();
+        CompletableFuture<HttpResponse<String>> response = getAsync();
+        assertTrue(probe.serviceEntered.await(5, TimeUnit.SECONDS), SERVICE);
+        Thread undeploy = Thread.ofVirtual().start(deployment::close);
+        assertFalse(undeploy.join(Duration.ofMillis(500)), "the undeploy did not wait for the request in service");
+        probe.serviceGate.countDown();
+        assertEquals(200, response.get(5, TimeUnit.SECONDS).statusCode());
+        assertTrue(undeploy.join(Duration.ofSeconds(5)), "the undeploy did not return");
+        assertEquals(List.of(SERVICE, "service end", DESTROY), probe.events);
+    }
+
+    /** A request still in service after the grace does not hold the undeploy: it goes on, with a WARNING. */
+    @Test
+    void theUndeployDoesNotWaitForARequestPastItsGrace() throws Exception {
+        probe.holdService = true;
+        deploy();
+        CompletableFuture<HttpResponse<String>> response = getAsync();
+        assertTrue(probe.serviceEntered.await(5, TimeUnit.SECONDS), SERVICE);
+        try (var log = LogCapture.of(VidocqServletContext.class.getName())) {
+            Thread undeploy = Thread.ofVirtual().start(deployment::close);
+            assertTrue(undeploy.join(Duration.ofSeconds(10)), "the undeploy waited past its grace");
+            assertEquals(List.of(SERVICE, DESTROY), probe.events);
+            assertTrue(log.warnings().stream().anyMatch(w -> w.contains("requests still in service (1)")),
+                    log.warnings().toString());
+        } finally {
+            probe.serviceGate.countDown();
+        }
+        assertEquals(200, response.get(5, TimeUnit.SECONDS).statusCode());
+    }
+
     private void deploy() {
         var servlet = new ServletDecl("probe", ProbeServlet.class, () -> new ProbeServlet(probe), List.of(PATH),
                 Map.of(), 1, true);
@@ -150,5 +198,9 @@ class UndeployRequestsEndToEndTest {
 
     private HttpResponse<String> get() throws IOException, InterruptedException {
         return client.send(request(), HttpResponse.BodyHandlers.ofString());
+    }
+
+    private CompletableFuture<HttpResponse<String>> getAsync() {
+        return client.sendAsync(request(), HttpResponse.BodyHandlers.ofString());
     }
 }

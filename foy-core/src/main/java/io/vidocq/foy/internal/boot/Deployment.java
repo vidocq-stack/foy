@@ -88,7 +88,8 @@ public final class Deployment implements AutoCloseable {
     /**
      * Undeploys. From its start, a new request gets 503 and reaches no filter or servlet. Open upgraded
      * connections close first, all at once and for 3 s at most (their {@code HttpUpgradeHandler.destroy()}
-     * runs, after a WebSocket's {@code onClose}); then Servlet 6.1 §2.3.4 — {@code destroy()} in
+     * runs, after a WebSocket's {@code onClose}); the requests in service get up to 2 s to finish; then
+     * Servlet 6.1 §2.3.4 — {@code destroy()} in
      * reverse {@code init()} order (filters, then servlets), then the session reaper stops and every live session is
      * invalidated with its listeners ({@code sessionDestroyed}, {@code valueUnbound}; Foy does not
      * persist sessions across deployments), then {@code contextDestroyed}, then the context leaves
@@ -126,6 +127,8 @@ public final class Deployment implements AutoCloseable {
         // while the application is intact (BUG-20261114-08).
         try { servletContext.closeUpgradedConnections(); }
         catch (RuntimeException e) { warn("closing the upgraded connections failed", e); }
+        // Servlet 6.1 section 2.3.4: the requests in service finish first, for a bounded time (BUG-20261115-03).
+        servletContext.awaitRequestsInService();
         for (int i = initializedFilters.size() - 1; i >= 0; i--) {
             Filter f = initializedFilters.get(i);
             try { f.destroy(); } catch (RuntimeException e) { warn("destroy failed for filter " + f, e); }
