@@ -1,5 +1,23 @@
 # BUG.md — foy
 
+## BUG-20261115-01 — A send blocked on a peer that does not read holds an undeploy without limit
+
+- Date: 2026-11-15 (found in review of the BUG-20261114-08 fix, on `fix/websocket-shutdown-order`).
+- Symptom: an undeploy never returned while a WebSocket send of the application was blocked on a peer that
+  does not read: the undeploy's 1001 Close waited for that send, before the 2 s grace of BUG-20261114-08
+  even started.
+- Repro: deterministic, `WebSocketTakeoverEndToEndTest.anUndeployDoesNotWaitForASendBlockedOnThePeer`: the
+  listener's `onOpen` starts a 32 MiB send on a thread of its own to a raw peer that never reads; once that
+  send is parked, the undeploy had not returned after 5 s.
+- Cause: chappe sends every frame, the Close included, under the connection's write lock, which it takes with
+  `lockInterruptibly` and no time limit; the blocked send holds it for as long as the peer does not read.
+  The undeploy hook sent its Close on the undeploy's thread, so it waited for that lock before its grace.
+- Status: FIXED on `fix/websocket-shutdown-order`. The hook sends the Close on a virtual thread of its own and
+  waits for it against the same deadline as the rest of the hook (2 s in all); past it, the takeover ends
+  with 1001 all the same and the Close goes out once that send ends. Raw upgrades already bounded their close
+  the same way (`WebConnectionImpl.CLOSE_WRITE_GRACE`). The test now returns after the 2 s grace with
+  `[open, close, destroy]` and 1001.
+
 ## BUG-20261114-09 — The stalled-peer upgrade test reads the writer's state twice and can see it running
 
 - Date: 2026-11-14 (found by the Error Prone check of `fix/websocket-shutdown-order`, a full `install` under

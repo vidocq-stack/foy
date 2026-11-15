@@ -45,6 +45,7 @@ import java.net.URL;
 import java.net.URLClassLoader;
 import java.net.http.HttpClient;
 import java.net.http.WebSocket;
+import java.nio.ByteBuffer;
 import java.time.Duration;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
@@ -80,8 +81,14 @@ class WebSocketTakeoverEndToEndTest {
         volatile boolean holdText;
         final CountDownLatch textGate = new CountDownLatch(1);
         final CountDownLatch textEntered = new CountDownLatch(1);
+        /** The listener's {@code onOpen} starts, on a thread of its own, a send the peer never reads. */
+        volatile boolean blockASend;
+        final AtomicReference<Thread> sender = new AtomicReference<>();
         final List<ClassLoader> loaders = new CopyOnWriteArrayList<>();
     }
+
+    /** Far more than the socket buffers hold: to a peer that does not read, the send blocks. */
+    private static final int BLOCKING_SEND_BYTES = 32 * 1024 * 1024;
 
     /** The text the listener holds in {@code onText}, and the event it records for it. */
     private static final String HELD = "held";
@@ -339,6 +346,27 @@ class WebSocketTakeoverEndToEndTest {
         assertEquals(1001, probe.closeCode.get());
     }
 
+    /**
+     * A send blocked on a peer that does not read holds chappe's write lock, which the 1001 Close needs: the
+     * undeploy does not wait for that send past its grace, and still ends the takeover with 1001, once
+     * (BUG-20261115-01).
+     */
+    @Test
+    void anUndeployDoesNotWaitForASendBlockedOnThePeer() throws Exception {
+        probe.blockASend = true;
+        start(new VidocqServletContext("/"));
+        try (var client = new RawClient(port)) {
+            client.send(handshake("/ws"));
+            assertTrue(probe.opened.await(5, TimeUnit.SECONDS), ON_OPEN);
+            awaitParked(probe.sender.get());
+            Thread undeploy = Thread.ofVirtual().start(context::closeUpgradedConnections);
+            assertTrue(undeploy.join(Duration.ofSeconds(5)), "the undeploy waited for the blocked send");
+            assertEquals(List.of("open", "close", "destroy"), probe.events);
+            assertEquals(1001, probe.closeCode.get());
+            assertEquals(1, probe.destroyCalls.get());
+        }
+    }
+
     @Test
     void aPeerCloseCallsOnCloseThenDestroyOnce() throws Exception {
         start(new VidocqServletContext("/"));
@@ -423,6 +451,20 @@ class WebSocketTakeoverEndToEndTest {
         WebSocket ws = connect(new TextListener(new CompletableFuture<>(), new CompletableFuture<>()));
         ws.sendText(HELD, true).get(5, TimeUnit.SECONDS);
         assertTrue(probe.textEntered.await(5, TimeUnit.SECONDS), "onText");
+    }
+
+    /**
+     * Waits until the thread parks: a send to a peer that does not read parks in the socket write, and holds
+     * chappe's write lock from then on. One read per check: the park ends whenever the kernel takes more bytes.
+     */
+    private static void awaitParked(Thread thread) {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+        Thread.State state = thread.getState();
+        while (state != Thread.State.WAITING && System.nanoTime() < deadline) {
+            Thread.onSpinWait();
+            state = thread.getState();
+        }
+        assertEquals(Thread.State.WAITING, state, "the send never blocked on the peer");
     }
 
     private void connectWithoutOpen(CompletableFuture<Integer> closedByServer) throws Exception {
@@ -519,6 +561,7 @@ class WebSocketTakeoverEndToEndTest {
                     peer.set(p);
                     probe.events.add("open");
                     probe.loaders.add(Thread.currentThread().getContextClassLoader());
+                    if (probe.blockASend) probe.sender.set(Thread.ofVirtual().start(() -> sendWhatThePeerNeverReads(p)));
                     probe.opened.countDown();
                     if (probe.closeOnOpen) p.close(1000, "done");
                 }
@@ -554,6 +597,15 @@ class WebSocketTakeoverEndToEndTest {
             probe.events.add("destroy");
             probe.destroyCalls.incrementAndGet();
             probe.destroyed.countDown();
+        }
+
+        /** Holds chappe's write lock for as long as the peer does not read. */
+        private static void sendWhatThePeerNeverReads(WebSocketPeer p) {
+            try {
+                p.sendBinary(ByteBuffer.allocate(BLOCKING_SEND_BYTES));
+            } catch (IOException _) {
+                // the connection closed under the send
+            }
         }
 
         private static void awaitGate(CountDownLatch gate) {
