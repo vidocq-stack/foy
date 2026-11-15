@@ -1035,6 +1035,15 @@ public final class HttpServletRequestImpl implements HttpServletRequest {
             throws IOException, ServletException {
         if (identity != null) return true;
         if (response.isCommitted()) throw new IllegalStateException("the response is already committed");
+        var hook = security().settings().requestAuthentication();
+        if (hook != null) {
+            // The runtime that took over authentication decides; whoever stays anonymous is not authenticated.
+            if (hook.validateRequest(this, response, true) instanceof
+                    io.vidocq.foy.spi.security.RequestAuthentication.Outcome.Authenticated found) {
+                bindIdentity(found.identity(), found.authType());
+            }
+            return identity != null;
+        }
         var mechanism = security().authenticator();
         var found = mechanism.authenticate(this);
         if (found.isPresent()) {
@@ -1053,6 +1062,9 @@ public final class HttpServletRequestImpl implements HttpServletRequest {
     @Override public void login(String username, String password) throws ServletException {
         if (identity != null) throw new ServletException("an identity is already established for this request");
         var security = security();
+        if (security.settings().requestAuthentication() != null) {
+            throw new ServletException("login is not supported: a request authentication runtime is installed");
+        }
         var mechanism = security.authenticator();
         if (!mechanism.supportsPasswordLogin()) {
             throw new ServletException("the configured authentication mechanism does not support username/password login");

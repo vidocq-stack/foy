@@ -11,7 +11,7 @@ Consolidated technical reference. Use this page as an anchor for external links 
 | Artefact | Role
 
 | `io.vidocq.foy:foy-api:{project-version}`
-| Public SPI: `SessionStore`, `IdentityStore`, `Identity`. No dependency outside `jakarta.servlet-api`.
+| Public SPI: `SessionStore`, `IdentityStore`, `Identity`, `RequestAuthentication`. No dependency outside `jakarta.servlet-api`.
 
 | `io.vidocq.foy:foy-core:{project-version}`
 | Servlet 6.1 engine — dispatcher, filter chain, sessions, error pages, listeners, security, `web.xml` parser, multipart, and the Chappe bridge (`ChappeServletBridge`, package `io.vidocq.foy.internal.bridge`).
@@ -44,7 +44,7 @@ module io.vidocq.foy.api {
     requires static jakarta.annotation;
 
     exports io.vidocq.foy.spi.session;    // SessionStore
-    exports io.vidocq.foy.spi.security;   // IdentityStore, Identity
+    exports io.vidocq.foy.spi.security;   // IdentityStore, Identity, RequestAuthentication
     exports io.vidocq.foy.spi.gen;        // WebComponent, WebComponentDescriptor
     exports io.vidocq.foy.spi.cdi;        // CdiWebComponents
     exports io.vidocq.foy.spi.websocket;  // WebSocketUpgradeHandler, WebSocketListener, WebSocketPeer
@@ -353,6 +353,16 @@ Lot 1 of Jakarta WebSocket 2.2: the programmatic server API. How to use it: xref
 
 [#security]
 == Security
+
+=== `RequestAuthentication` hook
+
+`RequestAuthentication` lets a runtime take over the authentication of an application, for instance a Jakarta Authentication implementation that places an `HttpAuthenticationMechanism` in service (Jakarta Security 4.0, section 2.5). Foy defines the contract and depends on no implementation: the arrow goes from the implementation to Foy, never the reverse.
+
+When one is installed (`SecuritySettings.withRequestAuthentication`), it replaces the `login-config` mechanism and is asked for _every_ request, protected or not:
+
+* `validateRequest(request, response, mandatory)` -- `mandatory` is `true` when a constraint protects the resource. It answers an `Outcome`: `authenticated(identity, authType)`, `anonymous()` or `responseSent()` (the hook already produced the response, the request stops).
+* A caller left anonymous on a protected resource gets `403`: there is no container mechanism to challenge with. An excluded resource is `403` without asking. An exception from the hook fails closed.
+* `HttpServletRequest.authenticate` asks the hook with `mandatory` set; `login(user, password)` throws `ServletException`; `logout` calls `cleanSubject`.
 
 === `IdentityStore` contract
 

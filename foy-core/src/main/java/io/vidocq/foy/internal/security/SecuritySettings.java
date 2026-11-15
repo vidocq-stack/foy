@@ -20,6 +20,7 @@
 package io.vidocq.foy.internal.security;
 
 import io.vidocq.foy.spi.security.IdentityStore;
+import io.vidocq.foy.spi.security.RequestAuthentication;
 
 /**
  * Container-side security settings of a deployment, chosen by the embedder.
@@ -29,10 +30,17 @@ import io.vidocq.foy.spi.security.IdentityStore;
  * @param confidentialPort       HTTPS port a CONFIDENTIAL/INTEGRAL constraint redirects a plain request
  *                               to; {@code -1}: such a request gets 403
  * @param rotateSessionIdOnLogin whether a successful login changes the session id
+ * @param requestAuthentication  runtime that takes over the authentication of every request (a Jakarta
+ *                               Authentication implementation); {@code null}: the container's own mechanisms
  */
-public record SecuritySettings(IdentityStore identityStore, int confidentialPort, boolean rotateSessionIdOnLogin) {
+public record SecuritySettings(IdentityStore identityStore, int confidentialPort, boolean rotateSessionIdOnLogin,
+                               RequestAuthentication requestAuthentication) {
 
-    public static final SecuritySettings DEFAULTS = new SecuritySettings(IdentityStore.none(), -1, true);
+    public static final SecuritySettings DEFAULTS = new SecuritySettings(IdentityStore.none(), -1, true, null);
+
+    public SecuritySettings(IdentityStore identityStore, int confidentialPort, boolean rotateSessionIdOnLogin) {
+        this(identityStore, confidentialPort, rotateSessionIdOnLogin, null);
+    }
 
     public SecuritySettings {
         if (identityStore == null) identityStore = IdentityStore.none();
@@ -52,14 +60,18 @@ public record SecuritySettings(IdentityStore identityStore, int confidentialPort
     }
 
     public SecuritySettings withIdentityStore(IdentityStore s) {
-        return new SecuritySettings(s, confidentialPort, rotateSessionIdOnLogin);
+        return new SecuritySettings(s, confidentialPort, rotateSessionIdOnLogin, requestAuthentication);
     }
 
     public SecuritySettings withConfidentialPort(int port) {
-        return new SecuritySettings(identityStore, port, rotateSessionIdOnLogin);
+        return new SecuritySettings(identityStore, port, rotateSessionIdOnLogin, requestAuthentication);
     }
 
     public SecuritySettings withRotateSessionIdOnLogin(boolean rotate) {
-        return new SecuritySettings(identityStore, confidentialPort, rotate);
+        return new SecuritySettings(identityStore, confidentialPort, rotate, requestAuthentication);
+    }
+
+    public SecuritySettings withRequestAuthentication(RequestAuthentication hook) {
+        return new SecuritySettings(identityStore, confidentialPort, rotateSessionIdOnLogin, hook);
     }
 }

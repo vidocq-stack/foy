@@ -25,6 +25,7 @@ import io.vidocq.foy.internal.session.HttpSessionImpl;
 import io.vidocq.foy.internal.webxml.SecurityDefs.LoginConfigDef;
 import io.vidocq.foy.spi.security.Identity;
 import io.vidocq.foy.spi.security.IdentityStore;
+import io.vidocq.foy.spi.security.RequestAuthentication;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletResponse;
 
@@ -140,6 +141,10 @@ public final class WebSecurity {
             form.processLogin(req, res, this);
             return false;
         }
+        RequestAuthentication hook = settings.requestAuthentication();
+        if (hook != null) {
+            return admitThroughHook(hook, req, res, decision);
+        }
         switch (decision.access()) {
             case UNCHECKED -> { return true; }
             case EXCLUDED -> { res.sendError(HttpServletResponse.SC_FORBIDDEN); return false; }
@@ -155,6 +160,30 @@ public final class WebSecurity {
             return false;
         }
         if (!decision.permits(req.identity())) {
+            res.sendError(HttpServletResponse.SC_FORBIDDEN);
+            return false;
+        }
+        return true;
+    }
+
+    /**
+     * The access rule once a {@link RequestAuthentication} took over: it is asked for every request, mandatory
+     * when the resource is protected. Whoever it leaves anonymous gets 403 on a protected resource (there is no
+     * mechanism of the container to challenge with), and an exception fails closed.
+     */
+    private boolean admitThroughHook(RequestAuthentication hook, HttpServletRequestImpl req, HttpServletResponse res,
+                                     Decision decision) throws IOException, ServletException {
+        if (decision.access() == Decision.Access.EXCLUDED) {
+            res.sendError(HttpServletResponse.SC_FORBIDDEN);
+            return false;
+        }
+        boolean mandatory = decision.access() == Decision.Access.ROLES;
+        switch (hook.validateRequest(req, res, mandatory)) {
+            case RequestAuthentication.Outcome.ResponseSent _ -> { return false; }
+            case RequestAuthentication.Outcome.Authenticated found -> req.bindIdentity(found.identity(), found.authType());
+            case RequestAuthentication.Outcome.Anonymous _ -> { }
+        }
+        if (mandatory && (req.identity() == null || !decision.permits(req.identity()))) {
             res.sendError(HttpServletResponse.SC_FORBIDDEN);
             return false;
         }
@@ -237,6 +266,8 @@ public final class WebSecurity {
 
     /** {@code HttpServletRequest.logout}: the request's and the session's identity are cleared; the session stays. */
     public void loggedOut(HttpServletRequestImpl req) {
+        RequestAuthentication hook = settings.requestAuthentication();
+        if (hook != null) hook.cleanSubject(req);
         req.bindIdentity(null, null);
         if (req.getSession(false) instanceof HttpSessionImpl s) {
             s.removeNote(FormAuthenticator.IDENTITY_NOTE);
