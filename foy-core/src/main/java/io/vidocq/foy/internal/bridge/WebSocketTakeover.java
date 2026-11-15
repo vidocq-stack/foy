@@ -48,7 +48,8 @@ import java.util.concurrent.atomic.AtomicReference;
  * 1001; {@code onClose} calls the listener, then unregisters the connection and calls
  * {@link WebSocketUpgradeHandler#destroy()}, exactly once. When the undeploy closed an open
  * connection, the listener hears that 1001, not the code the peer answers with nor the 1006 of a
- * connection the server's stop cut before the answer came. An {@code Error} from the listener's
+ * connection the server's stop cut before the answer came, and no I/O failure of that closing
+ * handshake reaches its {@code onError}. An {@code Error} from the listener's
  * {@code onOpen}, after which chappe sends no event, closes with 1011 and ends the takeover the same way
  * before it propagates.</p>
  */
@@ -153,11 +154,22 @@ final class WebSocketTakeover implements WebSocketHandler {
         }
     }
 
+    /**
+     * Forwards the error to the listener, except an I/O failure of a connection the undeploy closed:
+     * the session is over for the application once the undeploy sent its 1001, and what the transport
+     * hits while that closing handshake ends (the server's stop cutting the read, the peer going away)
+     * is the connection going down, not an error of the session (BUG-20261114-07).
+     */
     @Override
     public void onError(WebSocket ws, Throwable error) {
         try (var _ = ContextLoaderScope.enter(applicationLoader)) {
             var current = listener.get();
-            if (current != null) current.onError(error);
+            if (closedByUndeploy && error instanceof IOException) {
+                LOG.log(System.Logger.Level.DEBUG,
+                        "an I/O failure after the undeploy closed the WebSocket is not reported", error);
+            } else if (current != null) {
+                current.onError(error);
+            }
         } finally {
             // A failed onOpen is followed by no onClose from chappe: the listener hears the 1011 chappe
             // closes with, then the takeover is released, once.

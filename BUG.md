@@ -1,5 +1,25 @@
 # BUG.md — foy
 
+## BUG-20261114-07 — A server stop right after an undeploy reports a spurious `onError` before `onClose(1001)`
+
+- Date: 2026-11-14 (found while fixing BUG-20261114-05: 47 undeploys in 1,000 under load).
+- Symptom: an undeploy closed a session with 1001; when the server stopped before the peer answered the
+  Close, `Endpoint.onError` got a `ClosedByInterruptException` or an `AsynchronousCloseException` just before
+  `onClose(1001)`. The error is the server going down, not an error of the session, which the container had
+  already closed.
+- Repro: deterministic with a peer that never answers, `SessionEndToEndTest.aServerStopAfterAnUndeployIsNoErrorOfTheSession`
+  and, at the transport hook, `WebSocketTakeoverEndToEndTest.aServerStopAfterAnUndeployReportsNoError`
+  (undeploy, then `Server.stop()`): both failed in 15 runs of 15 under load. With the JDK client, which
+  answers, only when the stop wins the race: 69 undeploys in 1,000 (macOS, 18 cores, 18 busy processes,
+  `-Djdk.virtualThreadScheduler.parallelism=1`).
+- Cause: `Server.stop()` closes the sockets (step 3: `AsynchronousCloseException` in the read loop) and
+  interrupts the connection threads (step 4: `ClosedByInterruptException`). Chappe's read loop reports the
+  `IOException` through `WebSocketHandler.onError`, and `WebSocketTakeover.onError` passed every error on to
+  the listener, `FoySession`, whose session was not closed yet.
+- Status: FIXED on `fix/websocket-shutdown-order`. The takeover, which marks a connection the undeploy closed,
+  does not pass on an `IOException` of such a connection (logged at DEBUG); any other error still reaches
+  `onError`. After the fix, under the same load: 0 failing runs in 15, 0 `onError` in 1,000 undeploys.
+
 ## BUG-20261114-06 — Tests pick a free port, close it, then bind it: another process can take it meanwhile
 
 - Date: 2026-11-14 (found while looping the WebSocket tests of BUG-20261114-05, with other JVMs running on

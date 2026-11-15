@@ -260,7 +260,8 @@ Decided by the maintainer: same-origin by default, opened by configuration only.
   undeploy or any other local close reports the session's own reason, even when the peer
   then vanishes; otherwise `onClose` carries the peer's code, and 1006 only when TCP is cut
   with no local close first. `onError` precedes
-  `onClose` when a transport failure closes the session; an exception from a message
+  `onClose` when a transport failure closes the session, except once an undeploy closed it: the
+  server's stop cutting that closing handshake is not an error of the session; an exception from a message
   handler reaches `onError` and the session stays open.
 - **Not in lot 1.** `connectToServer` (client API, lot 3) throws `DeploymentException` with
   a message naming lot 3. `ServerContainer.upgradeHttpToWebSocket` reuses steps 4 to 7 of

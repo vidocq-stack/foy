@@ -104,7 +104,9 @@ public interface WebSocketListener {
 
     /**
      * A failure on the connection: a protocol violation, an I/O error, or an exception thrown by
-     * another callback. Delivered just before {@link #onClose(int, String)}.
+     * another callback. Delivered just before {@link #onClose(int, String)}. An I/O failure after the
+     * undeploy of the application closed the connection (the server's stop cutting the closing
+     * handshake, for one) is not delivered: it is the connection going down, not an error of it.
      *
      * @param error the failure
      */

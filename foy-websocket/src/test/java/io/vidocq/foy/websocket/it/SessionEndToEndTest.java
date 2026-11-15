@@ -72,6 +72,8 @@ class SessionEndToEndTest {
 
     /** The close reasons {@code Endpoint.onClose} received, in order. */
     static final BlockingQueue<CloseReason> CLOSES = new LinkedBlockingQueue<>();
+    /** The errors {@code Endpoint.onError} received, in order. */
+    static final BlockingQueue<Throwable> ERRORS = new LinkedBlockingQueue<>();
     /** The sessions the endpoints opened, in order. */
     static final BlockingQueue<Session> SESSIONS = new LinkedBlockingQueue<>();
     /** The results of the asynchronous sends of {@link BurstEndpoint}. */
@@ -82,6 +84,7 @@ class SessionEndToEndTest {
     @BeforeEach
     void reset() {
         CLOSES.clear();
+        ERRORS.clear();
         SESSIONS.clear();
         RESULTS.clear();
     }
@@ -95,13 +98,18 @@ class SessionEndToEndTest {
 
     // ---------------------------------------------------------------- endpoints
 
-    /** Echoes text and binary messages, and records its session and its close reason. */
+    /** Echoes text and binary messages, and records its session, its errors and its close reason. */
     public static class EchoEndpoint extends Endpoint {
         @Override
         public void onOpen(Session session, EndpointConfig config) {
             SESSIONS.add(session);
             session.addMessageHandler(String.class, text -> sendText(session, text));
             session.addMessageHandler(ByteBuffer.class, bytes -> sendBinary(session, bytes));
+        }
+
+        @Override
+        public void onError(Session session, Throwable error) {
+            ERRORS.add(error);
         }
 
         @Override
@@ -177,6 +185,24 @@ class SessionEndToEndTest {
             assertNotNull(reason, "Endpoint.onClose did not run");
             assertEquals(CloseCodes.GOING_AWAY, reason.getCloseCode());
             assertTrue(CLOSES.isEmpty(), "Endpoint.onClose ran more than once");
+        }
+    }
+
+    /**
+     * The server stops right after the undeploy, before the peer answers its Close: the stop cuts the
+     * transport's read, which is no error of the session, so the endpoint hears {@code onClose} alone
+     * (BUG-20261114-07).
+     */
+    @Test
+    void aServerStopAfterAnUndeployIsNoErrorOfTheSession() throws Exception {
+        server = WebSocketTestServer.start(endpoint(EchoEndpoint.class));
+        try (var _ = RawHandshake.connect(server.port(), "/echo")) {
+            assertNotNull(SESSIONS.poll(WAIT, SECONDS), "the endpoint did not open");
+
+            server.close();
+
+            assertNotNull(CLOSES.poll(WAIT, SECONDS), "Endpoint.onClose did not run");
+            assertTrue(ERRORS.isEmpty(), () -> "Endpoint.onError ran: " + ERRORS);
         }
     }
 

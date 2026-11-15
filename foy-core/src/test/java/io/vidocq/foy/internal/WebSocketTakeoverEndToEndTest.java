@@ -220,6 +220,24 @@ class WebSocketTakeoverEndToEndTest {
         }
     }
 
+    /**
+     * The server stops right after the undeploy, before the peer answers its Close: the read the stop
+     * cuts is the transport going down, not an error of the connection, so the listener hears the 1001
+     * and no error (BUG-20261114-07).
+     */
+    @Test
+    void aServerStopAfterAnUndeployReportsNoError() throws Exception {
+        start(new VidocqServletContext("/"));
+        try (var client = new RawClient(port)) {
+            client.send(handshake("/ws"));
+            assertTrue(probe.opened.await(5, TimeUnit.SECONDS), "onOpen");
+            context.closeUpgradedConnections();
+            server.stop();
+            assertTrue(probe.destroyed.await(5, TimeUnit.SECONDS));
+            assertEquals(List.of("open", "close", "destroy"), probe.events);
+        }
+    }
+
     @Test
     void aPeerCloseCallsOnCloseThenDestroyOnce() throws Exception {
         start(new VidocqServletContext("/"));
