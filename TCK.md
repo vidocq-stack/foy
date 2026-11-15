@@ -5,7 +5,18 @@ First full-suite measurement run. Unlike cassini/champollion/vauban, this is a
 Vidocq runtime to serve Cassini-style stacks, and several spec chapters are not
 implemented yet. This report quantifies exactly which ones.
 
-## 0. JSP exit (2026-10-18)
+## 0. Re-run after the undeploy limits (2026-11-15)
+
+`main` at `995ee3c` (Vidocq/foy#106: one longest-match rule for `getContext`, `Retry-After` on the 503 of an
+undeploy, the deployment closed before the server, the cut of a WebSocket whose Close is held), chappe and vauban
+0.4.0-SNAPSHOT, a fresh local repository, `-Ptck,tck-official -pl foy-tck test` (what
+`./run-official-tck-servlet6.1.sh --all` runs): **1707 passing / 1714 run, 7 skipped**, 0 errors, 0 failures,
+11 min 50 s. Surefire's own summary: `Tests run: 1714, Failures: 0, Errors: 0, Skipped: 7`.
+
+The tally (`foy-tck/tck-tally.sh`) is identical to `foy-tck/tck-baseline.txt`, line for line: no class changed. The
+run was made for the `getContext` change: the `ServletContext` and cross-context dispatch classes pass as before.
+
+## 0.1 JSP exit (2026-10-18)
 
 `tck/ibarra-jsp-engine` (ibarra 0.4.0-SNAPSHOT at `6b68c8e`, chappe 0.4.0-SNAPSHOT),
 `./run-official-tck-servlet6.1.sh --all`: 1714 run, **1707 passing / 1714 run, 7 skipped**
@@ -47,7 +58,7 @@ Remaining 7 skips:
 
 Bugs at this exit: BUG-20261011-04 FIXED.
 
-## 0.1 CLIENT-CERT exit (2026-10-12)
+## 0.2 CLIENT-CERT exit (2026-10-12)
 
 `pr/ybl/foy-client-cert` (chappe 0.4.0-SNAPSHOT, chappe#29: TLS client authentication and
 `Request.tls()`), `./run-official-tck-servlet6.1.sh --all`: 1714 run, **1702 passing / 1714 run,
@@ -89,7 +100,7 @@ Remaining 5 errors and 7 skips:
 
 Bugs at this exit: BUG-20261011-03 FIXED.
 
-## 0.2 Phase 7 exit: multipart and request body limits (2026-10-11)
+## 0.3 Phase 7 exit: multipart and request body limits (2026-10-11)
 
 `pr/ybl/servlet-completion-phase7` @ `6ac5daa` (chappe 0.4.0-SNAPSHOT),
 `./run-official-tck-servlet6.1.sh --all`: 1714 run, **1700 passing / 1714 run, 7 skipped**
@@ -134,7 +145,7 @@ Remaining 7 errors and 7 skips:
 
 | Count | Classes | Reason |
 |---|---|---|
-| 2 | `spec.security.clientcert.ClientCertTests`, `spec.security.clientcertanno.ClientCertAnnoTests` | CLIENT-CERT deferred at this exit (BUG-20261011-03); both pass since the CLIENT-CERT exit (§0.1) |
+| 2 | `spec.security.clientcert.ClientCertTests`, `spec.security.clientcertanno.ClientCertAnnoTests` | CLIENT-CERT deferred at this exit (BUG-20261011-03); both pass since the CLIENT-CERT exit (§0.2) |
 | 2 | `spec.security.secform.SecFormTests`: `test2`, `test2_anno` | accepted gap: the failed login forwards to `/error.jsp`; no JSP engine (BUG-20261011-04) |
 | 3 | `ServletContext40Tests` (`addJspTest`, `addJspContextListenerInTLD`, `setSessionTimeoutContextListenerInTLD`) | JSP-engine SPI, plugged by Ibarra (Jakarta Pages 4.0) (BUG-20261011-04 family) |
 | 7 skipped | `spec.serverpush.ServerPushTests` (HTTP/2 push) | accepted gap |
@@ -142,7 +153,7 @@ Remaining 7 errors and 7 skips:
 Bugs at this exit: BUG-20261011-10 FIXED (vidocq#222); BUG-20261011-11 opened (chappe drains
 an over-cap chunked body without bound).
 
-## 0.3 Phase 6 exit: security (2026-10-11)
+## 0.4 Phase 6 exit: security (2026-10-11)
 
 `pr/ybl/servlet-completion-phase6` @ `1100b90` (chappe 0.4.0-SNAPSHOT),
 `./run-official-tck-servlet6.1.sh --all`: 1714 run, **1692 passing / 1714 run, 7 skipped**
@@ -179,7 +190,7 @@ Remaining 15 errors and 7 skips:
 
 | Count | Classes | Reason |
 |---|---|---|
-| 2 | `spec.security.clientcert.ClientCertTests`, `spec.security.clientcertanno.ClientCertAnnoTests` | CLIENT-CERT deferred at this exit: it needed chappe TLS client authentication and peer certificates, plus an `https` Arquillian container (BUG-20261011-03); both pass since the CLIENT-CERT exit (§0.1) |
+| 2 | `spec.security.clientcert.ClientCertTests`, `spec.security.clientcertanno.ClientCertAnnoTests` | CLIENT-CERT deferred at this exit: it needed chappe TLS client authentication and peer certificates, plus an `https` Arquillian container (BUG-20261011-03); both pass since the CLIENT-CERT exit (§0.2) |
 | 2 | `spec.security.secform.SecFormTests`: `test2`, `test2_anno` | accepted gap: the failed login forwards to `/error.jsp`, which must be executed; no JSP engine (BUG-20261011-04) |
 | 8 | multipart: `PartTests` 4, `Part1Tests` 4 | Phase 7 |
 | 3 | `ServletContext40Tests` (`addJspTest`, `addJspContextListenerInTLD`, `setSessionTimeoutContextListenerInTLD`) | JSP-engine SPI, plugged by Ibarra (Jakarta Pages 4.0) |
@@ -190,7 +201,7 @@ accepted gap), -05 (case-sensitive constraint matching vs a case-insensitive fil
 -06 (flaky `CallbackSerializerTest`), -07 (security denial on the redirect and unmapped
 branches outside the request listeners).
 
-## 0.4 Phase 5 exit: streaming, async and non-blocking I/O (2026-10-10)
+## 0.5 Phase 5 exit: streaming, async and non-blocking I/O (2026-10-10)
 
 `pr/ybl/servlet-completion-phase5` @ `3c0aa13` (chappe `pr/ybl/servlet-streaming-upgrade` @
 `3623006`, 0.4.0-SNAPSHOT), `./run-official-tck-servlet6.1.sh --all`: 1714 run,
@@ -245,7 +256,7 @@ only by chappe's write timeout), plus the Phase 4 ones still open (-20261009-01,
 -09). Chappe: CHAPPE-008 (ordinary headers), CHAPPE-014 (lingering close skipped after an
 interrupted body read).
 
-## 0.5 Phase 4 exit: request, response and session core (2026-10-09)
+## 0.6 Phase 4 exit: request, response and session core (2026-10-09)
 
 `pr/ybl/servlet-completion-phase4` @ `8cc03fd`, `./run-official-tck-servlet6.1.sh --all`:
 1714 run, **1649 pass**, 65 errors, 13 min 32 s (Phase 3: 1587, +62). Per family:
@@ -281,7 +292,7 @@ Remaining 65 errors, by class and by phase:
 Open bugs: BUG-20261009-01 (dispatch drops a non-HTTP wrapper), -03 (error dispatch paths),
 -04 (decoded paths in dispatch URIs), -09 (connection and HTTP/2 stream ids, chappe follow-up).
 
-## 0.6 Phase 3 exit: descriptors and pluggability (2026-10-09)
+## 0.7 Phase 3 exit: descriptors and pluggability (2026-10-09)
 
 `pr/ybl/servlet-completion-phase3`, `./run-official-tck-servlet6.1.sh --all`:
 1714 run, **1587 pass**, 127 errors, 13 min 52 s (Phase 2: 928). Per family:
@@ -303,7 +314,7 @@ BUG-20261008-02), `httpservletresponse`, `httpservletresponse30`,
 `fragment.FragmentTests` (1). They belong to the request/response phase (default
 servlet, welcome files) and the security phase.
 
-## 0.7 Phase 2 exit: build-time code generation (2026-10-08)
+## 0.8 Phase 2 exit: build-time code generation (2026-10-08)
 
 `pr/ybl/servlet-completion-phase2`, `./run-official-tck-servlet6.1.sh --all`:
 1714 run, **928 pass**, 786 errors, 11 min 19 s (Phase 1: 921). Per family:
@@ -440,8 +451,8 @@ timeouts, event ordering).
 `secform` (17/25), `secbasic` (8/14), `clientcert*` (2/2), `denyUncovered`,
 `metadatacomplete`: FORM/BASIC auth flows and TLS client-cert mapping are
 partial in the chappe adapter and the provider SPI of the time. Resolved in
-Phase 6 (§0.3): 55/59, the `IdentityStore` SPI replaced that provider. The CLIENT-CERT exit
-(§0.1) brings it to 57/59 (`clientcert*` 2/2).
+Phase 6 (§0.4): 55/59, the `IdentityStore` SPI replaced that provider. The CLIENT-CERT exit
+(§0.2) brings it to 57/59 (`clientcert*` 2/2).
 
 ### 3.6 Scattered behavioral gaps (2026-06 diagnosis; resolved in Phases 4 and 5, push skipped)
 
