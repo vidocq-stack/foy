@@ -100,7 +100,6 @@ class WebSocketTakeoverEndToEndTest {
     private static final String HELD = "held";
     private static final String HELD_EVENT = "text:" + HELD;
     private static final String ON_OPEN = "onOpen";
-    private static final String TAKEOVER_LOGGER = "io.vidocq.foy.internal.bridge.WebSocketTakeover";
 
     private static volatile Probe current;
 
@@ -186,8 +185,9 @@ class WebSocketTakeoverEndToEndTest {
     }
 
     /**
-     * An undeploy on an interrupted thread still sends the 1001 Close (chappe takes its write lock
-     * interruptibly), and the thread keeps its interrupt.
+     * An undeploy started on an interrupted thread still waits for its connections: the interrupt it
+     * arrives with is set aside for the wait, so the takeover has ended with 1001 when the undeploy returns,
+     * and the thread gets its interrupt back.
      */
     @Test
     void anInterruptedUndeployStillClosesWith1001() throws Exception {
@@ -202,8 +202,8 @@ class WebSocketTakeoverEndToEndTest {
             stillInterrupted = Thread.interrupted();
         }
         assertTrue(stillInterrupted, "the undeploy thread lost its interrupt");
+        assertEquals(List.of("open", "close", "destroy"), probe.events, "the undeploy did not wait for its connection");
         assertEquals(1001, closedByServer.get(5, TimeUnit.SECONDS));
-        assertTrue(probe.destroyed.await(5, TimeUnit.SECONDS));
         assertEquals(1, probe.destroyCalls.get());
     }
 
@@ -372,39 +372,6 @@ class WebSocketTakeoverEndToEndTest {
             assertEquals(List.of("open", "close", "destroy"), probe.events);
             assertEquals(1001, probe.closeCode.get());
             assertEquals(1, probe.destroyCalls.get());
-        }
-    }
-
-    /**
-     * An interrupt that reaches the undeploy hook while it waits (here for a Close that a blocked send holds
-     * back) ends the wait, not the undeploy's work: the takeover of the connection it closed still ends with
-     * 1001 before the hook returns, a WARNING says so, and the thread keeps its interrupt.
-     */
-    @Test
-    void anInterruptedUndeployHookStillEndsTheTakeover() throws Exception {
-        probe.blockASend = true;
-        start(new VidocqServletContext("/"));
-        try (var client = new RawClient(port);
-             var log = LogCapture.of(TAKEOVER_LOGGER)) {
-            client.send(handshake("/ws"));
-            assertTrue(probe.opened.await(5, TimeUnit.SECONDS), ON_OPEN);
-            awaitState(probe.sender.get(), Thread.State.WAITING);
-            AutoCloseable hook = hooks().getFirst();
-            var keptItsInterrupt = new CompletableFuture<Boolean>();
-            Thread undeploy = Thread.ofVirtual().start(() -> {
-                try {
-                    hook.close();
-                    keptItsInterrupt.complete(Thread.currentThread().isInterrupted());
-                } catch (Exception e) {
-                    keptItsInterrupt.completeExceptionally(e);
-                }
-            });
-            awaitState(undeploy, Thread.State.TIMED_WAITING);
-            undeploy.interrupt();
-            assertTrue(keptItsInterrupt.get(5, TimeUnit.SECONDS), "the hook lost the interrupt");
-            assertEquals(List.of("open", "close", "destroy"), probe.events);
-            assertEquals(1001, probe.closeCode.get());
-            assertTrue(log.warnings().stream().anyMatch(w -> w.contains("interrupted")), log.warnings().toString());
         }
     }
 

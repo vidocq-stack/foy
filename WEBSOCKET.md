@@ -364,9 +364,10 @@ Decided by the maintainer: same-origin by default, opened by configuration only.
 - An abort in `chappe-api`, cutting a WebSocket without a Close frame. Chappe's `close()`
   takes its write lock interruptibly: when it throws before its frame is written, it arms
   no close deadline and nothing cuts TCP, so a vanished peer keeps the socket and the
-  session until Chappe's own teardown. Lot 1 clears the interrupt around the undeploy
-  close, the one Foy close made on a thread that may be interrupted (Foy's timer and send
-  threads never are); a close whose write fails without a cut still has no fallback.
+  session until Chappe's own teardown. No Foy close runs on a thread that may be
+  interrupted: the undeploy closes each connection on a virtual thread of its own and sends
+  the Close on another, which nothing interrupts, and Foy's timer and send threads never
+  are. A close whose write fails without a cut still has no fallback.
 - The client API: `java.net.http.WebSocket` covers the protocol; `ClientEndpointConfig`
   and its configurator map onto its builder.
 - Annotated endpoints: one model of the endpoint shared by the annotation processor and the

@@ -507,7 +507,9 @@ public final class VidocqServletContext implements ServletContext {
      * close that fails, even with an {@code Error} from the application's {@code onClose} or
      * {@code destroy()}, is logged and stops neither the others nor the rest of the undeploy. The
      * interrupt of the undeploy's thread is cleared for the wait and restored afterwards; one that
-     * arrives during the wait ends it. The deadline counts from now.
+     * arrives during the wait ends it, and the connections still closing then finish on their own
+     * virtual threads, a WebSocket's {@code onClose} possibly after {@code contextDestroyed}. The
+     * deadline counts from now.
      */
     public void closeUpgradedConnections() {
         closeUpgradedConnectionsFrom(System.nanoTime());

@@ -66,6 +66,11 @@ import java.util.concurrent.locks.ReentrantLock;
  * its own, since a send blocked on a peer that does not read holds the lock it needs. The whole of it,
  * the Close and the wait, lasts at most {@link #UNDEPLOY_GRACE}; past it, the takeover ends on the
  * transport's thread, and a Close still held goes out once that send ends.</p>
+ *
+ * <p>Nothing interrupts the hook: it runs on a virtual thread the context starts for this connection, and
+ * its Close on another one. An interrupt of the undeploy's own thread only stops the undeploy's wait for
+ * its connections ({@code VidocqServletContext.closeUpgradedConnections}): a connection still closing then
+ * finishes on its own virtual thread, and its {@code onClose} may come after {@code contextDestroyed}.</p>
  */
 final class WebSocketTakeover implements WebSocketHandler {
 
@@ -270,46 +275,16 @@ final class WebSocketTakeover implements WebSocketHandler {
      * The undeploy hook: ends the takeover before the undeploy goes on, within {@link #UNDEPLOY_GRACE}
      * for the whole hook. A connection still open is closed with 1001 ({@link #sendGoingAway}) and ended
      * at once ({@link #endNow}); one whose closing handshake already began is waited for
-     * ({@link #awaitEnd}). The interrupt of the hook's thread is cleared for the hook and restored
-     * afterwards; one that arrives during a wait ends the wait ({@link #endInterrupted}).
+     * ({@link #awaitEnd}). It runs on the virtual thread the context starts for this connection, which
+     * nothing interrupts; an {@code InterruptedException} would reach the context, which logs it.
      */
-    private void undeploy(WebSocket ws) {
+    private void undeploy(WebSocket ws) throws InterruptedException {
         long deadline = System.nanoTime() + UNDEPLOY_GRACE.toNanos();
-        boolean interrupted = Thread.interrupted();
-        try {
-            if (sendGoingAway(ws, deadline)) {
-                endNow(deadline);
-            } else {
-                awaitEnd(deadline);
-            }
-        } catch (InterruptedException _) {
-            interrupted = true;
-            endInterrupted();
-        } finally {
-            if (interrupted) Thread.currentThread().interrupt();
+        if (sendGoingAway(ws, deadline)) {
+            endNow(deadline);
+        } else {
+            awaitEnd(deadline);
         }
-    }
-
-    /**
-     * The undeploy was interrupted while it waited for its Close, for the event in progress or for a
-     * closing handshake under way. The takeover of a connection it closed ends now, unless an event runs:
-     * the undeploy closed the session, and its Close still goes out on its own thread, possibly after
-     * {@code onClose} (as on the deadline path of {@link #endNow}). Otherwise the transport ends it, after
-     * the application stopped. A WARNING says which.
-     */
-    private void endInterrupted() {
-        if (closedByUndeploy && events.tryLock()) {
-            try {
-                finish(GOING_AWAY, STOPPING);
-            } finally {
-                events.unlock();
-            }
-        }
-        LOG.log(System.Logger.Level.WARNING, closed.get()
-                ? "the undeploy was interrupted while it closed a WebSocket: the session ended without waiting"
-                        + " for the rest of its closing"
-                : "the undeploy was interrupted while it closed a WebSocket: onClose and destroy() run when the"
-                        + " connection ends, after the application stopped");
     }
 
     /**
@@ -317,9 +292,8 @@ final class WebSocketTakeover implements WebSocketHandler {
      * the connection, which a send blocked on a peer that does not read holds for as long as the peer does
      * not read, and takes that lock with no time limit: the Close therefore goes out on a virtual thread
      * of its own (BUG-20261115-01). Past the deadline the undeploy goes on without it, and the Close goes
-     * out once that send ends (or fails with the connection). On its own thread, the close is not
-     * affected by an interrupt of the undeploy, on which chappe would send no Close. A close that throws
-     * (dead connection) is logged; chappe's own teardown then ends the connection.
+     * out once that send ends (or fails with the connection). A close that throws (dead connection) is
+     * logged; chappe's own teardown then ends the connection.
      *
      * <p>A connection still open is marked closed by the undeploy before its Close goes out, so the
      * peer's answer cannot reach {@link #onClose} first; a connection the peer or the listener already

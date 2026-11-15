@@ -90,7 +90,7 @@
   waits for it against the same deadline as the rest of the hook (2 s in all); past it, the takeover ends
   with 1001 all the same and the Close goes out once that send ends. Raw upgrades already bounded their close
   the same way (`WebConnectionImpl.CLOSE_WRITE_GRACE`). The test now returns after the 2 s grace with
-  `[open, close, destroy]` and 1001. On that path, and when the undeploy hook is interrupted, the endpoint
+  `[open, close, destroy]` and 1001. On that path the endpoint
   gets `onClose(1001)` before the Close frame leaves, against Jakarta WebSocket 2.2 section 2.1.5 (the Close
   before `onClose`): waiting for the frame would let a peer that does not read hold the undeploy without limit.
 
@@ -150,7 +150,12 @@
   undeploy hook while it waited ended the hook with nothing ending the takeover and nothing logged, the
   connection left marked as closed by the undeploy (`[open]` only). The takeover of a connection the undeploy
   closed now ends at once unless an event runs, with a WARNING, and the thread keeps its interrupt
-  (`WebSocketTakeoverEndToEndTest.anInterruptedUndeployHookStillEndsTheTakeover`).
+  (`WebSocketTakeoverEndToEndTest.anInterruptedUndeployHookStillEndsTheTakeover`). Final review, 2026-11-15:
+  that interrupt path was removed, with its test. Since the parallel close above, each hook runs on a
+  `foy-upgrade-close-N` virtual thread the context starts, and its Close on a `foy-websocket-close` thread;
+  nothing interrupts either, so the path only ran in that test, which reached the hook by reflection. An
+  interrupt of the undeploy's own thread now only stops the undeploy's wait for its connections: those still
+  closing finish on their own virtual threads, and their `onClose` may then come after `contextDestroyed`.
 
 ## BUG-20261114-07 — A server stop right after an undeploy reports a spurious `onError` before `onClose(1001)`
 
