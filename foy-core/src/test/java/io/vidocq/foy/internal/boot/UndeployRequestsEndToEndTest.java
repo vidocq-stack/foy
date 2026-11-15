@@ -101,7 +101,7 @@ class UndeployRequestsEndToEndTest {
         private static void await(CountDownLatch gate) {
             try {
                 if (!gate.await(20, TimeUnit.SECONDS)) throw new IllegalStateException("the gate never opened");
-            } catch (InterruptedException e) {
+            } catch (InterruptedException _) {
                 Thread.currentThread().interrupt();
             }
         }

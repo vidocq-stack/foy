@@ -410,6 +410,8 @@ class WebSocketTakeoverEndToEndTest {
             awaitState(probe.sender.get(), Thread.State.WAITING);
             Thread undeploy = Thread.ofVirtual().start(this::closeConnections);
             assertFalse(undeploy.join(Duration.ofMillis(500)), "the undeploy did not wait for its held Close");
+            // Still open: the stop reaches a takeover the undeploy marked closed but has not ended yet.
+            assertEquals(List.of("open"), probe.events, "the takeover ended before the stop");
             server.stop();
             assertTrue(probe.destroyed.await(5, TimeUnit.SECONDS));
             assertTrue(undeploy.join(Duration.ofSeconds(5)), "the undeploy did not return");
@@ -871,7 +873,7 @@ class WebSocketTakeoverEndToEndTest {
         private static void awaitGate(CountDownLatch gate) {
             try {
                 if (!gate.await(20, TimeUnit.SECONDS)) throw new IllegalStateException("the gate never opened");
-            } catch (InterruptedException e) {
+            } catch (InterruptedException _) {
                 Thread.currentThread().interrupt();
             }
         }
