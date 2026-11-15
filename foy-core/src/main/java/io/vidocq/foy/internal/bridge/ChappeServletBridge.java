@@ -186,9 +186,17 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
     private static final AtomicLong PIPELINE_THREADS =
             new AtomicLong();
 
-    /** The pipeline thread's body: every way out settles the head or ends the live body. */
+    /**
+     * The pipeline thread's body: every way out settles the head or ends the live body. Once the
+     * application's undeploy began, the request is refused with 503 before any listener, filter or
+     * servlet sees it (Servlet 6.1 section 2.3.4, BUG-20261115-02).
+     */
     private void runPipeline(Request request, List<HttpServletRequestImpl> requests,
                              HttpServletResponseImpl res, ResponseHead head) {
+        if (!servletContext.enterRequest()) {
+            head.complete(plainServiceUnavailable());
+            return;
+        }
         Response response = null;
         Throwable failure = null;
         try {
@@ -318,6 +326,11 @@ public final class ChappeServletBridge implements Handler, RequestDispatcherImpl
     /** Chappe's own answer to a failed handler, built here when the response must carry a hand-back. */
     private static Response plainInternalServerError() {
         return plainText(StatusCode.INTERNAL_SERVER_ERROR).body(asciiBody("Internal Server Error")).build();
+    }
+
+    /** The answer to a request that arrives once the application's undeploy began. */
+    private static Response plainServiceUnavailable() {
+        return plainText(StatusCode.SERVICE_UNAVAILABLE).body(asciiBody("Service Unavailable")).build();
     }
 
     /** A response builder with {@code status} and a plain-text content type; the body comes next. */

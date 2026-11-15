@@ -361,6 +361,27 @@ public final class VidocqServletContext implements ServletContext {
         return f;
     }
 
+    // ---- Requests (Servlet 6.1 section 2.3.4) ----
+
+    /** The undeploy began: requests are refused. */
+    private volatile boolean requestsRefused;
+
+    /**
+     * A request enters the application, unless the undeploy began: then it is refused and must reach no
+     * filter and no servlet, since the container may not route a request to a servlet it destroys
+     * (Servlet 6.1 section 2.3.4, BUG-20261115-02).
+     *
+     * @return {@code false} when the request is refused: the caller answers 503
+     */
+    public boolean enterRequest() {
+        return !requestsRefused;
+    }
+
+    /** Undeploy, its first step: every request from now on is refused (BUG-20261115-02). */
+    public void refuseRequests() {
+        requestsRefused = true;
+    }
+
     // ---- Upgraded connections (Servlet 6.1 section 2.3.3.5) ----
 
     /**

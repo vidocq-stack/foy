@@ -1,5 +1,23 @@
 # BUG.md — foy
 
+## BUG-20261115-02 — Requests reach the application while and after it is undeployed
+
+- Date: 2026-11-15 (found in review: the documented order, close the deployment then stop the server, opens
+  that window).
+- Symptom: a request that arrived once `Deployment.close()` had started, or after it returned and before
+  the server stopped, reached the application's listeners, filters and servlets, destroyed or being
+  destroyed; a WebSocket handshake got its 101. Servlet 6.1 section 2.3.4: once `destroy` was called, the
+  container may not route other requests to that servlet.
+- Repro: deterministic, `UndeployRequestsEndToEndTest.aRequestAfterTheUndeployGets503` and
+  `aRequestWhileTheUndeployRunsGets503` (200 from the servlet, its `doGet` called) and
+  `WebSocketTakeoverEndToEndTest.aHandshakeOnceTheUndeployBeganGets503` (101).
+- Cause: the bridge served every request it received; nothing told it the application was going away. The
+  old documented order (stop the server, then close) hid it, since no request could arrive any more.
+- Status: FIXED on `fix/websocket-shutdown-order`. The undeploy's first step makes the context refuse
+  requests (`VidocqServletContext.refuseRequests`); from then on the bridge answers `503 Service Unavailable`
+  before any listener, filter or servlet. Not covered: a cross-context dispatch from another application
+  into this one (`RequestDispatcherImpl.Invoker`) does not go through that gate.
+
 ## BUG-20261115-01 — A send blocked on a peer that does not read holds an undeploy without limit
 
 - Date: 2026-11-15 (found in review of the BUG-20261114-08 fix, on `fix/websocket-shutdown-order`).

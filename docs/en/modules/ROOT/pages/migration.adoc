@@ -214,6 +214,8 @@ These changes may need attention:
 
 * **Dynamic filter mappings honour `isMatchAfter`** (BUG-20261114-01). `FilterRegistration.addMappingForUrlPatterns` and `addMappingForServletNames` used to put every dynamic mapping after the declared ones whatever the flag; `isMatchAfter=false` now places the mapping before the descriptor's, as the Servlet specification says. A filter that relied on the old order must pass `true`.
 
+* **Requests during an undeploy get `503`** (BUG-20261115-02). From the moment `Mounted.close()` starts, a new request, a WebSocket handshake included, is answered `503 Service Unavailable` without reaching a listener, filter or servlet; it used to reach the application while, or after, its servlets were destroyed.
+
 * **Close `Mounted` before you stop the server.** The getting-started example used to stop the server first. In that order the stop cuts WebSocket connections without a Close frame, and endpoints may get `onError` before `onClose(1006)`; closing `Mounted` first sends every peer its 1001 Close and runs `onClose(1001)` before `contextDestroyed`.
 
 * **Wrappers: every application wrapper, HTTP or not, now reaches the forward/include target.** The dispatch wrapper sits under the application's, so a wrapper's overrides win. A framework wrapper that caches the request URI at construction time shows the original URI to the target, as on Tomcat.

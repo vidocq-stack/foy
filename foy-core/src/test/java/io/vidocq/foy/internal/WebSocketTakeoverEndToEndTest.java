@@ -442,6 +442,23 @@ class WebSocketTakeoverEndToEndTest {
         }
     }
 
+    /**
+     * Once the undeploy began, a WebSocket handshake is a request like any other: it gets 503 and never
+     * reaches the application's filters and servlets, so no takeover starts (BUG-20261115-02).
+     */
+    @Test
+    void aHandshakeOnceTheUndeployBeganGets503() throws Exception {
+        start(new VidocqServletContext("/"));
+        context.refuseRequests();
+        try (var client = new RawClient(port)) {
+            client.send(handshake("/ws"));
+            String head = client.readHead();
+            assertTrue(head.startsWith("HTTP/1.1 503 "), head);
+        }
+        assertEquals(List.of(), probe.events);
+        assertEquals(0, registeredConnections());
+    }
+
     @Test
     void aPeerCloseCallsOnCloseThenDestroyOnce() throws Exception {
         start(new VidocqServletContext("/"));
