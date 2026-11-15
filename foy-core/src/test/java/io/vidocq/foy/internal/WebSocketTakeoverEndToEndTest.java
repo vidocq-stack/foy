@@ -53,6 +53,7 @@ import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -96,8 +97,11 @@ class WebSocketTakeoverEndToEndTest {
         /** The listener's {@code onClose} waits for {@link #closeGate} to open once it recorded the close. */
         volatile boolean holdClose;
         final CountDownLatch closeGate = new CountDownLatch(1);
-        /** Whether the connection was still open when {@code onClose} began: no Close sent nor received. */
-        final AtomicReference<Boolean> openAtClose = new AtomicReference<>();
+        /**
+         * Whether the connection was still open when {@code onClose} began (no Close sent nor received);
+         * {@code true} until {@code onClose} recorded it.
+         */
+        final AtomicBoolean openAtClose = new AtomicBoolean(true);
         /** The name of the thread {@code onClose} ran on. */
         final AtomicReference<String> closeThread = new AtomicReference<>();
     }
@@ -444,7 +448,7 @@ class WebSocketTakeoverEndToEndTest {
             assertTrue(undeploy.join(Duration.ofSeconds(5)), "the undeploy did not return");
             assertTrue(probe.destroyed.await(5, TimeUnit.SECONDS));
             assertEquals(List.of("open", HELD_EVENT, "close", "destroy"), probe.events);
-            assertEquals(Boolean.FALSE, probe.openAtClose.get(), "onClose ran before the 1001 Close went out");
+            assertFalse(probe.openAtClose.get(), "onClose ran before the 1001 Close went out");
             assertEquals(1001, probe.closeCode.get());
         }
     }
