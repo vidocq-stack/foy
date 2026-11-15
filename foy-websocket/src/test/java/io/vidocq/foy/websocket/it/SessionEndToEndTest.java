@@ -75,6 +75,10 @@ class SessionEndToEndTest {
     /** Far more than the socket buffers hold: to a peer that does not read, the send blocks. */
     private static final int STALLED_SEND_BYTES = 32 * 1024 * 1024;
     private static final HttpClient HTTP = HttpClient.newHttpClient();
+    /** The reason of an undeploy's close, on the wire and in {@code onClose}. */
+    private static final String STOPPING = "the application is stopping";
+    private static final String ON_OPEN_FAILED = "onOpen failed";
+    private static final String LEAVING = "leaving";
 
     /** The close reasons {@code Endpoint.onClose} received, in order. */
     static final BlockingQueue<CloseReason> CLOSES = new LinkedBlockingQueue<>();
@@ -152,6 +156,50 @@ class SessionEndToEndTest {
         }
     }
 
+    /** Fails in {@code onOpen} with an exception, which the endpoint hears in {@code onError}. */
+    public static final class RefusingEndpoint extends EchoEndpoint {
+        @Override
+        public void onOpen(Session session, EndpointConfig config) {
+            super.onOpen(session, config);
+            throw new IllegalStateException("refused");
+        }
+    }
+
+    /** Takes text messages of 4 characters at most. */
+    public static final class SmallLimitEndpoint extends EchoEndpoint {
+        @Override
+        public void onOpen(Session session, EndpointConfig config) {
+            SESSIONS.add(session);
+            session.setMaxTextMessageBufferSize(4);
+        }
+    }
+
+    /** Fails on every message with an {@code Error}, which the session does not catch. */
+    public static final class FailingHandlerEndpoint extends EchoEndpoint {
+        @Override
+        public void onOpen(Session session, EndpointConfig config) {
+            SESSIONS.add(session);
+            session.addMessageHandler(String.class, text -> {
+                throw new ExceptionInInitializerError("handler failed");
+            });
+        }
+    }
+
+    /** Closes its session itself, with 1001, when a message arrives. */
+    public static final class LeavingEndpoint extends EchoEndpoint {
+        @Override
+        public void onOpen(Session session, EndpointConfig config) {
+            SESSIONS.add(session);
+            session.addMessageHandler(String.class, text -> {
+                try {
+                    session.close(new CloseReason(CloseCodes.GOING_AWAY, LEAVING));
+                } catch (IOException e) {
+                    throw new UncheckedIOException(e);
+                }
+            });
+        }
+    }
+
     /** Answers a message with {@value #BURST} asynchronous sends, issued without waiting for one another. */
     public static final class BurstEndpoint extends EchoEndpoint {
         @Override
@@ -189,8 +237,12 @@ class SessionEndToEndTest {
 
     // ---------------------------------------------------------------- tests
 
+    /**
+     * The peer reads the undeploy's 1001, the endpoint hears 1006: the container closed the session (Jakarta
+     * WebSocket 2.2 section 2.1.5), and the reason says why (BUG-20261115-08).
+     */
     @Test
-    void undeployClosesSessionsWith1001() throws Exception {
+    void undeployClosesSessionsWith1001AndReports1006() throws Exception {
         server = WebSocketTestServer.start(endpoint(EchoEndpoint.class));
         var client = new Client();
         client.connect();
@@ -200,28 +252,25 @@ class SessionEndToEndTest {
 
         assertTrue(client.closed.await(WAIT, SECONDS), "the client saw no close frame");
         assertEquals(CloseCodes.GOING_AWAY.getCode(), client.closeCode);
-        CloseReason reason = CLOSES.poll(WAIT, SECONDS);
-        assertNotNull(reason, "Endpoint.onClose did not run");
-        assertEquals(CloseCodes.GOING_AWAY, reason.getCloseCode());
+        assertEquals(STOPPING, client.closeReason);
+        assertClosedByTheContainer(CLOSES.poll(WAIT, SECONDS), STOPPING);
     }
 
     /**
-     * The undeploy closed first, so {@code onClose} reports its 1001 even when the server stops before the
-     * peer answers the Close: the transport then sees a cut connection (1006), the endpoint does not
+     * The undeploy closed first, so {@code onClose} reports its 1006 even when the server stops before the
+     * peer answers the Close: the transport then sees a cut connection, the endpoint the undeploy's reason
      * (BUG-20261114-05). The raw client never answers, which makes deterministic what a slow JDK client
      * does on a loaded machine.
      */
     @Test
-    void undeployReports1001WhenTheServerStopsBeforeThePeerAnswers() throws Exception {
+    void undeployReports1006WhenTheServerStopsBeforeThePeerAnswers() throws Exception {
         server = WebSocketTestServer.start(endpoint(EchoEndpoint.class));
         try (var _ = RawHandshake.connect(server.port(), "/echo")) {
             assertNotNull(SESSIONS.poll(WAIT, SECONDS), "the endpoint did not open");
 
             server.close();
 
-            CloseReason reason = CLOSES.poll(WAIT, SECONDS);
-            assertNotNull(reason, "Endpoint.onClose did not run");
-            assertEquals(CloseCodes.GOING_AWAY, reason.getCloseCode());
+            assertClosedByTheContainer(CLOSES.poll(WAIT, SECONDS), STOPPING);
             assertTrue(CLOSES.isEmpty(), "Endpoint.onClose ran more than once");
         }
     }
@@ -266,7 +315,7 @@ class SessionEndToEndTest {
     /**
      * Sends blocked on a peer that does not read hold the undeploy's Close back: past its grace the undeploy
      * cuts the connection (BUG-20261115-01). The blocking send throws, and the asynchronous one reports, an
-     * {@code IOException} that says the connection was cut; the endpoint hears the undeploy's 1001, and no
+     * {@code IOException} that says the connection was cut; the endpoint hears the undeploy's 1006, and no
      * {@code onError}.
      */
     @Test
@@ -284,9 +333,7 @@ class SessionEndToEndTest {
                 assertInstanceOf(IOException.class, outcome);
                 assertTrue(String.valueOf(outcome.getMessage()).contains("was cut"), outcome::toString);
             }
-            CloseReason reason = CLOSES.poll(WAIT, SECONDS);
-            assertNotNull(reason, "Endpoint.onClose did not run");
-            assertEquals(CloseCodes.GOING_AWAY, reason.getCloseCode());
+            assertClosedByTheContainer(CLOSES.poll(WAIT, SECONDS), STOPPING);
             assertTrue(ERRORS.isEmpty(), () -> "Endpoint.onError ran: " + ERRORS);
             // The cut session ended before the undeploy went on.
             assertEquals(List.of("onClose", "contextDestroyed"), List.copyOf(LIFECYCLE));
@@ -294,7 +341,7 @@ class SessionEndToEndTest {
     }
 
     @Test
-    void anErrorFromOnOpenClosesWith1011AndLeavesNoOpenSession() throws Exception {
+    void anErrorFromOnOpenClosesWith1011Reports1006AndLeavesNoOpenSession() throws Exception {
         server = WebSocketTestServer.start(endpoint(BrokenEndpoint.class));
         var client = new Client();
         client.connect();
@@ -303,11 +350,108 @@ class SessionEndToEndTest {
 
         assertTrue(client.closed.await(WAIT, SECONDS), "the client saw no close");
         assertEquals(CloseCodes.UNEXPECTED_CONDITION.getCode(), client.closeCode);
-        CloseReason reason = CLOSES.poll(WAIT, SECONDS);
-        assertNotNull(reason, "Endpoint.onClose did not run");
-        assertEquals(CloseCodes.UNEXPECTED_CONDITION, reason.getCloseCode());
+        assertClosedByTheContainer(CLOSES.poll(WAIT, SECONDS), ON_OPEN_FAILED);
         assertEquals(Set.of(), session.getOpenSessions());
         assertTrue(CLOSES.isEmpty(), "Endpoint.onClose ran more than once");
+    }
+
+    @Test
+    void anExceptionFromOnOpenIsReportedThenClosesWith1011AndReports1006() throws Exception {
+        server = WebSocketTestServer.start(endpoint(RefusingEndpoint.class));
+        var client = new Client();
+        client.connect();
+
+        assertTrue(client.closed.await(WAIT, SECONDS), "the client saw no close");
+        assertEquals(CloseCodes.UNEXPECTED_CONDITION.getCode(), client.closeCode);
+        assertClosedByTheContainer(CLOSES.poll(WAIT, SECONDS), ON_OPEN_FAILED);
+        assertInstanceOf(IllegalStateException.class, ERRORS.poll(WAIT, SECONDS));
+    }
+
+    /** The peer reads 1009, the endpoint hears 1006 with the reason the peer read (BUG-20261115-08). */
+    @Test
+    void aMessageOverTheLimitClosesWith1009AndReports1006() throws Exception {
+        server = WebSocketTestServer.start(endpoint(SmallLimitEndpoint.class));
+        var client = new Client();
+        WebSocket ws = client.connect();
+
+        ws.sendText("hello", true).get(WAIT, SECONDS);
+
+        assertTrue(client.closed.await(WAIT, SECONDS), "the client saw no close");
+        assertEquals(CloseCodes.TOO_BIG.getCode(), client.closeCode);
+        String reason = "text message of 5 characters, the maximum is 4";
+        assertEquals(reason, client.closeReason);
+        assertClosedByTheContainer(CLOSES.poll(WAIT, SECONDS), reason);
+    }
+
+    /**
+     * A protocol violation of the peer, here a text message that is not UTF-8: the transport closes with
+     * 1007 and the endpoint hears 1006, with a reason naming the violation, after its {@code onError}.
+     */
+    @Test
+    void aProtocolErrorOfThePeerClosesWith1007AndReports1006() throws Exception {
+        server = WebSocketTestServer.start(endpoint(EchoEndpoint.class));
+        try (Socket socket = RawHandshake.connect(server.port(), "/echo")) {
+            assertNotNull(SESSIONS.poll(WAIT, SECONDS), "the endpoint did not open");
+
+            socket.getOutputStream().write(maskedText(new byte[] {(byte) 0xC3, 0x28}));
+            socket.getOutputStream().flush();
+
+            assertEquals(CloseCodes.NOT_CONSISTENT.getCode(), closeFrameCode(socket.getInputStream().readAllBytes()));
+            assertClosedByTheContainer(CLOSES.poll(WAIT, SECONDS), "protocol error: Invalid UTF-8 in TEXT frame");
+            assertNotNull(ERRORS.poll(WAIT, SECONDS), "Endpoint.onError did not run");
+        }
+    }
+
+    /**
+     * An {@code Error} from a message handler: the endpoint hears it in {@code onError}, the transport closes
+     * with 1011, and {@code onClose} hears 1006 with a reason naming the {@code Error} (BUG-20261115-08).
+     */
+    @Test
+    void anErrorFromAMessageHandlerClosesWith1011AndReports1006() throws Exception {
+        server = WebSocketTestServer.start(endpoint(FailingHandlerEndpoint.class));
+        var client = new Client();
+        WebSocket ws = client.connect();
+
+        ws.sendText("fail", true).get(WAIT, SECONDS);
+
+        assertTrue(client.closed.await(WAIT, SECONDS), "the client saw no close");
+        assertEquals(CloseCodes.UNEXPECTED_CONDITION.getCode(), client.closeCode);
+        assertClosedByTheContainer(CLOSES.poll(WAIT, SECONDS),
+                "callback failed: java.lang.ExceptionInInitializerError: handler failed");
+        assertInstanceOf(ExceptionInInitializerError.class, ERRORS.poll(WAIT, SECONDS));
+    }
+
+    /** A close the application initiates keeps its code, 1001 here, on the wire and in {@code onClose}. */
+    @Test
+    void anApplicationCloseKeepsItsCode() throws Exception {
+        server = WebSocketTestServer.start(endpoint(LeavingEndpoint.class));
+        var client = new Client();
+        WebSocket ws = client.connect();
+
+        ws.sendText("leave", true).get(WAIT, SECONDS);
+
+        assertTrue(client.closed.await(WAIT, SECONDS), "the client saw no close");
+        assertEquals(CloseCodes.GOING_AWAY.getCode(), client.closeCode);
+        CloseReason reason = CLOSES.poll(WAIT, SECONDS);
+        assertNotNull(reason, "Endpoint.onClose did not run");
+        assertEquals(CloseCodes.GOING_AWAY, reason.getCloseCode());
+        assertEquals(LEAVING, reason.getReasonPhrase());
+    }
+
+    /** A close the peer initiates gives {@code onClose} the peer's code and reason. */
+    @Test
+    void aPeerCloseReportsThePeersCode() throws Exception {
+        server = WebSocketTestServer.start(endpoint(EchoEndpoint.class));
+        var client = new Client();
+        WebSocket ws = client.connect();
+        assertNotNull(SESSIONS.poll(WAIT, SECONDS), "the endpoint did not open");
+
+        ws.sendClose(4000, "bye").get(WAIT, SECONDS);
+
+        CloseReason reason = CLOSES.poll(WAIT, SECONDS);
+        assertNotNull(reason, "Endpoint.onClose did not run");
+        assertEquals(4000, reason.getCloseCode().getCode());
+        assertEquals("bye", reason.getReasonPhrase());
     }
 
     @Test
@@ -322,6 +466,10 @@ class SessionEndToEndTest {
         assertEquals("still here", client.nextText());
     }
 
+    /**
+     * The peer that vanished never answers the idle timeout's 1001: the endpoint hears 1006, the container
+     * having closed the session (Jakarta WebSocket 2.2 section 2.1.5, BUG-20261115-08).
+     */
     @Test
     void aVanishedPeerIsCutByTheIdleTimeout() throws Exception {
         // The raw client never reads nor closes: the server's close frame is never answered, so the
@@ -332,18 +480,10 @@ class SessionEndToEndTest {
             Session session = SESSIONS.poll(WAIT, SECONDS);
             assertNotNull(session, "the endpoint did not open");
 
-            CloseReason reason = CLOSES.poll(WAIT, SECONDS);
-            assertNotNull(reason, "the idle timeout did not close the session");
-            assertEquals(CloseCodes.GOING_AWAY, reason.getCloseCode());
+            assertClosedByTheContainer(CLOSES.poll(WAIT, SECONDS), "idle timeout");
             assertFalse(session.isOpen());
 
-            byte[] received = socket.getInputStream().readAllBytes();
-            String text = new String(received, StandardCharsets.ISO_8859_1);
-            int frameAt = text.indexOf("\r\n\r\n") + 4;
-            assertTrue(frameAt > 4 && text.startsWith("HTTP/1.1 101"), text);
-            assertEquals(0x88, received[frameAt] & 0xFF, "the server sent a close frame");
-            assertEquals(CloseCodes.GOING_AWAY.getCode(),
-                    ((received[frameAt + 2] & 0xFF) << 8) | (received[frameAt + 3] & 0xFF));
+            assertEquals(CloseCodes.GOING_AWAY.getCode(), closeFrameCode(socket.getInputStream().readAllBytes()));
             assertTrue(CLOSES.isEmpty(), "Endpoint.onClose ran more than once");
         }
     }
@@ -384,6 +524,42 @@ class SessionEndToEndTest {
     }
 
     // ---------------------------------------------------------------- helpers
+
+    /**
+     * Asserts that {@code reason} is the one of a close the container initiated: 1006 with {@code phrase},
+     * whatever the code on the wire (Jakarta WebSocket 2.2 section 2.1.5).
+     */
+    private static void assertClosedByTheContainer(CloseReason reason, String phrase) {
+        assertNotNull(reason, "Endpoint.onClose did not run");
+        assertEquals(CloseCodes.CLOSED_ABNORMALLY, reason.getCloseCode(), reason::toString);
+        assertEquals(phrase, reason.getReasonPhrase());
+    }
+
+    /**
+     * The code of the frame that follows the 101 response head in {@code received}, everything a raw client
+     * read: that frame must be a Close.
+     */
+    private static int closeFrameCode(byte[] received) {
+        String text = new String(received, StandardCharsets.ISO_8859_1);
+        int frameAt = text.indexOf("\r\n\r\n") + 4;
+        assertTrue(frameAt > 4 && text.startsWith("HTTP/1.1 101"), text);
+        assertTrue(received.length >= frameAt + 4, "no close frame with a code followed the 101");
+        assertEquals(0x88, received[frameAt] & 0xFF, "the server sent a close frame");
+        return ((received[frameAt + 2] & 0xFF) << 8) | (received[frameAt + 3] & 0xFF);
+    }
+
+    /** A masked client text frame (RFC 6455 section 5.2) of fewer than 126 bytes, carrying {@code payload}. */
+    private static byte[] maskedText(byte[] payload) {
+        byte[] mask = {0x11, 0x22, 0x33, 0x44};
+        byte[] frame = new byte[2 + mask.length + payload.length];
+        frame[0] = (byte) 0x81;
+        frame[1] = (byte) (0x80 | payload.length);
+        System.arraycopy(mask, 0, frame, 2, mask.length);
+        for (int i = 0; i < payload.length; i++) {
+            frame[2 + mask.length + i] = (byte) (payload[i] ^ mask[i % mask.length]);
+        }
+        return frame;
+    }
 
     private static ServletContextListener endpoint(Class<?> endpointClass) {
         return new ServletContextListener() {
@@ -450,6 +626,7 @@ class SessionEndToEndTest {
         final BlockingQueue<byte[]> binaries = new LinkedBlockingQueue<>();
         final CountDownLatch closed = new CountDownLatch(1);
         volatile int closeCode = -1;
+        volatile String closeReason;
         private final StringBuilder partialText = new StringBuilder();
         private final ByteArrayOutputStream partialBinary = new ByteArrayOutputStream();
 
@@ -484,6 +661,7 @@ class SessionEndToEndTest {
         @Override
         public CompletionStage<?> onClose(WebSocket webSocket, int statusCode, String reason) {
             closeCode = statusCode;
+            closeReason = reason;
             closed.countDown();
             return null;
         }

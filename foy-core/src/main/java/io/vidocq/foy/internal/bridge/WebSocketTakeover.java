@@ -34,7 +34,9 @@ import io.vidocq.foy.spi.websocket.WebSocketUpgradeHandler;
 import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.nio.ByteBuffer;
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.util.Objects;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -54,20 +56,33 @@ import java.util.concurrent.locks.ReentrantLock;
  * from the listener's {@code onOpen}, after which chappe sends no event, closes with 1011 and ends the
  * takeover the same way before it propagates.</p>
  *
+ * <p>The code the listener hears in {@code onClose} follows Jakarta WebSocket 2.2 section 2.1.5, whose
+ * implementation, {@code foy-websocket}'s session, is the listener this SPI serves: the code and reason of
+ * the peer's Close when the peer closed first, and 1006, a code never sent on the wire, when this side's
+ * container closed the connection, with a reason naming why, whatever code its Close frame carried. The
+ * undeploy (1001 on the wire, {@code "the application is stopping"}), a failed {@code onOpen} (1011,
+ * {@code "onOpen failed"}),
+ * and the closes chappe initiates on a failure it reports to {@code onError} first: a protocol violation of
+ * the peer (1002, 1007 or 1009 on the wire, {@code "protocol error: "} and what chappe found) or a callback
+ * that threw (1011, {@code "callback failed: "} and the throwable). A connection cut with no Close frame
+ * stays the 1006 chappe reports, with no reason. A close the listener initiates through its peer reports
+ * the peer's answer, as before: the listener knows its own code (BUG-20261115-08).</p>
+ *
  * <p>An undeploy ends the takeover before it goes on, so {@code onClose} and {@code destroy()} run
  * while the application is intact, before its {@code contextDestroyed} (BUG-20261114-08). A
  * connection still open is closed with 1001 and ended once its Close is sent, without waiting for the
  * peer's answer and never before that Close: on the undeploy hook's thread (a virtual thread of its own
  * for each connection), or, when an event in progress returns after the Close went out, on the
  * connection's thread as soon as it returns, so the listener never runs on two threads at once; the hook
- * then waits for that {@code onClose}. The listener hears that 1001, not the code the peer answers with
- * nor the 1006 of a connection the server's stop cut; no I/O failure of that closing handshake reaches
- * its {@code onError}, and no frame read once the undeploy closed the connection reaches it either. A
- * connection whose closing handshake had already begun keeps the code of the side that closed first: the
- * undeploy waits for its end. The Close goes out on a thread of its own, since a send blocked on a peer
- * that does not read holds the lock it needs; a Close that send still holds at the end of the grace never
- * goes out: the connection is cut (CHAPPE-060), which fails that send, and the takeover ends with its 1001
- * all the same. The whole of it, the Close and the waits, lasts at most {@link #UNDEPLOY_GRACE}, plus
+ * then waits for that {@code onClose}. The listener hears the undeploy's close, 1006 with its reason, not
+ * the code the peer answers with nor the 1006 with no reason of a connection the server's stop cut; no I/O
+ * failure of that closing handshake reaches its {@code onError}, and no frame read once the undeploy closed
+ * the connection reaches it either. A connection whose closing handshake had already begun keeps the code
+ * of the side that closed first: the undeploy waits for its end. The Close goes out on a thread of its own,
+ * since a send blocked on a peer that does not read holds the lock it needs; a Close that send still holds
+ * at the end of the grace never goes out: the connection is cut (CHAPPE-060), which fails that send, and
+ * the takeover ends with the undeploy's close all the same. The whole of it, the Close and the waits, lasts
+ * at most {@link #UNDEPLOY_GRACE}, plus
  * {@link #CUT_GRACE} for a connection it cut, except an end already under way on the connection's thread (an
  * {@code onClose}, or the {@code onError} that follows a failed {@code onOpen}), which the context's own grace
  * bounds. Past it, the takeover still ends after the application stopped: once the event in progress returns,
@@ -99,7 +114,11 @@ final class WebSocketTakeover implements WebSocketHandler {
     static final Duration CUT_GRACE = Duration.ofMillis(500);
 
     private static final int GOING_AWAY = 1001;
+    /** The code of a close this side's container initiated, for the listener only: never on the wire. */
+    private static final int CLOSED_ABNORMALLY = 1006;
     private static final int INTERNAL_ERROR = 1011;
+    /** The most a close reason holds, in UTF-8 bytes (RFC 6455 section 5.5: 125 bytes, 2 for the code). */
+    private static final int MAX_REASON_BYTES = 123;
     private static final String STOPPING = "the application is stopping";
     private static final String ON_OPEN_FAILED = "onOpen failed";
 
@@ -127,6 +146,8 @@ final class WebSocketTakeover implements WebSocketHandler {
     private long hookStarted;
     private final AtomicReference<WebSocketListener> listener = new AtomicReference<>();
     private final AtomicReference<AutoCloseable> undeployHook = new AtomicReference<>();
+    /** The first failure chappe reported to {@link #onError}: a close that follows it is chappe's own. */
+    private final AtomicReference<Throwable> failure = new AtomicReference<>();
     /** Held while the listener runs: the transport's events and the undeploy's end never overlap. */
     private final ReentrantLock events = new ReentrantLock();
     /** Opens once the takeover ended: {@code onClose} ran and {@code destroy()} returned. */
@@ -188,7 +209,7 @@ final class WebSocketTakeover implements WebSocketHandler {
                 // An Error: chappe lets it end the connection with neither onError nor onClose.
                 // Close with 1011 and finish here, then the Error propagates.
                 closeQuietly(ws, INTERNAL_ERROR, ON_OPEN_FAILED);
-                finish(INTERNAL_ERROR, ON_OPEN_FAILED);
+                finish(CLOSED_ABNORMALLY, ON_OPEN_FAILED);
             }
         }
     }
@@ -217,8 +238,9 @@ final class WebSocketTakeover implements WebSocketHandler {
      * Hands one event of the transport to the listener, under {@link #events} and with the application
      * class loader; none once the takeover ended, which an undeploy can do before the transport does, and
      * none once the undeploy closed the connection. Then, still under the lock, the takeover of a
-     * connection the undeploy closed ends with its 1001 once the undeploy hook is past its wait for the
-     * Close: after the event that was in progress when the undeploy came, or instead of a frame read since.
+     * connection the undeploy closed ends with the undeploy's close once the undeploy hook is past its wait
+     * for the Close: after the event that was in progress when the undeploy came, or instead of a frame read
+     * since.
      * Before that, the hook ends it itself after the Close ({@link #endNow}). So no frame reaches the
      * listener after the undeploy closed the connection, even when the undeploy stopped waiting for an
      * event that outlived its grace, and {@code onClose} never comes before the Close frame on this path.
@@ -234,7 +256,7 @@ final class WebSocketTakeover implements WebSocketHandler {
             }
         } finally {
             try {
-                if (closedByUndeploy && closeWaitOver) finish(GOING_AWAY, STOPPING);
+                if (closedByUndeploy && closeWaitOver) finish(CLOSED_ABNORMALLY, STOPPING);
             } finally {
                 events.unlock();
             }
@@ -245,12 +267,14 @@ final class WebSocketTakeover implements WebSocketHandler {
      * Forwards the error to the listener, except an I/O failure of a connection the undeploy closed:
      * the session is over for the application once the undeploy sent its 1001, and what the transport
      * hits while that closing handshake ends (the server's stop cutting the read, the peer going away)
-     * is the connection going down, not an error of the session (BUG-20261114-07).
+     * is the connection going down, not an error of the session (BUG-20261114-07). The first error is kept:
+     * when chappe then closes the connection itself, {@link #onClose} names it to the listener.
      */
     @Override
     public void onError(WebSocket ws, Throwable error) {
         events.lock();
         try {
+            failure.compareAndSet(null, error);
             try (var _ = ContextLoaderScope.enter(applicationLoader)) {
                 report(error);
             } finally {
@@ -263,18 +287,18 @@ final class WebSocketTakeover implements WebSocketHandler {
     }
 
     /**
-     * Ends the takeover of an {@code onOpen} that failed with {@code error}. The undeploy's 1001 when
-     * {@code error} is the failure of a send the undeploy's cut ended, which {@link #report} does not report:
-     * the listener hears the undeploy's Close, as on any connection the undeploy cut. Otherwise the 1011
-     * chappe closes with, as outside an undeploy: after the listener's {@code onError}, or without it for
-     * another {@code IOException} once the undeploy closed the connection, which is not reported either
-     * (BUG-20261114-07).
+     * Ends the takeover of an {@code onOpen} that failed with {@code error}, with 1006, as for every close
+     * this side initiated. The undeploy's reason when {@code error} is the failure of a send the undeploy's
+     * cut ended, which {@link #report} does not report: the listener hears the undeploy's close, as on any
+     * connection the undeploy cut. Otherwise the reason of the 1011 chappe closes with, as outside an
+     * undeploy: after the listener's {@code onError}, or without it for another {@code IOException} once the
+     * undeploy closed the connection, which is not reported either (BUG-20261114-07).
      */
     private void finishOpenFailed(Throwable error) {
         if (closedByUndeploy && error instanceof ConnectionCutException) {
-            finish(GOING_AWAY, STOPPING);
+            finish(CLOSED_ABNORMALLY, STOPPING);
         } else {
-            finish(INTERNAL_ERROR, ON_OPEN_FAILED);
+            finish(CLOSED_ABNORMALLY, ON_OPEN_FAILED);
         }
     }
 
@@ -289,22 +313,53 @@ final class WebSocketTakeover implements WebSocketHandler {
     }
 
     /**
-     * Ends the takeover with the code of the side that closed first: chappe reports the peer's code, or
-     * 1006 for a cut connection, so an undeploy that closed first reports its own 1001 instead. A no-op
-     * when the undeploy already ended it.
+     * Ends the takeover with the close of the side that closed first. Chappe reports the peer's code, or
+     * 1006 for a cut connection; a close this side initiated reports 1006 with its own reason instead
+     * (Jakarta WebSocket 2.2 section 2.1.5): the undeploy's, or, after a failure chappe reported to
+     * {@link #onError} and closed the connection on, which it reports with no code of the peer's (1005),
+     * a reason naming that failure ({@link #failureReason}). A no-op when the undeploy already ended it.
      */
     @Override
     public void onClose(WebSocket ws, int code, String reason) {
         events.lock();
         try {
+            Throwable closedOn = failure.get();
             if (closedByUndeploy) {
-                finish(GOING_AWAY, STOPPING);
+                finish(CLOSED_ABNORMALLY, STOPPING);
+            } else if (closedOn != null && code != CLOSED_ABNORMALLY) {
+                finish(CLOSED_ABNORMALLY, failureReason(closedOn));
             } else {
                 finish(code, reason);
             }
         } finally {
             events.unlock();
         }
+    }
+
+    /**
+     * The reason the listener hears for a close chappe initiated on {@code error}: an {@code IOException} is a
+     * protocol violation of the peer, which chappe names in its message (an I/O failure of the connection is
+     * reported as a cut, 1006, never here); anything else is the failure of a callback. At most
+     * 123 bytes ({@link #boundedReason}).
+     */
+    static String failureReason(Throwable error) {
+        String phrase = error instanceof IOException
+                ? "protocol error: " + Objects.requireNonNullElse(error.getMessage(), error.getClass().getName())
+                : "callback failed: " + error;
+        return boundedReason(phrase);
+    }
+
+    /**
+     * {@code phrase}, cut to the 123 bytes in UTF-8 a close reason holds, which
+     * {@code jakarta.websocket.CloseReason} refuses past, without splitting a character.
+     */
+    static String boundedReason(String phrase) {
+        byte[] bytes = phrase.getBytes(StandardCharsets.UTF_8);
+        if (bytes.length <= MAX_REASON_BYTES) return phrase;
+        int end = MAX_REASON_BYTES;
+        // bytes[end] is the first byte left out: a continuation byte there means a character would be split.
+        while (end > 0 && (bytes[end] & 0xC0) == 0x80) end--;
+        return new String(bytes, 0, end, StandardCharsets.UTF_8);
     }
 
     /**
@@ -340,8 +395,8 @@ final class WebSocketTakeover implements WebSocketHandler {
         long deadline = hookStarted + UNDEPLOY_GRACE.toNanos();
         // A window remains for a simultaneous close: a peer Close chappe has read but not yet marked
         // (closeReceived), or an EOF chappe has hit before notifyClose, still finds the socket open, so
-        // the connection is reported as 1001 although no 1001 frame went out. Closing it needs chappe
-        // to tell whether close() actually sent the frame.
+        // the connection is reported as the undeploy's close although no 1001 frame went out. Closing it
+        // needs chappe to tell whether close() actually sent the frame.
         boolean open = ws.isOpen();
         if (open) {
             closedByUndeploy = true;
@@ -384,7 +439,7 @@ final class WebSocketTakeover implements WebSocketHandler {
      * (CHAPPE-060). The blocked send then fails, with an {@code IOException} that says the connection was
      * cut ({@link Peer}), and so does any later one; the thread of the Close returns without sending it; the
      * peer reads the end of the connection. The read the cut ends reaches no {@code onError}, and the
-     * takeover still ends with the undeploy's 1001, once.
+     * takeover still ends with the undeploy's close, once.
      *
      * @return the deadline, {@link #CUT_GRACE} from now, of the waits that follow
      */
@@ -404,7 +459,8 @@ final class WebSocketTakeover implements WebSocketHandler {
     }
 
     /**
-     * Ends the takeover with its 1001 without waiting for the peer to answer: Jakarta WebSocket 2.2
+     * Ends the takeover with the undeploy's close (1006 to the listener, its Close frame 1001) without
+     * waiting for the peer to answer: Jakarta WebSocket 2.2
      * section 5.1 asks that the listener never run on two threads at once, and section 2.1.5 that the
      * Close be sent before {@code onClose}, which needs no answer from the peer. It runs once the hook is
      * past its wait for the Close. With no event running it ends here, on the undeploy hook's thread; an
@@ -436,7 +492,7 @@ final class WebSocketTakeover implements WebSocketHandler {
         }
         boolean openFailedFirst = openFailed;
         try {
-            if (!openFailedFirst) finish(GOING_AWAY, STOPPING);
+            if (!openFailedFirst) finish(CLOSED_ABNORMALLY, STOPPING);
         } finally {
             events.unlock();
         }

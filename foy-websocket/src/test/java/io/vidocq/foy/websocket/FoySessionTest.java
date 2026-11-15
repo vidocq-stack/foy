@@ -51,36 +51,49 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class FoySessionTest {
 
     private static final long WAIT = 5;
+    private static final String ON_OPEN_FAILED = "onOpen failed";
 
     private final FakePeer peer = new FakePeer();
     private final List<String> received = new CopyOnWriteArrayList<>();
 
+    /**
+     * The peer reads 1009, the endpoint hears 1006: the container closed the session (Jakarta WebSocket 2.2
+     * section 2.1.5), even once the peer answers its Close with the same 1009 (BUG-20261115-08).
+     */
     @Test
-    void aMessageOverTheLimitClosesWith1009() {
+    void aMessageOverTheLimitClosesWith1009AndReports1006() {
         var endpoint = new Recorder(session ->
                 session.addMessageHandler(String.class, (MessageHandler.Whole<String>) received::add));
         FoySession session = TestSessions.open(endpoint, peer);
+        String reason = "text message of 65537 characters, the maximum is 65536";
 
         session.onText("a".repeat(65_536));
         session.onText("a".repeat(65_537));
+        session.onClose(CloseCodes.TOO_BIG.getCode(), "");
 
         assertEquals(65_536, session.getMaxTextMessageBufferSize(), "the default is 64 KiB");
         assertEquals(1, received.size(), "the message over the limit is not delivered");
         assertEquals(CloseCodes.TOO_BIG.getCode(), peer.closeCode());
+        assertEquals(reason, peer.closeReason());
+        TestSessions.assertClosedByTheContainer(endpoint, reason);
     }
 
     @Test
-    void aBinaryMessageOverTheLimitClosesWith1009() {
+    void aBinaryMessageOverTheLimitClosesWith1009AndReports1006() {
         var endpoint = new Recorder(session ->
                 session.addMessageHandler(ByteBuffer.class, (MessageHandler.Whole<ByteBuffer>) data ->
                         received.add("binary")));
         FoySession session = TestSessions.open(endpoint, peer);
         session.setMaxBinaryMessageBufferSize(4);
+        String reason = "binary message of 5 bytes, the maximum is 4";
 
         session.onBinary(ByteBuffer.allocate(5));
+        session.onClose(CloseCodes.CLOSED_ABNORMALLY.getCode(), "");
 
         assertEquals(List.of(), received);
         assertEquals(CloseCodes.TOO_BIG.getCode(), peer.closeCode());
+        assertEquals(reason, peer.closeReason());
+        TestSessions.assertClosedByTheContainer(endpoint, reason);
     }
 
     @Test
@@ -100,7 +113,7 @@ class FoySessionTest {
     }
 
     @Test
-    void anOnOpenThatThrowsReportsThenClosesWith1011() {
+    void anOnOpenThatThrowsReportsThenClosesWith1011AndReports1006() {
         var failure = new IllegalStateException("cannot open");
         var endpoint = new Recorder(session -> {
             throw failure;
@@ -112,14 +125,14 @@ class FoySessionTest {
 
         assertEquals(List.of(failure), endpoint.errors);
         assertEquals(CloseCodes.UNEXPECTED_CONDITION.getCode(), peer.closeCode());
-        assertEquals(1, endpoint.closes.size());
-        assertEquals(CloseCodes.UNEXPECTED_CONDITION, endpoint.closes.getFirst().getCloseCode());
+        assertEquals(ON_OPEN_FAILED, peer.closeReason());
+        TestSessions.assertClosedByTheContainer(endpoint, ON_OPEN_FAILED);
     }
 
     /**
      * An {@code Error} from {@code onOpen} (a failed static initializer) propagates to the transport, but
-     * only once the session closed with 1011: {@code onClose} ran, the session left the open sessions, its
-     * timer stopped and its sends fail.
+     * only once the session closed with 1011: {@code onClose} ran, with 1006, the session left the open
+     * sessions, its timer stopped and its sends fail.
      */
     @Test
     void anOnOpenThatThrowsAnErrorClosesWith1011BeforeItPropagates() {
@@ -133,8 +146,7 @@ class FoySessionTest {
         assertThrows(ExceptionInInitializerError.class, () -> session.onOpen(peer));
 
         assertEquals(CloseCodes.UNEXPECTED_CONDITION.getCode(), peer.closeCode());
-        assertEquals(1, endpoint.closes.size());
-        assertEquals(CloseCodes.UNEXPECTED_CONDITION, endpoint.closes.getFirst().getCloseCode());
+        TestSessions.assertClosedByTheContainer(endpoint, ON_OPEN_FAILED);
         assertEquals(Set.of(), session.getOpenSessions());
         assertFalse(session.isOpen());
         var send = session.getAsyncRemote().sendText("after");
@@ -161,8 +173,12 @@ class FoySessionTest {
         assertEquals(List.of(), endpoint.errors);
     }
 
+    /**
+     * A close the application initiates keeps its code: the 1006 of Jakarta WebSocket 2.2 section 2.1.5 is
+     * for the closes the container initiates.
+     */
     @Test
-    void aLocalCloseReportsTheLocalReason() throws IOException {
+    void anApplicationCloseReportsTheApplicationsReason() throws IOException {
         var endpoint = new Recorder();
         FoySession session = TestSessions.open(endpoint, peer);
 
@@ -172,6 +188,39 @@ class FoySessionTest {
         assertEquals(4000, peer.closeCode());
         assertEquals("bye", peer.closeReason());
         assertEquals(4000, endpoint.closes.getFirst().getCloseCode().getCode());
+        assertEquals("bye", endpoint.closes.getFirst().getReasonPhrase());
+    }
+
+    /** An application that closes with 1001 hears its 1001, even when the peer then vanishes. */
+    @Test
+    void anApplicationCloseWithGoingAwayKeepsItsCodeWhenThePeerVanishes() throws IOException {
+        var endpoint = new Recorder();
+        FoySession session = TestSessions.open(endpoint, peer);
+
+        session.close(new CloseReason(CloseCodes.GOING_AWAY, "leaving"));
+        session.onClose(CloseCodes.CLOSED_ABNORMALLY.getCode(), "");
+
+        assertEquals(CloseCodes.GOING_AWAY.getCode(), peer.closeCode());
+        assertEquals(CloseCodes.GOING_AWAY, endpoint.closes.getFirst().getCloseCode());
+        assertEquals("leaving", endpoint.closes.getFirst().getReasonPhrase());
+    }
+
+    /**
+     * The peer closed first: a close the container tries afterwards sends nothing more, and the endpoint hears
+     * the peer's code.
+     */
+    @Test
+    void aContainerCloseAfterThePeerClosedReportsThePeersCode() {
+        var endpoint = new Recorder();
+        FoySession session = TestSessions.open(endpoint, peer);
+        session.setMaxTextMessageBufferSize(1);
+        peer.close(CloseCodes.NORMAL_CLOSURE.getCode(), "the peer's Close, echoed");
+
+        session.onText("too big");
+        session.onClose(CloseCodes.NORMAL_CLOSURE.getCode(), "bye");
+
+        assertEquals(CloseCodes.NORMAL_CLOSURE.getCode(), peer.closeCode(), "a second Close went out");
+        assertEquals(CloseCodes.NORMAL_CLOSURE, endpoint.closes.getFirst().getCloseCode());
         assertEquals("bye", endpoint.closes.getFirst().getReasonPhrase());
     }
 

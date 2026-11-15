@@ -21,6 +21,7 @@ package io.vidocq.foy.websocket;
 
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.websocket.CloseReason;
+import jakarta.websocket.CloseReason.CloseCodes;
 import jakarta.websocket.Endpoint;
 import jakarta.websocket.EndpointConfig;
 import jakarta.websocket.Session;
@@ -33,6 +34,8 @@ import java.util.Map;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.function.Consumer;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
 
 /** Sessions opened on a {@link FakePeer}, as the handshake and the transport open them. */
 final class TestSessions {
@@ -61,6 +64,17 @@ final class TestSessions {
         FoySession session = session(endpoint);
         session.onOpen(peer);
         return session;
+    }
+
+    /**
+     * Asserts that {@code endpoint} heard one {@code onClose}, for a close the container initiated: 1006 with
+     * {@code reason}, whatever the code on the wire (Jakarta WebSocket 2.2 section 2.1.5).
+     */
+    static void assertClosedByTheContainer(Recorder endpoint, String reason) {
+        assertEquals(1, endpoint.closes.size(), endpoint.closes::toString);
+        CloseReason heard = endpoint.closes.getFirst();
+        assertEquals(CloseCodes.CLOSED_ABNORMALLY, heard.getCloseCode(), heard::toString);
+        assertEquals(reason, heard.getReasonPhrase());
     }
 
     /** A handshake request answering only the methods the handshake and the session read. */

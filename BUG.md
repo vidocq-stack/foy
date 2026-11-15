@@ -1,5 +1,42 @@
 # BUG.md — foy
 
+## BUG-20261115-08 — A WebSocket close the container initiates reaches `onClose` with its wire code, not 1006
+
+- Date: 2026-11-15 (the maintainer ruled for Jakarta WebSocket 2.2 section 2.1.5 over the design of record,
+  `WEBSOCKET.md` section 5.4 "Close.", which said a local close reports the session's own reason).
+- Symptom: `Endpoint.onClose` heard the code of the Close frame the container sent: 1001 for the undeploy, an
+  idle timeout or a send timeout, 1009 for a message over the limit, 1011 for a failed `onOpen`. Section 2.1.5
+  asks for 1006 (`CLOSED_ABNORMALLY`, never sent on the wire) with a suitable reason whenever the local
+  container initiates the close, so the endpoint can tell a remote close from a local one: an endpoint could
+  not tell the undeploy's 1001 from a peer that closed with 1001. Worse, a close Chappe initiates on a
+  protocol violation of the peer (an invalid UTF-8 text message, closed with 1007) or on an `Error` from a
+  message handler (1011) reached `onClose` as 1005 (`NO_STATUS_CODE`), as if the peer had sent a Close with no
+  code.
+- Repro: deterministic. In `foy-websocket`: `FoySessionTest` (`aMessageOverTheLimitClosesWith1009AndReports1006`,
+  the binary one, `anOnOpenThatThrowsReportsThenClosesWith1011AndReports1006`,
+  `anOnOpenThatThrowsAnErrorClosesWith1011BeforeItPropagates`), `SessionTimerTest`
+  (`theIdleTimeoutClosesWith1001AndReports1006`), `AsyncRemoteTest` (`aSendTimeoutReports1006ToTheEndpoint`) and
+  `SessionEndToEndTest` (the undeploy, the undeploy's cut, the idle timeout, a message too big, `onOpen`
+  failures, `aProtocolErrorOfThePeerClosesWith1007AndReports1006`, which got `CloseReason[1005]`). In
+  `foy-core`, `WebSocketTakeoverEndToEndTest`: 23 tests, among them `aProtocolErrorOfThePeerClosesWith1007AndReports1006`
+  and `anErrorFromACallbackClosesWith1011AndReports1006` (1005 to the listener).
+- Cause: `FoySession` recorded the Close frame it sent as the reason of `onClose`; the takeover handed its
+  listener the undeploy's 1001 and a failed `onOpen`'s 1011, and passed on the 1005 Chappe reports for a close
+  it initiated after an `onError`.
+- Status: FIXED on `fix/websocket-onclose-1006`. A close the container initiates reaches `onClose` as 1006 with
+  a reason naming the cause; the peer still reads the Close frame's own code. `FoySession.closeByContainer`
+  sends the frame and records `CloseReason(CLOSED_ABNORMALLY, reason)` for the idle timeout (`idle timeout`),
+  the send timeout (`send timeout`), a message too big (`text message of N characters, the maximum is M`, or
+  the binary one) and a failed `onOpen` (`onOpen failed`). The takeover's `WebSocketListener.onClose` contract
+  follows the same rule: 1006 for the undeploy (`the application is stopping`, also when it cuts the
+  connection), a failed `onOpen`, and a close Chappe initiates after an `onError` and reports with a code other
+  than 1006 (`protocol error: ` and Chappe's message, or `callback failed: ` and the throwable), every reason
+  cut to 123 bytes on a character boundary. Unchanged: a close of the peer gives the peer's code, a
+  `Session.close(...)` of the application its own code (the rule names the container), a TCP cut with no close
+  first 1006 with no reason, and the side that closed first keeps its reason. Consumers: Vidocq's
+  `FoyWebSocketModulePathTest.anApplicationStopClosesTheConnectionWith1001BeforeTheServerStops` asserts
+  `onClose` codes `[1001]` and must expect `[1006]`; Atmosphere (Vaadin push) treats 1006 as it treated 1001.
+
 ## BUG-20261115-07 — During its undeploy, an application's `getContext` no longer finds its own path
 
 - Date: 2026-11-15 (left as is by the undeploy work of Vidocq/foy#104, BUG-20261115-04).

@@ -60,6 +60,7 @@ class AsyncRemoteTest {
     private static final long WAIT = 10;
     private static final int THREADS = 8;
     private static final int PER_THREAD = 125;
+    private static final String SEND_TIMEOUT = "send timeout";
 
     private final FakePeer peer = new FakePeer();
     private final Recorder endpoint = new Recorder();
@@ -176,6 +177,25 @@ class AsyncRemoteTest {
         assertSame(session, result.value.getSession());
         assertTrue(peer.closed.await(WAIT, SECONDS));
         assertEquals(CloseCodes.GOING_AWAY.getCode(), peer.closeCode());
+        assertEquals(SEND_TIMEOUT, peer.closeReason());
+    }
+
+    /**
+     * The peer reads the 1001 of a send timeout, the endpoint hears 1006: the container closed the session
+     * (Jakarta WebSocket 2.2 section 2.1.5), even once the peer answers with its own 1001 (BUG-20261115-08).
+     */
+    @Test
+    void aSendTimeoutReports1006ToTheEndpoint() throws InterruptedException {
+        session = TestSessions.open(endpoint, peer);
+        RemoteEndpoint.Async async = session.getAsyncRemote();
+        async.setSendTimeout(100);
+        peer.blockWrites();
+
+        async.sendText("never written", new CompletableResult());
+
+        assertTrue(peer.closed.await(WAIT, SECONDS));
+        session.onClose(CloseCodes.GOING_AWAY.getCode(), "");
+        TestSessions.assertClosedByTheContainer(endpoint, SEND_TIMEOUT);
     }
 
     /** A send handler that throws an {@code Error} at its send timeout does not keep the session open. */

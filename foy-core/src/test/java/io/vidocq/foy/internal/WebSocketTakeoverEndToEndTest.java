@@ -74,7 +74,10 @@ class WebSocketTakeoverEndToEndTest {
         final CountDownLatch destroyed = new CountDownLatch(1);
         final AtomicInteger destroyCalls = new AtomicInteger();
         final AtomicInteger closeCode = new AtomicInteger(-1);
+        final AtomicReference<String> closeReason = new AtomicReference<>();
         volatile boolean failOpen;
+        /** The listener's {@code onText} throws an {@code Error}. */
+        volatile boolean failTextWithError;
         volatile boolean failOpenWithError;
         volatile boolean failListener;
         /** The listener closes the connection with 1000 at the end of its {@code onOpen}. */
@@ -137,7 +140,10 @@ class WebSocketTakeoverEndToEndTest {
     /** How many of the last bytes before the end of a cut connection the tests check. */
     private static final int TAIL = 64;
     /** The reason of the undeploy's 1001 Close, the last bytes of its frame. */
-    private static final byte[] STOPPING = "the application is stopping".getBytes(java.nio.charset.StandardCharsets.US_ASCII);
+    private static final String STOPPING_REASON = "the application is stopping";
+    private static final byte[] STOPPING = STOPPING_REASON.getBytes(java.nio.charset.StandardCharsets.US_ASCII);
+    /** The reason of the close of a failed {@code onOpen}, on the wire and to the listener. */
+    private static final String ON_OPEN_FAILED = "onOpen failed";
     private static final String TAKEOVER_LOGGER = "io.vidocq.foy.internal.bridge.WebSocketTakeover";
     /** The prefix of the virtual threads the context runs its undeploy hooks on. */
     private static final String HOOK_THREAD = "foy-upgrade-close-";
@@ -229,8 +235,8 @@ class WebSocketTakeoverEndToEndTest {
 
     /**
      * An undeploy started on an interrupted thread still waits for its connections: the interrupt it
-     * arrives with is set aside for the wait, so the takeover has ended with 1001 when the undeploy returns,
-     * and the thread gets its interrupt back.
+     * arrives with is set aside for the wait, so the takeover has ended (its peer read 1001, its listener heard
+     * 1006) when the undeploy returns, and the thread gets its interrupt back.
      */
     @Test
     void anInterruptedUndeployStillClosesWith1001() throws Exception {
@@ -247,15 +253,17 @@ class WebSocketTakeoverEndToEndTest {
         assertTrue(stillInterrupted, "the undeploy thread lost its interrupt");
         assertEquals(List.of("open", "close", "destroy"), probe.events, "the undeploy did not wait for its connection");
         assertEquals(1001, closedByServer.get(5, TimeUnit.SECONDS));
+        assertClosedByTheUndeploy();
         assertEquals(1, probe.destroyCalls.get());
     }
 
     /**
-     * The side that closed first gives the code: the listener hears the undeploy's own 1001, not the code
-     * the peer answers its Close with (BUG-20261114-05).
+     * The side that closed first gives the code: the listener hears the undeploy's own close, 1006 for a close
+     * the container initiated, not the code the peer answers its Close with (BUG-20261114-05,
+     * BUG-20261115-08).
      */
     @Test
-    void anUndeployReportsItsOwn1001WhateverThePeerAnswers() throws Exception {
+    void anUndeployReportsItsOwn1006WhateverThePeerAnswers() throws Exception {
         start(new VidocqServletContext("/"));
         var closedByServer = new CompletableFuture<Integer>();
         connect(new WebSocket.Listener() {
@@ -268,16 +276,16 @@ class WebSocketTakeoverEndToEndTest {
         closeConnections();
         assertEquals(1001, closedByServer.get(5, TimeUnit.SECONDS));
         assertTrue(probe.destroyed.await(5, TimeUnit.SECONDS));
-        assertEquals(1001, probe.closeCode.get());
+        assertClosedByTheUndeploy();
         assertEquals(List.of("open", "close", "destroy"), probe.events);
     }
 
     /**
-     * The server stops before the peer answers the undeploy's Close: chappe sees a cut connection (1006),
-     * the listener still hears the 1001 its side closed with (BUG-20261114-05).
+     * The server stops before the peer answers the undeploy's Close: chappe sees a cut connection (1006 with
+     * no reason), the listener still hears the close its side initiated, with its reason (BUG-20261114-05).
      */
     @Test
-    void anUndeployReports1001WhenTheServerStopsBeforeThePeerAnswers() throws Exception {
+    void anUndeployReports1006WhenTheServerStopsBeforeThePeerAnswers() throws Exception {
         start(new VidocqServletContext("/"));
         try (var client = new RawClient(port)) {
             client.send(handshake("/ws"));
@@ -285,13 +293,13 @@ class WebSocketTakeoverEndToEndTest {
             closeConnections();
             server.stop();
             assertTrue(probe.closed.await(5, TimeUnit.SECONDS));
-            assertEquals(1001, probe.closeCode.get());
+            assertClosedByTheUndeploy();
         }
     }
 
     /**
      * The server stops right after the undeploy, before the peer answers its Close: the listener hears the
-     * 1001 and no error. The undeploy ended the takeover before the stop (BUG-20261114-08), so the read the
+     * undeploy's close and no error. The undeploy ended the takeover before the stop (BUG-20261114-08), so the read the
      * stop cuts finds it closed; {@link #aServerStopWhileTheUndeployWaitsForItsCloseReportsNoError} pins the
      * case of BUG-20261114-07, a stop that reaches a takeover still open.
      */
@@ -321,7 +329,7 @@ class WebSocketTakeoverEndToEndTest {
             assertTrue(probe.opened.await(5, TimeUnit.SECONDS), ON_OPEN);
             closeConnections();
             assertEquals(List.of("open", "close", "destroy"), probe.events);
-            assertEquals(1001, probe.closeCode.get());
+            assertClosedByTheUndeploy();
         }
     }
 
@@ -360,12 +368,12 @@ class WebSocketTakeoverEndToEndTest {
         assertTrue(undeploy.join(Duration.ofSeconds(5)), "the undeploy did not return");
         assertTrue(probe.destroyed.await(5, TimeUnit.SECONDS));
         assertEquals(List.of("open", HELD_EVENT, "close", "destroy"), probe.events);
-        assertEquals(1001, probe.closeCode.get());
+        assertClosedByTheUndeploy();
     }
 
     /**
      * An event that does not return within the undeploy's grace does not stop the undeploy: the takeover
-     * then ends on the transport's thread, once the event returned, still with the undeploy's 1001.
+     * then ends on the transport's thread, once the event returned, still with the undeploy's close (1006).
      */
     @Test
     void anUndeployDoesNotWaitForAnEventPastItsGrace() throws Exception {
@@ -376,13 +384,13 @@ class WebSocketTakeoverEndToEndTest {
         probe.textGate.countDown();
         assertTrue(probe.destroyed.await(5, TimeUnit.SECONDS));
         assertEquals(List.of("open", HELD_EVENT, "close", "destroy"), probe.events);
-        assertEquals(1001, probe.closeCode.get());
+        assertClosedByTheUndeploy();
     }
 
     /**
      * Once the undeploy closed the connection, no frame reaches the listener: a frame the peer sends after the
      * undeploy stopped waiting for an event in progress is not delivered after the application stopped, and
-     * the takeover ends with 1001 as soon as that event returns.
+     * the takeover ends with the undeploy's close (1006) as soon as that event returns.
      */
     @Test
     void aFrameAfterTheUndeployGaveUpReachesNoListener() throws Exception {
@@ -402,13 +410,13 @@ class WebSocketTakeoverEndToEndTest {
             assertEquals(List.of("open", HELD_EVENT, "close", "destroy"), probe.events,
                     "a frame reached the listener after the undeploy closed the connection");
             assertTrue(ended, "the takeover did not end once the event returned");
-            assertEquals(1001, probe.closeCode.get());
+            assertClosedByTheUndeploy();
         }
     }
 
     /**
      * The undeploy's grace runs out on an event in progress, then the server stops: the held {@code onText}
-     * cannot echo any more, and the takeover ends with the undeploy's 1001 as soon as it returns, so the
+     * cannot echo any more, and the takeover ends with the undeploy's close (1006) as soon as it returns, so the
      * stop's I/O failure finds it closed and the listener hears no error.
      */
     @Test
@@ -420,14 +428,14 @@ class WebSocketTakeoverEndToEndTest {
         server.stop();
         assertTrue(probe.destroyed.await(5, TimeUnit.SECONDS));
         assertEquals(List.of("open", HELD_EVENT, "close", "destroy"), probe.events);
-        assertEquals(1001, probe.closeCode.get());
+        assertClosedByTheUndeploy();
     }
 
     /**
      * The server stops while the undeploy hook still waits for its 1001 Close, which a send blocked on the
      * peer holds back: the connection is marked closed by the undeploy but its takeover has not ended yet, so
      * the read the stop cuts reaches the takeover's {@code onError}, which must not report it
-     * (BUG-20261114-07). The listener hears the undeploy's 1001 and no error.
+     * (BUG-20261114-07). The listener hears the undeploy's close (1006) and no error.
      */
     @Test
     void aServerStopWhileTheUndeployWaitsForItsCloseReportsNoError() throws Exception {
@@ -445,7 +453,7 @@ class WebSocketTakeoverEndToEndTest {
             assertTrue(probe.destroyed.await(5, TimeUnit.SECONDS));
             assertTrue(undeploy.join(Duration.ofSeconds(5)), "the undeploy did not return");
             assertEquals(List.of("open", "close", "destroy"), probe.events);
-            assertEquals(1001, probe.closeCode.get());
+            assertClosedByTheUndeploy();
         }
     }
 
@@ -474,7 +482,7 @@ class WebSocketTakeoverEndToEndTest {
             assertTrue(probe.destroyed.await(5, TimeUnit.SECONDS));
             assertEquals(List.of("open", HELD_EVENT, "close", "destroy"), probe.events);
             assertFalse(probe.openAtClose.get(), "onClose ran before the 1001 Close went out");
-            assertEquals(1001, probe.closeCode.get());
+            assertClosedByTheUndeploy();
         }
     }
 
@@ -511,7 +519,7 @@ class WebSocketTakeoverEndToEndTest {
         }
         assertTrue(probe.destroyed.await(5, TimeUnit.SECONDS));
         assertEquals(List.of("open", HELD_EVENT, "close", "destroy"), probe.events);
-        assertEquals(1001, probe.closeCode.get());
+        assertClosedByTheUndeploy();
     }
 
     /**
@@ -548,8 +556,8 @@ class WebSocketTakeoverEndToEndTest {
 
     /**
      * A send blocked on a peer that does not read holds chappe's write lock, which the 1001 Close needs: the
-     * undeploy does not wait for that send past its grace, and still ends the takeover with 1001, once
-     * (BUG-20261115-01).
+     * undeploy does not wait for that send past its grace, and still ends the takeover with its close (1006),
+     * once (BUG-20261115-01).
      */
     @Test
     void anUndeployDoesNotWaitForASendBlockedOnThePeer() throws Exception {
@@ -563,7 +571,7 @@ class WebSocketTakeoverEndToEndTest {
             assertTrue(undeploy.join(Duration.ofSeconds(5)), WAITED_FOR_THE_BLOCKED_SEND);
             assertTrue(probe.destroyed.await(5, TimeUnit.SECONDS));
             assertEquals(List.of("open", "close", "destroy"), probe.events);
-            assertEquals(1001, probe.closeCode.get());
+            assertClosedByTheUndeploy();
             assertEquals(1, probe.destroyCalls.get());
         }
     }
@@ -572,7 +580,7 @@ class WebSocketTakeoverEndToEndTest {
      * Past its grace, the undeploy cuts a connection whose 1001 Close a send blocked on the peer holds back
      * (BUG-20261115-01, CHAPPE-060): the peer reads the end of the connection, with no Close frame, the
      * application's blocked send fails with an {@code IOException} that says so, and the listener hears the
-     * undeploy's 1001, once, with no {@code onError}.
+     * undeploy's close (1006), once, with no {@code onError}.
      */
     @Test
     void anUndeployCutsAConnectionWhoseCloseASendHoldsBack() throws Exception {
@@ -594,11 +602,11 @@ class WebSocketTakeoverEndToEndTest {
 
     /**
      * A send blocked in the listener's {@code onOpen}, which rethrows its failure: the undeploy cuts the
-     * connection, {@code onOpen} fails, and the listener still hears the undeploy's 1001, not the 1011 of a
+     * connection, {@code onOpen} fails, and the listener still hears the undeploy's close, not the close of a
      * failed {@code onOpen}, with no {@code onError}: the failure is the undeploy's own cut.
      */
     @Test
-    void aSendBlockedInOnOpenIsCutAndTheListenerHearsTheUndeploys1001() throws Exception {
+    void aSendBlockedInOnOpenIsCutAndTheListenerHearsTheUndeploysClose() throws Exception {
         probe.blockASendInOnOpen = true;
         start(new VidocqServletContext("/"));
         try (var client = new RawClient(port)) {
@@ -616,11 +624,12 @@ class WebSocketTakeoverEndToEndTest {
 
     /**
      * An {@code onOpen} that fails on its own while the undeploy waits for it, its Close already sent and
-     * nothing cut, keeps what any failed {@code onOpen} gets: its {@code onError}, then 1011. The undeploy
-     * leaves that end to chappe's {@code onError}, which always follows a failed {@code onOpen}.
+     * nothing cut, keeps what any failed {@code onOpen} gets: its {@code onError}, then its close (1006,
+     * "onOpen failed"). The undeploy leaves that end to chappe's {@code onError}, which always follows a failed
+     * {@code onOpen}.
      */
     @Test
-    void anOnOpenThatFailsOnItsOwnDuringTheUndeployKeepsItsErrorAnd1011() throws Exception {
+    void anOnOpenThatFailsOnItsOwnDuringTheUndeployKeepsItsErrorAndItsClose() throws Exception {
         probe.failOpenOnceReleased = true;
         start(new VidocqServletContext("/"));
         try (var client = new RawClient(port)) {
@@ -633,17 +642,17 @@ class WebSocketTakeoverEndToEndTest {
             probe.openGate.countDown();
             assertTrue(undeploy.join(Duration.ofSeconds(5)), "the undeploy did not return");
             assertEquals(List.of("open", "error", "close", "destroy"), probe.events);
-            assertEquals(1011, probe.closeCode.get());
+            assertClosedOnAFailedOnOpen();
             assertEquals(1, probe.destroyCalls.get());
         }
     }
 
     /**
      * An {@code onOpen} that fails on its own after the undeploy cut the connection, its failure not an I/O
-     * one, keeps its {@code onError} and its 1011: the undeploy's 1001 is only for the failure the cut caused.
+     * one, keeps its {@code onError} and its close: the undeploy's close is only for the failure the cut caused.
      */
     @Test
-    void anOnOpenThatFailsOnItsOwnAfterTheCutKeepsItsErrorAnd1011() throws Exception {
+    void anOnOpenThatFailsOnItsOwnAfterTheCutKeepsItsErrorAndItsClose() throws Exception {
         probe.blockASend = true;
         probe.failOpenOnceReleased = true;
         start(new VidocqServletContext("/"));
@@ -656,7 +665,7 @@ class WebSocketTakeoverEndToEndTest {
             probe.openGate.countDown();
             assertTrue(undeploy.join(Duration.ofSeconds(5)), "the undeploy did not return");
             assertEquals(List.of("open", "error", "close", "destroy"), probe.events);
-            assertEquals(1011, probe.closeCode.get());
+            assertClosedOnAFailedOnOpen();
             assertEquals(1, probe.destroyCalls.get());
         }
     }
@@ -664,10 +673,10 @@ class WebSocketTakeoverEndToEndTest {
     /**
      * An {@code onOpen} that fails on its own with an {@code IOException} once the undeploy closed the
      * connection, nothing cut: the failure is not reported (BUG-20261114-07), and the takeover ends with the
-     * 1011 of a failed {@code onOpen}.
+     * close of a failed {@code onOpen}.
      */
     @Test
-    void anIoFailureOfOnOpenDuringTheUndeployIsNotReportedAndEndsWith1011() throws Exception {
+    void anIoFailureOfOnOpenDuringTheUndeployIsNotReportedAndEndsWithItsClose() throws Exception {
         probe.failOpenOnceReleased = true;
         probe.failOpenWithIo = true;
         start(new VidocqServletContext("/"));
@@ -680,7 +689,7 @@ class WebSocketTakeoverEndToEndTest {
             probe.openGate.countDown();
             assertTrue(undeploy.join(Duration.ofSeconds(5)), "the undeploy did not return");
             assertEquals(List.of("open", "close", "destroy"), probe.events);
-            assertEquals(1011, probe.closeCode.get());
+            assertClosedOnAFailedOnOpen();
             assertEquals(1, probe.destroyCalls.get());
         }
     }
@@ -714,7 +723,7 @@ class WebSocketTakeoverEndToEndTest {
             releaseChappe.countDown();
             assertTrue(undeploy.join(Duration.ofSeconds(5)), "the undeploy did not return");
             assertEquals(List.of("open", "error", "close", "destroy"), probe.events);
-            assertEquals(1011, probe.closeCode.get());
+            assertClosedOnAFailedOnOpen();
             assertEquals(1, probe.destroyCalls.get());
         } finally {
             releaseChappe.countDown();
@@ -742,16 +751,41 @@ class WebSocketTakeoverEndToEndTest {
             probe.errorGate.countDown();
             assertTrue(undeploy.join(Duration.ofSeconds(5)), "the undeploy did not return");
             assertEquals(List.of("open", "error", "close", "destroy"), probe.events);
-            assertEquals(1011, probe.closeCode.get());
+            assertClosedOnAFailedOnOpen();
             assertEquals(1, probe.destroyCalls.get());
         }
     }
 
-    /** The cut takeover ended with the undeploy's 1001, once, before the undeploy went on. */
+    /** The cut takeover ended with the undeploy's 1006, once, before the undeploy went on. */
     private void assertEndedBeforeTheUndeployWentOn() {
         assertEquals(List.of("open", "close", "destroy"), probe.events);
-        assertEquals(1001, probe.closeCode.get());
+        assertClosedByTheUndeploy();
         assertEquals(1, probe.destroyCalls.get());
+    }
+
+    /**
+     * The listener heard the close of the undeploy, which the container initiated: 1006 with its reason,
+     * whatever went on the wire (Jakarta WebSocket 2.2 section 2.1.5, BUG-20261115-08).
+     */
+    private void assertClosedByTheUndeploy() {
+        assertClosedByTheContainer(STOPPING_REASON);
+    }
+
+    /** The listener heard the close of a failed {@code onOpen}, which the container initiated: 1006. */
+    private void assertClosedOnAFailedOnOpen() {
+        assertClosedByTheContainer(ON_OPEN_FAILED);
+    }
+
+    private void assertClosedByTheContainer(String reason) {
+        assertEquals(1006, probe.closeCode.get(), probe.closeReason::get);
+        assertEquals(reason, probe.closeReason.get());
+    }
+
+    /** The code of the Close frame a raw client read after the 101, {@code received} being all it read. */
+    private static int closeFrameCode(byte[] received) {
+        assertTrue(received.length >= 4, () -> "no close frame with a code: " + java.util.HexFormat.of().formatHex(received));
+        assertEquals(0x88, received[0] & 0xFF, "a close frame");
+        return ((received[2] & 0xFF) << 8) | (received[3] & 0xFF);
     }
 
     /**
@@ -835,8 +869,49 @@ class WebSocketTakeoverEndToEndTest {
         ws.sendClose(4000, "bye").get(5, TimeUnit.SECONDS);
         assertTrue(probe.destroyed.await(5, TimeUnit.SECONDS));
         assertEquals(4000, probe.closeCode.get());
+        assertEquals("bye", probe.closeReason.get());
         assertEquals(List.of("open", "text:hi", "close", "destroy"), probe.events);
         assertEquals(1, probe.destroyCalls.get());
+    }
+
+    /**
+     * A protocol violation of the peer, here a text message that is not UTF-8: chappe closes with 1007 and
+     * reports no code of the peer's (1005); the listener hears its {@code onError}, then 1006 with a reason
+     * naming the violation, since this side closed (Jakarta WebSocket 2.2 section 2.1.5, BUG-20261115-08).
+     */
+    @Test
+    void aProtocolErrorOfThePeerClosesWith1007AndReports1006() throws Exception {
+        start(new VidocqServletContext("/"));
+        try (var client = new RawClient(port)) {
+            client.send(handshake("/ws"));
+            assertTrue(client.readHead().startsWith("HTTP/1.1 101"));
+            assertTrue(probe.opened.await(5, TimeUnit.SECONDS), ON_OPEN);
+            client.send(clientFrame(0x81, new byte[] {(byte) 0xC3, 0x28}));
+
+            assertEquals(1007, closeFrameCode(client.readAllBytes()));
+            assertTrue(probe.destroyed.await(5, TimeUnit.SECONDS));
+            assertEquals(List.of("open", "error", "close", "destroy"), probe.events);
+            assertClosedByTheContainer("protocol error: Invalid UTF-8 in TEXT frame");
+        }
+    }
+
+    /**
+     * An {@code Error} from the listener's {@code onText}: chappe reports it, closes with 1011 and reports no
+     * code of the peer's (1005); the listener hears 1006 with a reason naming the failure (BUG-20261115-08).
+     */
+    @Test
+    void anErrorFromACallbackClosesWith1011AndReports1006() throws Exception {
+        probe.failTextWithError = true;
+        start(new VidocqServletContext("/"));
+        var closedByServer = new CompletableFuture<Integer>();
+        WebSocket ws = connect(new TextListener(new CompletableFuture<>(), closedByServer));
+
+        ws.sendText("hi", true).get(5, TimeUnit.SECONDS);
+
+        assertEquals(1011, closedByServer.get(5, TimeUnit.SECONDS));
+        assertTrue(probe.destroyed.await(5, TimeUnit.SECONDS));
+        assertEquals(List.of("open", "text:hi", "error", "close", "destroy"), probe.events);
+        assertClosedByTheContainer("callback failed: java.lang.ExceptionInInitializerError: onText failed");
     }
 
     @Test
@@ -848,7 +923,7 @@ class WebSocketTakeoverEndToEndTest {
         assertEquals(1011, closedByServer.get(5, TimeUnit.SECONDS));
         assertTrue(probe.destroyed.await(5, TimeUnit.SECONDS));
         assertEquals(List.of("error", "close", "destroy"), probe.events);
-        assertEquals(1011, probe.closeCode.get());
+        assertClosedOnAFailedOnOpen();
         assertEquals(1, probe.destroyCalls.get());
         assertEquals(0, registeredConnections());
     }
@@ -866,7 +941,7 @@ class WebSocketTakeoverEndToEndTest {
         assertEquals(1011, closedByServer.get(5, TimeUnit.SECONDS));
         assertTrue(probe.destroyed.await(5, TimeUnit.SECONDS));
         assertEquals(List.of("close", "destroy"), probe.events);
-        assertEquals(1011, probe.closeCode.get());
+        assertClosedOnAFailedOnOpen();
         assertEquals(1, probe.destroyCalls.get());
         assertEquals(0, registeredConnections());
     }
@@ -936,10 +1011,14 @@ class WebSocketTakeoverEndToEndTest {
 
     /** A masked client text frame (RFC 6455 section 5.2) of fewer than 126 bytes. */
     private static byte[] clientText(String text) {
-        byte[] payload = text.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        return clientFrame(0x81, text.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+    }
+
+    /** A masked client frame (RFC 6455 section 5.2) whose first byte is {@code head}, of fewer than 126 bytes. */
+    private static byte[] clientFrame(int head, byte[] payload) {
         byte[] mask = {0x11, 0x22, 0x33, 0x44};
         byte[] frame = new byte[2 + mask.length + payload.length];
-        frame[0] = (byte) 0x81;
+        frame[0] = (byte) head;
         frame[1] = (byte) (0x80 | payload.length);
         System.arraycopy(mask, 0, frame, 2, mask.length);
         for (int i = 0; i < payload.length; i++) {
@@ -1068,6 +1147,7 @@ class WebSocketTakeoverEndToEndTest {
                 public void onText(String text) throws IOException {
                     probe.events.add("text:" + text);
                     probe.loaders.add(Thread.currentThread().getContextClassLoader());
+                    if (probe.failTextWithError) throw new ExceptionInInitializerError("onText failed");
                     if (probe.holdText) {
                         probe.textEntered.release();
                         awaitGate(probe.textGate);
@@ -1092,6 +1172,7 @@ class WebSocketTakeoverEndToEndTest {
                     probe.events.add("close");
                     probe.loaders.add(Thread.currentThread().getContextClassLoader());
                     probe.closeCode.set(code);
+                    probe.closeReason.set(reason);
                     probe.closed.countDown();
                     if (probe.holdClose) awaitGate(probe.closeGate);
                     if (probe.failCloseWithError) throw new ExceptionInInitializerError("onClose failed");

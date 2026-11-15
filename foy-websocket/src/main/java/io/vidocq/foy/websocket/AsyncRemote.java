@@ -44,8 +44,9 @@ import java.util.concurrent.atomic.AtomicLong;
  * result of its own send, on that thread, with the application's class loader as context loader.
  *
  * <p>With a send timeout, a send not written that long after it was queued fails its result with a
- * {@link SocketTimeoutException} and closes the session with 1001. When the session closes, every
- * queued send fails; a send queued afterwards fails at once.
+ * {@link SocketTimeoutException} and closes the session with 1001, which {@code Endpoint.onClose} hears as
+ * 1006, {@code "send timeout"}: the container closed it (Jakarta WebSocket 2.2 section 2.1.5). When the
+ * session closes, every queued send fails; a send queued afterwards fails at once.
  */
 final class AsyncRemote extends FoySession.Remote implements RemoteEndpoint.Async {
 
@@ -198,7 +199,7 @@ final class AsyncRemote extends FoySession.Remote implements RemoteEndpoint.Asyn
             send.deliver(new SocketTimeoutException("The send was not written within its timeout of "
                     + send.timeoutMillis + " ms"));
         } finally {
-            session.closeQuietly(new CloseReason(CloseCodes.GOING_AWAY, "send timeout"));
+            session.closeByContainer(new CloseReason(CloseCodes.GOING_AWAY, "send timeout"));
         }
     }
 

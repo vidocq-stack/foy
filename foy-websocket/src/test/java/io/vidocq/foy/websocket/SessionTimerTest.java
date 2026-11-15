@@ -53,8 +53,12 @@ class SessionTimerTest {
         return thread;
     };
 
+    /**
+     * The peer reads 1001; the endpoint hears 1006, the container having closed the session (Jakarta
+     * WebSocket 2.2 section 2.1.5), even once the peer answers with its own 1001 (BUG-20261115-08).
+     */
     @Test
-    void theIdleTimeoutClosesWith1001() throws InterruptedException {
+    void theIdleTimeoutClosesWith1001AndReports1006() throws InterruptedException {
         FoySession session = TestSessions.open(endpoint, peer);
         session.setMaxIdleTimeout(IDLE_MILLIS);
         long lastFrame = System.nanoTime();
@@ -64,8 +68,9 @@ class SessionTimerTest {
         assertTrue(System.nanoTime() - lastFrame >= MILLISECONDS.toNanos(IDLE_MILLIS),
                 "no frame for the whole timeout");
         assertEquals(CloseCodes.GOING_AWAY.getCode(), peer.closeCode());
+        assertEquals("idle timeout", peer.closeReason());
         session.onClose(CloseCodes.GOING_AWAY.getCode(), "");
-        assertEquals(CloseCodes.GOING_AWAY, endpoint.closes.getFirst().getCloseCode());
+        TestSessions.assertClosedByTheContainer(endpoint, "idle timeout");
     }
 
     @Test

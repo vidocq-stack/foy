@@ -57,6 +57,13 @@ import java.util.concurrent.atomic.AtomicReference;
  * then it propagates). {@code Endpoint.onClose} runs once, with the reason of
  * the side that closed first; then the session leaves the open sessions, its timer stops and its
  * queued asynchronous sends fail. No {@code Endpoint.onError} follows it.
+ *
+ * <p>A close the container initiates (the idle and send timeouts, a message too big, a failed
+ * {@code onOpen}) sends its own code to the peer, but {@code Endpoint.onClose} hears 1006 with the same
+ * reason (Jakarta WebSocket 2.2 section 2.1.5), so the endpoint tells it from a close of the peer. A close
+ * the application initiates with {@link #close(CloseReason)} keeps the application's code: the spec's rule
+ * names the container. The transport applies the same rule to the closes it initiates, the undeploy's
+ * among them ({@link WebSocketListener#onClose(int, String)}).
  */
 final class FoySession implements Session, WebSocketListener {
 
@@ -69,6 +76,7 @@ final class FoySession implements Session, WebSocketListener {
 
     private static final String PROTOCOL_VERSION = "13";
     private static final int MAX_CONTROL_PAYLOAD = 125;
+    /** The close of a failed {@code onOpen}, as the peer reads it. */
     private static final CloseReason ON_OPEN_FAILED =
             new CloseReason(CloseCodes.UNEXPECTED_CONDITION, "onOpen failed");
 
@@ -89,7 +97,10 @@ final class FoySession implements Session, WebSocketListener {
     private final BasicRemote basicRemote;
     private final AsyncRemote asyncRemote;
     private final AtomicReference<WebSocketPeer> peer = new AtomicReference<>();
-    /** The reason this side closed with, when it closed first. */
+    /**
+     * The reason {@code Endpoint.onClose} reports when this side closed first: the application's own, or 1006
+     * for a close the container initiated.
+     */
     private final AtomicReference<CloseReason> localClose = new AtomicReference<>();
     private final AtomicBoolean closed = new AtomicBoolean();
     /** The context class loader of the transport's callbacks: the application's. */
@@ -137,8 +148,8 @@ final class FoySession implements Session, WebSocketListener {
      * Opens the session: the addresses join the user properties, then {@code Endpoint.onOpen} runs.
      * When it throws an exception, the endpoint hears it and the session closes with 1011. When it
      * throws an {@code Error} (a failed static initializer), the session closes with 1011 and
-     * {@code onClose} runs before the {@code Error} propagates to the transport, which may end the
-     * connection without another event: neither the session, its timer nor its sends outlive it.
+     * {@code onClose} runs, with 1006, before the {@code Error} propagates to the transport, which may end
+     * the connection without another event: neither the session, its timer nor its sends outlive it.
      */
     @Override
     public void onOpen(WebSocketPeer opened) {
@@ -162,8 +173,8 @@ final class FoySession implements Session, WebSocketListener {
             returned = true;
         } finally {
             if (!returned) {
-                closeQuietly(ON_OPEN_FAILED);
-                onClose(ON_OPEN_FAILED.getCloseCode().getCode(), ON_OPEN_FAILED.getReasonPhrase());
+                closeByContainer(ON_OPEN_FAILED);
+                onClose(CloseCodes.CLOSED_ABNORMALLY.getCode(), ON_OPEN_FAILED.getReasonPhrase());
             }
         }
     }
@@ -174,7 +185,7 @@ final class FoySession implements Session, WebSocketListener {
             endpoint.onOpen(this, config);
         } catch (RuntimeException e) {
             endpoint.onError(this, e);
-            closeQuietly(ON_OPEN_FAILED);
+            closeByContainer(ON_OPEN_FAILED);
         }
     }
 
@@ -182,7 +193,7 @@ final class FoySession implements Session, WebSocketListener {
     public void onText(String text) {
         timer.touch();
         if (text.length() > maxTextMessageBufferSize) {
-            closeQuietly(new CloseReason(CloseCodes.TOO_BIG, "text message of " + text.length()
+            closeByContainer(new CloseReason(CloseCodes.TOO_BIG, "text message of " + text.length()
                     + " characters, the maximum is " + maxTextMessageBufferSize));
             return;
         }
@@ -193,7 +204,7 @@ final class FoySession implements Session, WebSocketListener {
     public void onBinary(ByteBuffer data) {
         timer.touch();
         if (data.remaining() > maxBinaryMessageBufferSize) {
-            closeQuietly(new CloseReason(CloseCodes.TOO_BIG, "binary message of " + data.remaining()
+            closeByContainer(new CloseReason(CloseCodes.TOO_BIG, "binary message of " + data.remaining()
                     + " bytes, the maximum is " + maxBinaryMessageBufferSize));
             return;
         }
@@ -228,8 +239,10 @@ final class FoySession implements Session, WebSocketListener {
     }
 
     /**
-     * Runs {@code Endpoint.onClose} once, with the local reason when this side closed first, else the
-     * peer's code; then the session leaves the open sessions, its timer stops and its queued sends fail.
+     * Runs {@code Endpoint.onClose} once, with the local reason when this side closed first (the
+     * application's, or 1006 for a close of the container), else the transport's: the peer's code, or 1006
+     * for a close the transport initiated or a cut connection; then the session leaves the open sessions,
+     * its timer stops and its queued sends fail.
      */
     @Override
     public void onClose(int code, String reason) {
@@ -328,7 +341,10 @@ final class FoySession implements Session, WebSocketListener {
         return maxIdleTimeout;
     }
 
-    /** No frame in or out for {@code milliseconds} closes the session with 1001; {@code 0} or less for none. */
+    /**
+     * No frame in or out for {@code milliseconds} closes the session with 1001, which {@code Endpoint.onClose}
+     * hears as 1006, {@code "idle timeout"}; {@code 0} or less for none.
+     */
     @Override
     public void setMaxIdleTimeout(long milliseconds) {
         maxIdleTimeout = milliseconds;
@@ -379,17 +395,25 @@ final class FoySession implements Session, WebSocketListener {
 
     /**
      * Starts the closing handshake with {@code closeReason}, which {@code Endpoint.onClose} then
-     * reports; a code the protocol does not allow on the wire is sent as 1000. No effect once the
-     * session is closing or closed.
+     * reports: a close of the application keeps its code, 1001 included. A code the protocol does not
+     * allow on the wire is sent as 1000. No effect once the session is closing or closed.
      */
     @Override
     public void close(CloseReason closeReason) throws IOException {
+        close(closeReason, closeReason);
+    }
+
+    /**
+     * Sends {@code wire} to the peer and records {@code reported} for {@code Endpoint.onClose}, unless the
+     * session is closing or closed: the side that closed first gives the reason.
+     */
+    private void close(CloseReason wire, CloseReason reported) throws IOException {
         WebSocketPeer current = peer.get();
-        if (current == null || closed.get() || !current.isOpen() || !localClose.compareAndSet(null, closeReason)) {
+        if (current == null || closed.get() || !current.isOpen() || !localClose.compareAndSet(null, reported)) {
             return;
         }
-        current.close(wireCode(closeReason.getCloseCode().getCode()),
-                Objects.requireNonNullElse(closeReason.getReasonPhrase(), ""));
+        current.close(wireCode(wire.getCloseCode().getCode()),
+                Objects.requireNonNullElse(wire.getReasonPhrase(), ""));
     }
 
     /** The handshake's absolute request URI, context path and query string included. */
@@ -464,10 +488,16 @@ final class FoySession implements Session, WebSocketListener {
         return thread;
     }
 
-    /** Closes with {@code reason}; a close that fails leaves the transport to end the connection. */
-    void closeQuietly(CloseReason reason) {
+    /**
+     * A close the container initiates: the peer reads {@code wire}, and {@code Endpoint.onClose} hears 1006
+     * with the same reason, never sent on the wire (Jakarta WebSocket 2.2 section 2.1.5). A close that fails
+     * leaves the transport to end the connection.
+     *
+     * @param wire the code and the reason of the Close frame, the reason at most 123 bytes in UTF-8
+     */
+    void closeByContainer(CloseReason wire) {
         try {
-            close(reason);
+            close(wire, new CloseReason(CloseCodes.CLOSED_ABNORMALLY, wire.getReasonPhrase()));
         } catch (IOException e) {
             LOG.log(System.Logger.Level.DEBUG, () -> "Closing the WebSocket session " + id + " failed", e);
         }
@@ -476,7 +506,7 @@ final class FoySession implements Session, WebSocketListener {
     // ---------------------------------------------------------------- helpers
 
     private void idleTimedOut() {
-        closeQuietly(new CloseReason(CloseCodes.GOING_AWAY, "idle timeout"));
+        closeByContainer(new CloseReason(CloseCodes.GOING_AWAY, "idle timeout"));
     }
 
     /** Runs a delivery to a message handler; a handler that throws is reported, and the session stays open. */

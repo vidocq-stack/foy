@@ -130,10 +130,11 @@ reads `jakarta.websocket` once that module is in the boot layer). Read from its 
   subtype is answered with Chappe's `WebSocketUpgrade` (handler adapted to the listener,
   the negotiated subprotocol, the handshake request) instead of a `ConnectionUpgrade`.
   Everything before stays as it is: security constraints, filters, `requestDestroyed`.
-  Foy tracks these connections per context, so an undeploy closes them with 1001 (Going
-  Away) as it closes raw upgraded connections today, and calls `destroy()` on the handler.
-  Both happen before the application's `contextDestroyed`: the undeploy delivers `onClose`
-  itself once the Close is sent, without waiting for the peer (BUG-20261114-08).
+  Foy tracks these connections per context, so an undeploy closes them with a 1001 (Going
+  Away) Close frame as it closes raw upgraded connections today, and calls `destroy()` on the
+  handler. Both happen before the application's `contextDestroyed`: the undeploy delivers
+  `onClose` itself once the Close is sent, without waiting for the peer (BUG-20261114-08), with
+  1006 and its reason, not the 1001 of the frame: the container closed it (§5.4 "Close.").
 - **`foy-websocket`** (new, Java module `io.vidocq.foy.websocket`): the Jakarta WebSocket
   implementation. It requires `jakarta.websocket` (the API it implements, at `compile`
   scope per the ecosystem rule; `jakarta.websocket.client` comes transitively),
@@ -221,7 +222,7 @@ Decided by the maintainer: same-origin by default, opened by configuration only.
 
 - **Threads.** Chappe calls back on the connection's virtual thread, one event at a time;
   `Endpoint.onOpen`, the message handlers, `onClose` and `onError` run there, so an
-  endpoint instance never sees two threads at once. One exception: the `onClose` of a
+  endpoint instance never sees two threads at once. One exception: the `onClose` (1006) of a
   session an undeploy closes runs once the undeploy's 1001 Close went out: on the virtual
   thread the undeploy closes that session on (all sessions at once), or, when a callback in
   progress returns after that Close, on the connection's thread as soon as it returns. It
@@ -249,25 +250,53 @@ Decided by the maintainer: same-origin by default, opened by configuration only.
   reading its class's `Signature` attribute with the Class-File API (no reflection), and
   throws `IllegalStateException` when it cannot (a lambda). `MessageHandler.Partial` gets
   each whole message as one part with `last = true`. A message larger than the session's
-  maximum closes with 1009.
+  maximum closes with a 1009 Close frame (`onClose`: 1006).
 - **Sends.** `getBasicRemote()` sends block until written (`sendText`, `sendBinary`,
   `sendPing`, `sendPong`; `sendObject` for `String`, `ByteBuffer`, `byte[]` and boxed
   primitives, encoders being lot 2). `getAsyncRemote()` keeps a per-session FIFO drained by
   one virtual thread started on demand, so async sends are never reordered nor concurrent,
   and each `SendHandler` hears its own `SendResult`; with a send timeout, a send not written
-  in time fails its `SendResult` and closes the session.
+  in time fails its `SendResult` and closes the session with a 1001 Close frame (`onClose`:
+  1006).
 - **Idle timeout.** `setMaxIdleTimeout(ms)`: no incoming nor outgoing frame for that long
-  closes with 1001. Default `0`, no timeout, so an idle Vaadin page stays connected. No
-  platform thread for the timer.
+  closes with a 1001 Close frame (`onClose`: 1006). Default `0`, no timeout, so an idle
+  Vaadin page stays connected. No platform thread for the timer.
 - **Limits.** `getDefaultMaxTextMessageBufferSize()` and the binary one default to 64 KiB
   (Atmosphere sets its own when configured). Chappe still re-assembles up to its 64 MiB
   cap before Foy can check; lot 3 decides whether `chappe-api` gets a per-connection limit.
 - **Close.** `close(CloseReason)` maps to Chappe's close; `onClose(Session, CloseReason)`
-  carries the reason of the side that closed first. An idle timeout, a send timeout, an
-  undeploy or any other local close reports the session's own reason, even when the peer
-  then vanishes; otherwise `onClose` carries the peer's code, and 1006 only when TCP is cut
-  with no local close first. `onError` precedes
-  `onClose` when a transport failure closes the session, except once an undeploy closed it: the
+  carries the reason of the side that closed first, as Jakarta WebSocket 2.2 §2.1.5 asks
+  (decided by the maintainer on 2026-11-15, "respecte la spec", BUG-20261115-08; Foy used to
+  report the code of its own Close frame):
+  - the peer closed first: the code and reason of the peer's Close frame;
+  - the container closed first: 1006 (`CLOSED_ABNORMALLY`, never sent on the wire) with a
+    reason naming the cause, so the endpoint tells a remote close from a local one; the
+    Close frame keeps its own code and the same reason, and goes out before `onClose`:
+
+    | Cause | Close frame | `onClose` reason |
+    |---|---|---|
+    | undeploy | 1001; none when it cuts a connection whose Close a send holds back (BUG-20261115-01) | `the application is stopping` |
+    | idle timeout | 1001 | `idle timeout` |
+    | send timeout | 1001 | `send timeout` |
+    | message over the session's maximum | 1009 | `text message of N characters, the maximum is M`, `binary message of N bytes, the maximum is M` |
+    | `onOpen` throws | 1011 | `onOpen failed` |
+    | protocol violation Chappe detects in the peer's frames | 1002, 1007 or 1009 | `protocol error: ` and Chappe's message |
+    | a callback throws an `Error` (a message handler) | 1011 | `callback failed: ` and the throwable |
+
+    The session applies the rule to the closes it initiates (timeouts, size, `onOpen`); the
+    takeover to the undeploy, and to the closes Chappe initiates after the `onError` of a
+    failure, which Chappe reports with 1005 (no code of the peer's). Every reason fits the
+    123 bytes of a Close reason;
+  - the application closed first with `Session.close(...)`: the application's own code and
+    reason, 1001 included. The rule of §2.1.5 names the container, not the application;
+  - TCP cut with no Close first (a vanished peer, the server's stop before the undeploy):
+    1006 with an empty reason.
+
+  The side that closed first keeps its reason even when the peer then answers with another
+  code or vanishes. Atmosphere handles the 1006 as it handled the 1001: its
+  `DefaultWebSocketProcessor.allowedCloseCode` accepts a code up to 1001 or above 1005.
+
+  `onError` precedes `onClose` when a transport failure closes the session, except once an undeploy closed it: the
   server's stop cutting that closing handshake is not an error of the session; an exception from a message
   handler reaches `onError` and the session stays open.
 - **Not in lot 1.** `connectToServer` (client API, lot 3) throws `DeploymentException` with
@@ -300,7 +329,7 @@ Decided by the maintainer: same-origin by default, opened by configuration only.
   `addEndpoint` with a five-level template; a configurator pairing `modifyHandshake` and
   `getEndpointInstance` through a `ThreadLocal` exactly as Atmosphere does; the
   `HttpSession` of the handshake; ordered async sends; a security constraint refusing the
-  handshake; undeploy closing with 1001; a connection idle for longer than Chappe's
+  handshake; undeploy closing with 1001, and its `onClose` hearing 1006; a connection idle for longer than Chappe's
   `idleTimeout` staying open; the origin policy (same origin accepted, another refused
   with 403, no `Origin` accepted, the init parameter opening a listed origin and `*`); a
   session cookie and a `modifyHandshake` header present on the 101; a peer that stops
@@ -356,6 +385,12 @@ Decided by the maintainer: same-origin by default, opened by configuration only.
   `chappe-api` changes anyway for the origin policy.
 - The origin check compares host and port, ignores the scheme, and accepts a handshake
   without `Origin` (§5.3.1).
+- The 1006 of a close the container initiates (§5.4 "Close.") is applied where the close is
+  known: by the session for the closes it initiates, and by the takeover in the SPI's
+  `WebSocketListener.onClose` contract for the undeploy, a failed `onOpen` and the closes Chappe
+  initiates on a failure (an `onError`, then a code other than 1006). Only the takeover knows
+  the undeploy closed first, and its listener is the Jakarta session; the reason names the
+  cause and is the Close frame's own when there is one (BUG-20261115-08).
 
 ## 7. Open for lots 2 and 3
 
