@@ -28,7 +28,8 @@ import java.util.regex.Pattern;
 /**
  * The origins allowed to open a WebSocket: the defence against cross-site WebSocket hijacking.
  * Built from the {@code io.vidocq.foy.websocket.allowed-origins} init parameter; the rules are the
- * ones of Chappe's {@code WebSocketOrigins}, so both layers decide alike.
+ * ones of Chappe's {@code WebSocketOrigins}, so both layers decide alike ({@code OriginParsersAgreementTest}
+ * runs both on one corpus of settings and handshakes).
  * <ol>
  *   <li>a handshake without {@code Origin} is allowed (it does not come from a browser);</li>
  *   <li>{@code *} allows every origin;</li>
