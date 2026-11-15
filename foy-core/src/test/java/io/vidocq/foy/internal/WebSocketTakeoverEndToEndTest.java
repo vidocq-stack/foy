@@ -76,8 +76,9 @@ class WebSocketTakeoverEndToEndTest {
         volatile boolean failListener;
         /** The listener closes the connection with 1000 at the end of its {@code onOpen}. */
         volatile boolean closeOnOpen;
-        /** When set, {@code onText} waits for it to open before it echoes. */
-        volatile CountDownLatch textGate;
+        /** {@code onText} waits for {@link #textGate} to open before it echoes. */
+        volatile boolean holdText;
+        final CountDownLatch textGate = new CountDownLatch(1);
         final CountDownLatch textEntered = new CountDownLatch(1);
         final List<ClassLoader> loaders = new CopyOnWriteArrayList<>();
     }
@@ -85,6 +86,7 @@ class WebSocketTakeoverEndToEndTest {
     /** The text the listener holds in {@code onText}, and the event it records for it. */
     private static final String HELD = "held";
     private static final String HELD_EVENT = "text:" + HELD;
+    private static final String ON_OPEN = "onOpen";
 
     private static volatile Probe current;
 
@@ -222,7 +224,7 @@ class WebSocketTakeoverEndToEndTest {
         start(new VidocqServletContext("/"));
         try (var client = new RawClient(port)) {
             client.send(handshake("/ws"));
-            assertTrue(probe.opened.await(5, TimeUnit.SECONDS), "onOpen");
+            assertTrue(probe.opened.await(5, TimeUnit.SECONDS), ON_OPEN);
             context.closeUpgradedConnections();
             server.stop();
             assertTrue(probe.closed.await(5, TimeUnit.SECONDS));
@@ -240,7 +242,7 @@ class WebSocketTakeoverEndToEndTest {
         start(new VidocqServletContext("/"));
         try (var client = new RawClient(port)) {
             client.send(handshake("/ws"));
-            assertTrue(probe.opened.await(5, TimeUnit.SECONDS), "onOpen");
+            assertTrue(probe.opened.await(5, TimeUnit.SECONDS), ON_OPEN);
             context.closeUpgradedConnections();
             server.stop();
             assertTrue(probe.destroyed.await(5, TimeUnit.SECONDS));
@@ -258,7 +260,7 @@ class WebSocketTakeoverEndToEndTest {
         start(new VidocqServletContext("/"));
         try (var client = new RawClient(port)) {
             client.send(handshake("/ws"));
-            assertTrue(probe.opened.await(5, TimeUnit.SECONDS), "onOpen");
+            assertTrue(probe.opened.await(5, TimeUnit.SECONDS), ON_OPEN);
             context.closeUpgradedConnections();
             assertEquals(List.of("open", "close", "destroy"), probe.events);
             assertEquals(1001, probe.closeCode.get());
@@ -281,6 +283,7 @@ class WebSocketTakeoverEndToEndTest {
             assertFalse(undeploy.join(Duration.ofMillis(300)), "the undeploy did not wait for the closing handshake");
             client.send(new byte[] {(byte) 0x88, (byte) 0x82, 0, 0, 0, 0, 0x03, (byte) 0xE8});
             assertTrue(undeploy.join(Duration.ofSeconds(5)), "the undeploy did not return");
+            assertTrue(probe.destroyed.await(5, TimeUnit.SECONDS));
             assertEquals(List.of("open", "close", "destroy"), probe.events);
             assertEquals(1000, probe.closeCode.get());
         }
@@ -297,6 +300,7 @@ class WebSocketTakeoverEndToEndTest {
         assertFalse(probe.closed.await(300, TimeUnit.MILLISECONDS), "onClose ran while onText was running");
         probe.textGate.countDown();
         assertTrue(undeploy.join(Duration.ofSeconds(5)), "the undeploy did not return");
+        assertTrue(probe.destroyed.await(5, TimeUnit.SECONDS));
         assertEquals(List.of("open", HELD_EVENT, "close", "destroy"), probe.events);
         assertEquals(1001, probe.closeCode.get());
     }
@@ -312,6 +316,24 @@ class WebSocketTakeoverEndToEndTest {
         assertTrue(undeploy.join(Duration.ofSeconds(10)), "the undeploy waited past its grace");
         assertEquals(List.of("open", HELD_EVENT), probe.events);
         probe.textGate.countDown();
+        assertTrue(probe.destroyed.await(5, TimeUnit.SECONDS));
+        assertEquals(List.of("open", HELD_EVENT, "close", "destroy"), probe.events);
+        assertEquals(1001, probe.closeCode.get());
+    }
+
+    /**
+     * The undeploy's grace runs out on an event in progress, so the takeover is still open when the server
+     * stops: the I/O failure the stop causes (the held {@code onText} cannot echo any more) reaches the
+     * takeover's {@code onError}, which must not report it, the undeploy having closed the session
+     * (BUG-20261114-07).
+     */
+    @Test
+    void aServerStopAfterTheUndeployGaveUpReportsNoError() throws Exception {
+        holdATextInOnText();
+        Thread undeploy = Thread.ofVirtual().start(context::closeUpgradedConnections);
+        assertTrue(undeploy.join(Duration.ofSeconds(10)), "the undeploy waited past its grace");
+        assertEquals(List.of("open", HELD_EVENT), probe.events);
+        server.stop();
         assertTrue(probe.destroyed.await(5, TimeUnit.SECONDS));
         assertEquals(List.of("open", HELD_EVENT, "close", "destroy"), probe.events);
         assertEquals(1001, probe.closeCode.get());
@@ -396,7 +418,7 @@ class WebSocketTakeoverEndToEndTest {
 
     /** Starts a takeover whose {@code onText} holds the message {@value #HELD} until the probe's gate opens. */
     private void holdATextInOnText() throws Exception {
-        probe.textGate = new CountDownLatch(1);
+        probe.holdText = true;
         start(new VidocqServletContext("/"));
         WebSocket ws = connect(new TextListener(new CompletableFuture<>(), new CompletableFuture<>()));
         ws.sendText(HELD, true).get(5, TimeUnit.SECONDS);
@@ -421,7 +443,7 @@ class WebSocketTakeoverEndToEndTest {
         WebSocket ws = HttpClient.newHttpClient().newWebSocketBuilder()
                 .buildAsync(URI.create("ws://127.0.0.1:" + port + "/ws"), listener)
                 .get(5, TimeUnit.SECONDS);
-        assertTrue(probe.opened.await(5, TimeUnit.SECONDS), "onOpen");
+        assertTrue(probe.opened.await(5, TimeUnit.SECONDS), ON_OPEN);
         return ws;
     }
 
@@ -505,10 +527,9 @@ class WebSocketTakeoverEndToEndTest {
                 public void onText(String text) throws IOException {
                     probe.events.add("text:" + text);
                     probe.loaders.add(Thread.currentThread().getContextClassLoader());
-                    var gate = probe.textGate;
-                    if (gate != null) {
+                    if (probe.holdText) {
                         probe.textEntered.countDown();
-                        awaitGate(gate);
+                        awaitGate(probe.textGate);
                     }
                     peer.get().sendText(text);
                 }
