@@ -56,6 +56,8 @@ import java.util.Set;
  */
 public final class VidocqServletContext implements ServletContext {
 
+    private static final System.Logger LOG = System.getLogger(VidocqServletContext.class.getName());
+
     private final String contextPath;
     private final String serverInfo;
     private final Map<String, Object> attributes = new HashMap<>();
@@ -446,7 +448,7 @@ public final class VidocqServletContext implements ServletContext {
         }
         if (interrupted) Thread.currentThread().interrupt();
         if (left > 0) {
-            System.getLogger(VidocqServletContext.class.getName()).log(System.Logger.Level.WARNING,
+            LOG.log(System.Logger.Level.WARNING,
                     "The undeploy stopped waiting for the requests still in service ({0}), {1} ms after it began:"
                             + " the filters and servlets are destroyed while they run",
                     left, java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - undeployStart));
@@ -508,18 +510,12 @@ public final class VidocqServletContext implements ServletContext {
      * {@code destroy()}, is logged and stops neither the others nor the rest of the undeploy. The
      * interrupt of the undeploy's thread is cleared for the wait and restored afterwards; one that
      * arrives during the wait ends it, and the connections still closing then finish on their own
-     * virtual threads, a WebSocket's {@code onClose} possibly after {@code contextDestroyed}. The
-     * deadline counts from now.
+     * virtual threads, a WebSocket's {@code onClose} possibly after {@code contextDestroyed}.
+     *
+     * @param undeployStart the {@link System#nanoTime()} at which the undeploy began: the deadline counts
+     *                      from it
      */
-    public void closeUpgradedConnections() {
-        closeUpgradedConnectionsFrom(System.nanoTime());
-    }
-
-    /**
-     * {@link #closeUpgradedConnections()}, with the deadline counted from {@code undeployStart}, the
-     * {@link System#nanoTime()} at which the undeploy began.
-     */
-    public void closeUpgradedConnectionsFrom(long undeployStart) {
+    public void closeUpgradedConnections(long undeployStart) {
         upgradedConnectionsClosed = true;
         Thread.Builder closers = Thread.ofVirtual().name("foy-upgrade-close-", 1)
                 .uncaughtExceptionHandler((thread, failure) -> closeFailed(failure));
@@ -540,8 +536,7 @@ public final class VidocqServletContext implements ServletContext {
     }
 
     private static void closeFailed(Throwable failure) {
-        System.getLogger(VidocqServletContext.class.getName())
-                .log(System.Logger.Level.WARNING, "closing an upgraded connection failed", failure);
+        LOG.log(System.Logger.Level.WARNING, "closing an upgraded connection failed", failure);
     }
 
     /** Waits for the closing threads until {@code deadline}; logs the late ones. */
@@ -557,7 +552,7 @@ public final class VidocqServletContext implements ServletContext {
         if (interrupted) Thread.currentThread().interrupt();
         long late = closing.stream().filter(Thread::isAlive).count();
         if (late > 0) {
-            System.getLogger(VidocqServletContext.class.getName()).log(System.Logger.Level.WARNING,
+            LOG.log(System.Logger.Level.WARNING,
                     "{0} upgraded connections were still closing when the undeploy stopped waiting for them"
                             + " ({1} ms after it began, at most): their handlers end after the application stopped",
                     late, UPGRADED_CONNECTIONS_GRACE.toMillis());

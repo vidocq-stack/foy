@@ -118,7 +118,7 @@ class WebSocketTakeoverEndToEndTest {
 
     @AfterEach
     void tearDown() {
-        if (context != null) context.closeUpgradedConnections();
+        if (context != null) closeConnections();
         if (server != null) server.stop();
     }
 
@@ -180,7 +180,7 @@ class WebSocketTakeoverEndToEndTest {
         WebSocket ws = connect(new TextListener(echoed, closedByServer));
         ws.sendText("hi", true).get(5, TimeUnit.SECONDS);
         echoed.get(5, TimeUnit.SECONDS);
-        context.closeUpgradedConnections();
+        closeConnections();
         assertEquals(1001, closedByServer.get(5, TimeUnit.SECONDS));
         assertTrue(probe.destroyed.await(5, TimeUnit.SECONDS));
         assertEquals(1, probe.destroyCalls.get());
@@ -199,7 +199,7 @@ class WebSocketTakeoverEndToEndTest {
         boolean stillInterrupted;
         Thread.currentThread().interrupt();
         try {
-            context.closeUpgradedConnections();
+            closeConnections();
         } finally {
             stillInterrupted = Thread.interrupted();
         }
@@ -224,7 +224,7 @@ class WebSocketTakeoverEndToEndTest {
                 return ws.sendClose(4000, "another code");
             }
         });
-        context.closeUpgradedConnections();
+        closeConnections();
         assertEquals(1001, closedByServer.get(5, TimeUnit.SECONDS));
         assertTrue(probe.destroyed.await(5, TimeUnit.SECONDS));
         assertEquals(1001, probe.closeCode.get());
@@ -241,7 +241,7 @@ class WebSocketTakeoverEndToEndTest {
         try (var client = new RawClient(port)) {
             client.send(handshake("/ws"));
             assertTrue(probe.opened.await(5, TimeUnit.SECONDS), ON_OPEN);
-            context.closeUpgradedConnections();
+            closeConnections();
             server.stop();
             assertTrue(probe.closed.await(5, TimeUnit.SECONDS));
             assertEquals(1001, probe.closeCode.get());
@@ -260,7 +260,7 @@ class WebSocketTakeoverEndToEndTest {
         try (var client = new RawClient(port)) {
             client.send(handshake("/ws"));
             assertTrue(probe.opened.await(5, TimeUnit.SECONDS), ON_OPEN);
-            context.closeUpgradedConnections();
+            closeConnections();
             server.stop();
             assertTrue(probe.destroyed.await(5, TimeUnit.SECONDS));
             assertEquals(List.of("open", "close", "destroy"), probe.events);
@@ -278,7 +278,7 @@ class WebSocketTakeoverEndToEndTest {
         try (var client = new RawClient(port)) {
             client.send(handshake("/ws"));
             assertTrue(probe.opened.await(5, TimeUnit.SECONDS), ON_OPEN);
-            context.closeUpgradedConnections();
+            closeConnections();
             assertEquals(List.of("open", "close", "destroy"), probe.events);
             assertEquals(1001, probe.closeCode.get());
         }
@@ -296,7 +296,7 @@ class WebSocketTakeoverEndToEndTest {
             client.send(handshake("/ws"));
             client.readHead();
             client.readUntil("done");
-            Thread undeploy = Thread.ofVirtual().start(context::closeUpgradedConnections);
+            Thread undeploy = Thread.ofVirtual().start(this::closeConnections);
             assertFalse(undeploy.join(Duration.ofMillis(300)), "the undeploy did not wait for the closing handshake");
             client.send(new byte[] {(byte) 0x88, (byte) 0x82, 0, 0, 0, 0, 0x03, (byte) 0xE8});
             assertTrue(undeploy.join(Duration.ofSeconds(5)), "the undeploy did not return");
@@ -313,7 +313,7 @@ class WebSocketTakeoverEndToEndTest {
     @Test
     void anUndeployWaitsForTheEventInProgress() throws Exception {
         holdATextInOnText();
-        Thread undeploy = Thread.ofVirtual().start(context::closeUpgradedConnections);
+        Thread undeploy = Thread.ofVirtual().start(this::closeConnections);
         assertFalse(probe.closed.await(300, TimeUnit.MILLISECONDS), "onClose ran while onText was running");
         probe.textGate.countDown();
         assertTrue(undeploy.join(Duration.ofSeconds(5)), "the undeploy did not return");
@@ -329,7 +329,7 @@ class WebSocketTakeoverEndToEndTest {
     @Test
     void anUndeployDoesNotWaitForAnEventPastItsGrace() throws Exception {
         holdATextInOnText();
-        Thread undeploy = Thread.ofVirtual().start(context::closeUpgradedConnections);
+        Thread undeploy = Thread.ofVirtual().start(this::closeConnections);
         assertTrue(undeploy.join(Duration.ofSeconds(10)), "the undeploy waited past its grace");
         assertEquals(List.of("open", HELD_EVENT), probe.events);
         probe.textGate.countDown();
@@ -353,7 +353,7 @@ class WebSocketTakeoverEndToEndTest {
             assertTrue(probe.opened.await(5, TimeUnit.SECONDS), ON_OPEN);
             client.send(clientText(HELD));
             assertTrue(probe.textEntered.tryAcquire(5, TimeUnit.SECONDS), "onText");
-            Thread undeploy = Thread.ofVirtual().start(context::closeUpgradedConnections);
+            Thread undeploy = Thread.ofVirtual().start(this::closeConnections);
             assertTrue(undeploy.join(Duration.ofSeconds(10)), "the undeploy waited past its grace");
             client.send(clientText("late"));
             probe.textGate.countDown();
@@ -373,7 +373,7 @@ class WebSocketTakeoverEndToEndTest {
     @Test
     void aServerStopAfterTheUndeployGaveUpReportsNoError() throws Exception {
         holdATextInOnText();
-        Thread undeploy = Thread.ofVirtual().start(context::closeUpgradedConnections);
+        Thread undeploy = Thread.ofVirtual().start(this::closeConnections);
         assertTrue(undeploy.join(Duration.ofSeconds(10)), "the undeploy waited past its grace");
         assertEquals(List.of("open", HELD_EVENT), probe.events);
         server.stop();
@@ -396,7 +396,7 @@ class WebSocketTakeoverEndToEndTest {
             client.send(handshake("/ws"));
             assertTrue(probe.opened.await(5, TimeUnit.SECONDS), ON_OPEN);
             awaitState(probe.sender.get(), Thread.State.WAITING);
-            Thread undeploy = Thread.ofVirtual().start(context::closeUpgradedConnections);
+            Thread undeploy = Thread.ofVirtual().start(this::closeConnections);
             assertFalse(undeploy.join(Duration.ofMillis(500)), "the undeploy did not wait for its held Close");
             server.stop();
             assertTrue(probe.destroyed.await(5, TimeUnit.SECONDS));
@@ -419,7 +419,7 @@ class WebSocketTakeoverEndToEndTest {
             client.send(handshake("/ws"));
             assertTrue(probe.opened.await(5, TimeUnit.SECONDS), ON_OPEN);
             awaitState(probe.sender.get(), Thread.State.WAITING);
-            Thread undeploy = Thread.ofVirtual().start(context::closeUpgradedConnections);
+            Thread undeploy = Thread.ofVirtual().start(this::closeConnections);
             assertTrue(undeploy.join(Duration.ofSeconds(5)), "the undeploy waited for the blocked send");
             assertTrue(probe.destroyed.await(5, TimeUnit.SECONDS));
             assertEquals(List.of("open", "close", "destroy"), probe.events);
@@ -437,7 +437,7 @@ class WebSocketTakeoverEndToEndTest {
         int connections = 4;
         holdATextInOnText(connections);
         long start = System.nanoTime();
-        context.closeUpgradedConnections();
+        closeConnections();
         Duration took = Duration.ofNanos(System.nanoTime() - start);
         // A grace is 2 s: one connection after another, four of them would take 8 s.
         assertTrue(took.compareTo(Duration.ofSeconds(4)) < 0, "the undeploy took " + took);
@@ -455,7 +455,7 @@ class WebSocketTakeoverEndToEndTest {
         start(new VidocqServletContext("/"));
         connect(new TextListener(new CompletableFuture<>(), new CompletableFuture<>()));
         try (var log = LogCapture.of(VidocqServletContext.class.getName())) {
-            assertDoesNotThrow(context::closeUpgradedConnections);
+            assertDoesNotThrow(this::closeConnections);
             assertEquals(List.of("open", "close", "destroy"), probe.events);
             assertTrue(log.thrown().stream().anyMatch(ExceptionInInitializerError.class::isInstance),
                     log.thrown().toString());
@@ -545,7 +545,7 @@ class WebSocketTakeoverEndToEndTest {
     @Test
     void aRegistrationRefusedAfterUndeployClosesWith1001WithoutDestroy() throws Exception {
         start(new VidocqServletContext("/"));
-        context.closeUpgradedConnections();
+        closeConnections();
         var closedByServer = new CompletableFuture<Integer>();
         connectWithoutOpen(closedByServer);
         assertEquals(1001, closedByServer.get(5, TimeUnit.SECONDS));
@@ -637,6 +637,11 @@ class WebSocketTakeoverEndToEndTest {
                 + "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n"
                 + "Sec-WebSocket-Version: 13\r\n"
                 + "\r\n";
+    }
+
+    /** Undeploys the connections of {@link #context}, the deadline counted from now. */
+    private void closeConnections() {
+        context.closeUpgradedConnections(System.nanoTime());
     }
 
     private void start(VidocqServletContext ctx) {

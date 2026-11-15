@@ -47,7 +47,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
  *       {@code onAllDataRead} returned. Neither direction carries anything more then;</li>
  *   <li>a read or a write fails, or a listener callback throws: {@code onError} first;</li>
  *   <li>{@code init} throws;</li>
- *   <li>the context is undeployed ({@link VidocqServletContext#closeUpgradedConnections()}).</li>
+ *   <li>the context is undeployed ({@link VidocqServletContext#closeUpgradedConnections(long)}).</li>
  * </ul>
  * <p>Closing never waits on the peer without bound: unless it runs inside a listener callback, the
  * connection is closed first, which wakes a read or a write blocked on it (chappe has no write

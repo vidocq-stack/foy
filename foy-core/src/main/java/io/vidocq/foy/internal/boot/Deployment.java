@@ -135,7 +135,7 @@ public final class Deployment implements AutoCloseable {
         CrossContextRegistry.unregister(servletContext);
         // Upgraded connections next: their handlers' destroy(), and a WebSocket's onClose before it, run
         // while the application is intact (BUG-20261114-08).
-        try { servletContext.closeUpgradedConnectionsFrom(started); }
+        try { servletContext.closeUpgradedConnections(started); }
         catch (RuntimeException e) { warn("closing the upgraded connections failed", e); }
         // Servlet 6.1 section 2.3.4: the requests in service finish first, for a bounded time (BUG-20261115-03).
         servletContext.awaitRequestsInService(started);

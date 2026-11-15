@@ -22,12 +22,15 @@ package io.vidocq.foy.internal.container;
 import io.vidocq.foy.internal.LogCapture;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.MethodSource;
 
 import java.time.Duration;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
+import java.util.stream.Stream;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -51,7 +54,7 @@ class UpgradedConnectionsUndeployTest {
         for (int i = 0; i < CONNECTIONS; i++) {
             assertTrue(context.registerUpgradedConnection(() -> threads.add(Thread.currentThread())));
         }
-        context.closeUpgradedConnections();
+        context.closeUpgradedConnections(System.nanoTime());
         assertEquals(CONNECTIONS, threads.size());
         assertEquals(CONNECTIONS, Set.copyOf(threads).size(), "two connections closed on one thread");
         for (Thread thread : threads) {
@@ -72,7 +75,7 @@ class UpgradedConnectionsUndeployTest {
         }
         try (var log = LogCapture.of(CONTEXT_LOGGER)) {
             long start = System.nanoTime();
-            context.closeUpgradedConnections();
+            context.closeUpgradedConnections(System.nanoTime());
             Duration took = Duration.ofNanos(System.nanoTime() - start);
             Duration grace = VidocqServletContext.UPGRADED_CONNECTIONS_GRACE;
             assertTrue(took.compareTo(grace.multipliedBy(2)) < 0, "the undeploy took " + took);
@@ -84,44 +87,41 @@ class UpgradedConnectionsUndeployTest {
     }
 
     /**
-     * An {@code Error} from the end of one connection (an application's {@code onClose} or
-     * {@code destroy()}) stops neither the others nor the undeploy: it is logged.
+     * A close that fails stops neither the others nor the undeploy: it is logged, be it an exception from
+     * the close or an {@code Error} from the end of the connection (an application's {@code onClose} or
+     * {@code destroy()}).
      */
-    @Test
-    void anErrorEndingOneConnectionStopsNeitherTheOthersNorTheUndeploy() {
-        var failure = new ExceptionInInitializerError("destroy() failed");
+    @ParameterizedTest
+    @MethodSource("closeFailures")
+    void aFailingCloseIsLoggedAndStopsNeitherTheOthersNorTheUndeploy(Throwable failure) {
         var ended = new CopyOnWriteArrayList<String>();
-        assertTrue(context.registerUpgradedConnection(() -> {
-            throw failure;
-        }));
+        assertTrue(context.registerUpgradedConnection(failingWith(failure)));
         assertTrue(context.registerUpgradedConnection(() -> ended.add(OTHER)));
         try (var log = LogCapture.of(CONTEXT_LOGGER)) {
-            assertDoesNotThrow(context::closeUpgradedConnections);
+            assertDoesNotThrow(() -> context.closeUpgradedConnections(System.nanoTime()));
             assertEquals(List.of(OTHER), ended);
             assertEquals(List.of(failure), log.thrown());
         }
     }
 
-    /** A connection whose close throws is logged, and the others still close. */
-    @Test
-    void aFailingCloseIsLoggedAndTheOthersStillClose() {
-        var failure = new IllegalStateException("close failed");
-        var ended = new CopyOnWriteArrayList<String>();
-        assertTrue(context.registerUpgradedConnection(() -> {
-            throw failure;
-        }));
-        assertTrue(context.registerUpgradedConnection(() -> ended.add(OTHER)));
-        try (var log = LogCapture.of(CONTEXT_LOGGER)) {
-            context.closeUpgradedConnections();
-            assertEquals(List.of(OTHER), ended);
-            assertEquals(List.of(failure), log.thrown());
-        }
+    static Stream<Throwable> closeFailures() {
+        return Stream.of(new IllegalStateException("close failed"), new ExceptionInInitializerError("destroy() failed"));
+    }
+
+    private static AutoCloseable failingWith(Throwable failure) {
+        return () -> {
+            switch (failure) {
+                case Error error -> throw error;
+                case Exception exception -> throw exception;
+                default -> throw new IllegalArgumentException("neither an Error nor an Exception", failure);
+            }
+        };
     }
 
     /** Once undeployed, a context refuses new connections. */
     @Test
     void aConnectionRegisteredAfterTheUndeployIsRefused() {
-        context.closeUpgradedConnections();
+        context.closeUpgradedConnections(System.nanoTime());
         assertFalse(context.registerUpgradedConnection(() -> fail("a refused connection is not closed by the context")));
     }
 }

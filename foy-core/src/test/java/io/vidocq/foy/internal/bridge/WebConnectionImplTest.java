@@ -84,7 +84,7 @@ class WebConnectionImplTest {
     @Test
     void undeployedBeforeStartNeverCallsInitNorDestroy() {
         var context = new VidocqServletContext("/");
-        context.closeUpgradedConnections();
+        context.closeUpgradedConnections(System.nanoTime());
         var conn = new FakeConnection();
         var handler = new RecordingHandler(false);
         new WebConnectionImpl(conn, handler, context, getClass().getClassLoader()).start();
@@ -101,7 +101,7 @@ class WebConnectionImplTest {
         Thread starter = Thread.ofVirtual().start(wc::start);
         assertTrue(handler.inInit.await(5, TimeUnit.SECONDS));
         // Bounded: undeploy does not wait for init.
-        assertTimeoutPreemptively(Duration.ofSeconds(5), context::closeUpgradedConnections);
+        assertTimeoutPreemptively(Duration.ofSeconds(5), () -> context.closeUpgradedConnections(System.nanoTime()));
         assertTrue(conn.closes.get() >= 1, "the connection is closed at once");
         assertEquals(List.of("init"), handler.events, "no destroy while init runs");
         handler.release.countDown();

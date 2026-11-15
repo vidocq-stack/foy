@@ -109,7 +109,7 @@ class ServletUpgradeEndToEndTest {
     @AfterEach
     void tearDown() {
         // Undeploy first: every connection still open is destroyed now, never during the next test.
-        if (context != null) context.closeUpgradedConnections();
+        if (context != null) context.closeUpgradedConnections(System.nanoTime());
         if (server != null) server.stop();
     }
 
@@ -553,7 +553,7 @@ class ServletUpgradeEndToEndTest {
             client.send(tckHead());
             assertTrue(client.readHead().startsWith("HTTP/1.1 101 "));
             client.readUntil("idle");
-            context.closeUpgradedConnections();
+            context.closeUpgradedConnections(System.nanoTime());
             assertTrue(probe.destroyed.await(5, TimeUnit.SECONDS));
             assertEquals("", client.readAll(), "the connection closed");
         }
