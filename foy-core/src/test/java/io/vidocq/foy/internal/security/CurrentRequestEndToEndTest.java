@@ -46,7 +46,7 @@ class CurrentRequestEndToEndTest {
     public static class Peek extends HttpServlet {
         @Override protected void service(HttpServletRequest req, HttpServletResponse resp) throws IOException {
             var current = CurrentRequest.get();
-            resp.getWriter().write(current.map(r -> r.getRequestURI() + " same=" + (r == req)
+            resp.getWriter().write(current.map(r -> r.getRequestURI() + " same=" + r.equals(req)
                     + " user=" + r.getRemoteUser()).orElse("none"));
         }
     }
