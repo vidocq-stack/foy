@@ -94,6 +94,7 @@ class WebSocketTakeoverEndToEndTest {
     private static final String HELD = "held";
     private static final String HELD_EVENT = "text:" + HELD;
     private static final String ON_OPEN = "onOpen";
+    private static final String TAKEOVER_LOGGER = "io.vidocq.foy.internal.bridge.WebSocketTakeover";
 
     private static volatile Probe current;
 
@@ -358,12 +359,45 @@ class WebSocketTakeoverEndToEndTest {
         try (var client = new RawClient(port)) {
             client.send(handshake("/ws"));
             assertTrue(probe.opened.await(5, TimeUnit.SECONDS), ON_OPEN);
-            awaitParked(probe.sender.get());
+            awaitState(probe.sender.get(), Thread.State.WAITING);
             Thread undeploy = Thread.ofVirtual().start(context::closeUpgradedConnections);
             assertTrue(undeploy.join(Duration.ofSeconds(5)), "the undeploy waited for the blocked send");
             assertEquals(List.of("open", "close", "destroy"), probe.events);
             assertEquals(1001, probe.closeCode.get());
             assertEquals(1, probe.destroyCalls.get());
+        }
+    }
+
+    /**
+     * An interrupt that reaches the undeploy hook while it waits (here for a Close that a blocked send holds
+     * back) ends the wait, not the undeploy's work: the takeover of the connection it closed still ends with
+     * 1001 before the hook returns, a WARNING says so, and the thread keeps its interrupt.
+     */
+    @Test
+    void anInterruptedUndeployHookStillEndsTheTakeover() throws Exception {
+        probe.blockASend = true;
+        start(new VidocqServletContext("/"));
+        try (var client = new RawClient(port);
+             var log = LogCapture.of(TAKEOVER_LOGGER)) {
+            client.send(handshake("/ws"));
+            assertTrue(probe.opened.await(5, TimeUnit.SECONDS), ON_OPEN);
+            awaitState(probe.sender.get(), Thread.State.WAITING);
+            AutoCloseable hook = hooks().getFirst();
+            var keptItsInterrupt = new CompletableFuture<Boolean>();
+            Thread undeploy = Thread.ofVirtual().start(() -> {
+                try {
+                    hook.close();
+                    keptItsInterrupt.complete(Thread.currentThread().isInterrupted());
+                } catch (Exception e) {
+                    keptItsInterrupt.completeExceptionally(e);
+                }
+            });
+            awaitState(undeploy, Thread.State.TIMED_WAITING);
+            undeploy.interrupt();
+            assertTrue(keptItsInterrupt.get(5, TimeUnit.SECONDS), "the hook lost the interrupt");
+            assertEquals(List.of("open", "close", "destroy"), probe.events);
+            assertEquals(1001, probe.closeCode.get());
+            assertTrue(log.warnings().stream().anyMatch(w -> w.contains("interrupted")), log.warnings().toString());
         }
     }
 
@@ -454,17 +488,19 @@ class WebSocketTakeoverEndToEndTest {
     }
 
     /**
-     * Waits until the thread parks: a send to a peer that does not read parks in the socket write, and holds
-     * chappe's write lock from then on. One read per check: the park ends whenever the kernel takes more bytes.
+     * Waits until the thread is seen in {@code expected}: a send to a peer that does not read parks
+     * ({@code WAITING}) in the socket write, and holds chappe's write lock from then on; the undeploy hook
+     * waits for its Close with a time limit ({@code TIMED_WAITING}). One read per check: the park of a send
+     * ends whenever the kernel takes more bytes.
      */
-    private static void awaitParked(Thread thread) {
+    private static void awaitState(Thread thread, Thread.State expected) {
         long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
         Thread.State state = thread.getState();
-        while (state != Thread.State.WAITING && System.nanoTime() < deadline) {
+        while (state != expected && System.nanoTime() < deadline) {
             Thread.onSpinWait();
             state = thread.getState();
         }
-        assertEquals(Thread.State.WAITING, state, "the send never blocked on the peer");
+        assertEquals(expected, state, thread.getName());
     }
 
     private void connectWithoutOpen(CompletableFuture<Integer> closedByServer) throws Exception {
@@ -474,11 +510,16 @@ class WebSocketTakeoverEndToEndTest {
                 .get(5, TimeUnit.SECONDS);
     }
 
-    /** The upgraded connections the context still tracks. */
+    /** The number of upgraded connections the context still tracks. */
     private int registeredConnections() throws ReflectiveOperationException {
+        return hooks().size();
+    }
+
+    /** The undeploy hooks of the upgraded connections the context still tracks. */
+    private List<AutoCloseable> hooks() throws ReflectiveOperationException {
         var field = VidocqServletContext.class.getDeclaredField("upgradedConnections");
         field.setAccessible(true);
-        return ((java.util.Collection<?>) field.get(context)).size();
+        return ((java.util.Collection<?>) field.get(context)).stream().map(AutoCloseable.class::cast).toList();
     }
 
     private WebSocket connect(WebSocket.Listener listener) throws Exception {

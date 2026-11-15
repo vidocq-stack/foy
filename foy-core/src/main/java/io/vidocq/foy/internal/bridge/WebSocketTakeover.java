@@ -270,7 +270,7 @@ final class WebSocketTakeover implements WebSocketHandler {
      * for the whole hook. A connection still open is closed with 1001 ({@link #sendGoingAway}) and ended
      * at once ({@link #endNow}); one whose closing handshake already began is waited for
      * ({@link #awaitEnd}). The interrupt of the undeploy's thread is cleared for the hook and restored
-     * afterwards; one that arrives during a wait ends the wait.
+     * afterwards; one that arrives during a wait ends the wait ({@link #endInterrupted}).
      */
     private void undeploy(WebSocket ws) {
         long deadline = System.nanoTime() + UNDEPLOY_GRACE.toNanos();
@@ -282,10 +282,32 @@ final class WebSocketTakeover implements WebSocketHandler {
                 awaitEnd(deadline);
             }
         } catch (InterruptedException _) {
-            Thread.currentThread().interrupt();
+            interrupted = true;
+            endInterrupted();
         } finally {
             if (interrupted) Thread.currentThread().interrupt();
         }
+    }
+
+    /**
+     * The undeploy was interrupted while it waited for its Close, for the event in progress or for a
+     * closing handshake under way. The takeover of a connection it closed ends now, unless an event runs:
+     * the undeploy closed the session, and its Close still goes out on its own thread. Otherwise the
+     * transport ends it, after the application stopped. A WARNING says which.
+     */
+    private void endInterrupted() {
+        if (closedByUndeploy && events.tryLock()) {
+            try {
+                finish(GOING_AWAY, STOPPING);
+            } finally {
+                events.unlock();
+            }
+        }
+        LOG.log(System.Logger.Level.WARNING, closed.get()
+                ? "the undeploy was interrupted while it closed a WebSocket: the session ended without waiting"
+                        + " for the rest of its closing"
+                : "the undeploy was interrupted while it closed a WebSocket: onClose and destroy() run when the"
+                        + " connection ends, after the application stopped");
     }
 
     /**
