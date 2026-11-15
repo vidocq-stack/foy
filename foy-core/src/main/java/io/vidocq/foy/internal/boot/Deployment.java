@@ -37,8 +37,12 @@ import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
- * A deployed web application, produced by {@link WebAppDeployer#deploy}. It does not own
- * the HTTP server: stop the server first, then {@link #close()} the deployment.
+ * A deployed web application, produced by {@link WebAppDeployer#deploy}. It does not own the HTTP
+ * server: {@link #close()} the deployment first, then stop the server. The undeploy closes the
+ * application's upgraded connections while the server can still write, so a WebSocket peer gets its
+ * 1001 Close frame and the endpoint its {@code onClose(1001)}. The other way round, the server's stop
+ * cuts those connections first: their peers get no Close frame, and an endpoint may get
+ * {@code onError} for the cut connection before an {@code onClose(1006)}.
  */
 public final class Deployment implements AutoCloseable {
 

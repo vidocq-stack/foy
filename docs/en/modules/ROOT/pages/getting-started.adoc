@@ -86,14 +86,18 @@ void main() throws Exception {
             .mount(mounted.mountPrefix(), mounted.handler(), false) // route on the prefix, never strip it
             .build();
 
-    try (mounted; var server = Server.builder().port(8080).handler(router).build()) {
+    var server = Server.builder().port(8080).handler(router).build();
+    try {
         server.start(); // non-blocking
         // ... await your application's shutdown signal ...
-    } // server stops first, then mounted.close() destroys the web application
+    } finally {
+        mounted.close(); // first, while the server still runs: WebSocket peers get their 1001 Close
+        server.stop();
+    }
 }
 ----
 
-`build()` deploys the web application: servlets marked `load-on-startup` are initialised and `contextInitialized` has already fired when it returns. `Mounted` is `AutoCloseable`: `close()` destroys servlets and filters and fires `contextDestroyed`. `build()` returns an empty `Optional<Mounted>` when the application has nothing to deploy: no servlet, filter or listener (from a descriptor or an annotation), no descriptor content, no initializer and no JSP pages — the caller decides whether that's an error or a degraded mode.
+`build()` deploys the web application: servlets marked `load-on-startup` are initialised and `contextInitialized` has already fired when it returns. `Mounted` is `AutoCloseable`: `close()` destroys servlets and filters and fires `contextDestroyed`. Close it before you stop the server, as above: in the other order the server's stop cuts the WebSocket connections without a Close frame (see xref:reference.adoc#foychappeboot[`Mounted.close()`]). `build()` returns an empty `Optional<Mounted>` when the application has nothing to deploy: no servlet, filter or listener (from a descriptor or an annotation), no descriptor content, no initializer and no JSP pages — the caller decides whether that's an error or a degraded mode.
 
 == Annotations or `web.xml`?
 

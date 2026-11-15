@@ -83,7 +83,7 @@ import java.util.function.Function;
  *         .sessionTimeoutSeconds(1800)
  *         .build();
  * opt.ifPresent(mounted -> routerBuilder.mount(mounted.mountPrefix(), mounted.handler(), false));
- * // on shutdown: mounted.close()
+ * // on shutdown: mounted.close() first, then stop the server
  * }</pre>
  *
  * <p>The handler dispatches on the full request path, context path included. Mount it so that
@@ -145,7 +145,12 @@ public final class FoyChappeBoot {
             return deployment.listeners().classNames();
         }
 
-        /** Destroys the application: servlets, filters, then {@code contextDestroyed}. */
+        /**
+         * Destroys the application: its upgraded connections, servlets, filters, then
+         * {@code contextDestroyed}. Call it before stopping the server, so that the upgraded
+         * connections close while the server can still write: a WebSocket peer then gets its 1001
+         * Close frame. After a stop, the stop has already cut them, without a Close frame.
+         */
         @Override
         public void close() {
             deployment.close();

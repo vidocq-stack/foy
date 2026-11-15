@@ -120,7 +120,7 @@ Supported features:
 - `servlet`, `filter`, `listener`, `errorPage`, `contextPath`,
   `securityProvider`, `sessionTimeoutMinutes`, `localeEncodingMappings`,
   `contextInitParams`, `servletContainerInitializer`
-- Auto-allocated free port with retry (absorbs bind races)
+- Binds port 0 and reads the port the server got, so no other process can take it first
 - `AutoCloseable`: `close()` stops the server and fires `destroy()`
 
 ## Jakarta Servlet 6.1 TCK Conformance Status
