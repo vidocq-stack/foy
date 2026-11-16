@@ -654,6 +654,14 @@ class FoyChappeBootTest {
     }
 
     @Test
+    void accessControlIsKeptInTheSecuritySettings() {
+        io.vidocq.foy.spi.security.AccessControl control = (path, method, caller, constraints) -> true;
+        var builder = FoyChappeBoot.builder();
+        assertEquals(control, builder.accessControl(control).securitySettings().accessControl());
+        assertThrows(NullPointerException.class, () -> builder.accessControl(null));
+    }
+
+    @Test
     void requestAuthenticationHookIsKeptInTheSecuritySettings() {
         io.vidocq.foy.spi.security.RequestAuthentication hook = (req, res, mandatory) ->
                 io.vidocq.foy.spi.security.RequestAuthentication.anonymous();

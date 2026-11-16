@@ -39,6 +39,7 @@ import java.util.Set;
 import static io.vidocq.foy.internal.security.SecureApp.constraint;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * The access decision of a Jakarta Authorization runtime (Servlet 6.1 section 13, Jakarta Authorization 3.0): it is
@@ -135,6 +136,63 @@ class AccessControlEndToEndTest {
         try (var app = new SecureApp(model(), settings)) {
             assertEquals(403, app.get("/admin/x").statusCode());
             assertEquals(200, app.get("/open").statusCode());
+        }
+    }
+
+    // The container's own mechanism (no RequestAuthentication hook): BASIC, then the policy decides.
+
+    private static SecuritySettings withoutHook(AccessControl control) {
+        return SecuritySettings.DEFAULTS.withIdentityStore(SecureApp.USERS).withAccessControl(control);
+    }
+
+    @Test
+    void aProtectedResourceStillChallengesAnonymousWhenThePolicyDoesNotAcceptThem() throws Exception {
+        var control = new Scripted(false);
+        try (var app = new SecureApp(model(), withoutHook(control))) {
+            var response = app.get("/admin/x");
+
+            assertEquals(401, response.statusCode());
+            assertTrue(response.headers().firstValue("WWW-Authenticate").orElseThrow().startsWith("Basic realm=\"Corp\""));
+        }
+    }
+
+    @Test
+    void aPolicyThatAcceptsAnonymousOnAProtectedResourceLetsThemThroughWithoutAChallenge() throws Exception {
+        var control = new Scripted(true);
+        try (var app = new SecureApp(model(), withoutHook(control))) {
+            var response = app.get("/admin/x");
+
+            assertEquals(200, response.statusCode());
+            assertEquals("user=null", response.body());
+        }
+    }
+
+    @Test
+    void theCallerBasicIdentifiedIsTheOneThePolicyDecidesFor() throws Exception {
+        var control = new Scripted(true);
+        try (var app = new SecureApp(model(), withoutHook(control))) {
+            var response = app.send("GET", "/admin/x", "alice:a-secret");
+
+            assertEquals(200, response.statusCode());
+            assertEquals("user=alice", response.body());
+            assertEquals(new Asked("/admin/x", "GET", "alice", true), control.asked.getLast());
+        }
+    }
+
+    @Test
+    void aKnownCallerTheConstraintsRefuseIsForbiddenWhenThePolicySaysNo() throws Exception {
+        var control = new Scripted(false);
+        try (var app = new SecureApp(model(), withoutHook(control))) {
+            assertEquals(403, app.send("GET", "/admin/x", "bob:b-secret").statusCode());
+        }
+    }
+
+    @Test
+    void anUnprotectedResourceNeverChallengesAndIsStillAskedOfThePolicy() throws Exception {
+        var control = new Scripted(true);
+        try (var app = new SecureApp(model(), withoutHook(control))) {
+            assertEquals(200, app.get("/open").statusCode());
+            assertEquals(new Asked("/open", "GET", null, true), control.asked.getFirst());
         }
     }
 }
