@@ -1,6 +1,7 @@
 # HTTP sessions survive a dev swap: the Foy half
 
-Status: draft for review (VIDOCQ, then Yann). Date: 2026-11-16. Branch: `feat/session-survives-swap`.
+Status: agreed (VIDOCQ reviewed it; Yann answered the open points, 2026-11-16). VAADIN builds the Vidocq half on
+this API. Date: 2026-11-16. Branch: `feat/session-survives-swap`.
 
 ## Intent
 
@@ -88,7 +89,15 @@ public byte[] closeExporting();
 public SessionImport importSessions(byte[] export, ClassLoader loader);
 
 public record SessionImport(int imported, int expired, int dropped) {}
+
+/** Wraps every later import, e.g. to bind the CDI container that rebinds the session's beans. */
+public void importScope(SessionImportScope scope);
 ```
+
+with `public interface SessionImportScope { <T> T around(Supplier<T> importer); }` in the same package. A
+`closeExporting()` on a manager already closed, by `close()` or `closeExporting()`, returns an export of zero
+sessions. A session still used by a request whose grace ran out is exported anyway. A log line never carries a
+whole session id, which is a credential: it carries the first 8 characters.
 
 `foy-core`, `io.vidocq.foy.internal.boot.Deployment`:
 
@@ -180,6 +189,12 @@ Rejected alternative: `foy-cdi-vauban` strips the CDI entries at export, and the
 use. That gives a half-restored session (anti-goal). Stripping the entries does not help an object that holds a
 client proxy anyway.
 
+For the companion: the built-in `HttpSession` bean. `foy-cdi-vauban`'s `ServletBuiltInBeans` declares `HttpSession`
+as a `@SessionScoped` producer of `request.getSession()`, so its `Entry` holds the `HttpSessionImpl` itself: the
+session would hold itself. The companion must skip that `Entry` and not write it. On import the bean is produced
+again at its first use, from the request, which gives the imported session. Every application that injects
+`HttpSession` has that `Entry`: without the skip, none of its sessions would move, even with the companion.
+
 ### Push reconnection (the Foy side)
 
 Upgraded connections close with 1001 before the export, so Vaadin's push disconnect runs on the live application and
@@ -187,14 +202,21 @@ its result is in the snapshot. The client reconnects with the same `JSESSIONID`.
 mount, a reconnect never finds an empty store and never creates a new session. Until the new handler is mounted, the
 old deployment answers 503 with `Retry-After`. What Vaadin's client then does is VAADIN's to check end to end.
 
-## Open points
+## Decisions on the open points (Yann, 2026-11-16)
 
-1. **Vauban companion** (passivation of entries and client proxies). Who: I propose doing it myself, after this
-   design is agreed. Without it, CDI state does not move, and a session holding it starts afresh as today.
-2. **Whole-session drop.** VAADIN proposed it and I agree. VIDOCQ's brief allowed dropping the attribute or the
-   session. Yann to confirm.
-3. **Identity note.** The design moves only a serializable `Principal`, so a user whose `Principal` cannot be written
-   logs in again. Yann to confirm, or to ask for a re-authentication through the identity store instead.
+1. **Vauban companion.** Yes. Foy's author makes the passivation of entries and client proxies after Foy PR 1. Until
+   it lands, CDI state does not move, and a session that holds it starts afresh as today.
+2. **Whole-session drop.** Yes. VAADIN and VIDOCQ preferred it too.
+3. **Identity note.** Yes. Only a serializable `Principal` moves. A user whose `Principal` cannot be written logs in
+   again.
+
+## Where the CDI hook is applied
+
+`FoyChappeBoot` discovers the `CdiContextListeners` providers and knows the `BeanManager`. `Mounted` is a record, so
+a new component would change its canonical constructor. Its components therefore stay as they are. Instead, the
+builder gives the deployment's `SessionManager` an import scope (`SessionManager.importScope(SessionImportScope)`),
+which wraps the deserialization in each provider's `aroundSessionImport`. Without a `BeanManager`, the scope only
+runs the import.
 
 ## Tests (TDD, written first)
 
