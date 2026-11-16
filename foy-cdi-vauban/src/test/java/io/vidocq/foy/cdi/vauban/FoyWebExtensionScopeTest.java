@@ -113,6 +113,14 @@ class FoyWebExtensionScopeTest {
     }
 
     @Test
+    @DisplayName("a Jakarta Security annotation the model cannot resolve (a war nobody indexed) is no scope: @Dependent is added")
+    void securityApiAnnotationDoesNotBlockDependent() {
+        assertEquals(List.of(Dependent.class), added(classInfo("app.Secured", Set.of(),
+                unresolvable("jakarta.security.enterprise.authentication.mechanism.http.BasicAuthenticationMechanismDefinition"),
+                WEB_SERVLET)));
+    }
+
+    @Test
     @DisplayName("an annotation type the model cannot resolve may be a library stereotype or scope: nothing is added")
     void unresolvableApplicationAnnotationBlocksDependent() {
         assertEquals(List.of(), added(classInfo("app.Stereo", Set.of(), unresolvable("lib.Managed"), WEB_SERVLET)));

@@ -98,7 +98,7 @@ public class FoyWebExtension implements BuildCompatibleExtension {
      * matched first, by name), so an unresolvable declaration there does not block {@code @Dependent}.
      */
     private static final List<String> KNOWN_API_PACKAGES = List.of(
-            "java.", "javax.", "jdk.", "jakarta.servlet.", "jakarta.annotation.", "jakarta.inject.",
+            "java.", "javax.", "jdk.", "jakarta.servlet.", "jakarta.annotation.", "jakarta.inject.", "jakarta.security.",
             "jakarta.enterprise.", "jakarta.interceptor.", "jakarta.decorator.");
 
     /**
