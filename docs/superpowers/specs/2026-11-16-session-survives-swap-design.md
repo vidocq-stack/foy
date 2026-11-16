@@ -214,8 +214,9 @@ again at its first use, from the request, which gives the imported session. Ever
 
 Upgraded connections close with 1001 before the export, so Vaadin's push disconnect runs on the live application and
 its result is in the snapshot. The client reconnects with the same `JSESSIONID`. Because the import runs before the
-mount, a reconnect never finds an empty store and never creates a new session. Until the new handler is mounted, the
-old deployment answers 503 with `Retry-After`. What Vaadin's client then does is VAADIN's to check end to end.
+mount, a reconnect never finds an empty store and never creates a new session. Under `vidocq:dev` the whole Chappe
+server stops during a swap (VAADIN's design, §4), so a request sent meanwhile gets a refused connection rather than
+503. The replay measures how Vaadin's client copes with that.
 
 ## Decisions on the open points (Yann, 2026-11-16)
 
