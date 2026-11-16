@@ -44,6 +44,9 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * {@code "the application is stopping"}: the container closed it (Jakarta WebSocket 2.2 section 2.1.5). The
  * other way round, the server's stop cuts those connections first: their peers get no Close frame, and an
  * endpoint may get {@code onError} for the cut connection before an {@code onClose(1006)} with no reason.
+ *
+ * <p>{@link #close()} invalidates every live session. {@link #closeExportingSessions()} undeploys the same way but
+ * exports the sessions instead, for {@link #importSessions(byte[])} into the next deployment.</p>
  */
 public final class Deployment implements AutoCloseable {
 
@@ -96,15 +99,52 @@ public final class Deployment implements AutoCloseable {
      * graces count from the start of the undeploy, so it reaches {@code destroy()} 3 s after it began at
      * most; then
      * Servlet 6.1 §2.3.4 — {@code destroy()} in
-     * reverse {@code init()} order (filters, then servlets), then the session reaper stops and every live session is
-     * invalidated with its listeners ({@code sessionDestroyed}, {@code valueUnbound}; Foy does not
-     * persist sessions across deployments), then {@code contextDestroyed}, then its temp dir is removed.
+     * reverse {@code init()} order (filters, then servlets), then the session reaper stops and every live
+     * session is invalidated with its listeners ({@code sessionDestroyed}, {@code valueUnbound}; to keep them
+     * for the next deployment, call {@link #closeExportingSessions()} instead), then {@code contextDestroyed},
+     * then its temp dir is removed.
      * A second call is a no-op.
      */
     @Override
     public void close() {
         if (!closed.compareAndSet(false, true)) return;
-        undeploy(servletContext, listeners, initializedServlets, initializedFilters, tempDir, sessionManager);
+        undeploy(parts(), SessionStep.INVALIDATE);
+    }
+
+    /**
+     * Undeploys like {@link #close()}, in the same order, but the session step exports the live sessions instead
+     * of invalidating them: no {@code sessionDestroyed} fires for a session that is written (see
+     * {@link SessionManager#closeExporting()}). It shares the {@code close()} flag: a second call, or a call after
+     * {@code close()}, even one still running, undeploys nothing and returns an export of no session; the sessions
+     * stay with that {@code close()}, which ends them with {@code sessionDestroyed}. A failure of the session step
+     * is logged and the undeploy goes on; the export is then that of no session.
+     *
+     * @return the export, for {@link #importSessions(byte[])} on the next deployment; its format is private
+     */
+    public byte[] closeExportingSessions() {
+        // A close() under way (a stop during a swap) has not drained the requests or run destroy() yet: its
+        // sessions are its own to end, so this call exports none of them.
+        if (!closed.compareAndSet(false, true)) return SessionManager.emptyExport();
+        return undeploy(parts(), SessionStep.EXPORT);
+    }
+
+    /**
+     * Imports the sessions of an export written by {@link #closeExportingSessions()} of the previous deployment,
+     * under this application's class loader, else, when the deployment named none, under the caller's context
+     * class loader ({@link VidocqServletContext#getClassLoader()}). Call it before this deployment serves a
+     * request. See {@link SessionManager#importSessions(byte[], ClassLoader)}.
+     *
+     * @param export bytes that {@code closeExportingSessions()} returned in this JVM
+     * @return what was imported, expired and dropped
+     * @throws IllegalArgumentException when {@code export} is not an export of this Foy version
+     * @throws IllegalStateException once this deployment is closed
+     */
+    public SessionManager.SessionImport importSessions(byte[] export) {
+        return sessionManager.importSessions(export, servletContext.getClassLoader());
+    }
+
+    private Parts parts() {
+        return new Parts(servletContext, listeners, initializedServlets, initializedFilters, tempDir, sessionManager);
     }
 
     /**
@@ -116,17 +156,53 @@ public final class Deployment implements AutoCloseable {
     static void undeploy(VidocqServletContext servletContext, ListenerRegistry contextListeners,
                          List<Servlet> initializedServlets, List<Filter> initializedFilters, Path tempDir,
                          SessionManager sessions) {
+        undeploy(new Parts(servletContext, contextListeners, initializedServlets, initializedFilters, tempDir,
+                sessions), SessionStep.INVALIDATE);
+    }
+
+    /** What an undeploy tears down. */
+    private record Parts(VidocqServletContext servletContext, ListenerRegistry contextListeners,
+                         List<Servlet> initializedServlets, List<Filter> initializedFilters, Path tempDir,
+                         SessionManager sessions) {}
+
+    /** What the session step does: invalidate the live sessions, or export them for the next deployment. */
+    private enum SessionStep {
+        INVALIDATE("session invalidation failed") {
+            @Override byte[] run(SessionManager sessions) {
+                sessions.close();
+                return SessionManager.emptyExport();
+            }
+        },
+        EXPORT("session export failed") {
+            @Override byte[] run(SessionManager sessions) {
+                return sessions.closeExporting();
+            }
+        };
+
+        final String failure;
+
+        SessionStep(String failure) { this.failure = failure; }
+
+        /** Runs the step; returns the export, which is that of no session when the step invalidates. */
+        abstract byte[] run(SessionManager sessions);
+    }
+
+    private static byte[] undeploy(Parts parts, SessionStep step) {
         // The application's destroy(), session and context listeners run with its class loader as
         // context loader; the calling thread gets its own back (BUG-20261022-06).
-        try (var _ = ContextLoaderScope.enter(servletContext.applicationClassLoader())) {
-            undeployWithinScope(servletContext, contextListeners, initializedServlets, initializedFilters, tempDir,
-                    sessions);
+        try (var _ = ContextLoaderScope.enter(parts.servletContext().applicationClassLoader())) {
+            return undeployWithinScope(parts, step);
         }
     }
 
-    private static void undeployWithinScope(VidocqServletContext servletContext, ListenerRegistry contextListeners,
-                                            List<Servlet> initializedServlets, List<Filter> initializedFilters,
-                                            Path tempDir, SessionManager sessions) {
+    /** Returns the export when the session step exports and succeeded, an export of no session otherwise. */
+    private static byte[] undeployWithinScope(Parts parts, SessionStep step) {
+        VidocqServletContext servletContext = parts.servletContext();
+        List<Servlet> initializedServlets = parts.initializedServlets();
+        List<Filter> initializedFilters = parts.initializedFilters();
+        SessionManager sessions = parts.sessions();
+        ListenerRegistry contextListeners = parts.contextListeners();
+        Path tempDir = parts.tempDir();
         // The graces of the upgraded connections and of the requests in service both count from here: the
         // requests keep running while the connections close, so the two waits overlap.
         long started = System.nanoTime();
@@ -149,9 +225,10 @@ public final class Deployment implements AutoCloseable {
             Servlet s = initializedServlets.get(i);
             try { s.destroy(); } catch (RuntimeException e) { warn("destroy failed for servlet " + s, e); }
         }
+        byte[] export = SessionManager.emptyExport();
         if (sessions != null) {
-            try { sessions.close(); }
-            catch (RuntimeException e) { warn("session invalidation failed", e); }
+            try { export = step.run(sessions); }
+            catch (RuntimeException e) { warn(step.failure, e); }
         }
         if (contextListeners != null) {
             try { contextListeners.fireContextDestroyed(servletContext); }
@@ -160,6 +237,7 @@ public final class Deployment implements AutoCloseable {
         try { servletContext.closeJspEngineApplication(); }
         catch (RuntimeException failure) { warn("JSP application cleanup failed", failure); }
         if (tempDir != null) deleteRecursively(tempDir);
+        return export;
     }
 
     /** Best effort: a failure is logged at FINE and the remaining entries are still tried. */

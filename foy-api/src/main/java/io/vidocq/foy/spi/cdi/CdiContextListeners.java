@@ -23,6 +23,7 @@ import jakarta.enterprise.inject.spi.BeanManager;
 import jakarta.servlet.ServletRequestListener;
 import java.util.EventListener;
 import java.util.List;
+import java.util.function.Supplier;
 
 /**
  * Listeners that drive CDI contexts from the servlet container's events, for a given CDI container.
@@ -55,5 +56,21 @@ public interface CdiContextListeners {
      */
     default List<ServletRequestListener> requestContextListeners(BeanManager beanManager) {
         return List.of();
+    }
+
+    /**
+     * Runs {@code importer}, the import of the sessions a previous deployment exported, with the CDI container that
+     * owns {@code beanManager} bound for its duration, so that the CDI objects of those sessions (contextual
+     * instances, client proxies) rebind to it. An adapter binds its container here. The import runs on the calling
+     * thread; return what {@code importer} returns. The default only runs it. Foy nests the adapters' calls around
+     * the import when it is given a {@code BeanManager}.
+     *
+     * @param beanManager the container the new deployment runs on
+     * @param importer the import
+     * @param <T> the type {@code importer} returns
+     * @return what {@code importer} returned
+     */
+    default <T> T aroundSessionImport(BeanManager beanManager, Supplier<T> importer) {
+        return importer.get();
     }
 }

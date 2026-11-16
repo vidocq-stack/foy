@@ -42,6 +42,7 @@ import io.vidocq.foy.internal.webxml.WebAppDescriptor;
 import io.vidocq.foy.internal.webxml.WebXmlParser;
 import io.vidocq.foy.internal.listener.CdiRequestScopeListener;
 import io.vidocq.foy.internal.listener.ListenerRegistry;
+import io.vidocq.foy.internal.session.SessionImportScope;
 import io.vidocq.foy.internal.security.InMemoryIdentityStore;
 import io.vidocq.foy.internal.security.SecuritySettings;
 import io.vidocq.foy.spi.cdi.CdiContextListeners;
@@ -67,6 +68,7 @@ import java.util.ServiceConfigurationError;
 import java.util.ServiceLoader;
 import java.util.Set;
 import java.util.function.Function;
+import java.util.function.Supplier;
 
 /**
  * Bootstrap Foy on Chappe HTTP transport.
@@ -132,7 +134,8 @@ public final class FoyChappeBoot {
          * read of the session store ({@code SessionStore.size()}, a {@code ConcurrentHashMap}
          * count in the default store): no lock, no I/O and no expiry sweep, so a session that
          * expired but has not been reaped yet is still counted. It is {@code 0} once the
-         * deployment is closed, which invalidates every session.
+         * deployment is closed: {@link #close()} invalidates every session, and
+         * {@link #closeExportingSessions()} exports them.
          */
         public int activeSessions() {
             return deployment.sessionManager().store().size();
@@ -158,6 +161,34 @@ public final class FoyChappeBoot {
         @Override
         public void close() {
             deployment.close();
+        }
+
+        /**
+         * Destroys the application like {@link #close()}, and exports its live sessions instead of invalidating
+         * them: no {@code sessionDestroyed} fires for a session that is exported. Call it in place of
+         * {@code close()}, before the server stops. The bytes are private to Foy and in memory only; give them to
+         * {@link #importSessions(byte[])} on the {@code Mounted} of the next {@code build()}.
+         *
+         * @return the export; one of no session when the deployment was already closed, or is being closed by
+         *         {@code close()}, which then ends the sessions itself
+         */
+        public byte[] closeExportingSessions() {
+            return deployment.closeExportingSessions();
+        }
+
+        /**
+         * Imports the sessions of {@link #closeExportingSessions()} of the previous deployment into this one,
+         * under its class loader. Call it after {@code build()} and before the handler is mounted, so that a
+         * request with an old {@code JSESSIONID} never meets an empty store. Give it only bytes that
+         * {@code closeExportingSessions()} returned in this JVM: the format is private to this Foy version.
+         *
+         * @param export the bytes {@code closeExportingSessions()} returned
+         * @return the number of sessions imported
+         * @throws IllegalArgumentException when {@code export} is not an export of this Foy version
+         * @throws IllegalStateException once this deployment is closed
+         */
+        public int importSessions(byte[] export) {
+            return deployment.importSessions(export).imported();
         }
     }
 
@@ -645,18 +676,24 @@ public final class FoyChappeBoot {
                 if (i.jar() != null) scanRoots.add(i.jar());
             }
             try {
+                // Found once: the listeners at deploy and the import scope afterwards share them.
+                List<CdiContextListeners> adapters = beanManager == null ? List.of() : cdiAdapters(context.loader());
                 VidocqServletContext.ResourceProvider resources = resourceProvider != null ? resourceProvider
                         : new ClassPathResourceProvider(context.loader(), List.copyOf(sources.resourceRoots()),
                                 sources.excluded());
-                return WebAppDeployer.deploy(model, DeployOptions
+                Deployment deployed = WebAppDeployer.deploy(model, DeployOptions
                         .defaults(context.loader(), context.registry(), ApplicationSources.scanRoots(scanRoots),
                                 Set.copyOf(sources.excluded()))
                         .withComponentFactory(context.factory()).withResourceProvider(resources)
                         .withVirtualServerName(virtualServerName).withSecurity(security)
                         .withRequestLimits(requestLimits)
                         .withContainerListeners(beanManager == null ? null
-                                : listeners -> registerCdiListeners(listeners, context.loader())),
+                                : listeners -> registerCdiListeners(listeners, adapters)),
                         applicationLayer, engine);
+                if (beanManager != null) {
+                    deployed.sessionManager().importScope(sessionImportScope(beanManager, adapters));
+                }
+                return deployed;
             } catch (RuntimeException e) {
                 throw deploymentFailed(e);
             }
@@ -670,10 +707,7 @@ public final class FoyChappeBoot {
          * context), then the adapters' listeners that need the request context; the reverse when the request
          * ends.
          */
-        private void registerCdiListeners(ListenerRegistry listeners, ClassLoader loader) {
-            // An adapter module in both the boot and the application layer registers once.
-            List<CdiContextListeners> adapters = ApplicationSources.providers(CdiContextListeners.class, loader)
-                    .stream().map(ServiceLoader.Provider::get).toList();
+        private void registerCdiListeners(ListenerRegistry listeners, List<CdiContextListeners> adapters) {
             // Right behind the request context, once it is active: the request the built-in beans serve.
             for (CdiContextListeners adapter : adapters) {
                 adapter.requestContextListeners(beanManager).reversed().forEach(listeners::registerFirst);
@@ -687,6 +721,27 @@ public final class FoyChappeBoot {
                     listeners.registerFirst(listener);
                 }
             }
+        }
+
+        /** An adapter module in both the boot and the application layer registers once. */
+        private static List<CdiContextListeners> cdiAdapters(ClassLoader loader) {
+            return ApplicationSources.providers(CdiContextListeners.class, loader)
+                    .stream().map(ServiceLoader.Provider::get).toList();
+        }
+
+        /** The first adapter wraps the others, which wrap the import. */
+        static SessionImportScope sessionImportScope(BeanManager beanManager, List<CdiContextListeners> adapters) {
+            return new SessionImportScope() {
+                @Override
+                public <T> T around(Supplier<T> importer) {
+                    Supplier<T> nested = importer;
+                    for (CdiContextListeners adapter : adapters.reversed()) {
+                        Supplier<T> inner = nested;
+                        nested = () -> adapter.aroundSessionImport(beanManager, inner);
+                    }
+                    return nested.get();
+                }
+            };
         }
 
         private static void logDeployment(Sources sources, WebAppModel model) {
