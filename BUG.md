@@ -1,5 +1,18 @@
 # BUG.md — foy
 
+## BUG-20261116-01 — `WebSocketTakeoverEndToEndTest.anErrorFromOnCloseDoesNotStopTheUndeploy` is intermittent
+
+- Date: 2026-11-16
+- Status: open (seen once, in a Foy run during the Kerckhoffs JACC slice, foy#113; green on the rerun).
+- Symptom: the test fails now and then, with no change in the code under test.
+- Repro: none deterministic. Loop `WebSocketTakeoverEndToEndTest#anErrorFromOnCloseDoesNotStopTheUndeploy` in `foy-core`
+  until it fails; the failure message was not kept, so the assertion that fails is unknown.
+- Cause hypothesis: the test waits for `onClose` to be delivered by either thread (the undeploy's hook, or Chappe's
+  when the client's Close answers the 1001 first), then asserts `probe.events` equals `open, close, destroy` and that the
+  captured log holds the `ExceptionInInitializerError`. A race between the two delivering threads and the log capture
+  would explain a missing event or log record.
+- Next step: rerun in a loop with the failure output kept, then record the real assertion here.
+
 ## BUG-20261116-02 — A failing session listener logs the whole session id, which is a credential
 
 - Date: 2026-11-16 (found in review while building the session export of a dev swap, branch
