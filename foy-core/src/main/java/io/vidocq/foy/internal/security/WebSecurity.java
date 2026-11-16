@@ -23,6 +23,7 @@ import io.vidocq.foy.internal.bridge.HttpServletRequestImpl;
 import io.vidocq.foy.internal.security.ConstraintTable.Decision;
 import io.vidocq.foy.internal.session.HttpSessionImpl;
 import io.vidocq.foy.internal.webxml.SecurityDefs.LoginConfigDef;
+import io.vidocq.foy.spi.security.AccessControl;
 import io.vidocq.foy.spi.security.Identity;
 import io.vidocq.foy.spi.security.IdentityStore;
 import io.vidocq.foy.spi.security.RequestAuthentication;
@@ -143,7 +144,10 @@ public final class WebSecurity {
         }
         RequestAuthentication hook = settings.requestAuthentication();
         if (hook != null) {
-            return admitThroughHook(hook, req, res, decision);
+            return admitThroughHook(hook, req, res, decision, canonicalPath);
+        }
+        if (settings.accessControl() != null) {
+            return admitByAccessControl(req, res, canonicalPath, decision);
         }
         switch (decision.access()) {
             case UNCHECKED -> { return true; }
@@ -172,8 +176,9 @@ public final class WebSecurity {
      * mechanism of the container to challenge with), and an exception fails closed.
      */
     private boolean admitThroughHook(RequestAuthentication hook, HttpServletRequestImpl req, HttpServletResponse res,
-                                     Decision decision) throws IOException, ServletException {
-        if (decision.access() == Decision.Access.EXCLUDED) {
+                                     Decision decision, String canonicalPath) throws IOException, ServletException {
+        AccessControl control = settings.accessControl();
+        if (control == null && decision.access() == Decision.Access.EXCLUDED) {
             res.sendError(HttpServletResponse.SC_FORBIDDEN);
             return false;
         }
@@ -185,11 +190,41 @@ public final class WebSecurity {
                 // Nobody was identified: a protected resource refuses the request below.
             }
         }
+        if (control != null) {
+            return permitted(control, req, res, canonicalPath);
+        }
         if (mandatory && (req.identity() == null || !decision.permits(req.identity()))) {
             res.sendError(HttpServletResponse.SC_FORBIDDEN);
             return false;
         }
         return true;
+    }
+
+    /**
+     * The access rule once an {@link AccessControl} decides, with the container's own mechanism: a caller the
+     * policy does not know is challenged when the constraints would have asked for one.
+     */
+    private boolean admitByAccessControl(HttpServletRequestImpl req, HttpServletResponse res, String canonicalPath,
+                                         Decision decision) throws IOException, ServletException {
+        if (req.identity() == null && decision.access() == Decision.Access.ROLES) {
+            authenticator.authenticate(req).ifPresent(id -> req.bindIdentity(id, authenticator.authType()));
+            if (req.identity() == null && !settings.accessControl().permits(canonicalPath, req.getMethod(), null,
+                    ConstraintTable.constraintsOf(constraints))) {
+                authenticator.challenge(req, res);
+                return false;
+            }
+        }
+        return permitted(settings.accessControl(), req, res, canonicalPath);
+    }
+
+    /** Asks the {@link AccessControl}; a refusal is 403 and an exception fails closed (the caller reports 500). */
+    private boolean permitted(AccessControl control, HttpServletRequestImpl req, HttpServletResponse res,
+                              String canonicalPath) throws IOException {
+        if (control.permits(canonicalPath, req.getMethod(), req.identity(), ConstraintTable.constraintsOf(constraints))) {
+            return true;
+        }
+        res.sendError(HttpServletResponse.SC_FORBIDDEN);
+        return false;
     }
 
     /**

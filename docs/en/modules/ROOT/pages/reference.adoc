@@ -11,7 +11,7 @@ Consolidated technical reference. Use this page as an anchor for external links 
 | Artefact | Role
 
 | `io.vidocq.foy:foy-api:{project-version}`
-| Public SPI: `SessionStore`, `IdentityStore`, `Identity`, `RequestAuthentication`. No dependency outside `jakarta.servlet-api`.
+| Public SPI: `SessionStore`, `IdentityStore`, `Identity`, `RequestAuthentication`, `AccessControl`. No dependency outside `jakarta.servlet-api`.
 
 | `io.vidocq.foy:foy-core:{project-version}`
 | Servlet 6.1 engine — dispatcher, filter chain, sessions, error pages, listeners, security, `web.xml` parser, multipart, and the Chappe bridge (`ChappeServletBridge`, package `io.vidocq.foy.internal.bridge`).
@@ -44,7 +44,7 @@ module io.vidocq.foy.api {
     requires static jakarta.annotation;
 
     exports io.vidocq.foy.spi.session;    // SessionStore
-    exports io.vidocq.foy.spi.security;   // IdentityStore, Identity, RequestAuthentication
+    exports io.vidocq.foy.spi.security;   // IdentityStore, Identity, RequestAuthentication, AccessControl
     exports io.vidocq.foy.spi.gen;        // WebComponent, WebComponentDescriptor
     exports io.vidocq.foy.spi.cdi;        // CdiWebComponents
     exports io.vidocq.foy.spi.websocket;  // WebSocketUpgradeHandler, WebSocketListener, WebSocketPeer
@@ -220,6 +220,9 @@ Each run writes a fresh `META-INF/services/io.vidocq.foy.spi.gen.WebComponent` a
 | `Builder.requestAuthentication(RequestAuthentication hook)`
 | Hands the authentication of every request to `hook` (a Jakarta Authentication runtime, such as Kerckhoffs): it is asked before the constraint of the resource is applied and replaces the `login-config` mechanism. Without it the container's own mechanisms apply.
 
+| `Builder.accessControl(AccessControl control)`
+| Hands the access decision of every request to `control` (a Jakarta Authorization runtime, such as Kerckhoffs): it is asked once the caller is known, in place of the security constraints, which it can still read. Without it the constraints decide.
+
 | `Builder.confidentialPort(int port)`
 | HTTPS port a CONFIDENTIAL/INTEGRAL constraint redirects plain HTTP to (`302`). Default `-1`: such a request gets `403`. Any other value outside 1–65535 throws `IllegalArgumentException`.
 
@@ -366,6 +369,13 @@ When one is installed (`SecuritySettings.withRequestAuthentication`), it replace
 * `validateRequest(request, response, mandatory)` -- `mandatory` is `true` when a constraint protects the resource. It answers an `Outcome`: `authenticated(identity, authType)`, `anonymous()` or `responseSent()` (the hook already produced the response, the request stops).
 * A caller left anonymous on a protected resource gets `403`: there is no container mechanism to challenge with. An excluded resource is `403` without asking. An exception from the hook fails closed.
 * `HttpServletRequest.authenticate` asks the hook with `mandatory` set; `login(user, password)` throws `ServletException`; `logout` calls `cleanSubject`.
+
+=== `AccessControl` decision
+
+`AccessControl` lets a runtime decide the access to web resources, for instance a Jakarta Authorization implementation whose `Policy` answers the `WebResourcePermission` of a request (Servlet 6.1 section 13, Jakarta Authorization 3.0). Installed with `SecuritySettings.withAccessControl` (`Builder.accessControl`), it is asked for _every_ request, once the caller is known:
+
+* `permits(path, method, caller, constraints)` -- `caller` is `null` when nobody was identified; `constraints` answers what the security constraints of the application say, so a default policy can simply return it. `false` is `403`; an exception fails closed.
+* It replaces the constraints: an excluded resource, or a protected one reached by an anonymous caller, goes through if the control says so. Without a `RequestAuthentication` hook, an anonymous caller of a protected resource is still challenged by the container's mechanism unless the control accepts it.
 
 === `CurrentRequest`
 

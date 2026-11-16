@@ -19,6 +19,7 @@
  */
 package io.vidocq.foy.internal.security;
 
+import io.vidocq.foy.spi.security.AccessControl;
 import io.vidocq.foy.spi.security.IdentityStore;
 import io.vidocq.foy.spi.security.RequestAuthentication;
 
@@ -32,14 +33,21 @@ import io.vidocq.foy.spi.security.RequestAuthentication;
  * @param rotateSessionIdOnLogin whether a successful login changes the session id
  * @param requestAuthentication  runtime that takes over the authentication of every request (a Jakarta
  *                               Authentication implementation); {@code null}: the container's own mechanisms
+ * @param accessControl         runtime that decides the access to every resource (a Jakarta Authorization
+ *                               implementation); {@code null}: the security constraints decide
  */
 public record SecuritySettings(IdentityStore identityStore, int confidentialPort, boolean rotateSessionIdOnLogin,
-                               RequestAuthentication requestAuthentication) {
+                               RequestAuthentication requestAuthentication, AccessControl accessControl) {
 
-    public static final SecuritySettings DEFAULTS = new SecuritySettings(IdentityStore.none(), -1, true, null);
+    public static final SecuritySettings DEFAULTS = new SecuritySettings(IdentityStore.none(), -1, true, null, null);
 
     public SecuritySettings(IdentityStore identityStore, int confidentialPort, boolean rotateSessionIdOnLogin) {
-        this(identityStore, confidentialPort, rotateSessionIdOnLogin, null);
+        this(identityStore, confidentialPort, rotateSessionIdOnLogin, null, null);
+    }
+
+    public SecuritySettings(IdentityStore identityStore, int confidentialPort, boolean rotateSessionIdOnLogin,
+                            RequestAuthentication requestAuthentication) {
+        this(identityStore, confidentialPort, rotateSessionIdOnLogin, requestAuthentication, null);
     }
 
     public SecuritySettings {
@@ -60,18 +68,23 @@ public record SecuritySettings(IdentityStore identityStore, int confidentialPort
     }
 
     public SecuritySettings withIdentityStore(IdentityStore s) {
-        return new SecuritySettings(s, confidentialPort, rotateSessionIdOnLogin, requestAuthentication);
+        return new SecuritySettings(s, confidentialPort, rotateSessionIdOnLogin, requestAuthentication, accessControl);
     }
 
     public SecuritySettings withConfidentialPort(int port) {
-        return new SecuritySettings(identityStore, port, rotateSessionIdOnLogin, requestAuthentication);
+        return new SecuritySettings(identityStore, port, rotateSessionIdOnLogin, requestAuthentication, accessControl);
     }
 
     public SecuritySettings withRotateSessionIdOnLogin(boolean rotate) {
-        return new SecuritySettings(identityStore, confidentialPort, rotate, requestAuthentication);
+        return new SecuritySettings(identityStore, confidentialPort, rotate, requestAuthentication, accessControl);
     }
 
     public SecuritySettings withRequestAuthentication(RequestAuthentication hook) {
-        return new SecuritySettings(identityStore, confidentialPort, rotateSessionIdOnLogin, hook);
+        return new SecuritySettings(identityStore, confidentialPort, rotateSessionIdOnLogin, hook, accessControl);
+    }
+
+    public SecuritySettings withAccessControl(AccessControl control) {
+        return new SecuritySettings(identityStore, confidentialPort, rotateSessionIdOnLogin, requestAuthentication,
+                control);
     }
 }

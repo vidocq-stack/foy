@@ -107,6 +107,18 @@ public final class ConstraintTable {
 
     public static Builder builder() { return new Builder(); }
 
+    /** The constraints of {@code table} as the {@link io.vidocq.foy.spi.security.AccessControl.Constraints} of the SPI. */
+    public static io.vidocq.foy.spi.security.AccessControl.Constraints constraintsOf(ConstraintTable table) {
+        return (path, method, caller) -> {
+            Decision decision = table.decide(path, method);
+            return switch (decision.access()) {
+                case UNCHECKED -> true;
+                case EXCLUDED -> false;
+                case ROLES -> caller != null && decision.permits(caller);
+            };
+        };
+    }
+
     /** The decision for a canonical, context-relative path and a method name as sent ({@code HEAD} is its own method). */
     public Decision decide(String canonicalPath, String method) {
         String pattern = null;

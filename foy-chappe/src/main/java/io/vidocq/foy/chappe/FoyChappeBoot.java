@@ -46,6 +46,7 @@ import io.vidocq.foy.internal.security.InMemoryIdentityStore;
 import io.vidocq.foy.internal.security.SecuritySettings;
 import io.vidocq.foy.spi.cdi.CdiContextListeners;
 import io.vidocq.foy.spi.jsp.JspEngine;
+import io.vidocq.foy.spi.security.AccessControl;
 import io.vidocq.foy.spi.security.IdentityStore;
 import io.vidocq.foy.spi.security.RequestAuthentication;
 import jakarta.enterprise.inject.spi.BeanManager;
@@ -177,6 +178,7 @@ public final class FoyChappeBoot {
         private String virtualServerName = "vidocq";
         private IdentityStore identityStore;
         private RequestAuthentication requestAuthentication;
+        private AccessControl accessControl;
         private InMemoryIdentityStore.Builder users;
         private int confidentialPort = -1;
         private boolean rotateSessionIdOnLogin = true;
@@ -349,6 +351,16 @@ public final class FoyChappeBoot {
         }
 
         /**
+         * Hands the access decision of every request to {@code control}, as a Jakarta Authorization runtime does
+         * (its {@code Policy} answers the {@code WebResourcePermission} of the request): it is asked once the caller
+         * is known, in place of the security constraints, which it can still read. Without it, the constraints decide.
+         */
+        public Builder accessControl(AccessControl control) {
+            this.accessControl = Objects.requireNonNull(control, "control");
+            return this;
+        }
+
+        /**
          * Declares a user of Foy's in-memory identity store, with its application roles. The password is
          * digested at once (salted SHA-256) and not kept: the caller may wipe the array afterwards.
          */
@@ -458,7 +470,8 @@ public final class FoyChappeBoot {
             IdentityStore store;
             if (identityStore != null) store = identityStore;
             else store = users != null ? users.build() : IdentityStore.none();
-            return new SecuritySettings(store, confidentialPort, rotateSessionIdOnLogin, requestAuthentication);
+            return new SecuritySettings(store, confidentialPort, rotateSessionIdOnLogin, requestAuthentication,
+                    accessControl);
         }
 
         /**
