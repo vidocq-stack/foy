@@ -1,5 +1,27 @@
 # BUG.md — foy
 
+## BUG-20261116-01 — An `Error` thrown by a WebSocket listener's `onClose` escapes into Chappe's connection thread
+
+- Date: 2026-11-16 (a flaky CI test: `WebSocketTakeoverEndToEndTest.anErrorFromOnCloseDoesNotStopTheUndeploy`, PR
+  #111, run 888 job 2, line 873: `log.thrown()` was `[]`).
+- Symptom: the listener's `onClose` threw an `Error`; nothing was logged through Foy, and Chappe's thread printed
+  `Exception in thread "" java.lang.ExceptionInInitializerError: onClose failed` on its uncaught exception
+  handler (`WebSocketTakeover.finish` <- `WebSocketTakeover.onClose` <- `WebSocketConnection.notifyClose`). An
+  `Error` from `onOpen` escaped the same way (`WebSocketConnection.run` catches `Exception` from `onOpen`).
+- Repro: deterministic, `WebSocketTakeoverCallbackErrorTest` (`onClose` through `WebSocketTakeover.onClose` as
+  Chappe calls it; `onOpen` through `WebSocketTakeover.onOpen`). Racy: undeploy with an open connection whose peer
+  answers the 1001 before the hook delivers `onClose`.
+- Cause: `finish` ran `listener.onClose` in a `try`/`finally` with no catch. Delivered by the undeploy's hook, the
+  context logged what escaped (`closing an upgraded connection failed`); delivered by Chappe's thread, which
+  catches `Exception` only from `onClose`, the `Error` ended on the uncaught handler. The two paths won in turn
+  when the client's Close answered the undeploy's 1001.
+- Status: fixed by this branch. `finish` catches what `onClose` throws (a `VirtualMachineError` is rethrown) and
+  logs it once at WARNING on the `WebSocketTakeover` logger; `destroy()` still runs. `onOpen` logs an `Error` at
+  WARNING on the same logger, then hands Chappe an `IOException` carrying it (Chappe logs that at DEBUG only; the
+  listener hears no `onError` for the wrapper, the takeover having ended). The frame callbacks and `onError` are
+  caught by Chappe (`readLoop` catches `Throwable`, `safeError` logs it and swallows an `onError` failure). The
+  end-to-end test captures the takeover's logger, so it passes on either path.
+
 ## BUG-20261115-08 — A WebSocket close the container initiates reaches `onClose` with its wire code, not 1006
 
 - Date: 2026-11-15 (the maintainer ruled for Jakarta WebSocket 2.2 section 2.1.5 over the design of record,

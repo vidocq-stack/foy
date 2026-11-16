@@ -213,6 +213,16 @@ final class WebSocketTakeover implements WebSocketHandler {
         events.lock();
         try (var _ = ContextLoaderScope.enter(applicationLoader)) {
             open(ws);
+        } catch (VirtualMachineError e) {
+            throw e;
+        } catch (Error e) { // NOSONAR java:S1181 - deliberate: the boundary of the application's onOpen
+            // Chappe's connection thread catches the Exceptions of onOpen, not an Error, which would end that
+            // thread on its uncaught exception handler. By now open() closed and finished the takeover: log the
+            // Error here, once (chappe logs an IOException at DEBUG only), then hand chappe an exception that
+            // carries it, which chappe answers by ending the connection. The listener hears no onError for it:
+            // the takeover ended, so report() drops the wrapper.
+            LOG.log(System.Logger.Level.WARNING, "the onOpen of a WebSocket listener failed", e);
+            throw new IOException(ON_OPEN_FAILED, e);
         } finally {
             events.unlock();
         }
@@ -432,6 +442,14 @@ final class WebSocketTakeover implements WebSocketHandler {
             try {
                 var current = listener.get();
                 if (current != null) current.onClose(code, reason);
+            } catch (VirtualMachineError e) {
+                throw e;
+            } catch (Throwable t) { // NOSONAR java:S1181 - deliberate: the boundary of the application's listener
+                // The boundary of the application's listener. Whichever thread ends the takeover (the undeploy's
+                // hook, or chappe's connection thread, which catches Exceptions only from onClose), the
+                // application's failure stops nothing: destroy() runs and it is logged here, once, on this
+                // logger (BUG-20261116-01).
+                LOG.log(System.Logger.Level.WARNING, "the onClose of a WebSocket listener failed", t);
             } finally {
                 if (context != null) context.unregisterUpgradedConnection(undeployHook.get());
                 handler.destroy();

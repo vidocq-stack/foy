@@ -867,7 +867,9 @@ class WebSocketTakeoverEndToEndTest {
         probe.failCloseWithError = true;
         start(new VidocqServletContext("/"));
         connect(new TextListener(new CompletableFuture<>(), new CompletableFuture<>()));
-        try (var log = LogCapture.of(VidocqServletContext.class.getName())) {
+        // Either thread can deliver onClose (the undeploy's hook, or chappe's when the client's Close answers the
+        // 1001 first): the takeover logs the Error itself, on its own logger, before destroy() records its event.
+        try (var log = LogCapture.of(TAKEOVER_LOGGER)) {
             assertDoesNotThrow(this::closeConnections);
             assertEquals(List.of("open", "close", "destroy"), probe.events);
             assertTrue(log.thrown().stream().anyMatch(ExceptionInInitializerError.class::isInstance),
