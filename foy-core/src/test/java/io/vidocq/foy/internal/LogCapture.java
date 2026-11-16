@@ -64,7 +64,15 @@ public final class LogCapture implements AutoCloseable {
         }
 
         List<String> warnings() {
-            return records.stream().filter(r -> Level.WARNING.equals(r.getLevel()))
+            return at(Level.WARNING);
+        }
+
+        List<String> infos() {
+            return at(Level.INFO);
+        }
+
+        private List<String> at(Level level) {
+            return records.stream().filter(r -> level.equals(r.getLevel()))
                     .map(r -> r.getParameters() == null ? r.getMessage()
                             : java.text.MessageFormat.format(r.getMessage(), r.getParameters()))
                     .toList();
@@ -120,6 +128,11 @@ public final class LogCapture implements AutoCloseable {
     /** Returns the formatted messages logged at WARNING. */
     public List<String> warnings() {
         return jul.warnings();
+    }
+
+    /** Returns the formatted messages logged at INFO. */
+    public List<String> infos() {
+        return jul.infos();
     }
 
     /** Returns the throwables attached to the captured records, in order. */

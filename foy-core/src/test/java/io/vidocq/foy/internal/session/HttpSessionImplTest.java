@@ -38,6 +38,36 @@ class HttpSessionImplTest {
         manager = new SessionManager(new InMemorySessionStore(), new VidocqServletContext("/"), 1800);
     }
 
+    /** BUG-20261116-02: a session id is a credential, so a failing listener's log line names only its prefix. */
+    @Test
+    void aFailingInvalidationListenerLogsOnlyThePrefixOfTheId() {
+        var registry = new io.vidocq.foy.internal.listener.ListenerRegistry();
+        registry.register(new jakarta.servlet.http.HttpSessionListener() {
+            @Override public void sessionDestroyed(jakarta.servlet.http.HttpSessionEvent se) {
+                throw new IllegalStateException("listener failed");
+            }
+        });
+        registry.register(new jakarta.servlet.http.HttpSessionAttributeListener() {
+            @Override public void attributeRemoved(jakarta.servlet.http.HttpSessionBindingEvent event) {
+                throw new IllegalStateException("listener failed");
+            }
+        });
+        manager.setListenerRegistry(registry);
+        var s = manager.createNew();
+        s.setAttribute("user", "alice");
+        String id = s.getId();
+
+        List<String> warnings;
+        try (var log = io.vidocq.foy.internal.LogCapture.of(HttpSessionImpl.class.getName())) {
+            s.invalidate();
+            warnings = log.warnings();
+        }
+
+        assertEquals(2, warnings.size(), warnings::toString);
+        warnings.forEach(w -> assertTrue(w.contains(id.substring(0, 8)), w));
+        warnings.forEach(w -> assertFalse(w.contains(id), w));
+    }
+
     @Test
     void newSessionFlagsAsNew() {
         var s = manager.createNew();

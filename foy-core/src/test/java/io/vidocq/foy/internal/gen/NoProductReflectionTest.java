@@ -38,7 +38,8 @@ class NoProductReflectionTest {
     private static final List<String> ALLOWED = List.of(
             "internal/gen/WebComponentRegistry.java",
             "internal/gen/IndexedHandlesTypesResolver.java",
-            "internal/boot/ComponentFactory.java");
+            "internal/boot/ComponentFactory.java",
+            "internal/session/SessionExport.java");
 
     @Test
     void noReflectionOutsideTheRegistry() throws IOException {

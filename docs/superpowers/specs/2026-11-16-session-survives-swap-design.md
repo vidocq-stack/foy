@@ -126,13 +126,19 @@ The Vidocq contract follows:
 ### Export, per live session, under the application's class loader
 
 1. A session idle beyond its interval is invalidated as today, with its listeners, and is not exported.
-2. `sessionWillPassivate` fires on each attribute that implements `HttpSessionActivationListener`.
+2. `sessionWillPassivate` fires on each attribute that implements `HttpSessionActivationListener`. A listener that
+   fails, with an exception or an `Error` such as an `ExceptionInInitializerError`, is logged at WARN with what it
+   threw, and the session still moves; only a `VirtualMachineError` goes through. The same holds for
+   `sessionDidActivate` at import, where the classes of the new layer initialise.
 3. Each attribute value is written on its own, to its own `byte[]`, with `ObjectOutputStream`. The outer frame holds
    only JDK types, so a failing attribute never corrupts the stream:
    - a magic and a format version;
-   - per session: the id, the creation time, the last-accessed time, the maximum interval, and the name and bytes of
-     each attribute.
-4. If an attribute fails to write (`NotSerializableException` or any `IOException`), the whole session stays behind:
+   - per session: the id, the creation time, the last-accessed time, the time it is idle since (the last-accessed
+     time, or the time of the export for a session that a request still uses then: a session in use never expires
+     on the old side, however long its request runs, as a server-sent event stream does), the maximum interval, and
+     the name and bytes of each attribute.
+4. If an attribute fails to write (`NotSerializableException` or any `IOException`, a `RuntimeException` from its
+   `writeObject`, a `StackOverflowError` on a deep graph or a `LinkageError`), the whole session stays behind:
    - `sessionDidActivate` fires back on the attributes that were passivated;
    - the session is invalidated as today, with `sessionDestroyed` and the unbinding;
    - one WARN line names the session id prefix, the attribute name and the class that failed.
@@ -149,15 +155,24 @@ Notes are container-private state:
 
 ### Import, under the new application class loader
 
-- The bytes are read with an `ObjectInputStream` whose `resolveClass` and `resolveProxyClass` use the given loader.
-  Classes pinned in the parent layer (`vidocq.app.layer.keep`, the bricks, the APIs) are found through that loader's
-  parents, so they stay the same `Class` objects: nothing special is needed for them.
-- A session already idle beyond its interval when imported is skipped and counted in `expired`. The swap time counts
-  as idle time.
+- The bytes are read with an `ObjectInputStream` whose `resolveClass` loads each class by name through the given
+  loader, with `Class.forName(name, false, loader)`, which reads array names itself: a documented reflective fallback
+  of Foy (`REFLECTIVE_FALLBACKS`), as the stream carries the class names. Classes pinned in the parent layer
+  (`vidocq.app.layer.keep`, the bricks, the APIs) are found through that loader's parents, so they stay the same
+  `Class` objects: nothing special is needed for them.
+- `resolveProxyClass` keeps the JDK default: overriding it needs `java.lang.reflect.Proxy`, which Foy's
+  `NO_REFLECTION` rule forbids. The default resolves a proxy's interfaces through Foy's own loader. So a JDK dynamic
+  proxy of an application interface cannot be read and its session drops, while a proxy of API interfaces still
+  moves.
+- A session already idle beyond its interval when imported, counting from the time it is idle since, is skipped
+  silently and counted in `expired`. The swap time counts as idle time. `getLastAccessedTime()` of an imported
+  session is still the end of the last request that completed before the export.
 - A session whose attribute fails to read is skipped and counted in `dropped`:
   - `InvalidClassException` after a field change without a `serialVersionUID`;
   - `ClassNotFoundException` for a class that was deleted;
-  - an exception thrown from the attribute's `readObject`.
+  - an exception thrown from the attribute's `readObject`, a `StackOverflowError` or a `LinkageError` such as an
+    `ExceptionInInitializerError`;
+  - a value that reads back as `null` (a `readResolve` that returns it), as a session cannot hold one.
   The other sessions are kept. One summary WARN line gives the count and the first failing class.
 - Each imported session gets a new `HttpSessionImpl` with the same id and times, `isNew() == false`, its attributes
   and its notes. It is put in the store, then `sessionDidActivate` fires on its activation listeners. No

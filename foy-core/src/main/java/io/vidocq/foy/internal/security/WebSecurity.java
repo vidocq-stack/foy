@@ -275,7 +275,7 @@ public final class WebSecurity {
     }
 
     /** A session-based identity (section 13.7), cached by {@link #loggedIn}. */
-    record CachedIdentity(Identity identity, String authType) {}
+    record CachedIdentity(Identity identity, String authType) implements java.io.Serializable {}
 
     /** Binds the identity cached in the session, if any, to a request that has none yet. */
     void restoreIdentity(HttpServletRequestImpl req) {

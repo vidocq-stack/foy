@@ -1,5 +1,21 @@
 # BUG.md — foy
 
+## BUG-20261116-02 — A failing session listener logs the whole session id, which is a credential
+
+- Date: 2026-11-16 (found in review while building the session export of a dev swap, branch
+  `feat/session-survives-swap`).
+- Symptom: when `sessionDestroyed` or the unbinding of an attribute (`valueUnbound`, `attributeRemoved`) threw during
+  an invalidation, `HttpSessionImpl.completeInvalidation` logged a WARNING line that carried the whole session id
+  (`sessionDestroyed failed for session <id>`, `unbinding <name> failed for session <id>`). The session was ending,
+  so the window was short, but a session id is a credential and a log line never carries a whole one.
+- Repro: deterministic. A `HttpSessionListener` whose `sessionDestroyed` throws a `RuntimeException`, then
+  `session.invalidate()`: the WARNING line of `io.vidocq.foy.internal.session.HttpSessionImpl` holds the 32 hex
+  characters of the id.
+- Cause: the two log lines concatenated the field `id`.
+- Status: FIXED on `feat/session-survives-swap` (Foy PR 1, "HTTP sessions survive a dev swap"). The lines name the
+  session by the first 8 characters of its id (`HttpSessionImpl.idPrefix`), as every log line of the session export
+  and import does.
+
 ## BUG-20261116-01 — An `Error` thrown by a WebSocket listener's `onClose` escapes into Chappe's connection thread
 
 - Date: 2026-11-16 (a flaky CI test: `WebSocketTakeoverEndToEndTest.anErrorFromOnCloseDoesNotStopTheUndeploy`, PR

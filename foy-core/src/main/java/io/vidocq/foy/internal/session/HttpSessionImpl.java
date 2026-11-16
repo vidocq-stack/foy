@@ -27,6 +27,8 @@ import jakarta.servlet.http.HttpSessionBindingListener;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Enumeration;
+import java.util.LinkedHashMap;
+import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 
@@ -79,13 +81,41 @@ public final class HttpSessionImpl implements HttpSession {
     public Object removeNote(String key) { return notes.remove(key); }
 
     public HttpSessionImpl(String id, ServletContext ctx, SessionManager manager, int maxInactiveSeconds) {
+        this(id, ctx, manager, maxInactiveSeconds, System.currentTimeMillis());
+    }
+
+    private HttpSessionImpl(String id, ServletContext ctx, SessionManager manager, int maxInactiveSeconds,
+                            long creationTime) {
         this.id = id;
         this.servletContext = ctx;
         this.manager = manager;
-        this.creationTime = System.currentTimeMillis();
+        this.creationTime = creationTime;
         this.lastAccessedTime = creationTime;
         this.thisAccessedTime = creationTime;
         this.maxInactiveInterval = maxInactiveSeconds;
+    }
+
+    /**
+     * A session imported from another deployment ({@link SessionManager#importSessions}): its id, times, interval,
+     * attributes and notes as they were exported, and no longer new. {@link #getLastAccessedTime()} is the end of the
+     * last request that completed before the export; the idle time counts from {@link #idleSince(long)} at the export.
+     * No listener fires.
+     */
+    static HttpSessionImpl imported(ServletContext ctx, SessionManager manager, SessionExport.ExportedSession exported,
+                                    Map<String, Object> attributes, Map<String, Object> notes) {
+        var session = new HttpSessionImpl(exported.id(), ctx, manager, exported.maxInactiveInterval(),
+                exported.creationTime());
+        session.lastAccessedTime = exported.lastAccessedTime();
+        session.thisAccessedTime = exported.idleSince();
+        session.newSession = false;
+        session.attributes.putAll(attributes);
+        session.notes.putAll(notes);
+        return session;
+    }
+
+    /** The first 8 characters of a session id: a whole id is a credential, never logged. */
+    static String idPrefix(String id) {
+        return id.length() <= 8 ? id : id.substring(0, 8);
     }
 
     // ---- access tracking ----
@@ -121,10 +151,23 @@ public final class HttpSessionImpl implements HttpSession {
         lastAccessedTime = now;
     }
 
+    /**
+     * The reference of the idle time for an export at {@code now}: the end of the last request that completed, or
+     * {@code now} while a request still uses the session. A session in use never expires on this side, however
+     * long the request runs (a server-sent event stream), so its idle time starts with the export.
+     */
+    synchronized long idleSince(long now) {
+        return accessCount > 0 ? now : Math.max(lastAccessedTime, thisAccessedTime);
+    }
+
     /** {@code true} when the session is idle beyond its maximum inactive interval. */
     private boolean isIdleExpired(long now) {
-        int max = maxInactiveInterval;
-        return max > 0 && now - thisAccessedTime >= max * 1000L;
+        return idleBeyond(maxInactiveInterval, thisAccessedTime, now);
+    }
+
+    /** {@code true} when a session idle since {@code since} is beyond {@code maxInactiveSeconds} at {@code now}. */
+    static boolean idleBeyond(int maxInactiveSeconds, long since, long now) {
+        return maxInactiveSeconds > 0 && now - since >= maxInactiveSeconds * 1000L;
     }
 
     /**
@@ -163,7 +206,7 @@ public final class HttpSessionImpl implements HttpSession {
         try {
             manager.listenerRegistry().fireSessionDestroyed(this);
         } catch (RuntimeException e) {
-            LOG.log(System.Logger.Level.WARNING, "sessionDestroyed failed for session " + id, e);
+            LOG.log(System.Logger.Level.WARNING, "sessionDestroyed failed for session " + idPrefix(id) + "...", e);
         }
         invalidated = true;
         notes.clear();
@@ -176,10 +219,34 @@ public final class HttpSessionImpl implements HttpSession {
                 }
                 manager.listenerRegistry().fireSessionAttributeRemoved(this, name, v);
             } catch (RuntimeException e) {
-                LOG.log(System.Logger.Level.WARNING, "unbinding " + name + " failed for session " + id, e);
+                LOG.log(System.Logger.Level.WARNING,
+                        "unbinding " + name + " failed for session " + idPrefix(id) + "...", e);
             }
         }
         manager.onInvalidated(this);
+    }
+
+    /**
+     * Second half of an export claimed by {@link #claimInvalidation}: the session moved to another deployment, so it
+     * leaves without ending. It is marked invalidated, so that a stale reference throws
+     * {@link IllegalStateException}, its attributes and notes are cleared without any event, and it leaves the
+     * store. No {@code sessionDestroyed}, {@code valueUnbound} or {@code attributeRemoved} fires.
+     */
+    void depart() {
+        invalidated = true;
+        attributes.clear();
+        notes.clear();
+        manager.onInvalidated(this);
+    }
+
+    /** A copy of the attributes, for an export. */
+    Map<String, Object> attributeSnapshot() {
+        return new LinkedHashMap<>(attributes);
+    }
+
+    /** A copy of the container notes, for an export. */
+    Map<String, Object> noteSnapshot() {
+        return new LinkedHashMap<>(notes);
     }
 
     /**

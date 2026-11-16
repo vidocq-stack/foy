@@ -19,6 +19,7 @@
  */
 package io.vidocq.foy.spi.security;
 
+import java.io.Serializable;
 import java.security.Principal;
 import java.util.Objects;
 import java.util.Set;
@@ -29,7 +30,11 @@ import java.util.Set;
  * are by {@code isUserInRole} (after the servlet's {@code security-role-ref}s) and by the security
  * constraints; Foy maps no group.
  */
-public record Identity(Principal principal, Set<String> roles) {
+public record Identity(
+        // The principal is the authenticator's, serializable or not. One that cannot be written drops only the
+        // identity note of a session that moves to a new deployment, and that user logs in again.
+        Principal principal, // NOSONAR java:S1948 - deliberate: see the comment above
+        Set<String> roles) implements Serializable {
 
     public Identity {
         Objects.requireNonNull(principal, "principal");
@@ -48,7 +53,7 @@ public record Identity(Principal principal, Set<String> roles) {
     public boolean hasRole(String role) { return role != null && roles.contains(role); }
 
     /** A principal that carries only a name. */
-    public record NamedPrincipal(String name) implements Principal {
+    public record NamedPrincipal(String name) implements Principal, Serializable {
         public NamedPrincipal { Objects.requireNonNull(name, "name"); }
         @Override public String getName() { return name; }
         @Override public String toString() { return name; }

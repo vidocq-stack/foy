@@ -156,7 +156,10 @@ final class ArchitectureRules {
             "io.vidocq.foy.internal.gen.IndexedHandlesTypesResolver",
             "loads the entries of META-INF/foy/class-index.list by name, without initialising them",
             "io.vidocq.foy.cdi.vauban.CdiWebComponentsCreator",
-            "loads the class names recorded at build time, as a synthetic bean parameter cannot carry a Class");
+            "loads the class names recorded at build time, as a synthetic bean parameter cannot carry a Class",
+            "io.vidocq.foy.internal.session.SessionExport",
+            "deserializes session attributes through the new application layer's loader, by the class names the "
+                    + "stream carries");
 
     /**
      * Workspace AGENTS.md, "Maximum static code generation", and internals.adoc: reflection remains only as the

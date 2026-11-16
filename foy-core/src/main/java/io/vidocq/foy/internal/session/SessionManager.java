@@ -23,15 +23,28 @@ import io.vidocq.foy.spi.session.SessionStore;
 
 import io.vidocq.foy.internal.container.ContextLoaderScope;
 import io.vidocq.foy.internal.listener.ListenerRegistry;
+import io.vidocq.foy.internal.session.SessionExport.ExportedSession;
+import io.vidocq.foy.internal.session.SessionExport.ValueTransferException;
 import jakarta.servlet.ServletContext;
 import jakarta.servlet.http.HttpSession;
+import jakarta.servlet.http.HttpSessionActivationListener;
+import jakarta.servlet.http.HttpSessionEvent;
 
 import java.security.SecureRandom;
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.HexFormat;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.BiConsumer;
+import java.util.function.LongSupplier;
+import java.util.function.Supplier;
 
 /**
  * Coordinates the creation, resolution, re-keying and expiration of {@link HttpSession}s of one
@@ -44,14 +57,36 @@ import java.util.concurrent.TimeUnit;
  * a request asks for it ({@link #find}) or by the reaper ({@link #start()}), a single
  * virtual-thread scheduled task running every {@link #reaperPeriodFor min(60 s, max(1 s,
  * timeout / 2))}. {@link #close()} stops the reaper and invalidates every live session, firing
- * the same listeners: Foy does not persist sessions across deployments. After {@code close()} no
- * session can be created.</p>
+ * the same listeners. After {@code close()} no session can be created.</p>
+ * <p>A swap of the application in the same JVM (a dev reload) moves the sessions instead:
+ * {@link #closeExporting()} undeploys like {@code close()} but exports the live sessions, and the
+ * manager of the new deployment {@linkplain #importSessions imports} them through its own class
+ * loader before it serves a request. A session that moves fires {@code sessionWillPassivate} and
+ * {@code sessionDidActivate} (Servlet 6.1 section 7.7.2), and no lifecycle, attribute or binding
+ * event. The export is a private format of this Foy version that never leaves the process.</p>
  */
 public final class SessionManager implements AutoCloseable {
 
     private static final System.Logger LOG = System.getLogger(SessionManager.class.getName());
 
     public static final String COOKIE_NAME = "JSESSIONID";
+
+    /** The import scope of a manager that was given none: it runs the import as is. */
+    private static final SessionImportScope RUN_AS_IS = new SessionImportScope() {
+        @Override
+        public <T> T around(Supplier<T> importer) {
+            return importer.get();
+        }
+    };
+
+    /**
+     * What {@link #importSessions} did with the sessions of an export.
+     *
+     * @param imported the sessions put in the store
+     * @param expired the sessions idle beyond their interval at the import, the swap time included
+     * @param dropped the sessions left out because a value could not be read or their id is in use
+     */
+    public record SessionImport(int imported, int expired, int dropped) {}
 
     private final SessionStore store;
     private final SecureRandom random = new SecureRandom();
@@ -62,11 +97,15 @@ public final class SessionManager implements AutoCloseable {
     private final Object renameLock = new Object();
     private ScheduledExecutorService reaper;
     private final ClassLoader applicationLoader;
-    /** Set by {@link #close()}: no session is created afterwards. Guarded by {@link #creationLock}. */
+    /**
+     * Set by {@link #close()} or {@link #closeExporting()}: no session is created or imported
+     * afterwards. Guarded by {@link #creationLock}.
+     */
     private boolean closed;
     /**
-     * Guards {@link #closed} and {@link #creating}. {@link #createNew()} checks {@code closed} and
-     * counts itself under it, then fires {@code sessionCreated} after releasing it;
+     * Guards {@link #closed} and {@link #creating}. {@link #createNew()} and
+     * {@link #importSessions} check {@code closed} and count themselves under it, then store their
+     * sessions and fire {@code sessionCreated} or {@code sessionDidActivate} after releasing it;
      * {@link #close()} sets {@code closed} and waits until no creation is being announced. So every
      * session created before the close is in the store, fully announced, when close scans it,
      * none is created afterwards, and no listener runs under the lock (BUG-20261009-14).
@@ -74,8 +113,15 @@ public final class SessionManager implements AutoCloseable {
     private final java.util.concurrent.locks.ReentrantLock creationLock =
             new java.util.concurrent.locks.ReentrantLock();
     private final java.util.concurrent.locks.Condition creationsAnnounced = creationLock.newCondition();
-    /** Sessions stored whose {@code sessionCreated} has not returned yet. Guarded by {@link #creationLock}. */
+    /**
+     * Creations and imports whose sessions are not stored and announced yet. Guarded by
+     * {@link #creationLock}.
+     */
     private int creating;
+    /** Wraps every import: set by the deployment, for instance to bind its CDI container. */
+    private final AtomicReference<SessionImportScope> importScope = new AtomicReference<>(RUN_AS_IS);
+    /** The clock that dates an export and an import; a test seam. */
+    private final AtomicReference<LongSupplier> clock = new AtomicReference<>(System::currentTimeMillis);
 
     public SessionManager(SessionStore store, ServletContext servletContext,
                           int defaultMaxInactiveSeconds) {
@@ -133,27 +179,39 @@ public final class SessionManager implements AutoCloseable {
      *         application is being undeployed): {@code getSession(true)} then throws it too
      */
     public HttpSessionImpl createNew() {
-        HttpSessionImpl s;
+        beginCreation();
+        try {
+            HttpSessionImpl s = new HttpSessionImpl(generateId(), servletContext, this, defaultMaxInactiveSeconds);
+            store.put(s);
+            listenerRegistry.fireSessionCreated(s);
+            return s;
+        } finally {
+            endCreation();
+        }
+    }
+
+    /**
+     * Counts a creation or an import that is about to store and announce sessions: the close waits
+     * for it. Refused once the manager is closed.
+     */
+    private void beginCreation() {
         creationLock.lock();
         try {
             if (closed) throw new IllegalStateException("the web application is being undeployed");
-            s = new HttpSessionImpl(generateId(), servletContext, this, defaultMaxInactiveSeconds);
-            store.put(s);
             creating++;
         } finally {
             creationLock.unlock();
         }
+    }
+
+    /** The sessions of a creation or an import are stored and announced. */
+    private void endCreation() {
+        creationLock.lock();
         try {
-            listenerRegistry.fireSessionCreated(s);
+            if (--creating == 0) creationsAnnounced.signalAll();
         } finally {
-            creationLock.lock();
-            try {
-                if (--creating == 0) creationsAnnounced.signalAll();
-            } finally {
-                creationLock.unlock();
-            }
+            creationLock.unlock();
         }
-        return s;
     }
 
     /**
@@ -258,10 +316,23 @@ public final class SessionManager implements AutoCloseable {
      */
     @Override
     public void close() {
+        shutDown();
+        for (HttpSession s : store.sessions()) {
+            if (s instanceof HttpSessionImpl impl && impl.claimInvalidation()) impl.completeInvalidation();
+        }
+    }
+
+    /**
+     * Refuses new creations and imports, waits for those being announced, then stops the reaper.
+     * Returns {@code false} when the manager was already closed.
+     */
+    private boolean shutDown() {
+        boolean wasOpen;
         creationLock.lock();
         try {
+            wasOpen = !closed;
             closed = true;
-            // Every session already stored is announced before close announces its destruction.
+            // Every session already stored is announced before the close ends or exports it.
             while (creating > 0) creationsAnnounced.awaitUninterruptibly();
         } finally {
             creationLock.unlock();
@@ -280,8 +351,242 @@ public final class SessionManager implements AutoCloseable {
                 Thread.currentThread().interrupt();
             }
         }
-        for (HttpSession s : store.sessions()) {
-            if (s instanceof HttpSessionImpl impl && impl.claimInvalidation()) impl.completeInvalidation();
+        return wasOpen;
+    }
+
+    // ---- moving the sessions to another deployment ----
+
+    /**
+     * Undeploy of a swap: stops creations and the reaper as {@link #close()} does, then exports the
+     * live sessions instead of invalidating them. Under the application's class loader, for each
+     * session of the store:
+     * <ul>
+     *   <li>a session idle beyond its interval is invalidated with its listeners, as today, and not
+     *       exported;</li>
+     *   <li>any other live session, even one still used by a request whose grace ran out, is
+     *       passivated ({@code sessionWillPassivate}) and written as the passivation left it, each
+     *       value on its own. If an
+     *       attribute cannot be written, the session does not move: it is activated back, then
+     *       invalidated with its listeners, and one WARNING line names the attribute and its class.
+     *       A container note that cannot be written is left out alone (one INFO line): its user
+     *       logs in again;</li>
+     *   <li>a session written leaves silently: no {@code sessionDestroyed}, {@code valueUnbound} or
+     *       {@code attributeRemoved}. It leaves the store, and a stale reference to it throws
+     *       {@link IllegalStateException}.</li>
+     * </ul>
+     *
+     * @return the export, for {@link #importSessions}; an export of no session when the manager was
+     *         already closed, by {@code close()} or by this method
+     */
+    public byte[] closeExporting() {
+        if (!shutDown()) return SessionExport.empty();
+        List<ExportedSession> exported = new ArrayList<>();
+        // The listeners and the writeObject methods run with the application's class loader, as on a request.
+        try (var _ = ContextLoaderScope.enter(applicationLoader)) {
+            long now = clock.get().getAsLong();
+            for (HttpSession s : store.sessions()) {
+                if (s instanceof HttpSessionImpl impl) export(impl, now, exported);
+            }
+        }
+        return SessionExport.write(exported);
+    }
+
+    /** Exports one session into {@code exported}, or ends it as the close would. */
+    private void export(HttpSessionImpl session, long now, List<ExportedSession> exported) {
+        if (session.claimExpired(now)) {
+            session.completeInvalidation();
+            return;
+        }
+        if (!session.claimInvalidation()) return;
+        Map<String, Object> passivated = session.attributeSnapshot();
+        notifyActivationListeners(session, passivated, "sessionWillPassivate",
+                HttpSessionActivationListener::sessionWillPassivate);
+        // A passivation listener may have flushed its state into the session: write what it left.
+        Map<String, byte[]> written = new LinkedHashMap<>();
+        for (Map.Entry<String, Object> attribute : session.attributeSnapshot().entrySet()) {
+            try {
+                written.put(attribute.getKey(), SessionExport.serialize(attribute.getValue()));
+            } catch (ValueTransferException e) {
+                LOG.log(System.Logger.Level.WARNING, () -> label(session.getId())
+                        + " cannot move to the new deployment: its attribute " + attribute.getKey()
+                        + ", of class " + e.className() + ", cannot be written (" + e.getCause()
+                        + "). The session ends here.");
+                notifyActivationListeners(session, passivated, "sessionDidActivate",
+                        HttpSessionActivationListener::sessionDidActivate);
+                session.completeInvalidation();
+                return;
+            }
+        }
+        exported.add(new ExportedSession(session.getId(), session.getCreationTime(), session.getLastAccessedTime(),
+                session.idleSince(now), session.getMaxInactiveInterval(), written, writeNotes(session)));
+        session.depart();
+    }
+
+    /** Writes the container notes of {@code session}; a note that cannot be written is left out alone. */
+    private static Map<String, byte[]> writeNotes(HttpSessionImpl session) {
+        Map<String, byte[]> written = new LinkedHashMap<>();
+        for (Map.Entry<String, Object> note : session.noteSnapshot().entrySet()) {
+            try {
+                written.put(note.getKey(), SessionExport.serialize(note.getValue()));
+            } catch (ValueTransferException e) {
+                LOG.log(System.Logger.Level.INFO, () -> label(session.getId())
+                        + " moves without its container note of class " + e.className()
+                        + ", which cannot be written (" + e.getCause() + "). A login it held must be done again.");
+            }
+        }
+        return written;
+    }
+
+    /**
+     * An export of no session, as {@link #closeExporting()} returns for a manager already closed: what a deployment
+     * that hands over no session gives the next one.
+     */
+    public static byte[] emptyExport() {
+        return SessionExport.empty();
+    }
+
+    /**
+     * Imports the sessions of an export written by {@link #closeExporting()}. Call it before any
+     * request reaches the deployment. The import runs inside the {@linkplain #importScope import
+     * scope}, with {@code loader} as the context class loader, and every value is read through
+     * {@code loader}. A session idle beyond its interval, counting from the end of its last request,
+     * or from the export for a session that a request still used then, is {@code expired} and
+     * skipped silently; a session with an attribute that cannot be read or reads back as
+     * {@code null}, or whose id is already in the store, is {@code dropped} (one WARNING line gives
+     * the count and the first cause), and a container note that cannot be read is left out alone.
+     * An imported session keeps its id, its times, its interval, its attributes and notes, and is
+     * not new; {@code sessionDidActivate} fires on its activation listeners, and no lifecycle,
+     * attribute or binding event.
+     *
+     * @param export the bytes {@link #closeExporting()} returned
+     * @param loader the application's class loader, through which every value is read
+     * @return what was imported, expired and dropped
+     * @throws IllegalArgumentException when {@code export} is not an export of this Foy version
+     * @throws IllegalStateException once the manager is closed
+     */
+    public SessionImport importSessions(byte[] export, ClassLoader loader) {
+        Objects.requireNonNull(export, "export");
+        Objects.requireNonNull(loader, "loader");
+        beginCreation();
+        try {
+            return importUnder(SessionExport.read(export), loader);
+        } finally {
+            endCreation();
+        }
+    }
+
+    /**
+     * Wraps every later {@linkplain #importSessions import}, the deserialization and the
+     * {@code sessionDidActivate} listeners included; for instance to bind the CDI container that
+     * rebinds the session's beans. Without one, the import runs as is.
+     */
+    public void importScope(SessionImportScope scope) {
+        this.importScope.set(Objects.requireNonNull(scope, "scope"));
+    }
+
+    /** Test seam: the clock that dates the next export or import. */
+    void clock(LongSupplier clock) {
+        this.clock.set(clock);
+    }
+
+    private SessionImport importUnder(List<ExportedSession> sessions, ClassLoader loader) {
+        try (var _ = ContextLoaderScope.enter(loader)) {
+            return importScope.get().around(() -> importAll(sessions, loader));
+        }
+    }
+
+    private SessionImport importAll(List<ExportedSession> sessions, ClassLoader loader) {
+        long now = clock.get().getAsLong();
+        var tally = new ImportTally();
+        for (ExportedSession exported : sessions) importOne(exported, loader, now, tally);
+        if (tally.dropped > 0) {
+            LOG.log(System.Logger.Level.WARNING, () -> "Importing the HTTP sessions dropped " + tally.dropped
+                    + " session(s) that could not be restored, as new ones start instead; first cause: "
+                    + tally.firstCause);
+        }
+        return new SessionImport(tally.imported, tally.expired, tally.dropped);
+    }
+
+    private void importOne(ExportedSession exported, ClassLoader loader, long now, ImportTally tally) {
+        if (exported.idleExpiredAt(now)) {
+            tally.expired++;
+            return;
+        }
+        if (store.get(exported.id()).isPresent()) {
+            tally.drop("a session id already in use");
+            return;
+        }
+        Map<String, Object> attributes = new LinkedHashMap<>();
+        for (Map.Entry<String, byte[]> attribute : exported.attributes().entrySet()) {
+            try {
+                attributes.put(attribute.getKey(), SessionExport.deserialize(attribute.getValue(), loader));
+            } catch (ValueTransferException e) {
+                tally.drop(e.className() == null ? "an unreadable value" : "class " + e.className());
+                return;
+            }
+        }
+        HttpSessionImpl session = HttpSessionImpl.imported(servletContext, this, exported, attributes,
+                readNotes(exported, loader));
+        store.put(session);
+        notifyActivationListeners(session, attributes, "sessionDidActivate",
+                HttpSessionActivationListener::sessionDidActivate);
+        tally.imported++;
+    }
+
+    /** Reads the container notes of an exported session; a note that cannot be read is left out alone. */
+    private static Map<String, Object> readNotes(ExportedSession exported, ClassLoader loader) {
+        Map<String, Object> notes = new LinkedHashMap<>();
+        for (Map.Entry<String, byte[]> note : exported.notes().entrySet()) {
+            try {
+                notes.put(note.getKey(), SessionExport.deserialize(note.getValue(), loader));
+            } catch (ValueTransferException e) {
+                LOG.log(System.Logger.Level.INFO, () -> label(exported.id())
+                        + " moves without a container note of class " + e.className()
+                        + ", which cannot be read (" + e.getCause() + "). A login it held must be done again.");
+            }
+        }
+        return notes;
+    }
+
+    /**
+     * Fires {@code event} on each value of {@code attributes} that is an
+     * {@link HttpSessionActivationListener}; a listener that fails is logged and the others still run. An
+     * {@link Error} counts as a failure of the listener, except a {@link VirtualMachineError}.
+     */
+    private static void notifyActivationListeners(HttpSessionImpl session, Map<String, Object> attributes,
+            String eventName, BiConsumer<HttpSessionActivationListener, HttpSessionEvent> event) {
+        for (Object value : attributes.values()) {
+            if (value instanceof HttpSessionActivationListener listener) {
+                try {
+                    event.accept(listener, new HttpSessionEvent(session));
+                } catch (VirtualMachineError e) {
+                    throw e;
+                } catch (RuntimeException | Error e) { // NOSONAR java:S1181 - deliberate: the listener's boundary
+                    // A class of the old or the new layer whose initializer fails (an ExceptionInInitializerError, a
+                    // LinkageError) fails this listener alone: the swap never fails on the application's code. An
+                    // Error escaping here would end the undeploy halfway (the BUG-20261116-01 pattern).
+                    LOG.log(System.Logger.Level.WARNING, () -> eventName + " failed on a value of class "
+                            + value.getClass().getName() + " in " + label(session.getId()), e);
+                }
+            }
+        }
+    }
+
+    /** A session as a log line names it: by the first 8 characters of its id, never the whole id. */
+    private static String label(String id) {
+        return "HTTP session " + HttpSessionImpl.idPrefix(id) + "...";
+    }
+
+    /** The counts of an import, and the cause of its first drop. */
+    private static final class ImportTally {
+        private int imported;
+        private int expired;
+        private int dropped;
+        private String firstCause;
+
+        void drop(String cause) {
+            if (dropped == 0) firstCause = cause;
+            dropped++;
         }
     }
 
