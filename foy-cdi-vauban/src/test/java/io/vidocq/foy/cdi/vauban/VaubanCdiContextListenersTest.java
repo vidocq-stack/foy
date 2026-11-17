@@ -21,10 +21,12 @@ package io.vidocq.foy.cdi.vauban;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.vidocq.foy.spi.cdi.CdiContextListeners;
+import io.vidocq.vauban.api.Passivation;
 import io.vidocq.vauban.core.container.VaubanContainer;
 import jakarta.enterprise.context.ContextNotActiveException;
 import jakarta.enterprise.context.RequestScoped;
@@ -36,6 +38,8 @@ import jakarta.servlet.ServletRequestListener;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpSessionListener;
 import java.lang.reflect.Proxy;
+import java.util.Optional;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
 
 class VaubanCdiContextListenersTest {
@@ -59,6 +63,33 @@ class VaubanCdiContextListenersTest {
             assertTrue(listeners.getFirst() instanceof ServletRequestListener);
             assertTrue(listeners.getFirst() instanceof HttpSessionListener);
         }
+    }
+
+    @Test
+    void bindsVaubanAsTheImportingContainerForTheImportOnly() {
+        try (VaubanContainer container = VaubanContainer.builder().build()) {
+            BeanManager beanManager = container.getBeanManager();
+
+            Optional<BeanManager> bound = new VaubanCdiContextListeners()
+                    .aroundSessionImport(beanManager, Passivation::importingBeanManager);
+
+            assertSame(beanManager, bound.orElseThrow(), "the import reads into this container");
+            assertTrue(Passivation.importingBeanManager().isEmpty(), "no container bound once the import returns");
+        }
+    }
+
+    @Test
+    void runsTheImportUnchangedForAnotherContainer() {
+        BeanManager other = stub(BeanManager.class);
+        var runs = new AtomicInteger();
+
+        Optional<BeanManager> bound = new VaubanCdiContextListeners().aroundSessionImport(other, () -> {
+            runs.incrementAndGet();
+            return Passivation.importingBeanManager();
+        });
+
+        assertEquals(1, runs.get(), "the import ran once");
+        assertEquals(Optional.empty(), bound, "and bound no container: Vauban's serial forms read only into Vauban");
     }
 
     @Test

@@ -44,6 +44,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Set;
 import java.util.concurrent.Callable;
+import java.util.function.Consumer;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
@@ -89,9 +90,19 @@ final class TestApps {
      * its own server on a free port.
      */
     static Deployed deploy(VaubanContainer container, ClassLoader loader, String contextPath) throws Exception {
+        return deploy(container, loader, contextPath, mounted -> { });
+    }
+
+    /**
+     * As {@link #deploy(VaubanContainer, ClassLoader, String)}, with {@code beforeServing} run on the deployment
+     * between {@code build()} and the start of its server, as Vidocq imports the sessions of a swap.
+     */
+    static Deployed deploy(VaubanContainer container, ClassLoader loader, String contextPath,
+            Consumer<FoyChappeBoot.Mounted> beforeServing) throws Exception {
         var mounted = withTccl(loader, () -> FoyChappeBoot.builder().beanManager(container.getBeanManager())
                 .classLoader(loader).contextPath(contextPath).build().orElseThrow());
         try {
+            beforeServing.accept(mounted);
             Server server = Server.builder().host("127.0.0.1").port(0).handler(mounted.handler()).build();
             server.start();
             return new Deployed(mounted, server);

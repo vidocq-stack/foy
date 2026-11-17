@@ -29,7 +29,8 @@ import java.util.List;
 /**
  * An {@link HttpSession} as the storage of Vauban's session context. Built from a request, it
  * creates the session on the first instance stored, and only then; built from a session, it adapts
- * that session, for its destruction.
+ * that session, for its destruction. It tells Vauban which instance is the session itself, which
+ * stays out of the session when the session is written at a Vidocq dev swap.
  */
 final class HttpSessionStore implements SessionStore {
 
@@ -86,5 +87,18 @@ final class HttpSessionStore implements SessionStore {
     public Object mutex() {
         HttpSession s = existing();
         return s != null ? s : request;
+    }
+
+    /**
+     * Whether {@code instance} is the session itself, the same object: the instance of the {@code HttpSession} bean
+     * ({@link ServletBuiltInBeans}), which the session context stores in that session. Vauban leaves that entry out
+     * when the session is written at a swap, and the bean gives the imported session again at its first use: without
+     * it, every session that holds the bean would hold itself, and could not move.
+     */
+    @Override
+    @SuppressWarnings("ReferenceEquality") // the session object itself is the contract, never an equal one
+    public boolean isSession(Object instance) {
+        HttpSession s = existing();
+        return s != null && s == instance;
     }
 }
