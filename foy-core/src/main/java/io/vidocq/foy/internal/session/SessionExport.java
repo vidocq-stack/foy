@@ -29,14 +29,17 @@ import java.io.InvalidClassException;
 import java.io.ObjectInputStream;
 import java.io.ObjectOutputStream;
 import java.io.ObjectStreamClass;
+import java.io.OutputStream;
 import java.io.Serial;
 import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 /**
  * The private, versioned byte format of {@link SessionManager#closeExporting()}, read back by
@@ -46,22 +49,34 @@ import java.util.Map;
  * is private to one Foy version:
  *
  * <pre>
- * "FOYS" (4 ASCII bytes), version (int, 1), session count (int)
+ * "FOYS" (4 ASCII bytes), version (int, 2), session count (int)
  * per session: id (string), creation time (long), last-accessed time (long), idle since (long),
  *              maximum inactive interval (int),
  *              attribute count (int), then per attribute: name (string), length (int), bytes;
  *              note count (int), then per note: name (string), length (int), bytes
  * string: length (int), then its UTF-8 bytes
+ * value bytes: a Java serialization stream in which each class descriptor (not a proxy's) is followed by the
+ *              shape of its class: declares serialVersionUID (boolean), Externalizable (boolean),
+ *              declares writeObject (boolean), nearest serializable superclass (modified UTF-8, empty for none),
+ *              interface count (int), then the name of each interface the class itself implements, in the order
+ *              of its declaration (modified UTF-8), shape known (boolean)
  * </pre>
  *
  * <p>The last-accessed time is what {@code getLastAccessedTime()} returns: the end of the last request that
  * completed. "Idle since" is the reference of the expiry: that time, or the time of the export for a session that a
  * request still used then, as a session in use does not expire.</p>
+ *
+ * <p>The shape lets the import read a class whose default {@code serialVersionUID} changed, a method added for
+ * instance, with the new class's descriptor when its serialized form is the same (BUG-20261117-01): the stream's
+ * descriptor carries neither the declarations, the flags nor the interfaces of the exported class. Version 1 had no
+ * shape.</p>
  */
 final class SessionExport {
 
     private static final byte[] MAGIC = "FOYS".getBytes(StandardCharsets.US_ASCII);
-    private static final int VERSION = 1;
+    private static final int VERSION = 2;
+    /** The reason of a value whose class the importing loader does not find. */
+    static final String CLASS_MISSING = "the class is missing";
 
     /**
      * The primitive types by name, as {@code ObjectStreamClass} names them ({@code int}, {@code void}):
@@ -195,38 +210,74 @@ final class SessionExport {
 
     // ---- the values ----
 
-    /**
-     * Serializes one value on its own, with {@link ObjectOutputStream}.
-     *
-     * @throws ValueTransferException when the value cannot be written: an {@link IOException} (a value that is not
-     *         serializable), a {@link RuntimeException} from its {@code writeObject}, a {@link StackOverflowError} on a
-     *         graph too deep, or a {@link LinkageError} from a class it needs
-     */
-    static byte[] serialize(Object value) throws ValueTransferException {
-        var bytes = new ByteArrayOutputStream();
-        try (var out = new ObjectOutputStream(bytes)) {
-            out.writeObject(value);
-        } catch (IOException | RuntimeException | StackOverflowError | LinkageError e) {
-            throw new ValueTransferException(value.getClass().getName(), e);
-        }
-        return bytes.toByteArray();
+    /** The writer of the values of one export: it reads the shape of each class once for the whole export. */
+    static ValueWriter writer() {
+        return new ValueWriter();
     }
 
-    /**
-     * Reads one value, resolving every class it names through {@code loader}.
-     *
-     * @throws ValueTransferException when the value cannot be read: a class missing or changed, an
-     *         {@link IOException}, a {@link RuntimeException} from its {@code readObject}, a
-     *         {@link StackOverflowError}, a {@link LinkageError} such as an {@link ExceptionInInitializerError}, or a
-     *         value that reads back as {@code null} (a {@code readResolve} that returns it)
-     */
-    static Object deserialize(byte[] bytes, ClassLoader loader) throws ValueTransferException {
-        try (var in = new LoaderInputStream(new ByteArrayInputStream(bytes), loader)) {
-            return in.readValue();
-        } catch (IOException e) {
-            // Only the stream header can fail here: readValue reports every other failure itself.
-            throw new ValueTransferException(null, e);
+    /** The reader of the values of one import, through {@code loader}; it reads each local class's shape once. */
+    static ValueReader reader(ClassLoader loader) {
+        return new ValueReader(loader);
+    }
+
+    /** Writes the values of one export. */
+    static final class ValueWriter {
+
+        private final SerialShape.Cache shapes = new SerialShape.Cache();
+
+        private ValueWriter() {
         }
+
+        /**
+         * Serializes one value on its own, with {@link ObjectOutputStream}, each class descriptor followed by the
+         * shape of its class.
+         *
+         * @throws ValueTransferException when the value cannot be written: an {@link IOException} (a value that is
+         *         not serializable), a {@link RuntimeException} from its {@code writeObject}, a
+         *         {@link StackOverflowError} on a graph too deep, or a {@link LinkageError} from a class it needs
+         */
+        byte[] serialize(Object value) throws ValueTransferException {
+            var bytes = new ByteArrayOutputStream();
+            try (var out = new ShapeOutputStream(bytes, shapes)) {
+                out.writeObject(value);
+            } catch (IOException | RuntimeException | StackOverflowError | LinkageError e) {
+                throw new ValueTransferException(value.getClass().getName(), messageOf(e), e);
+            }
+            return bytes.toByteArray();
+        }
+    }
+
+    /** Reads the values of one import through the importing application's loader. */
+    static final class ValueReader {
+
+        private final ClassLoader loader;
+        private final SerialShape.Cache shapes = new SerialShape.Cache();
+
+        private ValueReader(ClassLoader loader) {
+            this.loader = loader;
+        }
+
+        /**
+         * Reads one value, resolving every class it names through the loader.
+         *
+         * @throws ValueTransferException when the value cannot be read: a class missing or changed, an
+         *         {@link IOException}, a {@link RuntimeException} from its {@code readObject}, a
+         *         {@link StackOverflowError}, a {@link LinkageError} such as an {@link ExceptionInInitializerError},
+         *         or a value that reads back as {@code null} (a {@code readResolve} that returns it)
+         */
+        Object deserialize(byte[] bytes) throws ValueTransferException {
+            try (var in = new LoaderInputStream(new ByteArrayInputStream(bytes), loader, shapes)) {
+                return in.readValue();
+            } catch (IOException e) {
+                // Only the stream header can fail here: readValue reports every other failure itself.
+                throw new ValueTransferException(null, messageOf(e), e);
+            }
+        }
+    }
+
+    /** The message of {@code e}, or what it is when it has none. */
+    private static String messageOf(Throwable e) {
+        return e.getMessage() != null ? e.getMessage() : e.toString();
     }
 
     /**
@@ -240,16 +291,41 @@ final class SessionExport {
         return primitive != null ? primitive : Class.forName(name, false, loader);
     }
 
-    /** An {@link ObjectInputStream} that resolves the classes of a value through the importing application's loader. */
+    /** An {@link ObjectOutputStream} that writes the shape of each class after its descriptor. */
+    private static final class ShapeOutputStream extends ObjectOutputStream {
+
+        private final SerialShape.Cache shapes;
+
+        ShapeOutputStream(OutputStream out, SerialShape.Cache shapes) throws IOException {
+            super(out);
+            this.shapes = shapes;
+        }
+
+        @Override
+        protected void writeClassDescriptor(ObjectStreamClass desc) throws IOException {
+            super.writeClassDescriptor(desc);
+            shapes.of(desc.forClass()).writeTo(this);
+        }
+    }
+
+    /**
+     * An {@link ObjectInputStream} that resolves the classes of a value through the importing application's loader,
+     * and reads a class whose default {@code serialVersionUID} changed with the local descriptor when its shape is
+     * the same.
+     */
     private static final class LoaderInputStream extends ObjectInputStream {
 
         private final ClassLoader loader;
+        private final SerialShape.Cache shapes;
         /** The first class the stream resolved: the class of the value read. */
         private String firstClass;
+        /** Why a class whose UID changed was left to the JDK to refuse, by class name. */
+        private final Map<String, String> refusals = new HashMap<>();
 
-        LoaderInputStream(InputStream in, ClassLoader loader) throws IOException {
+        LoaderInputStream(InputStream in, ClassLoader loader, SerialShape.Cache shapes) throws IOException {
             super(in);
             this.loader = loader;
+            this.shapes = shapes;
         }
 
         @Override
@@ -259,15 +335,45 @@ final class SessionExport {
             return resolve(name, loader);
         }
 
+        /**
+         * The stream's descriptor, or the local class's one when the two {@code serialVersionUID}s differ and the
+         * shapes prove the serialized forms the same. Plain Java refuses a descriptor whose UID differs from the local
+         * class's; everywhere else (equal UIDs, an enum, a record, an array, a class not found) the stream's
+         * descriptor goes on as is. The JDK then takes the UID, the fields and the flags from the local descriptor.
+         */
+        @Override
+        protected ObjectStreamClass readClassDescriptor() throws IOException, ClassNotFoundException {
+            ObjectStreamClass stream = super.readClassDescriptor();
+            SerialShape exported = SerialShape.readFrom(this);
+            Class<?> local = localClass(stream.getName());
+            if (local == null || local.isEnum() || local.isRecord() || local.isArray()) return stream;
+            ObjectStreamClass current = ObjectStreamClass.lookup(local);
+            if (current == null || current.getSerialVersionUID() == stream.getSerialVersionUID()) return stream;
+            Optional<String> refusal =
+                    SerialShape.refusal(exported, shapes.of(local), stream.getFields(), current.getFields());
+            if (refusal.isEmpty()) return current;
+            refusals.put(stream.getName(), refusal.get());
+            return stream;
+        }
+
+        /** The local class of that name, {@code null} when it cannot be loaded: resolveClass then fails as usual. */
+        private Class<?> localClass(String name) {
+            try {
+                return resolve(name, loader);
+            } catch (ClassNotFoundException | LinkageError _) {
+                return null;
+            }
+        }
+
         Object readValue() throws ValueTransferException {
             Object value;
             try {
                 value = readObject();
             } catch (ClassNotFoundException | IOException | RuntimeException | StackOverflowError | LinkageError e) {
-                throw new ValueTransferException(failingClass(e), e);
+                throw new ValueTransferException(failingClass(e), reason(e), e);
             }
             // A session never holds null: the stores reject it, so a value read as null cannot be restored.
-            if (value == null) throw new ValueTransferException(firstClass, null);
+            if (value == null) throw new ValueTransferException(firstClass, null, null);
             return value;
         }
 
@@ -277,11 +383,19 @@ final class SessionExport {
             if (e instanceof InvalidClassException invalid && invalid.classname != null) return invalid.classname;
             return firstClass;
         }
+
+        /** Why the reading failed: a class missing, the rule's reason for a UID refused, else the exception's own. */
+        private String reason(Throwable e) {
+            if (e instanceof ClassNotFoundException) return CLASS_MISSING;
+            // The JDK refuses a class whose UID changed with an InvalidClassException that names it.
+            String refusal = e instanceof InvalidClassException invalid ? refusals.get(invalid.classname) : null;
+            return refusal != null ? refusal : messageOf(e);
+        }
     }
 
     /**
-     * A value that could not be written or read, with the name of the class that failed when it is known. The cause
-     * is what the stream threw, {@code null} for a value read back as {@code null}.
+     * A value that could not be written or read, with the name of the class that failed and the reason when they are
+     * known. The cause is what the stream threw, {@code null} for a value read back as {@code null}.
      */
     static final class ValueTransferException extends Exception {
 
@@ -289,15 +403,25 @@ final class SessionExport {
         private static final long serialVersionUID = 1L;
 
         private final String className;
+        private final String reason;
 
-        ValueTransferException(String className, Throwable cause) {
+        ValueTransferException(String className, String reason, Throwable cause) {
             super(cause);
             this.className = className;
+            this.reason = reason;
         }
 
         /** The class that failed, {@code null} when the stream failed before naming one. */
         String className() {
             return className;
+        }
+
+        /**
+         * Why it failed: the reason of the rule for a class whose {@code serialVersionUID} changed, "the class is
+         * missing", else the message of what the stream threw; {@code null} for a value read back as {@code null}.
+         */
+        String reason() {
+            return reason;
         }
     }
 }

@@ -66,6 +66,7 @@ class CdiSessionSwapTest {
     private static final String CART = "/cart";
     private static final String APPLE = "apple";
     private static final String ADD_APPLE = CART + "?add=" + APPLE;
+    private static final String VISITS = "/visits";
 
     /** One instance per container: its id tells the containers apart. */
     private static final String SERVICE = """
@@ -197,14 +198,54 @@ class CdiSessionSwapTest {
             }
             """;
 
+    /** A session bean that declares no serialVersionUID: the JDK computes one from its members. */
+    private static final String VISITS_BEAN = """
+            package swap.app;
+
+            @jakarta.enterprise.context.SessionScoped
+            public class Visits implements java.io.Serializable {
+                private int count;
+
+                public int visit() {
+                    return ++count;
+                }
+                // more
+            }
+            """;
+
+    private static final String VISITS_SERVLET = """
+            package swap.app;
+
+            import jakarta.inject.Inject;
+            import jakarta.servlet.http.HttpServlet;
+            import jakarta.servlet.http.HttpServletRequest;
+            import jakarta.servlet.http.HttpServletResponse;
+
+            @jakarta.servlet.annotation.WebServlet("/visits")
+            public class VisitsServlet extends HttpServlet {
+                @Inject Visits visits;
+
+                @Override
+                protected void doGet(HttpServletRequest q, HttpServletResponse r) throws java.io.IOException {
+                    r.getWriter().write(String.valueOf(visits.visit()));
+                }
+            }
+            """;
+
     private Result app;
+    /** The same application, its {@code Visits} bean with a method added: another default serialVersionUID. */
+    private Result appWithAMethodAdded;
     private final HttpClient client = HttpClient.newHttpClient();
 
     @BeforeAll
     void compileTheApplication(@TempDir Path tempDir) throws Exception {
         app = TestApps.compile(tempDir, ProcessorPath.CLASS_PATH, List.of(), SERVICE, PING, PINGS, CART_BEAN, NOTEPAD,
-                CART_SERVLET);
+                CART_SERVLET, VISITS_BEAN, VISITS_SERVLET);
         assertTrue(app.success(), app::messages);
+        appWithAMethodAdded = TestApps.compile(tempDir, ProcessorPath.CLASS_PATH, List.of(), SERVICE, PING, PINGS,
+                CART_BEAN, NOTEPAD, CART_SERVLET,
+                VISITS_BEAN.replace("// more", "public int twice() { return 2 * count; }"), VISITS_SERVLET);
+        assertTrue(appWithAMethodAdded.success(), appWithAMethodAdded::messages);
     }
 
     @AfterAll
@@ -289,6 +330,22 @@ class CdiSessionSwapTest {
         }
     }
 
+    @Test
+    @DisplayName("a @SessionScoped bean without serialVersionUID that gains a method keeps its state (BUG-20261117-01)")
+    void aSessionBeanWithoutSerialVersionUidThatGainsAMethodMoves() throws Exception {
+        var alice = new Visitor();
+        try (var log = LogRecords.of(SESSION_MANAGER_LOGGER);
+             var swap = new Swap()) {
+            alice.text(swap.uri(VISITS));
+            assertEquals("2", alice.text(swap.uri(VISITS)));
+
+            assertEquals(1, swap.to(appWithAMethodAdded), log.warnings()::toString);
+
+            assertEquals("3", alice.text(swap.uri(VISITS)), "the bean's state moved to the new version");
+            assertFalse(alice.givenANewSession());
+        }
+    }
+
     /** What {@code /cart} answers. */
     private record View(String items, String cartService, String service, boolean sameServiceProxy, String session,
             String cartSession, String heard) {
@@ -307,6 +364,11 @@ class CdiSessionSwapTest {
         private boolean newSession;
 
         View get(URI uri) throws IOException, InterruptedException {
+            return View.of(text(uri));
+        }
+
+        /** The body of a 200 answer. */
+        String text(URI uri) throws IOException, InterruptedException {
             var request = HttpRequest.newBuilder(uri);
             if (cookie != null) {
                 request.header("Cookie", cookie);
@@ -316,7 +378,7 @@ class CdiSessionSwapTest {
             var setCookie = response.headers().firstValue("set-cookie");
             newSession = setCookie.isPresent();
             setCookie.ifPresent(header -> cookie = header.substring(0, header.indexOf(';')));
-            return View.of(response.body());
+            return response.body();
         }
 
         /** Whether the last answer started a session. */
@@ -335,7 +397,7 @@ class CdiSessionSwapTest {
         private Deployed deployed;
 
         Swap() throws Exception {
-            open(new byte[0]);
+            open(app, new byte[0]);
         }
 
         URI uri(String path) {
@@ -348,15 +410,25 @@ class CdiSessionSwapTest {
          * @return the number of sessions imported
          */
         int toB() throws Exception {
-            byte[] export = deployed.mounted().closeExportingSessions();
-            close();
-            return open(export);
+            return to(app);
         }
 
-        /** Deploys the application on a new container, importing {@code export} when it holds anything. */
-        private int open(byte[] export) throws Exception {
+        /**
+         * Exports A's sessions as its undeploy, closes A, and deploys {@code version} of the application as B, with
+         * the sessions imported before it serves.
+         *
+         * @return the number of sessions imported
+         */
+        int to(Result version) throws Exception {
+            byte[] export = deployed.mounted().closeExportingSessions();
+            close();
+            return open(version, export);
+        }
+
+        /** Deploys {@code version} on a new container, importing {@code export} when it holds anything. */
+        private int open(Result version, byte[] export) throws Exception {
             var imported = new AtomicInteger();
-            loader = app.loader();
+            loader = version.loader();
             container = withTccl(loader, () -> boot(loader));
             deployed = deploy(container, loader, CONTEXT_PATH, mounted -> {
                 if (export.length > 0) {

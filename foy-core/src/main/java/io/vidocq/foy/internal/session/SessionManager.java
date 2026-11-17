@@ -24,7 +24,9 @@ import io.vidocq.foy.spi.session.SessionStore;
 import io.vidocq.foy.internal.container.ContextLoaderScope;
 import io.vidocq.foy.internal.listener.ListenerRegistry;
 import io.vidocq.foy.internal.session.SessionExport.ExportedSession;
+import io.vidocq.foy.internal.session.SessionExport.ValueReader;
 import io.vidocq.foy.internal.session.SessionExport.ValueTransferException;
+import io.vidocq.foy.internal.session.SessionExport.ValueWriter;
 import jakarta.servlet.ServletContext;
 import jakarta.servlet.http.HttpSession;
 import jakarta.servlet.http.HttpSessionActivationListener;
@@ -381,18 +383,19 @@ public final class SessionManager implements AutoCloseable {
     public byte[] closeExporting() {
         if (!shutDown()) return SessionExport.empty();
         List<ExportedSession> exported = new ArrayList<>();
+        ValueWriter values = SessionExport.writer();
         // The listeners and the writeObject methods run with the application's class loader, as on a request.
         try (var _ = ContextLoaderScope.enter(applicationLoader)) {
             long now = clock.get().getAsLong();
             for (HttpSession s : store.sessions()) {
-                if (s instanceof HttpSessionImpl impl) export(impl, now, exported);
+                if (s instanceof HttpSessionImpl impl) export(impl, now, values, exported);
             }
         }
         return SessionExport.write(exported);
     }
 
     /** Exports one session into {@code exported}, or ends it as the close would. */
-    private void export(HttpSessionImpl session, long now, List<ExportedSession> exported) {
+    private void export(HttpSessionImpl session, long now, ValueWriter values, List<ExportedSession> exported) {
         if (session.claimExpired(now)) {
             session.completeInvalidation();
             return;
@@ -405,7 +408,7 @@ public final class SessionManager implements AutoCloseable {
         Map<String, byte[]> written = new LinkedHashMap<>();
         for (Map.Entry<String, Object> attribute : session.attributeSnapshot().entrySet()) {
             try {
-                written.put(attribute.getKey(), SessionExport.serialize(attribute.getValue()));
+                written.put(attribute.getKey(), values.serialize(attribute.getValue()));
             } catch (ValueTransferException e) {
                 LOG.log(System.Logger.Level.WARNING, () -> label(session.getId())
                         + " cannot move to the new deployment: its attribute " + attribute.getKey()
@@ -418,16 +421,16 @@ public final class SessionManager implements AutoCloseable {
             }
         }
         exported.add(new ExportedSession(session.getId(), session.getCreationTime(), session.getLastAccessedTime(),
-                session.idleSince(now), session.getMaxInactiveInterval(), written, writeNotes(session)));
+                session.idleSince(now), session.getMaxInactiveInterval(), written, writeNotes(session, values)));
         session.depart();
     }
 
     /** Writes the container notes of {@code session}; a note that cannot be written is left out alone. */
-    private static Map<String, byte[]> writeNotes(HttpSessionImpl session) {
+    private static Map<String, byte[]> writeNotes(HttpSessionImpl session, ValueWriter values) {
         Map<String, byte[]> written = new LinkedHashMap<>();
         for (Map.Entry<String, Object> note : session.noteSnapshot().entrySet()) {
             try {
-                written.put(note.getKey(), SessionExport.serialize(note.getValue()));
+                written.put(note.getKey(), values.serialize(note.getValue()));
             } catch (ValueTransferException e) {
                 LOG.log(System.Logger.Level.INFO, () -> label(session.getId())
                         + " moves without its container note of class " + e.className()
@@ -453,7 +456,9 @@ public final class SessionManager implements AutoCloseable {
      * or from the export for a session that a request still used then, is {@code expired} and
      * skipped silently; a session with an attribute that cannot be read or reads back as
      * {@code null}, or whose id is already in the store, is {@code dropped} (one WARNING line gives
-     * the count and the first cause), and a container note that cannot be read is left out alone.
+     * the count and the first cause: the class and why it could not be read), and a container note
+     * that cannot be read is left out alone. A class whose default {@code serialVersionUID} changed
+     * (a method added) is read with its new version when its serialized form is the same.
      * An imported session keeps its id, its times, its interval, its attributes and notes, and is
      * not new; {@code sessionDidActivate} fires on its activation listeners, and no lifecycle,
      * attribute or binding event.
@@ -498,7 +503,8 @@ public final class SessionManager implements AutoCloseable {
     private SessionImport importAll(List<ExportedSession> sessions, ClassLoader loader) {
         long now = clock.get().getAsLong();
         var tally = new ImportTally();
-        for (ExportedSession exported : sessions) importOne(exported, loader, now, tally);
+        ValueReader values = SessionExport.reader(loader);
+        for (ExportedSession exported : sessions) importOne(exported, values, now, tally);
         if (tally.dropped > 0) {
             LOG.log(System.Logger.Level.WARNING, () -> "Importing the HTTP sessions dropped " + tally.dropped
                     + " session(s) that could not be restored, as new ones start instead; first cause: "
@@ -507,7 +513,7 @@ public final class SessionManager implements AutoCloseable {
         return new SessionImport(tally.imported, tally.expired, tally.dropped);
     }
 
-    private void importOne(ExportedSession exported, ClassLoader loader, long now, ImportTally tally) {
+    private void importOne(ExportedSession exported, ValueReader values, long now, ImportTally tally) {
         if (exported.idleExpiredAt(now)) {
             tally.expired++;
             return;
@@ -519,26 +525,35 @@ public final class SessionManager implements AutoCloseable {
         Map<String, Object> attributes = new LinkedHashMap<>();
         for (Map.Entry<String, byte[]> attribute : exported.attributes().entrySet()) {
             try {
-                attributes.put(attribute.getKey(), SessionExport.deserialize(attribute.getValue(), loader));
+                attributes.put(attribute.getKey(), values.deserialize(attribute.getValue()));
             } catch (ValueTransferException e) {
-                tally.drop(e.className() == null ? "an unreadable value" : "class " + e.className());
+                tally.drop(dropCause(e));
                 return;
             }
         }
         HttpSessionImpl session = HttpSessionImpl.imported(servletContext, this, exported, attributes,
-                readNotes(exported, loader));
+                readNotes(exported, values));
         store.put(session);
         notifyActivationListeners(session, attributes, "sessionDidActivate",
                 HttpSessionActivationListener::sessionDidActivate);
         tally.imported++;
     }
 
+    /**
+     * What the drop line says of a value that could not be read: its class, or "an unreadable value" when the stream
+     * failed before naming one, then the reason when there is one.
+     */
+    private static String dropCause(ValueTransferException e) {
+        String what = e.className() == null ? "an unreadable value" : "class " + e.className();
+        return e.reason() == null ? what : what + ": " + e.reason();
+    }
+
     /** Reads the container notes of an exported session; a note that cannot be read is left out alone. */
-    private static Map<String, Object> readNotes(ExportedSession exported, ClassLoader loader) {
+    private static Map<String, Object> readNotes(ExportedSession exported, ValueReader values) {
         Map<String, Object> notes = new LinkedHashMap<>();
         for (Map.Entry<String, byte[]> note : exported.notes().entrySet()) {
             try {
-                notes.put(note.getKey(), SessionExport.deserialize(note.getValue(), loader));
+                notes.put(note.getKey(), values.deserialize(note.getValue()));
             } catch (ValueTransferException e) {
                 LOG.log(System.Logger.Level.INFO, () -> label(exported.id())
                         + " moves without a container note of class " + e.className()

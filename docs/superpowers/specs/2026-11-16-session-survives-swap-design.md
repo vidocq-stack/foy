@@ -168,12 +168,18 @@ Notes are container-private state:
   silently and counted in `expired`. The swap time counts as idle time. `getLastAccessedTime()` of an imported
   session is still the end of the last request that completed before the export.
 - A session whose attribute fails to read is skipped and counted in `dropped`:
-  - `InvalidClassException` after a field change without a `serialVersionUID`;
+  - `InvalidClassException` for a class whose `serialVersionUID` changed. A default UID that changed while the
+    serialized form stayed the same (a method added) is read with the new class instead: no declared UID and no
+    `writeObject` on either side, neither `Externalizable`, the same serializable fields, nearest serializable
+    superclass and directly implemented interfaces (by name, in declaration order), and both shapes read. Both sides
+    read a shape from the class as it was loaded, never from the class file its loader serves; a class of the JDK is
+    not looked at, and a `LinkageError` while listing a class's members leaves its shape unknown (BUG-20261117-01;
+    the rule and its reasons, in order, in `internals.adoc`, "A session class that changed");
   - `ClassNotFoundException` for a class that was deleted;
   - an exception thrown from the attribute's `readObject`, a `StackOverflowError` or a `LinkageError` such as an
     `ExceptionInInitializerError`;
   - a value that reads back as `null` (a `readResolve` that returns it), as a session cannot hold one.
-  The other sessions are kept. One summary WARN line gives the count and the first failing class.
+  The other sessions are kept. One summary WARN line gives the count, the first failing class and why.
 - Each imported session gets a new `HttpSessionImpl` with the same id and times, `isNew() == false`, its attributes
   and its notes. It is put in the store, then `sessionDidActivate` fires on its activation listeners. No
   `sessionCreated` fires, and no attribute or binding event.

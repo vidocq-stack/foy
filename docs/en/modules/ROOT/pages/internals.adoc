@@ -249,7 +249,7 @@ stateDiagram-v2
 
 A session that moves has not ended. `sessionWillPassivate` fires on its attributes that implement `HttpSessionActivationListener` before the export, and `sessionDidActivate` after the import. No `sessionCreated` fires on the new side and no `sessionDestroyed`, `valueUnbound` or `attributeRemoved` on the old one; the imported session is not new, and keeps its id, its creation and last-accessed times and its maximum interval. An activation listener that fails, with an exception or an `Error` such as the `ExceptionInInitializerError` of a class whose static initializer fails, is logged at WARNING with what it threw, and the session still moves: only a `VirtualMachineError` stops the swap.
 
-WARNING: A session moves whole or not at all. When one attribute cannot be written (not serializable, a failing `writeObject`), or cannot be read back (a class that was deleted or changed without a `serialVersionUID`), the whole session stays behind. At export it is invalidated as usual, with `sessionDestroyed`, and one WARNING line names the session, the attribute and its class. At import it is dropped and counted, and one summary WARNING line gives the number of sessions dropped and the first class that failed. The other sessions are kept.
+WARNING: A session moves whole or not at all. When one attribute cannot be written (not serializable, a failing `writeObject`), or cannot be read back (a class that was deleted, or whose serialized form changed: see <<session-class-changed>>), the whole session stays behind. At export it is invalidated as usual, with `sessionDestroyed`, and one WARNING line names the session, the attribute and its class. At import it is dropped and counted, and one summary WARNING line gives the number of sessions dropped and the first cause: `Importing the HTTP sessions dropped N session(s) that could not be restored, as new ones start instead; first cause: class <name>: <reason>`. The other sessions are kept.
 
 CDI state moves with the session when Foy runs on Vauban [.tag-new]#NEW#. `foy-cdi-vauban` binds the deployment's Vauban container around the import (`VaubanCdiContextListeners.aroundSessionImport` calls `Passivation.importInto`), and Vauban's serial forms read back into it. A `@SessionScoped` instance keeps its state and belongs to the new container's bean. A client proxy it holds, of an `@ApplicationScoped` service for instance, reads back as the new container's proxy of the same bean, and an injected `Event`, `Instance`, `Provider` or `BeanManager` as the new container's own: an event fired after the swap reaches the new deployment's observers. This is passivation: no `@PreDestroy` runs on the old side, no `@PostConstruct` on the new one. The instance of the built-in `HttpSession` bean is the session itself: `HttpSessionStore.isSession` says so, Vauban leaves it out of the stream, and the bean gives the imported session at its first use in the new deployment. How Vauban writes and reads these objects, and its limits between two versions of a class: xref:vauban::internals.adoc#session-swap[Vauban, Session entries across a container swap].
 
@@ -258,6 +258,46 @@ What does not move leaves its session behind whole, as above: an instance of an 
 Foy's own notes move with the session. The cached identity moves when its `Principal` is serializable; when it is not, only that note is dropped and the user logs in again. A session already idle beyond its interval is not exported. One that is idle beyond it when imported is skipped silently and counted in `expired`: the time of the swap counts as idle time. The idle time counts from the end of the session's last request or, for a session that a request still used at the export (a server-sent event stream), from the export: a session in use never expires on the old side, however long its request runs.
 
 Call `importSessions` after `build()` and before the handler is mounted, so that a request with an old `JSESSIONID` never meets an empty store. Give it only bytes that `closeExportingSessions()` returned in this JVM: anything else is refused with an `IllegalArgumentException`, and a closed deployment refuses an import with an `IllegalStateException`. When the builder was given a `BeanManager`, the import runs inside the import scope of the deployment's session manager: it nests each `CdiContextListeners.aroundSessionImport(BeanManager, Supplier)` of the discovered adapters around the import, so an adapter can bind its CDI container while the session's CDI objects are read and rebind to it. The default method only runs the import, and without a `BeanManager` there is no scope. The format of the export is private to Foy and the bytes live in memory only: they are neither a persistence format nor a contract between versions.
+
+[#session-class-changed]
+==== A session class that changed [.tag-new]#NEW#
+
+A class that declares no `serialVersionUID` gets one from the JDK, computed from its name, its interfaces, its fields and its non-private methods and constructors. Adding a method, the most common change behind a swap, gives it another one, and plain Java then refuses the stream (BUG-20261117-01). Foy acts only there: where the stream's `serialVersionUID` differs from the local class's. Everywhere else the stream reads as plain Java reads it: equal UIDs (a field added under a UID that did not change gets its default value), an enum, a record, an array, a proxy, a class not found.
+
+When the UIDs differ, Foy reads the class with the new class's descriptor only when all of these hold, the shapes then proving the serialized form the same; when any fails, the JDK refuses the class as before and the session is dropped:
+
+. neither version declares a `serialVersionUID` field (any modifiers): a declared UID that changed, was added or was removed is the developer's word;
+. neither version is `Externalizable`, through any supertype: its data is whatever `writeExternal` wrote;
+. neither version declares a `writeObject(ObjectOutputStream)` method (any modifiers): its custom data is opaque, and a changed body would read with a wrong layout;
+. their serializable fields are the same, in order, by name, type code and type string (`ObjectStreamField`), `serialPersistentFields` included;
+. their nearest serializable superclass is the same, by name, or neither has one;
+. the interfaces the class itself implements are the same, by name and in the order of their declaration (`getInterfaces()`): two anonymous classes whose numbers swapped have the same name, and may have the same fields;
+. the shapes of both versions could be read (see below).
+
+The stream's descriptor carries neither the declarations, these flags nor the interfaces of the exported class, so the export writes them itself: `SessionExport`'s output stream follows each class descriptor (not a proxy's) with the class's shape, read once per class for the whole export (`SerialShape`), and the import's input stream reads it back after the descriptor and decides. This is version 2 of the export; an export of version 1 is refused as an unknown version.
+
+Both sides read a shape the same way, from the class as it was loaded: the exported class at the export, the class of the importing loader at the import. The two "declares" facts come from `getDeclaredField("serialVersionUID")` and `getDeclaredMethod("writeObject", ObjectOutputStream.class)`, the lookups `ObjectStreamClass` already made on that class for its descriptor: no member is read or invoked. The class file a loader serves is never read, as it need not be the bytes the loader defined: a dev swap compiles the classes again in place before the old layer exports, and a layer loader such as Vauban's reads a class file from that directory when asked, so the file of the old layer's loader is already the new version's. Two shapes are unknown, and their class is never read with the new descriptor:
+
+* a class of the JDK (the bootstrap or the platform loader), which is not looked at: it is the same class on both sides, so its UIDs never differ;
+* a class whose members cannot be listed, a type of a member's signature being missing (a `LinkageError`).
+
+The reason closes the drop line, the first that applies in this order:
+
+[cols="2,3",options="header"]
+|===
+| Reason | When
+| `its declared serialVersionUID changed` | a UID is declared on either side, and the UIDs differ
+| `its default serialVersionUID changed and it is Externalizable` | either version is `Externalizable`
+| `its default serialVersionUID changed and it declares writeObject` | either version declares `writeObject`
+| `its default serialVersionUID changed and its serializable fields changed` | a field added, removed, renamed, reordered or of another type
+| `its default serialVersionUID changed and its serializable superclass changed` | another nearest serializable superclass, or one gained or lost
+| `its default serialVersionUID changed and its interfaces changed` | an interface the class itself implements added, removed, replaced or reordered
+| `its default serialVersionUID changed and its shape could not be read` | the shape of either version is unknown
+| `the class is missing` | the new layer has no class of that name (`ClassNotFoundException`)
+| the message of the exception, or the exception itself when it has none (`java.lang.IllegalStateException`) | any other failure, such as a `readObject` that throws
+|===
+
+A value that reads back as `null` gives its class without a reason.
 
 == Discovery and deployment pipeline
 
@@ -338,9 +378,12 @@ The guard test `NoProductReflectionTest` scans the main sources of `foy-core` fo
 * `IndexedHandlesTypesResolver` — loads the `META-INF/foy/class-index.list` entries with `Class.forName(name, false, loader)`, without initialising them;
 * `SessionExport` — deserializes session attributes through the new application layer's loader, by the class names the stream carries, with `Class.forName(name, false, loader)` (<<sessions-across-redeploy>>).
 
-The guard covers `foy-core` only: `foy-cdi-vauban`'s `CdiWebComponentsCreator` also loads the class names recorded at build time with `Class.forName(name, false, loader)` (no initialisation, no reflective instantiation).
+The guard covers `foy-core` only, and these three patterns only:
 
-The architecture rule `NO_REFLECTION` of `foy-architecture-tests` checks the bytecode of every shipped module against the same allow-list, `CdiWebComponentsCreator` included: a lookup by name, a member or an annotation read reflectively, or a `java.lang.reflect` type, anywhere else fails the build.
+* `foy-cdi-vauban`'s `CdiWebComponentsCreator` also loads the class names recorded at build time with `Class.forName(name, false, loader)` (no initialisation, no reflective instantiation);
+* `foy-core`'s `SerialShape` looks members up with `getDeclaredField` and `getDeclaredMethod`, which the patterns do not match: on both sides of a session swap, whether an application class as loaded declares a `serialVersionUID` field or a `writeObject` method. The class file its loader serves need not be the bytes it defined, as a dev swap compiles in place. Nothing is read, invoked or made accessible, and no class of the JDK is looked at (<<session-class-changed>>).
+
+The architecture rule `NO_REFLECTION` of `foy-architecture-tests` checks the bytecode of every shipped module against the same allow-list, `CdiWebComponentsCreator` and `SerialShape` included: a lookup by name, a member or an annotation read reflectively, or a `java.lang.reflect` type, anywhere else fails the build.
 
 *Logging policy.* One `INFO` line per class resolved through the Class-File tier, one `WARNING` per class on the reflective tier (naming the reason), and nothing per request.
 

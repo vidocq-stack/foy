@@ -369,7 +369,25 @@ class SessionTransferTest {
         assertTrue(target.store().get(lost.getId()).isEmpty());
         assertEquals(ITEMS, stored(target, kept.getId()).getAttribute(CART));
         assertEquals(1, warnings.size(), warnings::toString);
-        assertTrue(warnings.getFirst().contains(FIXTURE), warnings::toString);
+        assertTrue(warnings.getFirst().endsWith("first cause: class " + FIXTURE + ": the class is missing"),
+                warnings::toString);
+    }
+
+    @Test
+    void aValueThatIsNotASerializationStreamDropsItsSessionWithTheStreamsMessage() {
+        byte[] planted = SessionExport.write(List.of(new SessionExport.ExportedSession(
+                "0123456789abcdef0123456789abcdef", 0, 0, System.currentTimeMillis(), 600,
+                Map.of("value", new byte[] {1, 2, 3, 4}), Map.of())));
+
+        var target = manager();
+        List<String> warnings;
+        try (var log = LogCapture.of(SessionManager.class.getName())) {
+            assertEquals(new SessionImport(0, 0, 1), target.importSessions(planted, testLoader));
+            warnings = log.warnings();
+        }
+        assertEquals(1, warnings.size(), warnings::toString);
+        assertTrue(warnings.getFirst().endsWith("first cause: an unreadable value: invalid stream header: 01020304"),
+                warnings::toString);
     }
 
     @Test
@@ -385,7 +403,25 @@ class SessionTransferTest {
             warnings = log.warnings();
         }
         assertEquals(1, warnings.size(), warnings::toString);
-        assertTrue(warnings.getFirst().contains(ExplodingOnRead.class.getName()), warnings::toString);
+        assertTrue(warnings.getFirst().endsWith(
+                "first cause: class " + ExplodingOnRead.class.getName() + ": cannot read"), warnings::toString);
+    }
+
+    @Test
+    void aValueWhoseReadObjectThrowsWithoutAMessageDropsItsSessionWithWhatTheExceptionIs() {
+        var source = manager();
+        source.createNew().setAttribute("bomb", new SilentOnRead());
+        byte[] export = source.closeExporting();
+
+        var target = manager();
+        List<String> warnings;
+        try (var log = LogCapture.of(SessionManager.class.getName())) {
+            assertEquals(new SessionImport(0, 0, 1), target.importSessions(export, testLoader));
+            warnings = log.warnings();
+        }
+        assertEquals(1, warnings.size(), warnings::toString);
+        assertTrue(warnings.getFirst().endsWith("first cause: class " + SilentOnRead.class.getName()
+                + ": java.lang.IllegalStateException"), warnings::toString);
     }
 
     @Test
@@ -683,11 +719,25 @@ class SessionTransferTest {
     }
 
     @Test
-    void anExportOfAnotherVersionIsRejected() {
-        byte[] export = manager().closeExporting();
-        export[7] = 2;
+    void theExportIsOfVersion2AndRoundTrips() {
+        var source = manager();
+        var session = source.createNew();
+        session.setAttribute(CART, ITEMS);
+        byte[] export = source.closeExporting();
+
+        assertArrayEquals(new byte[] {'F', 'O', 'Y', 'S', 0, 0, 0, 2}, Arrays.copyOf(export, 8));
         var target = manager();
-        assertThrows(IllegalArgumentException.class, () -> target.importSessions(export, testLoader));
+        assertEquals(ONE, target.importSessions(export, testLoader));
+        assertEquals(ITEMS, stored(target, session.getId()).getAttribute(CART));
+    }
+
+    @Test
+    void anExportOfVersion1IsRefusedAsAnUnknownVersion() {
+        byte[] export = manager().closeExporting();
+        export[7] = 1;
+        var target = manager();
+        var refused = assertThrows(IllegalArgumentException.class, () -> target.importSessions(export, testLoader));
+        assertEquals("unknown version 1 of a Foy session export, this Foy reads version 2", refused.getMessage());
     }
 
     @Test
@@ -866,6 +916,14 @@ class SessionTransferTest {
         @java.io.Serial
         private void readObject(ObjectInputStream in) {
             throw new IllegalStateException("cannot read");
+        }
+    }
+
+    /** A value whose {@code readObject} throws an exception that has no message. */
+    static final class SilentOnRead implements Serializable {
+        @java.io.Serial
+        private void readObject(ObjectInputStream in) {
+            throw new IllegalStateException();
         }
     }
 

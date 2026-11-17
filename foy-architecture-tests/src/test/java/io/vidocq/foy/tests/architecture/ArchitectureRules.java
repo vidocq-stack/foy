@@ -147,7 +147,10 @@ final class ArchitectureRules {
 
     /**
      * internals.adoc, Component resolution: the documented reflective fallbacks, each with its reason. The same
-     * list as {@code NoProductReflectionTest} in foy-core, plus the class of foy-cdi-vauban that page names.
+     * list as {@code NoProductReflectionTest} in foy-core, plus the class of foy-cdi-vauban that page names, and
+     * {@code SerialShape}, whose lookups match none of that test's patterns: it looks up the declared
+     * {@code serialVersionUID} field and {@code writeObject} method of a class on both sides of a session swap, as
+     * {@code ObjectStreamClass} already does for its descriptor (BUG-20261117-01).
      * Nested classes share the entry of their top-level class.
      */
     static final Map<String, String> REFLECTIVE_FALLBACKS = Map.of(
@@ -161,7 +164,11 @@ final class ArchitectureRules {
             "loads the class names recorded at build time, as a synthetic bean parameter cannot carry a Class",
             "io.vidocq.foy.internal.session.SessionExport",
             "deserializes session attributes through the new application layer's loader, by the class names the "
-                    + "stream carries");
+                    + "stream carries",
+            "io.vidocq.foy.internal.session.SerialShape",
+            "at a session export and import, whether an application class as loaded declares serialVersionUID or "
+                    + "writeObject: the class file its loader serves need not be the bytes it defined, as a dev swap "
+                    + "compiles in place");
 
     /**
      * Workspace AGENTS.md, "Maximum static code generation", and internals.adoc: reflection remains only as the

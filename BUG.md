@@ -1,5 +1,46 @@
 # BUG.md — foy
 
+## BUG-20261117-01 — A session class without `serialVersionUID` that gains a method drops its session at a swap
+
+- Date: 2026-11-17 (found by the end-to-end replay of the Vidocq dev swap on vaadin-on-vidocq, Foy 18ff8067, Vauban
+  0e39add0).
+- Symptom: a public method was added to a `@SessionScoped Serializable` bean (`io.vidocq.tools.vaadin.Visits`) and to
+  a Vaadin view, neither of which declares a `serialVersionUID`. At the swap the import logged `Importing the HTTP
+  sessions dropped 1 session(s) that could not be restored, as new ones start instead; first cause: class
+  io.vidocq.tools.vaadin.Visits`, and the user got a new session. Adding a method is the most common reason for a
+  swap, so the session handover failed in its main case. The line did not say why either.
+- Repro: deterministic. Compile a `Serializable` class without `serialVersionUID`, put an instance in a session,
+  export with a loader of that version, then import through a loader of the same class with one public method or
+  constructor added (`SessionDefaultSerialVersionUidTest.aClassWithoutSerialVersionUidThatGainsAPublicMethodKeepsItsSession`;
+  on Vauban, `CdiSessionSwapTest.aSessionBeanWithoutSerialVersionUidThatGainsAMethodMoves`, which logged
+  `first cause: class swap.app.Visits` on main).
+- Cause: the JDK computes a class's default `serialVersionUID` from its name, interfaces, fields and non-private
+  methods and constructors, so the UID moved (-2180439236505541769 to -3816310884943761011 in the replay) and the
+  import's `ObjectInputStream` refused the stream descriptor, although the serialized form (the fields) had not
+  changed. The stream descriptor carries the fields, not whether the class declares its UID or a `writeObject`, so
+  the import could not tell a harmless change from a breaking one.
+- Status: FIXED on `fix/session-default-suid`. Where the stream's UID differs from the local class's, and only there,
+  the import reads the class with the local descriptor when neither version declares a `serialVersionUID` or a
+  `writeObject`, neither is `Externalizable`, the serializable fields (name, type code, type string, in order), the
+  nearest serializable superclass and the interfaces the class itself implements (by name, in declaration order) are
+  the same, and both shapes could be read; otherwise the JDK refuses as before. The export follows each class
+  descriptor with the class's shape (`SerialShape`, export format version 2; version 1 is refused as unknown). Both
+  sides read a shape from the class as it was loaded (`getDeclaredField`/`getDeclaredMethod`, a documented
+  reflective fallback), never from the class file its loader serves, which need not be the bytes it defined: a dev
+  swap compiles in place and the old layer's loader then serves the new class file
+  (`aSerialVersionUidDeclarationRemovedInPlaceDropsTheSession` and `aWriteObjectRemovedInPlaceDropsTheSession` were
+  kept, the second with its `writeObject` data unread, when the export read class files), and a loader may define
+  other bytes than it serves (`aWriteObjectOfTheLoadedClassDropsTheSessionWhateverItsClassFileSays` read the value
+  with the wrong layout and failed on `java.io.EOFException` when the import read class files). A class of the JDK
+  is not looked at, and a class whose members cannot be listed (a `LinkageError`) has an unknown shape. The
+  interfaces catch two anonymous classes whose numbers swapped: same name, same fields
+  (`twoAnonymousClassesWhoseNumbersSwappedDropTheSession` was kept, and read as the other class). The drop line now
+  ends with the reason, `first cause: class <name>: <reason>` (texts in `internals.adoc`, "A session class that
+  changed"). Verified by `SessionDefaultSerialVersionUidTest` (26 tests: kept, dropped with each reason, unknown
+  shapes, unchanged, compiled in place), `SessionTransferTest` (format version 2, version 1 refused, reasons of a
+  missing class, of a failing `readObject` with and without a message and of bytes that are no serialization
+  stream), the CDI test above, the full build with `-Pquality,errorprone`, and the Servlet 6.1 TCK.
+
 ## BUG-20261116-02 — A failing session listener logs the whole session id, which is a credential
 
 - Date: 2026-11-16 (found in review while building the session export of a dev swap, branch
