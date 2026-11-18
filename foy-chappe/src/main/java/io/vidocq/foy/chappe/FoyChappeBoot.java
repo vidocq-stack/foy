@@ -22,6 +22,7 @@ package io.vidocq.foy.chappe;
 import io.vidocq.chappe.api.Handler;
 import io.vidocq.foy.internal.boot.ApplicationSources;
 import io.vidocq.foy.internal.boot.ApplicationSources.Initializer;
+import io.vidocq.foy.internal.boot.CdiComponentFactory;
 import io.vidocq.foy.internal.boot.ComponentFactory;
 import io.vidocq.foy.internal.boot.DeployOptions;
 import io.vidocq.foy.internal.boot.DescriptorMerger;
@@ -527,7 +528,11 @@ public final class FoyChappeBoot {
             ClassLoader loader = classLoader != null ? classLoader : FoyChappeBoot.class.getClassLoader();
             // One registry for discovery, web.xml classes, dynamic registrations and @HandlesTypes.
             WebComponentRegistry registry = WebComponentRegistry.forClassLoader(loader);
-            ComponentFactory factory = new RegistryComponentFactory(registry, loader);
+            ComponentFactory registered = new RegistryComponentFactory(registry, loader);
+            // With a container, a component of web.xml or registered by class is created through CDI when its class
+            // is a bean, as an annotated one is: it gets its injection points (Servlet 6.1 §15.5, BUG-20261118-62).
+            ComponentFactory factory = beanManager == null ? registered
+                    : new CdiComponentFactory(beanManager, registered);
             AnnotatedComponents annotated;
             try {
                 annotated = beanManager == null

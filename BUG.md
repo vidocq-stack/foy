@@ -1,5 +1,26 @@
 # BUG.md — foy
 
+## BUG-20261118-62 — A servlet of `web.xml` whose class is a bean gets no injection
+
+- Date: 2026-11-18 (found by the Jakarta EE 11 Platform TCK for Persistence on the Vidocq runtime, Foy 412ca8b).
+- Symptom: the TCK's `puservlet` vehicle is a servlet `web.xml` declares, with an `@PersistenceUnit
+  EntityManagerFactory emf` field; the runner registers every class of the war as a bean. Its tests fail on
+  `this.emf` being null. Making the class `@Dependent` changed nothing. An `@WebServlet` with the same field is
+  injected.
+- Repro: `WebXmlComponentsThroughCdiTest` (`foy-cdi-vauban`): a `@Dependent` servlet with an `@Inject` field,
+  declared in `WEB-INF/web.xml`, answered `not injected`.
+- Cause: `FoyChappeBoot` creates the annotated components through `BeanManager.getReference` (`WebAppDiscovery`),
+  and every other one, those of `web.xml`, those registered by class and the listeners, upgrade handlers and
+  components of `create*`, through the `ComponentFactory`, which calls the no-argument constructor. Servlet 6.1
+  §15.5 asks a Jakarta EE container to inject them all (§4.4.3.5 for `create*`).
+- Status: FIXED on `fix/web-xml-components-through-cdi`. With a `BeanManager`, the factory is a
+  `CdiComponentFactory`: a class with exactly one bean of its own (not one of a subclass) is created through
+  `getReference`, as an annotated component is, and any other class by the registry factory, as before. A class
+  that is no bean stays without injection: in a build-indexed application a component class becomes a bean through
+  a bean defining annotation, or through `@WebServlet` and its siblings (`FoyWebExtension`).
+- Verification: the repro red before, green after; `CdiComponentFactoryTest` (6); `foy-core`, `foy-chappe`,
+  `foy-cdi-vauban` and the architecture tests (1934 tests) green.
+
 ## BUG-20261117-01 — A session class without `serialVersionUID` that gains a method drops its session at a swap
 
 - Date: 2026-11-17 (found by the end-to-end replay of the Vidocq dev swap on vaadin-on-vidocq, Foy 18ff8067, Vauban

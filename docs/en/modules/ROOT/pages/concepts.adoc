@@ -96,7 +96,7 @@ Jakarta Authentication and Jakarta Authorization are not implemented.
 
 `foy-cdi-vauban` connects Foy to xref:vauban::index.adoc[Vauban]: `FoyVaubanBootstrap` returns the current `VaubanContainer`'s `BeanManager` for `FoyChappeBoot`.
 
-* `Servlet`/`Filter`/`Listener` instances are resolved through the `BeanManager`, so they can carry `@Inject` for application beans.
+* `Servlet`/`Filter`/`Listener` instances are resolved through the `BeanManager`, so they can carry `@Inject` for application beans. This holds for the annotated components, and for a component `web.xml` declares or the application registers by its class (`addServlet(String, Class)`, `createFilter`, an upgrade handler, ...) whose class is a bean of its own: a bean defining annotation such as `@Dependent` makes it one (Servlet 6.1 §15.5). A class that is no bean is created by its no-argument constructor, without injection.
 * On Vauban, `HttpServletRequest` (`@RequestScoped`), `HttpSession` (`@SessionScoped`) and `ServletContext` (`@ApplicationScoped`) are beans, as CDI requires of a Servlet container: `foy-cdi-vauban` produces them, with client proxies generated at its build (xref:usage.adoc#servlet-built-in-beans[Usage], xref:internals.adoc#servlet-built-in-beans[Internals]).
 * The CDI request context is active for each request, under any container, Vauban and Weld included, so your own `@RequestScoped` beans work; the session context is active on Vauban, through `vauban-webcontexts` (xref:reference.adoc#other-containers[Other CDI containers]).
 
